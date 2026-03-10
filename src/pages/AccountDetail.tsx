@@ -5,6 +5,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { ArrowLeft, Users, FileText, Cpu, Calendar, Clock, Activity } from "lucide-react";
+import { KycTab } from "@/components/kyc/KycTab";
 
 export default function AccountDetail() {
   const { id } = useParams();
