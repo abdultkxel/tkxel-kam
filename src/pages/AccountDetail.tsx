@@ -6,6 +6,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { ArrowLeft, Users, FileText, Cpu, Calendar, Clock, Activity } from "lucide-react";
 import { KycTab } from "@/components/kyc/KycTab";
+import { StrategyTab } from "@/components/strategy/StrategyTab";
 
 export default function AccountDetail() {
   const { id } = useParams();
