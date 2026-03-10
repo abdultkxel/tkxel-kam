@@ -120,30 +120,7 @@ export default function AccountDetail() {
 
         {/* Strategy Tab */}
         <TabsContent value="strategy">
-          <Card>
-            <CardHeader><CardTitle className="text-base">Strategy & Plan</CardTitle></CardHeader>
-            <CardContent>
-              <div className="space-y-4">
-                <div className="p-4 rounded-lg bg-muted/50">
-                  <h4 className="text-sm font-medium text-foreground mb-2">Account Strategy</h4>
-                  <p className="text-sm text-muted-foreground">
-                    {account.segment === "Growth"
-                      ? "Focus on expansion through new service lines and deepening executive relationships. Target 20% ARR growth over next 12 months."
-                      : "Priority on retention through service quality improvement and proactive risk management. Ensure smooth contract renewal."
-                    }
-                  </p>
-                </div>
-                <div className="p-4 rounded-lg bg-muted/50">
-                  <h4 className="text-sm font-medium text-foreground mb-2">Key Objectives</h4>
-                  <ul className="space-y-2 text-sm text-muted-foreground">
-                    <li className="flex items-start gap-2"><span className="h-1.5 w-1.5 rounded-full bg-primary mt-1.5 flex-shrink-0" />Strengthen executive-level relationships</li>
-                    <li className="flex items-start gap-2"><span className="h-1.5 w-1.5 rounded-full bg-primary mt-1.5 flex-shrink-0" />Improve delivery predictability</li>
-                    <li className="flex items-start gap-2"><span className="h-1.5 w-1.5 rounded-full bg-primary mt-1.5 flex-shrink-0" />Identify expansion opportunities</li>
-                  </ul>
-                </div>
-              </div>
-            </CardContent>
-          </Card>
+          <StrategyTab account={account} />
         </TabsContent>
 
         {/* Health Scores Tab */}
