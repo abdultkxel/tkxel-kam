@@ -5,16 +5,18 @@ import { RAG_STYLES, getRagColor } from "@/data/accounts";
 import {
   DEFAULT_RELATIONSHIP_CRITERIA, DEFAULT_CONTRACT_CRITERIA,
   DEFAULT_RESOURCE_CRITERIA, DEFAULT_CSAT_CRITERIA,
-  calcScore, interpretRag03, interpretCsat,
+  DEFAULT_RISK_CRITERIA,
+  calcScore, interpretRag03, interpretCsat, interpretRisk03,
   generateMockHistory, type ScoringCriterion, type CsatCriterion,
 } from "@/data/healthScoring";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Activity, Users, FileText, Cpu, Star, Settings, Save, ChevronDown } from "lucide-react";
+import { Activity, Users, FileText, Cpu, Star, Settings, Save, ChevronDown, ShieldAlert, Layers } from "lucide-react";
 import { toast } from "sonner";
 import { ScoringCard } from "./ScoringCard";
 import { CsatScoringCard } from "./CsatScoringCard";
+import { ServiceLineMappingCard } from "./ServiceLineMappingCard";
 import { HealthTrendChart } from "./HealthTrendChart";
 import { WeightSettingsPanel } from "./WeightSettingsPanel";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
@@ -33,12 +35,15 @@ export function HealthScoringTab({ account }: Props) {
   const [conCriteria, setConCriteria] = useState(DEFAULT_CONTRACT_CRITERIA);
   const [resCriteria, setResCriteria] = useState(DEFAULT_RESOURCE_CRITERIA);
   const [csatCriteria, setCsatCriteria] = useState(DEFAULT_CSAT_CRITERIA);
+  const [riskCriteria, setRiskCriteria] = useState(DEFAULT_RISK_CRITERIA);
 
   // Current selections
   const [relSelections, setRelSelections] = useState<Record<string, number>>({});
   const [conSelections, setConSelections] = useState<Record<string, number>>({});
   const [resSelections, setResSelections] = useState<Record<string, number>>({});
   const [csatSelections, setCsatSelections] = useState<Record<string, number>>({});
+  const [riskSelections, setRiskSelections] = useState<Record<string, number>>({});
+  const [serviceSelections, setServiceSelections] = useState<Record<string, boolean>>({});
 
   // Settings panel
   const [showSettings, setShowSettings] = useState(false);
@@ -51,6 +56,11 @@ export function HealthScoringTab({ account }: Props) {
   const conScore = calcScore(conCriteria, conSelections);
   const resScore = calcScore(resCriteria, resSelections);
   const csatScore = calcScore(csatCriteria, csatSelections);
+  const riskScore = calcScore(riskCriteria, riskSelections);
+
+  // Service line coverage
+  const serviceActive = Object.values(serviceSelections).filter(Boolean).length;
+  const serviceCoverage = serviceActive > 0 ? Math.round((serviceActive / 49) * 100) : 0;
 
   // Normalize CSAT (1-5) to 0-3 scale for overall
   const csatNorm = csatScore > 0 ? ((csatScore - 1) / 4) * 3 : 0;
@@ -62,6 +72,8 @@ export function HealthScoringTab({ account }: Props) {
   const conRag = interpretRag03(hasAnySelection ? conScore : account.health.contract);
   const resRag = interpretRag03(hasAnySelection ? resScore : account.health.resource);
   const csatInterp = interpretCsat(csatScore || 3.5);
+  const riskInterp = interpretRisk03(riskScore || 2);
+  const serviceRag = serviceCoverage >= 50 ? "green" as const : serviceCoverage >= 25 ? "amber" as const : "red" as const;
 
   const handleSaveScores = () => {
     toast.success("Health scores saved successfully.", { description: `Overall: ${overallScore.toFixed(2)} · ${new Date().toLocaleDateString()}` });
@@ -85,18 +97,22 @@ export function HealthScoringTab({ account }: Props) {
                 </Badge>
               </div>
             </div>
-            <div className="flex items-center gap-4">
+            <div className="flex items-center gap-3 flex-wrap">
               {[
                 { label: "Relationship", score: hasAnySelection ? relScore : account.health.relationship, icon: Users, rag: relRag.color },
                 { label: "Contract", score: hasAnySelection ? conScore : account.health.contract, icon: FileText, rag: conRag.color },
                 { label: "Resource", score: hasAnySelection ? resScore : account.health.resource, icon: Cpu, rag: resRag.color },
                 { label: "CSAT", score: csatScore || 3.5, icon: Star, rag: csatInterp.color, suffix: "/5" },
+                { label: "Risk", score: riskScore || 2, icon: ShieldAlert, rag: riskInterp.color },
+                { label: "Services", score: serviceCoverage, icon: Layers, rag: serviceRag, suffix: "%" },
               ].map(item => (
                 <div key={item.label} className="text-center">
                   <div className={`h-10 w-10 rounded-lg ${RAG_STYLES[item.rag].bg} flex items-center justify-center mx-auto`}>
                     <item.icon className={`h-5 w-5 ${RAG_STYLES[item.rag].text}`} />
                   </div>
-                  <p className={`text-lg font-bold mt-1 ${RAG_STYLES[item.rag].text}`}>{item.score.toFixed(1)}</p>
+                  <p className={`text-lg font-bold mt-1 ${RAG_STYLES[item.rag].text}`}>
+                    {item.suffix === "%" ? `${item.score}%` : item.score.toFixed(1)}
+                  </p>
                   <p className="text-[10px] text-muted-foreground">{item.label}</p>
                 </div>
               ))}
@@ -123,6 +139,7 @@ export function HealthScoringTab({ account }: Props) {
               conCriteria={conCriteria} onConChange={setConCriteria}
               resCriteria={resCriteria} onResChange={setResCriteria}
               csatCriteria={csatCriteria} onCsatChange={setCsatCriteria}
+              riskCriteria={riskCriteria} onRiskChange={setRiskCriteria}
             />
           </CollapsibleContent>
         </Collapsible>
@@ -164,6 +181,20 @@ export function HealthScoringTab({ account }: Props) {
         selections={csatSelections}
         onSelect={setCsatSelections}
         score={csatScore || 3.5}
+      />
+      <ScoringCard
+        title="Risk Score"
+        icon={<ShieldAlert className="h-4 w-4" />}
+        criteria={riskCriteria}
+        selections={riskSelections}
+        onSelect={setRiskSelections}
+        score={riskScore || 2}
+        interpret={interpretRisk03}
+        scale="0–3"
+      />
+      <ServiceLineMappingCard
+        selections={serviceSelections}
+        onSelect={setServiceSelections}
       />
 
       {/* Save */}

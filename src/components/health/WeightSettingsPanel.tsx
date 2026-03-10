@@ -13,6 +13,8 @@ interface Props {
   onResChange: (c: ScoringCriterion[]) => void;
   csatCriteria: CsatCriterion[];
   onCsatChange: (c: CsatCriterion[]) => void;
+  riskCriteria: ScoringCriterion[];
+  onRiskChange: (c: ScoringCriterion[]) => void;
 }
 
 function WeightGroup({ title, items, onChange }: { title: string; items: { id: string; name: string; weight: number }[]; onChange: (id: string, weight: number) => void }) {
