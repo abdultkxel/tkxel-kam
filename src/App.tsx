@@ -8,6 +8,7 @@ import { AppLayout } from "@/components/AppLayout";
 import Login from "@/pages/Login";
 import Dashboard from "@/pages/Dashboard";
 import Accounts from "@/pages/Accounts";
+import AccountDetail from "@/pages/AccountDetail";
 import Playbook from "@/pages/Playbook";
 import HealthScores from "@/pages/HealthScores";
 import Governance from "@/pages/Governance";
@@ -29,6 +30,7 @@ const App = () => (
             <Route element={<AppLayout />}>
               <Route path="/dashboard" element={<Dashboard />} />
               <Route path="/accounts" element={<Accounts />} />
+              <Route path="/accounts/:id" element={<AccountDetail />} />
               <Route path="/playbook" element={<Playbook />} />
               <Route path="/health-scores" element={<HealthScores />} />
               <Route path="/governance" element={<Governance />} />

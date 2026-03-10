@@ -1,76 +1,187 @@
+import { useState, useMemo } from "react";
+import { useNavigate } from "react-router-dom";
 import { useAuth } from "@/contexts/AuthContext";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { MOCK_ACCOUNTS, RAG_STYLES, getRagColor, type RiskStatus, type Segment } from "@/data/accounts";
+import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-
-const ALL_ACCOUNTS = [
-  { id: 1, name: "Acme Corporation", industry: "FinTech", health: "healthy", am: "Sarah Mitchell", amId: "u1", arr: "$1.2M" },
-  { id: 2, name: "Beta Industries", industry: "Healthcare", health: "at-risk", am: "Sarah Mitchell", amId: "u1", arr: "$800K" },
-  { id: 3, name: "Gamma Ltd", industry: "E-Commerce", health: "healthy", am: "Sarah Mitchell", amId: "u1", arr: "$450K" },
-  { id: 4, name: "Delta Corp", industry: "Logistics", health: "healthy", am: "Sarah Mitchell", amId: "u1", arr: "$2.1M" },
-  { id: 5, name: "Epsilon Tech", industry: "SaaS", health: "critical", am: "Sarah Mitchell", amId: "u1", arr: "$350K" },
-  { id: 6, name: "Zeta Partners", industry: "Insurance", health: "healthy", am: "James Chen", amId: "u2", arr: "$1.8M" },
-  { id: 7, name: "Eta Solutions", industry: "Retail", health: "at-risk", am: "James Chen", amId: "u2", arr: "$600K" },
-  { id: 8, name: "Theta Inc", industry: "Manufacturing", health: "healthy", am: "Other AM", amId: "u4", arr: "$950K" },
-];
-
-const healthColors: Record<string, string> = {
-  healthy: "bg-success/10 text-success",
-  "at-risk": "bg-warning/10 text-warning",
-  critical: "bg-destructive/10 text-destructive",
-};
+import { Input } from "@/components/ui/input";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Search, Users, TrendingUp, FileText, Cpu } from "lucide-react";
 
 export default function Accounts() {
   const { user } = useAuth();
+  const navigate = useNavigate();
+  const [search, setSearch] = useState("");
+  const [segmentFilter, setSegmentFilter] = useState<string>("all");
+  const [riskFilter, setRiskFilter] = useState<string>("all");
+
+  const accounts = useMemo(() => {
+    let list = user?.role === "am"
+      ? MOCK_ACCOUNTS.filter(a => a.amId === user.id)
+      : MOCK_ACCOUNTS;
+
+    if (search) {
+      const q = search.toLowerCase();
+      list = list.filter(a => a.name.toLowerCase().includes(q) || a.industry.toLowerCase().includes(q));
+    }
+    if (segmentFilter !== "all") {
+      list = list.filter(a => a.segment === segmentFilter);
+    }
+    if (riskFilter !== "all") {
+      list = list.filter(a => a.riskStatus === riskFilter);
+    }
+    return list;
+  }, [user, search, segmentFilter, riskFilter]);
+
   if (!user) return null;
 
-  const accounts = user.role === "am"
-    ? ALL_ACCOUNTS.filter(a => a.amId === user.id)
-    : ALL_ACCOUNTS;
-
   return (
-    <div className="space-y-6 max-w-6xl">
+    <div className="space-y-6">
       <div>
         <h1 className="text-2xl font-semibold text-foreground">Accounts</h1>
         <p className="text-sm text-muted-foreground mt-1">
-          {user.role === "am" ? "Your assigned accounts" : "All managed accounts"}
+          {user.role === "am" ? "Your assigned accounts" : "All managed accounts"} · {accounts.length} accounts
         </p>
       </div>
-      <Card>
-        <CardContent className="p-0">
-          <div className="overflow-x-auto">
-            <table className="w-full">
-              <thead>
-                <tr className="border-b border-border">
-                  <th className="text-left p-4 text-xs font-medium text-muted-foreground uppercase tracking-wider">Account</th>
-                  <th className="text-left p-4 text-xs font-medium text-muted-foreground uppercase tracking-wider">Industry</th>
-                  <th className="text-left p-4 text-xs font-medium text-muted-foreground uppercase tracking-wider">ARR</th>
-                  <th className="text-left p-4 text-xs font-medium text-muted-foreground uppercase tracking-wider">Health</th>
+
+      {/* Filters */}
+      <div className="flex flex-col sm:flex-row gap-3">
+        <div className="relative flex-1 max-w-md">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+          <Input
+            placeholder="Search accounts..."
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            className="pl-9"
+          />
+        </div>
+        <Select value={segmentFilter} onValueChange={setSegmentFilter}>
+          <SelectTrigger className="w-[160px]">
+            <SelectValue placeholder="Segment" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">All Segments</SelectItem>
+            <SelectItem value="Growth">Growth</SelectItem>
+            <SelectItem value="Retention">Retention</SelectItem>
+          </SelectContent>
+        </Select>
+        <Select value={riskFilter} onValueChange={setRiskFilter}>
+          <SelectTrigger className="w-[160px]">
+            <SelectValue placeholder="Risk Status" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">All Risk</SelectItem>
+            <SelectItem value="green">Green</SelectItem>
+            <SelectItem value="amber">Amber</SelectItem>
+            <SelectItem value="red">Red</SelectItem>
+          </SelectContent>
+        </Select>
+      </div>
+
+      {/* Account Cards Grid */}
+      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+        {accounts.map((account) => {
+          const overallRag = getRagColor(account.health.overall);
+          const relRag = getRagColor(account.health.relationship);
+          const conRag = getRagColor(account.health.contract);
+          const resRag = getRagColor(account.health.resource);
+
+          return (
+            <Card
+              key={account.id}
+              className="cursor-pointer hover:shadow-lg transition-all duration-200 hover:-translate-y-0.5 border"
+              onClick={() => navigate(`/accounts/${account.id}`)}
+            >
+              <CardContent className="p-5 space-y-4">
+                {/* Header */}
+                <div className="flex items-start justify-between">
+                  <div className="flex-1 min-w-0">
+                    <h3 className="font-semibold text-foreground truncate">{account.name}</h3>
+                    <p className="text-xs text-muted-foreground mt-0.5">{account.industry} · {account.arr}</p>
+                  </div>
+                  <div className="flex items-center gap-2 flex-shrink-0 ml-2">
+                    <Badge
+                      variant="secondary"
+                      className={`text-[10px] uppercase tracking-wide font-semibold ${
+                        account.segment === "Growth"
+                          ? "bg-primary/10 text-primary"
+                          : "bg-muted text-muted-foreground"
+                      }`}
+                    >
+                      {account.segment}
+                    </Badge>
+                  </div>
+                </div>
+
+                {/* Overall Health Score */}
+                <div className="flex items-center gap-3 p-3 rounded-lg bg-muted/50">
+                  <div className={`text-2xl font-bold ${RAG_STYLES[overallRag].text}`}>
+                    {account.health.overall.toFixed(1)}
+                  </div>
+                  <div className="flex-1">
+                    <p className="text-xs font-medium text-foreground">Overall Health</p>
+                    <div className="flex items-center gap-1.5 mt-1">
+                      <div className={`h-1.5 flex-1 rounded-full bg-border overflow-hidden`}>
+                        <div
+                          className={`h-full rounded-full ${RAG_STYLES[overallRag].dot}`}
+                          style={{ width: `${(account.health.overall / 3) * 100}%` }}
+                        />
+                      </div>
+                      <span className="text-[10px] text-muted-foreground">/3</span>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Health Dimensions */}
+                <div className="grid grid-cols-3 gap-2">
+                  <HealthDimension icon={Users} label="Relationship" score={account.health.relationship} rag={relRag} />
+                  <HealthDimension icon={FileText} label="Contract" score={account.health.contract} rag={conRag} />
+                  <HealthDimension icon={Cpu} label="Resource" score={account.health.resource} rag={resRag} />
+                </div>
+
+                {/* Footer */}
+                <div className="flex items-center justify-between pt-1 border-t border-border">
                   {user.role !== "am" && (
-                    <th className="text-left p-4 text-xs font-medium text-muted-foreground uppercase tracking-wider">Account Manager</th>
+                    <span className="text-xs text-muted-foreground">{account.amName}</span>
                   )}
-                </tr>
-              </thead>
-              <tbody>
-                {accounts.map((account) => (
-                  <tr key={account.id} className="border-b border-border last:border-0 hover:bg-muted/50 transition-colors">
-                    <td className="p-4 text-sm font-medium text-foreground">{account.name}</td>
-                    <td className="p-4 text-sm text-muted-foreground">{account.industry}</td>
-                    <td className="p-4 text-sm text-foreground font-medium">{account.arr}</td>
-                    <td className="p-4">
-                      <Badge className={`${healthColors[account.health]} border-0 capitalize text-xs`}>
-                        {account.health}
-                      </Badge>
-                    </td>
-                    {user.role !== "am" && (
-                      <td className="p-4 text-sm text-muted-foreground">{account.am}</td>
-                    )}
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </CardContent>
-      </Card>
+                  <RiskPill status={account.riskStatus} />
+                </div>
+              </CardContent>
+            </Card>
+          );
+        })}
+      </div>
+
+      {accounts.length === 0 && (
+        <div className="text-center py-12">
+          <p className="text-muted-foreground">No accounts match your filters.</p>
+        </div>
+      )}
     </div>
+  );
+}
+
+function HealthDimension({ icon: Icon, label, score, rag }: {
+  icon: React.ElementType;
+  label: string;
+  score: number;
+  rag: RiskStatus;
+}) {
+  return (
+    <div className={`rounded-md p-2 text-center ${RAG_STYLES[rag].bg}`}>
+      <Icon className={`h-3.5 w-3.5 mx-auto ${RAG_STYLES[rag].text}`} />
+      <p className={`text-sm font-semibold mt-1 ${RAG_STYLES[rag].text}`}>{score.toFixed(1)}</p>
+      <p className="text-[10px] text-muted-foreground">{label}</p>
+    </div>
+  );
+}
+
+function RiskPill({ status }: { status: RiskStatus }) {
+  const labels: Record<RiskStatus, string> = { green: "Green", amber: "Amber", red: "Red" };
+  return (
+    <span className={`inline-flex items-center gap-1.5 text-xs font-medium px-2.5 py-1 rounded-full ${RAG_STYLES[status].bg} ${RAG_STYLES[status].text}`}>
+      <span className={`h-1.5 w-1.5 rounded-full ${RAG_STYLES[status].dot}`} />
+      {labels[status]}
+    </span>
   );
 }
