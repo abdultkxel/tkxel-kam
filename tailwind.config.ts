@@ -72,6 +72,11 @@ export default {
           DEFAULT: "hsl(var(--info))",
           foreground: "hsl(var(--info-foreground))",
         },
+        rag: {
+          green: "hsl(var(--rag-green))",
+          amber: "hsl(var(--rag-amber))",
+          red: "hsl(var(--rag-red))",
+        },
       },
       borderRadius: {
         lg: "var(--radius)",

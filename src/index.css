@@ -49,6 +49,10 @@
     --success-foreground: 0 0% 100%;
     --warning: 38 92% 50%;
     --warning-foreground: 0 0% 100%;
+
+    --rag-green: 134 61% 41%;
+    --rag-amber: 45 100% 51%;
+    --rag-red: 354 70% 54%;
     --info: 199 89% 48%;
     --info-foreground: 0 0% 100%;
 
