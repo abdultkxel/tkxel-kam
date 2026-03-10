@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { ArrowLeft, Users, FileText, Cpu, Calendar, Clock, Activity } from "lucide-react";
 import { KycTab } from "@/components/kyc/KycTab";
 import { StrategyTab } from "@/components/strategy/StrategyTab";
+import { HealthScoringTab } from "@/components/health/HealthScoringTab";
 
 export default function AccountDetail() {
   const { id } = useParams();
@@ -125,21 +126,7 @@ export default function AccountDetail() {
 
         {/* Health Scores Tab */}
         <TabsContent value="health" className="space-y-4">
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <DetailedHealthCard label="Relationship Health" score={account.health.relationship} factors={["Executive sponsor engagement", "Stakeholder mapping coverage", "NPS / CSAT scores", "Communication frequency"]} />
-            <DetailedHealthCard label="Contract Health" score={account.health.contract} factors={["Contract compliance", "SLA adherence", "Change request management", "Renewal timeline"]} />
-            <DetailedHealthCard label="Resource Health" score={account.health.resource} factors={["Team stability", "Skill coverage", "Bench availability", "Utilization rate"]} />
-            <Card>
-              <CardContent className="pt-6">
-                <h4 className="text-sm font-medium text-foreground mb-3">Health Score Legend</h4>
-                <div className="space-y-2 text-sm">
-                  <div className="flex items-center gap-2"><span className="h-3 w-3 rounded-full bg-rag-green" /><span className="text-muted-foreground">2.0 – 3.0: Healthy</span></div>
-                  <div className="flex items-center gap-2"><span className="h-3 w-3 rounded-full bg-rag-amber" /><span className="text-muted-foreground">1.0 – 1.9: At Risk</span></div>
-                  <div className="flex items-center gap-2"><span className="h-3 w-3 rounded-full bg-rag-red" /><span className="text-muted-foreground">0.0 – 0.9: Critical</span></div>
-                </div>
-              </CardContent>
-            </Card>
-          </div>
+          <HealthScoringTab account={account} />
         </TabsContent>
 
         {/* Governance Tab */}
