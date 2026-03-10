@@ -5,6 +5,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { ArrowLeft, Users, FileText, Cpu, Calendar, Clock, Activity } from "lucide-react";
+import { KycTab } from "@/components/kyc/KycTab";
 
 export default function AccountDetail() {
   const { id } = useParams();
@@ -113,21 +114,7 @@ export default function AccountDetail() {
 
         {/* KYC Tab */}
         <TabsContent value="kyc">
-          <Card>
-            <CardHeader><CardTitle className="text-base">Know Your Customer</CardTitle></CardHeader>
-            <CardContent>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <InfoRow label="Company Name" value={account.name} />
-                <InfoRow label="Industry" value={account.industry} />
-                <InfoRow label="Segment" value={account.segment} />
-                <InfoRow label="Account Manager" value={account.amName} />
-                <InfoRow label="Stakeholders" value={String(account.stakeholders)} />
-                <InfoRow label="ARR" value={account.arr} />
-                <InfoRow label="Contract Period" value={`${account.contractStart} to ${account.contractEnd}`} />
-                <InfoRow label="Last Updated" value={account.lastUpdated} />
-              </div>
-            </CardContent>
-          </Card>
+          <KycTab account={account} />
         </TabsContent>
 
         {/* Strategy Tab */}
