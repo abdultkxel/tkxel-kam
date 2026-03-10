@@ -55,7 +55,40 @@ export function interpretCsat(score: number): { label: string; color: RagLevel }
   return { label: "Critical", color: "red" };
 }
 
+// ─── Risk Score interpretation ───
+
+export function interpretRisk03(score: number): { label: string; color: RagLevel } {
+  if (score >= 2) return { label: "Low Risk", color: "green" };
+  if (score >= 1.6) return { label: "Medium Risk", color: "amber" };
+  return { label: "High Risk", color: "red" };
+}
+
 // ─── Default weight configs ───
+
+export const DEFAULT_RISK_CRITERIA: ScoringCriterion[] = [
+  { id: "competitors", name: "Competitors", weight: 30, options: [{ value: 3, label: "No competitors on this account" }, { value: 0, label: "1 or more competitors on this account" }], tooltip: "Whether Tkxel faces competition on this account." },
+  { id: "leadership_tenure", name: "Current Leadership Tenure", weight: 15, options: [{ value: 3, label: "Aligned for 1+ year" }, { value: 0, label: "Aligned for less than 6 months" }], tooltip: "How long client leadership is expected to remain stable." },
+  { id: "funding_revenue", name: "Funding & Revenue Changes", weight: 15, options: [{ value: 3, label: "Stable revenue for 1+ years" }, { value: 0, label: "Unaware of revenue information" }], tooltip: "Stability of client's revenue stream and funding." },
+  { id: "payment_behavior", name: "Payment Behavior", weight: 15, options: [{ value: 3, label: "Invoices paid regularly" }, { value: 2, label: "Irregular payment schedule" }, { value: 0, label: "Invoices pending 2+ months" }], tooltip: "Timeliness and regularity of client payments." },
+  { id: "roadmap_alignment", name: "Roadmap Alignment", weight: 20, options: [{ value: 3, label: "Aligned for 1+ years" }, { value: 2, label: "Aligned for 6+ months" }, { value: 0, label: "Vaguely or not aligned" }], tooltip: "How well Tkxel's plans align with the client's technology roadmap." },
+  { id: "geopolitical", name: "Geopolitical Situation", weight: 5, options: [{ value: 3, label: "Stable geo-political situation" }, { value: 0, label: "Unstable geo-political situation" }], tooltip: "Stability of the client's geopolitical environment." },
+];
+
+export const SERVICE_LINE_COMPETENCIES: string[] = [
+  "Assessment & Strategy", "Business Analysis", "UX Design", "Solution Architecture & Design",
+  "Development", "DevOps Service", "Functional Testing Service", "Performance Testing Service",
+  "Security Testing Service", "Test Automation", "SRE Services", "L1 Support", "L2 Support",
+  "L3 Support", "Salesforce Tech Support", "MS Dynamics Tech Support", "PeopleSoft Tech Support",
+  "Hubspot Tech Support", "Monday.com Tech Support", "Jira Tech Support",
+  "Data Engineering Services", "Data Analysis Services", "Data Science Services", "GenAI Services",
+  "Architecture & Design Audit", "Security Audit", "Infrastructure Audit", "Code Audit",
+  "Wordpress Tech Support", "Moodle Tech Support", "Discovery Workshop Service",
+  "Mobile Development", "Web Development", "Digital Transformation", "AI Transformation",
+  "Application Modernization", "Call Center Service", "NOC", "SOC", "Cyber Security Services",
+  "GRC Services", "Cloud Optimization", "Cloud Migration Service", "Technology Upgradation",
+  "Business Intelligence Service", "Staff Augmentation", "Handover Process (HOP)",
+  "Automation Testing", "Mulesoft",
+];
 
 export const DEFAULT_RELATIONSHIP_CRITERIA: ScoringCriterion[] = [
   { id: "ceo", name: "CEO Engagement", weight: 20, options: [{ value: 3, label: "Regular 1:1 access" }, { value: 2, label: "Occasional contact" }, { value: 0, label: "No engagement" }], tooltip: "Measures direct access to client CEO/MD. Regular means monthly+, occasional means quarterly." },
