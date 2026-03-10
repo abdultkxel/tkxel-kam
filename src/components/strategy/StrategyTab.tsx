@@ -215,7 +215,7 @@ export function StrategyTab({ account }: Props) {
         )}
       </div>
 
-      <VersionHistoryModal open={versionModalOpen} onClose={() => setVersionModalOpen(false)} versions={strategy.versions} />
+      <VersionHistoryModal open={versionModalOpen} onClose={() => setVersionModalOpen(false)} versions={strategy.versions.map(v => ({ id: v.id, submittedAt: v.savedAt, submittedBy: v.savedBy, status: v.status, comment: v.comment }))} />
     </div>
   );
 }
