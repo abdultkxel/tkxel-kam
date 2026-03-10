@@ -48,7 +48,7 @@ function WeightGroup({ title, items, onChange }: { title: string; items: { id: s
   );
 }
 
-export function WeightSettingsPanel({ relCriteria, onRelChange, conCriteria, onConChange, resCriteria, onResChange, csatCriteria, onCsatChange }: Props) {
+export function WeightSettingsPanel({ relCriteria, onRelChange, conCriteria, onConChange, resCriteria, onResChange, csatCriteria, onCsatChange, riskCriteria, onRiskChange }: Props) {
   const updateWeight = <T extends { id: string; weight: number }>(items: T[], setter: (items: T[]) => void) => (id: string, weight: number) => {
     setter(items.map(i => i.id === id ? { ...i, weight } : i));
   };
@@ -61,6 +61,7 @@ export function WeightSettingsPanel({ relCriteria, onRelChange, conCriteria, onC
         <WeightGroup title="Contract Health" items={conCriteria} onChange={updateWeight(conCriteria, onConChange)} />
         <WeightGroup title="Resource Health" items={resCriteria} onChange={updateWeight(resCriteria, onResChange)} />
         <WeightGroup title="CSAT" items={csatCriteria} onChange={updateWeight(csatCriteria, onCsatChange)} />
+        <WeightGroup title="Risk Score" items={riskCriteria} onChange={updateWeight(riskCriteria, onRiskChange)} />
       </CardContent>
     </Card>
   );
