@@ -133,26 +133,7 @@ export default function AccountDetail() {
 
         {/* Governance Tab */}
         <TabsContent value="governance">
-          <Card>
-            <CardHeader><CardTitle className="text-base">Governance & Reviews</CardTitle></CardHeader>
-            <CardContent>
-              <div className="space-y-3">
-                {[
-                  { type: "QBR", frequency: "Quarterly", next: "2026-04-15", status: "Scheduled" },
-                  { type: "Executive Review", frequency: "Bi-annual", next: "2026-06-01", status: "Pending" },
-                  { type: "Operational Sync", frequency: "Weekly", next: "2026-03-14", status: "Scheduled" },
-                ].map((item, i) => (
-                  <div key={i} className="flex items-center justify-between p-3 rounded-lg bg-muted/50">
-                    <div>
-                      <p className="text-sm font-medium text-foreground">{item.type}</p>
-                      <p className="text-xs text-muted-foreground">{item.frequency} · Next: {item.next}</p>
-                    </div>
-                    <Badge variant="outline" className="text-xs">{item.status}</Badge>
-                  </div>
-                ))}
-              </div>
-            </CardContent>
-          </Card>
+          <GovernanceTab account={account} />
         </TabsContent>
 
         {/* Financials Tab */}
