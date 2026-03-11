@@ -38,6 +38,8 @@ export interface HeatmapRow {
   contract: number;
   resource: number;
   csat: number;
+  risk: number;
+  serviceCoverage: number;
   overall: number;
   arr: string;
 }
@@ -46,6 +48,9 @@ export function getHeatmapData(accounts: Account[]): HeatmapRow[] {
   return accounts.map(a => {
     const hist = generateMockHistory(a.id);
     const latest = hist[hist.length - 1];
+    // Mock risk & service coverage per account
+    const riskMap: Record<string, number> = { "acc-1": 2.4, "acc-2": 1.3, "acc-3": 1.8, "acc-4": 2.7, "acc-5": 0.9, "acc-6": 2.1, "acc-7": 1.5, "acc-8": 2.2 };
+    const serviceMap: Record<string, number> = { "acc-1": 42, "acc-2": 18, "acc-3": 24, "acc-4": 55, "acc-5": 10, "acc-6": 38, "acc-7": 22, "acc-8": 30 };
     return {
       id: a.id,
       name: a.name,
@@ -54,6 +59,8 @@ export function getHeatmapData(accounts: Account[]): HeatmapRow[] {
       contract: latest?.contract.score ?? a.health.contract,
       resource: latest?.resource.score ?? a.health.resource,
       csat: latest?.csat.score ?? 3.5,
+      risk: riskMap[a.id] ?? 2.0,
+      serviceCoverage: serviceMap[a.id] ?? 25,
       overall: latest?.overall ?? a.health.overall,
       arr: a.arr,
     };

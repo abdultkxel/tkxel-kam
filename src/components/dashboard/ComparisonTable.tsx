@@ -5,7 +5,7 @@ import { useState } from "react";
 import { ArrowUpDown } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 
-type SortKey = "name" | "relationship" | "contract" | "resource" | "csat" | "overall";
+type SortKey = "name" | "relationship" | "contract" | "resource" | "csat" | "risk" | "serviceCoverage" | "overall";
 
 function cellBadge(v: number, max: number = 3) {
   const pct = v / max;
@@ -32,7 +32,7 @@ export function ComparisonTable({ data }: { data: HeatmapRow[] }) {
 
   const SortHeader = ({ k, label }: { k: SortKey; label: string }) => (
     <TableHead className="cursor-pointer select-none text-center" onClick={() => toggleSort(k)}>
-      <span className="inline-flex items-center gap-1">{label} <ArrowUpDown className="h-3 w-3" /></span>
+      <span className="inline-flex items-center gap-1 text-xs">{label} <ArrowUpDown className="h-3 w-3" /></span>
     </TableHead>
   );
 
@@ -48,25 +48,31 @@ export function ComparisonTable({ data }: { data: HeatmapRow[] }) {
               <TableHead className="pl-6 cursor-pointer" onClick={() => toggleSort("name")}>
                 <span className="inline-flex items-center gap-1">Account <ArrowUpDown className="h-3 w-3" /></span>
               </TableHead>
-              <TableHead className="text-center">ARR</TableHead>
-              <TableHead className="text-center">Segment</TableHead>
+              <TableHead className="text-center text-xs">ARR</TableHead>
               <SortHeader k="relationship" label="Rel." />
               <SortHeader k="contract" label="Contract" />
               <SortHeader k="resource" label="Resource" />
               <SortHeader k="csat" label="CSAT" />
+              <SortHeader k="risk" label="Risk" />
+              <SortHeader k="serviceCoverage" label="Svc %" />
               <SortHeader k="overall" label="Overall" />
             </TableRow>
           </TableHeader>
           <TableBody>
             {sorted.map(row => (
               <TableRow key={row.id} className="cursor-pointer hover:bg-muted/50" onClick={() => navigate(`/accounts/${row.id}`)}>
-                <TableCell className="pl-6 font-medium text-foreground">{row.name}</TableCell>
-                <TableCell className="text-center text-sm text-muted-foreground">{row.arr}</TableCell>
-                <TableCell className="text-center text-xs text-muted-foreground">{row.segment}</TableCell>
+                <TableCell className="pl-6 font-medium text-foreground text-sm">{row.name}</TableCell>
+                <TableCell className="text-center text-xs text-muted-foreground">{row.arr}</TableCell>
                 <TableCell className="text-center">{cellBadge(row.relationship)}</TableCell>
                 <TableCell className="text-center">{cellBadge(row.contract)}</TableCell>
                 <TableCell className="text-center">{cellBadge(row.resource)}</TableCell>
                 <TableCell className="text-center">{cellBadge(row.csat, 5)}</TableCell>
+                <TableCell className="text-center">{cellBadge(row.risk)}</TableCell>
+                <TableCell className="text-center">
+                  <span className={`font-semibold text-xs ${row.serviceCoverage >= 67 ? "text-rag-green" : row.serviceCoverage >= 33 ? "text-rag-amber" : "text-rag-red"}`}>
+                    {row.serviceCoverage}%
+                  </span>
+                </TableCell>
                 <TableCell className="text-center">{cellBadge(row.overall)}</TableCell>
               </TableRow>
             ))}

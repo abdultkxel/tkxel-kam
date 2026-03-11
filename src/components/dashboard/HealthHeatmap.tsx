@@ -23,10 +23,12 @@ export function HealthHeatmap({ data }: { data: HeatmapRow[] }) {
           <TableHeader>
             <TableRow>
               <TableHead className="pl-6">Account</TableHead>
-              <TableHead className="text-center">Relationship</TableHead>
+              <TableHead className="text-center">Rel.</TableHead>
               <TableHead className="text-center">Contract</TableHead>
               <TableHead className="text-center">Resource</TableHead>
               <TableHead className="text-center">CSAT</TableHead>
+              <TableHead className="text-center">Risk</TableHead>
+              <TableHead className="text-center">Svc %</TableHead>
               <TableHead className="text-center">Overall</TableHead>
             </TableRow>
           </TableHeader>
@@ -37,20 +39,30 @@ export function HealthHeatmap({ data }: { data: HeatmapRow[] }) {
                 className="cursor-pointer hover:bg-muted/50"
                 onClick={() => navigate(`/accounts/${row.id}`)}
               >
-                <TableCell className="pl-6 font-medium text-foreground">{row.name}</TableCell>
+                <TableCell className="pl-6 font-medium text-foreground text-sm">{row.name}</TableCell>
                 {[
                   { v: row.relationship, m: 3 },
                   { v: row.contract, m: 3 },
                   { v: row.resource, m: 3 },
                   { v: row.csat, m: 5 },
-                  { v: row.overall, m: 3 },
+                  { v: row.risk, m: 3 },
                 ].map((cell, i) => (
-                  <TableCell key={i} className="text-center p-2">
-                    <span className={`inline-block px-3 py-1 rounded-md text-xs font-semibold ${cellColor(cell.v, cell.m)}`}>
+                  <TableCell key={i} className="text-center p-1.5">
+                    <span className={`inline-block px-2 py-0.5 rounded text-[11px] font-semibold ${cellColor(cell.v, cell.m)}`}>
                       {cell.v.toFixed(1)}
                     </span>
                   </TableCell>
                 ))}
+                <TableCell className="text-center p-1.5">
+                  <span className={`inline-block px-2 py-0.5 rounded text-[11px] font-semibold ${cellColor(row.serviceCoverage, 100)}`}>
+                    {row.serviceCoverage}%
+                  </span>
+                </TableCell>
+                <TableCell className="text-center p-1.5">
+                  <span className={`inline-block px-2 py-0.5 rounded text-[11px] font-semibold ${cellColor(row.overall, 3)}`}>
+                    {row.overall.toFixed(1)}
+                  </span>
+                </TableCell>
               </TableRow>
             ))}
           </TableBody>
