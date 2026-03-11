@@ -8,6 +8,8 @@ import { ArrowLeft, Users, FileText, Cpu, Calendar, Clock, Activity } from "luci
 import { KycTab } from "@/components/kyc/KycTab";
 import { StrategyTab } from "@/components/strategy/StrategyTab";
 import { HealthScoringTab } from "@/components/health/HealthScoringTab";
+import { GovernanceTab } from "@/components/governance/GovernanceTab";
+import { getLatestGovernanceEvents } from "@/data/governance";
 
 export default function AccountDetail() {
   const { id } = useParams();
