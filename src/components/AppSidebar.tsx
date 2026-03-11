@@ -5,9 +5,11 @@ import {
   HeartPulse,
   Shield,
   BarChart3,
+  Settings,
 } from "lucide-react";
 import { NavLink } from "@/components/NavLink";
 import { useLocation } from "react-router-dom";
+import { useAuth } from "@/contexts/AuthContext";
 import {
   Sidebar,
   SidebarContent,
@@ -33,6 +35,11 @@ export function AppSidebar() {
   const { state } = useSidebar();
   const collapsed = state === "collapsed";
   const location = useLocation();
+  const { user } = useAuth();
+
+  const allItems = user?.role === "admin"
+    ? [...navItems, { title: "Admin", url: "/admin", icon: Settings }]
+    : navItems;
 
   return (
     <Sidebar collapsible="icon" className="border-r border-sidebar-border">
@@ -53,7 +60,7 @@ export function AppSidebar() {
         <SidebarGroup>
           <SidebarGroupContent>
             <SidebarMenu>
-              {navItems.map((item) => (
+              {allItems.map((item) => (
                 <SidebarMenuItem key={item.title}>
                   <SidebarMenuButton asChild tooltip={item.title}>
                     <NavLink
