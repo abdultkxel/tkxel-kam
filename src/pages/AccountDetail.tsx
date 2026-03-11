@@ -8,6 +8,8 @@ import { ArrowLeft, Users, FileText, Cpu, Calendar, Clock, Activity } from "luci
 import { KycTab } from "@/components/kyc/KycTab";
 import { StrategyTab } from "@/components/strategy/StrategyTab";
 import { HealthScoringTab } from "@/components/health/HealthScoringTab";
+import { GovernanceTab } from "@/components/governance/GovernanceTab";
+import { getLatestGovernanceEvents } from "@/data/governance";
 
 export default function AccountDetail() {
   const { id } = useParams();
@@ -84,6 +86,30 @@ export default function AccountDetail() {
               <div className="relative">
                 <div className="absolute left-3 top-0 bottom-0 w-px bg-border" />
                 <div className="space-y-6">
+                  {/* Governance events */}
+                  {getLatestGovernanceEvents().map((event, idx) => {
+                    const typeColors: Record<string, string> = {
+                      qbr: "bg-primary",
+                      steerco: "bg-rag-amber",
+                      escalation: "bg-rag-red",
+                      meeting: "bg-info",
+                    };
+                    return (
+                      <div key={`gov-${idx}`} className="relative pl-8">
+                        <div className={`absolute left-1.5 top-1 h-3 w-3 rounded-full border-2 border-background ${typeColors[event.type] || "bg-muted-foreground"}`} />
+                        <div>
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <span className="text-sm font-medium text-foreground">{event.title}</span>
+                            <Badge variant="outline" className="text-[10px] capitalize">{event.type}</Badge>
+                          </div>
+                          <p className="text-xs text-muted-foreground mt-1 flex items-center gap-1">
+                            <Calendar className="h-3 w-3" /> {event.date}
+                          </p>
+                        </div>
+                      </div>
+                    );
+                  })}
+                  {/* Account activities */}
                   {account.activities.map((activity) => {
                     const typeColors: Record<string, string> = {
                       meeting: "bg-info",
@@ -131,26 +157,7 @@ export default function AccountDetail() {
 
         {/* Governance Tab */}
         <TabsContent value="governance">
-          <Card>
-            <CardHeader><CardTitle className="text-base">Governance & Reviews</CardTitle></CardHeader>
-            <CardContent>
-              <div className="space-y-3">
-                {[
-                  { type: "QBR", frequency: "Quarterly", next: "2026-04-15", status: "Scheduled" },
-                  { type: "Executive Review", frequency: "Bi-annual", next: "2026-06-01", status: "Pending" },
-                  { type: "Operational Sync", frequency: "Weekly", next: "2026-03-14", status: "Scheduled" },
-                ].map((item, i) => (
-                  <div key={i} className="flex items-center justify-between p-3 rounded-lg bg-muted/50">
-                    <div>
-                      <p className="text-sm font-medium text-foreground">{item.type}</p>
-                      <p className="text-xs text-muted-foreground">{item.frequency} · Next: {item.next}</p>
-                    </div>
-                    <Badge variant="outline" className="text-xs">{item.status}</Badge>
-                  </div>
-                ))}
-              </div>
-            </CardContent>
-          </Card>
+          <GovernanceTab account={account} />
         </TabsContent>
 
         {/* Financials Tab */}
