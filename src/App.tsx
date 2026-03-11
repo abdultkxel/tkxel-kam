@@ -13,6 +13,7 @@ import Playbook from "@/pages/Playbook";
 import HealthScores from "@/pages/HealthScores";
 import Governance from "@/pages/Governance";
 import Reports from "@/pages/Reports";
+import Admin from "@/pages/Admin";
 import NotFound from "@/pages/NotFound";
 
 const queryClient = new QueryClient();
