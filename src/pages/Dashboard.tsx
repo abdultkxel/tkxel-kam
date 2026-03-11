@@ -1,107 +1,97 @@
 import { useAuth, ROLE_LABELS } from "@/contexts/AuthContext";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { Building2, TrendingUp, AlertTriangle, CheckCircle } from "lucide-react";
+import { MOCK_ACCOUNTS } from "@/data/accounts";
+import {
+  getAMStats, getPortfolioStats, getHeatmapData, getSegmentSplit,
+  getAlerts, getUpcomingGovernance, getOverdueActions,
+  getPortfolioAverages, getAMPerformanceData, getRiskHeatmapData,
+  getRenewalCalendar, getBillingForecast,
+} from "@/data/dashboard";
 
-const MOCK_STATS = {
-  am: { accounts: 5, healthy: 3, atRisk: 1, renewals: 2 },
-  leadership: { accounts: 24, healthy: 16, atRisk: 5, renewals: 8 },
-  admin: { accounts: 24, healthy: 16, atRisk: 5, renewals: 8 },
-};
+import { SummaryRow } from "@/components/dashboard/SummaryRow";
+import { HealthHeatmap } from "@/components/dashboard/HealthHeatmap";
+import { SegmentDonut } from "@/components/dashboard/SegmentDonut";
+import { AlertsPanel } from "@/components/dashboard/AlertsPanel";
+import { GovernanceUpcoming } from "@/components/dashboard/GovernanceUpcoming";
+import { OverdueTracker } from "@/components/dashboard/OverdueTracker";
+import { PortfolioOverview } from "@/components/dashboard/PortfolioOverview";
+import { AMPerformanceTable } from "@/components/dashboard/AMPerformanceTable";
+import { RiskScatterPlot } from "@/components/dashboard/RiskScatterPlot";
+import { RenewalCalendar } from "@/components/dashboard/RenewalCalendar";
+import { BillingForecastChart } from "@/components/dashboard/BillingForecastTable";
+import { ComparisonTable } from "@/components/dashboard/ComparisonTable";
 
 export default function Dashboard() {
   const { user } = useAuth();
   if (!user) return null;
 
-  const stats = MOCK_STATS[user.role];
   const isAM = user.role === "am";
+  const isLeadership = user.role === "leadership" || user.role === "admin";
+
+  const accounts = isAM ? MOCK_ACCOUNTS.filter(a => a.amId === user.id) : MOCK_ACCOUNTS;
+  const stats = isAM ? getAMStats(user.id) : getPortfolioStats();
+  const heatmapData = getHeatmapData(accounts);
+  const segmentData = getSegmentSplit(accounts);
+  const alerts = getAlerts(accounts);
+  const upcoming = getUpcomingGovernance();
+  const overdue = getOverdueActions();
 
   return (
-    <div className="space-y-6 max-w-6xl">
+    <div className="space-y-6 max-w-[1400px]">
+      {/* Header */}
       <div>
         <h1 className="text-2xl font-semibold text-foreground">
           {isAM ? "My Dashboard" : "Portfolio Dashboard"}
         </h1>
         <p className="text-sm text-muted-foreground mt-1">
-          Welcome back, {user.name} · <Badge variant="secondary" className="text-xs bg-primary/10 text-primary border-0">{ROLE_LABELS[user.role]}</Badge>
+          Welcome back, {user.name} ·{" "}
+          <Badge variant="secondary" className="text-xs bg-primary/10 text-primary border-0">
+            {ROLE_LABELS[user.role]}
+          </Badge>
         </p>
       </div>
 
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-        <StatCard icon={Building2} label={isAM ? "My Accounts" : "Total Accounts"} value={stats.accounts} />
-        <StatCard icon={CheckCircle} label="Healthy" value={stats.healthy} variant="success" />
-        <StatCard icon={AlertTriangle} label="At Risk" value={stats.atRisk} variant="warning" />
-        <StatCard icon={TrendingUp} label="Upcoming Renewals" value={stats.renewals} variant="info" />
-      </div>
+      {/* Summary Row */}
+      <SummaryRow {...stats} isAM={isAM} />
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-base">Recent Activity</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="space-y-3">
-              {[
-                { text: "QBR completed for Acme Corp", time: "2h ago" },
-                { text: "Health score updated for Beta Inc", time: "5h ago" },
-                { text: "New stakeholder added to Gamma Ltd", time: "1d ago" },
-              ].map((item, i) => (
-                <div key={i} className="flex justify-between items-center py-2 border-b border-border last:border-0">
-                  <span className="text-sm text-foreground">{item.text}</span>
-                  <span className="text-xs text-muted-foreground">{item.time}</span>
-                </div>
-              ))}
-            </div>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-base">Upcoming Tasks</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="space-y-3">
-              {[
-                { text: "Prepare QBR deck for Delta Corp", due: "Mar 12" },
-                { text: "Review health score metrics", due: "Mar 14" },
-                { text: "Stakeholder alignment call", due: "Mar 15" },
-              ].map((item, i) => (
-                <div key={i} className="flex justify-between items-center py-2 border-b border-border last:border-0">
-                  <span className="text-sm text-foreground">{item.text}</span>
-                  <Badge variant="outline" className="text-xs">{item.due}</Badge>
-                </div>
-              ))}
-            </div>
-          </CardContent>
-        </Card>
-      </div>
-    </div>
-  );
-}
-
-function StatCard({ icon: Icon, label, value, variant }: {
-  icon: React.ElementType;
-  label: string;
-  value: number;
-  variant?: "success" | "warning" | "info";
-}) {
-  const colorMap = {
-    success: "text-success",
-    warning: "text-warning",
-    info: "text-info",
-  };
-  const iconColor = variant ? colorMap[variant] : "text-primary";
-
-  return (
-    <Card>
-      <CardContent className="pt-6">
-        <div className="flex items-center justify-between">
-          <div>
-            <p className="text-sm text-muted-foreground">{label}</p>
-            <p className="text-3xl font-semibold text-foreground mt-1">{value}</p>
-          </div>
-          <Icon className={`h-8 w-8 ${iconColor} opacity-80`} />
+      {/* Row: Heatmap + Sidebar */}
+      <div className="grid grid-cols-1 xl:grid-cols-3 gap-4">
+        <div className="xl:col-span-2">
+          <HealthHeatmap data={heatmapData} />
         </div>
-      </CardContent>
-    </Card>
+        <div className="space-y-4">
+          <SegmentDonut data={segmentData} />
+          <AlertsPanel alerts={alerts} />
+        </div>
+      </div>
+
+      {/* Governance + Overdue */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+        <GovernanceUpcoming items={upcoming} />
+        <OverdueTracker items={overdue} />
+      </div>
+
+      {/* Leadership-only sections */}
+      {isLeadership && (
+        <>
+          <div className="border-t border-border pt-6 mt-2">
+            <h2 className="text-lg font-semibold text-foreground mb-4">Portfolio Analytics</h2>
+          </div>
+
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+            <PortfolioOverview averages={getPortfolioAverages()} />
+            <RiskScatterPlot data={getRiskHeatmapData()} />
+          </div>
+
+          <ComparisonTable data={heatmapData} />
+          <AMPerformanceTable data={getAMPerformanceData()} />
+
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+            <RenewalCalendar entries={getRenewalCalendar()} />
+            <BillingForecastChart data={getBillingForecast()} />
+          </div>
+        </>
+      )}
+    </div>
   );
 }
