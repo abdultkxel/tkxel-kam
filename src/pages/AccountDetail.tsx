@@ -86,6 +86,30 @@ export default function AccountDetail() {
               <div className="relative">
                 <div className="absolute left-3 top-0 bottom-0 w-px bg-border" />
                 <div className="space-y-6">
+                  {/* Governance events */}
+                  {getLatestGovernanceEvents().map((event, idx) => {
+                    const typeColors: Record<string, string> = {
+                      qbr: "bg-primary",
+                      steerco: "bg-rag-amber",
+                      escalation: "bg-rag-red",
+                      meeting: "bg-info",
+                    };
+                    return (
+                      <div key={`gov-${idx}`} className="relative pl-8">
+                        <div className={`absolute left-1.5 top-1 h-3 w-3 rounded-full border-2 border-background ${typeColors[event.type] || "bg-muted-foreground"}`} />
+                        <div>
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <span className="text-sm font-medium text-foreground">{event.title}</span>
+                            <Badge variant="outline" className="text-[10px] capitalize">{event.type}</Badge>
+                          </div>
+                          <p className="text-xs text-muted-foreground mt-1 flex items-center gap-1">
+                            <Calendar className="h-3 w-3" /> {event.date}
+                          </p>
+                        </div>
+                      </div>
+                    );
+                  })}
+                  {/* Account activities */}
                   {account.activities.map((activity) => {
                     const typeColors: Record<string, string> = {
                       meeting: "bg-info",
