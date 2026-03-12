@@ -28,6 +28,9 @@ import { PipelineWidget } from "@/components/dashboard/PipelineWidget";
 
 export default function Dashboard() {
   const { user } = useAuth();
+  const { tasks: oppTasks } = useOpportunityDetail();
+  const { opportunities } = useOpportunities();
+
   if (!user) return null;
 
   const isAM = user.role === "am";
