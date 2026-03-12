@@ -185,7 +185,7 @@ export default function Opportunities() {
                 {filtered.map(opp => {
                   const acc = getAccount(opp.accountId);
                   return (
-                    <TableRow key={opp.id}>
+                    <TableRow key={opp.id} className="cursor-pointer hover:bg-muted/50" onClick={() => navigate(`/opportunities/${opp.id}`)}>
                       <TableCell className="font-medium text-sm">{opp.name}</TableCell>
                       <TableCell className="text-sm">{acc?.name}</TableCell>
                       <TableCell><Badge variant="outline" className="text-[10px]">{opp.type}</Badge></TableCell>
