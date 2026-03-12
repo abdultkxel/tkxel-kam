@@ -130,6 +130,7 @@ export default function Opportunities() {
                         key={opp.id}
                         draggable
                         onDragStart={() => handleDragStart(opp.id)}
+                        onClick={() => navigate(`/opportunities/${opp.id}`)}
                         className="bg-card border rounded-lg p-3 cursor-grab active:cursor-grabbing hover:shadow-md transition-shadow"
                       >
                         <div className="flex items-start justify-between gap-1">
