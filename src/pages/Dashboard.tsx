@@ -31,14 +31,11 @@ export default function Dashboard() {
   const { tasks: oppTasks } = useOpportunityDetail();
   const { opportunities } = useOpportunities();
 
-  if (!user) return null;
-
-  const isAM = user.role === "am";
-  const isLeadership = user.role === "leadership" || user.role === "admin";
-
-  const accounts = isAM ? MOCK_ACCOUNTS.filter(a => a.amId === user.id) : MOCK_ACCOUNTS;
+  const isAM = user?.role === "am";
+  const isLeadership = user?.role === "leadership" || user?.role === "admin";
+  const accounts = isAM ? MOCK_ACCOUNTS.filter(a => a.amId === user?.id) : MOCK_ACCOUNTS;
   const segmentData = getSegmentSplit(accounts);
-  const baseTasks = getDailyTasks(isAM ? user.id : undefined);
+  const baseTasks = getDailyTasks(isAM ? user?.id : undefined);
 
 
 
