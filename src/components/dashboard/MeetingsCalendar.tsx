@@ -2,8 +2,12 @@ import { useState } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { CalendarDays, ChevronLeft, ChevronRight, Presentation, Shield, Users } from "lucide-react";
+import { CalendarDays, ChevronLeft, ChevronRight, Presentation, Shield, Users, TrendingUp, ClipboardCheck } from "lucide-react";
 import { MOCK_CALENDAR_EVENTS, MOCK_MEETINGS } from "@/data/governance";
+import { useOpportunities } from "@/contexts/OpportunitiesContext";
+import { useOpportunityDetail } from "@/contexts/OpportunityDetailContext";
+import { isOpenStage, formatCurrency } from "@/data/opportunities";
+import { MOCK_ACCOUNTS } from "@/data/accounts";
 import {
   format, startOfMonth, endOfMonth, eachDayOfInterval, getDay,
   addMonths, subMonths, isSameDay, isSameMonth, isToday,
