@@ -5,7 +5,7 @@ import {
   getAMStats, getPortfolioStats, getHeatmapData, getSegmentSplit,
   getAlerts, getUpcomingGovernance, getOverdueActions,
   getPortfolioAverages, getAMPerformanceData, getRiskHeatmapData,
-  getRenewalCalendar, getBillingForecast,
+  getRenewalCalendar, getBillingForecast, getDailyTasks,
 } from "@/data/dashboard";
 
 import { SummaryRow } from "@/components/dashboard/SummaryRow";
