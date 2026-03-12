@@ -163,25 +163,7 @@ export default function AccountDetail() {
 
         {/* Financials Tab */}
         <TabsContent value="financials">
-          <Card>
-            <CardHeader><CardTitle className="text-base">Financial Overview</CardTitle></CardHeader>
-            <CardContent>
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-                <div className="p-4 rounded-lg bg-muted/50 text-center">
-                  <p className="text-2xl font-bold text-foreground">{account.arr}</p>
-                  <p className="text-xs text-muted-foreground mt-1">Annual Recurring Revenue</p>
-                </div>
-                <div className="p-4 rounded-lg bg-muted/50 text-center">
-                  <p className="text-2xl font-bold text-foreground">{account.contractStart}</p>
-                  <p className="text-xs text-muted-foreground mt-1">Contract Start</p>
-                </div>
-                <div className="p-4 rounded-lg bg-muted/50 text-center">
-                  <p className="text-2xl font-bold text-foreground">{account.contractEnd}</p>
-                  <p className="text-xs text-muted-foreground mt-1">Contract End</p>
-                </div>
-              </div>
-            </CardContent>
-          </Card>
+          <FinancialsTab account={account} />
         </TabsContent>
       </Tabs>
     </div>
