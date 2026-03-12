@@ -35,7 +35,32 @@ export default function Dashboard() {
 
   const accounts = isAM ? MOCK_ACCOUNTS.filter(a => a.amId === user.id) : MOCK_ACCOUNTS;
   const segmentData = getSegmentSplit(accounts);
-  const dailyTasks = getDailyTasks(isAM ? user.id : undefined);
+  const baseTasks = getDailyTasks(isAM ? user.id : undefined);
+
+  const { tasks: oppTasks } = useOpportunityDetail();
+  const { opportunities } = useOpportunities();
+
+  // Merge opportunity tasks into daily tasks
+  const dailyTasks = useMemo(() => {
+    const today = "2026-03-12";
+    const oppDailyTasks: DailyTask[] = oppTasks
+      .filter(t => !t.completed && t.dueDate <= today)
+      .map(t => {
+        const opp = opportunities.find(o => o.id === t.opportunityId);
+        const acc = opp ? ACCOUNTS_LIST.find(a => a.id === opp.accountId) : null;
+        return {
+          id: t.id,
+          task: t.title,
+          account: acc?.name || "",
+          category: "opportunity" as const,
+          priority: t.priority.toLowerCase() as DailyTask["priority"],
+          dueDate: t.dueDate,
+          completed: false,
+          contextLabel: opp?.name,
+        };
+      });
+    return [...baseTasks, ...oppDailyTasks];
+  }, [baseTasks, oppTasks, opportunities]);
 
   return (
     <div className="space-y-6 max-w-[1400px]">
