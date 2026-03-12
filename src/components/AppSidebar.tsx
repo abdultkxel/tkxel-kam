@@ -2,9 +2,6 @@ import {
   LayoutDashboard,
   Building2,
   BookOpen,
-  HeartPulse,
-  Shield,
-  BarChart3,
   Settings,
 } from "lucide-react";
 import { NavLink } from "@/components/NavLink";
