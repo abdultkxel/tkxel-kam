@@ -67,8 +67,8 @@ export default function Dashboard() {
         </div>
       </div>
 
-      {/* Alerts */}
-      <AlertsPanel alerts={alerts} />
+      {/* Meetings Calendar */}
+      <MeetingsCalendar />
 
       {/* Leadership-only sections */}
       {isLeadership && (
