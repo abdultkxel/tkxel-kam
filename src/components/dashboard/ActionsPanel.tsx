@@ -3,10 +3,13 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { Zap, AlertCircle, FileWarning, Clock, CalendarClock, AlertTriangle, Shield, Presentation } from "lucide-react";
+import { Zap, AlertCircle, FileWarning, Clock, CalendarClock, AlertTriangle, Shield, Presentation, TrendingUp } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { Account } from "@/data/accounts";
 import { MOCK_MEETINGS, getDueDateStatus } from "@/data/governance";
+import { useOpportunities } from "@/contexts/OpportunitiesContext";
+import { useOpportunityDetail } from "@/contexts/OpportunityDetailContext";
+import { isOpenStage, formatCurrency } from "@/data/opportunities";
 
 type TabKey = "priority" | "upcoming" | "overdue";
 
