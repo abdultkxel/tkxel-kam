@@ -1,11 +1,15 @@
+import { useMemo } from "react";
 import { useAuth, ROLE_LABELS } from "@/contexts/AuthContext";
 import { Badge } from "@/components/ui/badge";
 import { MOCK_ACCOUNTS } from "@/data/accounts";
 import {
   getSegmentSplit,
   getPortfolioAverages, getAMPerformanceData, getRiskHeatmapData,
-  getRenewalCalendar, getBillingForecast, getDailyTasks,
+  getRenewalCalendar, getBillingForecast, getDailyTasks, type DailyTask,
 } from "@/data/dashboard";
+import { useOpportunityDetail } from "@/contexts/OpportunityDetailContext";
+import { useOpportunities } from "@/contexts/OpportunitiesContext";
+import { MOCK_ACCOUNTS as ACCOUNTS_LIST } from "@/data/accounts";
 
 import { SummaryRow } from "@/components/dashboard/SummaryRow";
 import { ActionsPanel } from "@/components/dashboard/ActionsPanel";
