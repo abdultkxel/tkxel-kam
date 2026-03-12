@@ -9,7 +9,6 @@ import {
 } from "@/data/dashboard";
 import { useOpportunityDetail } from "@/contexts/OpportunityDetailContext";
 import { useOpportunities } from "@/contexts/OpportunitiesContext";
-import { MOCK_ACCOUNTS as ACCOUNTS_LIST } from "@/data/accounts";
 
 import { SummaryRow } from "@/components/dashboard/SummaryRow";
 import { ActionsPanel } from "@/components/dashboard/ActionsPanel";
