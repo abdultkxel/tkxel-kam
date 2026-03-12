@@ -41,6 +41,8 @@ const typeConfig: Record<string, { icon: React.ElementType; dotClass: string; bg
   QBR: { icon: Presentation, dotClass: "bg-primary", bgClass: "bg-primary/10 text-primary" },
   SteerCo: { icon: Shield, dotClass: "bg-info", bgClass: "bg-info/10 text-info" },
   Meeting: { icon: Users, dotClass: "bg-rag-green", bgClass: "bg-rag-green/10 text-rag-green" },
+  "Opp Close": { icon: TrendingUp, dotClass: "bg-chart-4", bgClass: "bg-chart-4/10 text-chart-4" },
+  "Opp Task": { icon: ClipboardCheck, dotClass: "bg-chart-5", bgClass: "bg-chart-5/10 text-chart-5" },
 };
 
 export function MeetingsCalendar() {
