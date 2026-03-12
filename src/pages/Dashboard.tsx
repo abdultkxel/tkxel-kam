@@ -2,7 +2,7 @@ import { useAuth, ROLE_LABELS } from "@/contexts/AuthContext";
 import { Badge } from "@/components/ui/badge";
 import { MOCK_ACCOUNTS } from "@/data/accounts";
 import {
-  getSegmentSplit, getAlerts,
+  getSegmentSplit,
   getPortfolioAverages, getAMPerformanceData, getRiskHeatmapData,
   getRenewalCalendar, getBillingForecast, getDailyTasks,
 } from "@/data/dashboard";
@@ -12,7 +12,7 @@ import { ActionsPanel } from "@/components/dashboard/ActionsPanel";
 import { PortfolioTable } from "@/components/dashboard/PortfolioTable";
 import { SegmentDonut } from "@/components/dashboard/SegmentDonut";
 import { ARRByRiskChart } from "@/components/dashboard/ARRByRiskChart";
-import { AlertsPanel } from "@/components/dashboard/AlertsPanel";
+import { MeetingsCalendar } from "@/components/dashboard/MeetingsCalendar";
 import { DailyTasks } from "@/components/dashboard/DailyTasks";
 import { PortfolioOverview } from "@/components/dashboard/PortfolioOverview";
 import { AMPerformanceTable } from "@/components/dashboard/AMPerformanceTable";
@@ -30,7 +30,6 @@ export default function Dashboard() {
 
   const accounts = isAM ? MOCK_ACCOUNTS.filter(a => a.amId === user.id) : MOCK_ACCOUNTS;
   const segmentData = getSegmentSplit(accounts);
-  const alerts = getAlerts(accounts);
   const dailyTasks = getDailyTasks(isAM ? user.id : undefined);
 
   return (
@@ -68,8 +67,8 @@ export default function Dashboard() {
         </div>
       </div>
 
-      {/* Alerts */}
-      <AlertsPanel alerts={alerts} />
+      {/* Meetings Calendar */}
+      <MeetingsCalendar />
 
       {/* Leadership-only sections */}
       {isLeadership && (
