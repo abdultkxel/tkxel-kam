@@ -39,11 +39,15 @@ export default function Dashboard() {
 
 
 
-  // Merge opportunity tasks into daily tasks
+  // Merge opportunity tasks into daily tasks — include due today, overdue, and due within 3 days
   const dailyTasks = useMemo(() => {
-    const today = "2026-03-12";
+    const today = new Date("2026-03-12");
+    const in3Days = new Date("2026-03-15");
     const oppDailyTasks: DailyTask[] = oppTasks
-      .filter(t => !t.completed && t.dueDate <= today)
+      .filter(t => {
+        const due = new Date(t.dueDate);
+        return due <= in3Days; // include overdue, today, and upcoming 3 days
+      })
       .map(t => {
         const opp = opportunities.find(o => o.id === t.opportunityId);
         const acc = opp ? MOCK_ACCOUNTS.find(a => a.id === opp.accountId) : null;
@@ -54,7 +58,7 @@ export default function Dashboard() {
           category: "opportunity" as const,
           priority: t.priority.toLowerCase() as DailyTask["priority"],
           dueDate: t.dueDate,
-          completed: false,
+          completed: t.completed,
           contextLabel: opp?.name,
         };
       });

@@ -47,7 +47,42 @@ const typeConfig: Record<string, { icon: React.ElementType; dotClass: string; bg
 
 export function MeetingsCalendar() {
   const [currentMonth, setCurrentMonth] = useState(new Date());
-  const meetings = getAllMeetings();
+  const { opportunities } = useOpportunities();
+  const { tasks: oppTasks } = useOpportunityDetail();
+
+  // Merge governance meetings + opportunity events
+  const meetings = useMemo(() => {
+    const base = getAllMeetings();
+
+    // Add opportunity target close dates
+    const oppCloseEvents: CalendarMeeting[] = opportunities
+      .filter(o => isOpenStage(o.stage))
+      .map(o => {
+        const acc = MOCK_ACCOUNTS.find(a => a.id === o.accountId);
+        return {
+          id: `opp-close-${o.id}`,
+          title: `${acc?.name}: ${o.name} closes (${formatCurrency(o.estimatedValue)})`,
+          date: o.targetClose,
+          type: "Opp Close",
+        };
+      });
+
+    // Add upcoming opportunity tasks
+    const oppTaskEvents: CalendarMeeting[] = oppTasks
+      .filter(t => !t.completed)
+      .map(t => {
+        const opp = opportunities.find(o => o.id === t.opportunityId);
+        return {
+          id: `opp-task-${t.id}`,
+          title: `${t.title}${opp ? ` (${opp.name})` : ""}`,
+          date: t.dueDate,
+          type: "Opp Task",
+        };
+      });
+
+    return [...base, ...oppCloseEvents, ...oppTaskEvents]
+      .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+  }, [opportunities, oppTasks]);
 
   const monthStart = startOfMonth(currentMonth);
   const monthEnd = endOfMonth(currentMonth);

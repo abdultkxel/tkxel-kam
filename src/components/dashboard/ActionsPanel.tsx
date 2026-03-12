@@ -160,11 +160,65 @@ const tabs: { key: TabKey; label: string; icon: React.ElementType }[] = [
 export function ActionsPanel({ accounts }: { accounts: Account[] }) {
   const [activeTab, setActiveTab] = useState<TabKey>("priority");
   const navigate = useNavigate();
+  const { opportunities } = useOpportunities();
+  const { tasks: oppTasks } = useOpportunityDetail();
+  const today = new Date("2026-03-12");
+
+  // Derive opportunity-related actions
+  const oppPriorityRows: ActionRow[] = [];
+  const oppUpcomingRows: ActionRow[] = [];
+  const oppOverdueRows: ActionRow[] = [];
+
+  // High-value deals closing soon
+  const openOpps = opportunities.filter(o => isOpenStage(o.stage));
+  for (const opp of openOpps) {
+    const daysToClose = Math.ceil((new Date(opp.targetClose).getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
+    const acc = accounts.find(a => a.id === opp.accountId);
+    if (daysToClose <= 30 && daysToClose >= 0) {
+      oppPriorityRows.push({
+        icon: TrendingUp, iconClass: "text-primary", bgClass: "bg-primary/10",
+        account: acc?.name || opp.name, accountId: "",
+        issue: `"${opp.name}" closes in ${daysToClose}d (${formatCurrency(opp.estimatedValue)})`,
+        actionLabel: "View",
+        badge: `${daysToClose}d`, badgeClass: daysToClose <= 14 ? "bg-rag-amber/10 text-rag-amber border-rag-amber/20" : "bg-muted text-muted-foreground border-border",
+      });
+      oppUpcomingRows.push({
+        icon: TrendingUp, iconClass: "text-primary", bgClass: "bg-primary/10",
+        account: acc?.name || opp.name, accountId: "",
+        issue: `"${opp.name}" target close ${opp.targetClose}`,
+        actionLabel: "View",
+        badge: opp.stage, badgeClass: "bg-primary/10 text-primary border-primary/20",
+      });
+    } else if (daysToClose < 0) {
+      oppOverdueRows.push({
+        icon: TrendingUp, iconClass: "text-destructive", bgClass: "bg-destructive/10",
+        account: acc?.name || opp.name, accountId: "",
+        issue: `"${opp.name}" target close overdue by ${Math.abs(daysToClose)}d (${formatCurrency(opp.estimatedValue)})`,
+        actionLabel: "Update",
+        badge: "overdue", badgeClass: "bg-destructive/10 text-destructive border-destructive/20",
+      });
+    }
+  }
+
+  // Overdue opportunity tasks
+  for (const t of oppTasks) {
+    if (!t.completed && new Date(t.dueDate) < today) {
+      const opp = opportunities.find(o => o.id === t.opportunityId);
+      const daysOver = Math.ceil((today.getTime() - new Date(t.dueDate).getTime()) / (1000 * 60 * 60 * 24));
+      oppOverdueRows.push({
+        icon: Clock, iconClass: "text-destructive", bgClass: "bg-destructive/10",
+        account: opp?.name || "Opportunity", accountId: "",
+        issue: `"${t.title}" — ${t.owner} (${daysOver}d overdue)`,
+        actionLabel: "Resolve",
+        badge: `${daysOver}d late`, badgeClass: "bg-destructive/10 text-destructive border-destructive/20",
+      });
+    }
+  }
 
   const dataMap: Record<TabKey, ActionRow[]> = {
-    priority: derivePriority(accounts),
-    upcoming: deriveUpcoming(accounts),
-    overdue: deriveOverdue(accounts),
+    priority: [...derivePriority(accounts), ...oppPriorityRows].slice(0, 8),
+    upcoming: [...deriveUpcoming(accounts), ...oppUpcomingRows].slice(0, 8),
+    overdue: [...deriveOverdue(accounts), ...oppOverdueRows].slice(0, 8),
   };
 
   const rows = dataMap[activeTab];
