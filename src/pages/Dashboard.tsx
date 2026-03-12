@@ -5,7 +5,7 @@ import {
   getAMStats, getPortfolioStats, getHeatmapData, getSegmentSplit,
   getAlerts, getUpcomingGovernance, getOverdueActions,
   getPortfolioAverages, getAMPerformanceData, getRiskHeatmapData,
-  getRenewalCalendar, getBillingForecast,
+  getRenewalCalendar, getBillingForecast, getDailyTasks,
 } from "@/data/dashboard";
 
 import { SummaryRow } from "@/components/dashboard/SummaryRow";
@@ -20,6 +20,7 @@ import { RiskScatterPlot } from "@/components/dashboard/RiskScatterPlot";
 import { RenewalCalendar } from "@/components/dashboard/RenewalCalendar";
 import { BillingForecastChart } from "@/components/dashboard/BillingForecastTable";
 import { ComparisonTable } from "@/components/dashboard/ComparisonTable";
+import { DailyTasks } from "@/components/dashboard/DailyTasks";
 
 export default function Dashboard() {
   const { user } = useAuth();
@@ -35,6 +36,7 @@ export default function Dashboard() {
   const alerts = getAlerts(accounts);
   const upcoming = getUpcomingGovernance();
   const overdue = getOverdueActions();
+  const dailyTasks = getDailyTasks(isAM ? user.id : undefined);
 
   return (
     <div className="space-y-6 max-w-[1400px]">
@@ -65,8 +67,9 @@ export default function Dashboard() {
         </div>
       </div>
 
-      {/* Governance + Overdue */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+      {/* Daily Tasks + Governance + Overdue */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+        <DailyTasks tasks={dailyTasks} />
         <GovernanceUpcoming items={upcoming} />
         <OverdueTracker items={overdue} />
       </div>
