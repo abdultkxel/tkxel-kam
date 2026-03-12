@@ -2,7 +2,7 @@ import { useAuth, ROLE_LABELS } from "@/contexts/AuthContext";
 import { Badge } from "@/components/ui/badge";
 import { MOCK_ACCOUNTS } from "@/data/accounts";
 import {
-  getSegmentSplit, getAlerts,
+  getSegmentSplit,
   getPortfolioAverages, getAMPerformanceData, getRiskHeatmapData,
   getRenewalCalendar, getBillingForecast, getDailyTasks,
 } from "@/data/dashboard";
