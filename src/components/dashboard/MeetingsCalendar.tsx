@@ -1,9 +1,13 @@
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { CalendarDays, ChevronLeft, ChevronRight, Presentation, Shield, Users } from "lucide-react";
+import { CalendarDays, ChevronLeft, ChevronRight, Presentation, Shield, Users, TrendingUp, ClipboardCheck } from "lucide-react";
 import { MOCK_CALENDAR_EVENTS, MOCK_MEETINGS } from "@/data/governance";
+import { useOpportunities } from "@/contexts/OpportunitiesContext";
+import { useOpportunityDetail } from "@/contexts/OpportunityDetailContext";
+import { isOpenStage, formatCurrency } from "@/data/opportunities";
+import { MOCK_ACCOUNTS } from "@/data/accounts";
 import {
   format, startOfMonth, endOfMonth, eachDayOfInterval, getDay,
   addMonths, subMonths, isSameDay, isSameMonth, isToday,
@@ -37,11 +41,48 @@ const typeConfig: Record<string, { icon: React.ElementType; dotClass: string; bg
   QBR: { icon: Presentation, dotClass: "bg-primary", bgClass: "bg-primary/10 text-primary" },
   SteerCo: { icon: Shield, dotClass: "bg-info", bgClass: "bg-info/10 text-info" },
   Meeting: { icon: Users, dotClass: "bg-rag-green", bgClass: "bg-rag-green/10 text-rag-green" },
+  "Opp Close": { icon: TrendingUp, dotClass: "bg-chart-4", bgClass: "bg-chart-4/10 text-chart-4" },
+  "Opp Task": { icon: ClipboardCheck, dotClass: "bg-chart-5", bgClass: "bg-chart-5/10 text-chart-5" },
 };
 
 export function MeetingsCalendar() {
   const [currentMonth, setCurrentMonth] = useState(new Date());
-  const meetings = getAllMeetings();
+  const { opportunities } = useOpportunities();
+  const { tasks: oppTasks } = useOpportunityDetail();
+
+  // Merge governance meetings + opportunity events
+  const meetings = useMemo(() => {
+    const base = getAllMeetings();
+
+    // Add opportunity target close dates
+    const oppCloseEvents: CalendarMeeting[] = opportunities
+      .filter(o => isOpenStage(o.stage))
+      .map(o => {
+        const acc = MOCK_ACCOUNTS.find(a => a.id === o.accountId);
+        return {
+          id: `opp-close-${o.id}`,
+          title: `${acc?.name}: ${o.name} closes (${formatCurrency(o.estimatedValue)})`,
+          date: o.targetClose,
+          type: "Opp Close",
+        };
+      });
+
+    // Add upcoming opportunity tasks
+    const oppTaskEvents: CalendarMeeting[] = oppTasks
+      .filter(t => !t.completed)
+      .map(t => {
+        const opp = opportunities.find(o => o.id === t.opportunityId);
+        return {
+          id: `opp-task-${t.id}`,
+          title: `${t.title}${opp ? ` (${opp.name})` : ""}`,
+          date: t.dueDate,
+          type: "Opp Task",
+        };
+      });
+
+    return [...base, ...oppCloseEvents, ...oppTaskEvents]
+      .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+  }, [opportunities, oppTasks]);
 
   const monthStart = startOfMonth(currentMonth);
   const monthEnd = endOfMonth(currentMonth);
