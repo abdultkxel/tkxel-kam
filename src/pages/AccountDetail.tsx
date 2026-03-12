@@ -167,6 +167,11 @@ export default function AccountDetail() {
         <TabsContent value="financials">
           <FinancialsTab account={account} />
         </TabsContent>
+
+        {/* Opportunities Tab */}
+        <TabsContent value="opportunities">
+          <AccountOpportunitiesTab account={account} />
+        </TabsContent>
       </Tabs>
     </div>
   );

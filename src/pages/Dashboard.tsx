@@ -51,10 +51,11 @@ export default function Dashboard() {
       {/* KPI Tiles */}
       <SummaryRow accounts={accounts} isAM={isAM} />
 
-      {/* Actions (with toggle) + Today's Tasks */}
-      <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
+      {/* Actions + Today's Tasks + Pipeline */}
+      <div className="grid grid-cols-1 xl:grid-cols-3 gap-4">
         <ActionsPanel accounts={accounts} />
         <DailyTasks tasks={dailyTasks} />
+        <PipelineWidget />
       </div>
 
       {/* Portfolio Table + Sidebar */}
