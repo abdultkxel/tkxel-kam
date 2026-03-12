@@ -1,12 +1,15 @@
 import { createContext, useContext, useState, useEffect, ReactNode } from "react";
-import { getAlerts, AlertItem } from "@/data/dashboard";
+import { getAlerts, getOverdueActions, getUpcomingGovernance, AlertItem } from "@/data/dashboard";
+import { getRenewalCalendar } from "@/data/dashboard";
 import { MOCK_ACCOUNTS } from "@/data/accounts";
 import { useAuth } from "@/contexts/AuthContext";
 
+export type NotificationType = "health" | "contract" | "overdue" | "deadline" | "renewal";
+
 export interface Notification {
   id: string;
-  type: AlertItem["type"];
-  severity: AlertItem["severity"];
+  type: NotificationType;
+  severity: "red" | "amber" | "info";
   account: string;
   message: string;
   read: boolean;
