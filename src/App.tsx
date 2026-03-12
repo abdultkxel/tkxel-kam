@@ -28,21 +28,24 @@ const App = () => (
       <AuthProvider>
         <NotificationsProvider>
           <OpportunitiesProvider>
-            <BrowserRouter>
-              <Routes>
-                <Route path="/login" element={<Login />} />
-                <Route path="/" element={<Navigate to="/dashboard" replace />} />
-                <Route element={<AppLayout />}>
-                  <Route path="/dashboard" element={<Dashboard />} />
-                  <Route path="/accounts" element={<Accounts />} />
-                  <Route path="/accounts/:id" element={<AccountDetail />} />
-                  <Route path="/opportunities" element={<Opportunities />} />
-                  <Route path="/playbook" element={<Playbook />} />
-                  <Route path="/admin" element={<Admin />} />
-                </Route>
-                <Route path="*" element={<NotFound />} />
-              </Routes>
-            </BrowserRouter>
+            <OpportunityDetailProvider>
+              <BrowserRouter>
+                <Routes>
+                  <Route path="/login" element={<Login />} />
+                  <Route path="/" element={<Navigate to="/dashboard" replace />} />
+                  <Route element={<AppLayout />}>
+                    <Route path="/dashboard" element={<Dashboard />} />
+                    <Route path="/accounts" element={<Accounts />} />
+                    <Route path="/accounts/:id" element={<AccountDetail />} />
+                    <Route path="/opportunities" element={<Opportunities />} />
+                    <Route path="/opportunities/:id" element={<OpportunityDetail />} />
+                    <Route path="/playbook" element={<Playbook />} />
+                    <Route path="/admin" element={<Admin />} />
+                  </Route>
+                  <Route path="*" element={<NotFound />} />
+                </Routes>
+              </BrowserRouter>
+            </OpportunityDetailProvider>
           </OpportunitiesProvider>
         </NotificationsProvider>
       </AuthProvider>
