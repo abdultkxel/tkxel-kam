@@ -1,15 +1,17 @@
-import { Bell, AlertCircle, FileWarning, Clock, CheckCheck, X } from "lucide-react";
+import { Bell, AlertCircle, FileWarning, Clock, CheckCheck, CalendarClock, RefreshCw } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
-import { useNotifications } from "@/contexts/NotificationsContext";
+import { useNotifications, NotificationType } from "@/contexts/NotificationsContext";
 import { formatDistanceToNow } from "date-fns";
 
-const iconMap = {
+const iconMap: Record<NotificationType, typeof AlertCircle> = {
   health: AlertCircle,
   contract: FileWarning,
   overdue: Clock,
+  deadline: CalendarClock,
+  renewal: RefreshCw,
 };
 
 export function NotificationsDropdown() {
