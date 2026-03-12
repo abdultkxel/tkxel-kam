@@ -2,25 +2,26 @@ import { useAuth, ROLE_LABELS } from "@/contexts/AuthContext";
 import { Badge } from "@/components/ui/badge";
 import { MOCK_ACCOUNTS } from "@/data/accounts";
 import {
-  getAMStats, getPortfolioStats, getHeatmapData, getSegmentSplit,
-  getAlerts, getUpcomingGovernance, getOverdueActions,
+  getSegmentSplit, getAlerts, getUpcomingGovernance, getOverdueActions,
   getPortfolioAverages, getAMPerformanceData, getRiskHeatmapData,
   getRenewalCalendar, getBillingForecast, getDailyTasks,
 } from "@/data/dashboard";
 
 import { SummaryRow } from "@/components/dashboard/SummaryRow";
-import { HealthHeatmap } from "@/components/dashboard/HealthHeatmap";
+import { PriorityActions } from "@/components/dashboard/PriorityActions";
+import { PortfolioTable } from "@/components/dashboard/PortfolioTable";
 import { SegmentDonut } from "@/components/dashboard/SegmentDonut";
+import { ARRByRiskChart } from "@/components/dashboard/ARRByRiskChart";
 import { AlertsPanel } from "@/components/dashboard/AlertsPanel";
 import { GovernanceUpcoming } from "@/components/dashboard/GovernanceUpcoming";
 import { OverdueTracker } from "@/components/dashboard/OverdueTracker";
+import { DailyTasks } from "@/components/dashboard/DailyTasks";
 import { PortfolioOverview } from "@/components/dashboard/PortfolioOverview";
 import { AMPerformanceTable } from "@/components/dashboard/AMPerformanceTable";
 import { RiskScatterPlot } from "@/components/dashboard/RiskScatterPlot";
 import { RenewalCalendar } from "@/components/dashboard/RenewalCalendar";
 import { BillingForecastChart } from "@/components/dashboard/BillingForecastTable";
 import { ComparisonTable } from "@/components/dashboard/ComparisonTable";
-import { DailyTasks } from "@/components/dashboard/DailyTasks";
 
 export default function Dashboard() {
   const { user } = useAuth();
@@ -30,8 +31,6 @@ export default function Dashboard() {
   const isLeadership = user.role === "leadership" || user.role === "admin";
 
   const accounts = isAM ? MOCK_ACCOUNTS.filter(a => a.amId === user.id) : MOCK_ACCOUNTS;
-  const stats = isAM ? getAMStats(user.id) : getPortfolioStats();
-  const heatmapData = getHeatmapData(accounts);
   const segmentData = getSegmentSplit(accounts);
   const alerts = getAlerts(accounts);
   const upcoming = getUpcomingGovernance();
@@ -53,24 +52,30 @@ export default function Dashboard() {
         </p>
       </div>
 
-      {/* Summary Row */}
-      <SummaryRow {...stats} isAM={isAM} />
+      {/* KPI Tiles */}
+      <SummaryRow accounts={accounts} isAM={isAM} />
 
-      {/* Row: Heatmap + Sidebar */}
+      {/* Priority Actions + Today's Tasks */}
+      <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
+        <PriorityActions accounts={accounts} />
+        <DailyTasks tasks={dailyTasks} />
+      </div>
+
+      {/* Portfolio Table + Sidebar */}
       <div className="grid grid-cols-1 xl:grid-cols-3 gap-4">
         <div className="xl:col-span-2">
-          <HealthHeatmap data={heatmapData} />
+          <PortfolioTable accounts={accounts} />
         </div>
         <div className="space-y-4">
-          <SegmentDonut data={segmentData} />
-          <AlertsPanel alerts={alerts} />
+          <SegmentDonut data={segmentData} accounts={accounts} />
+          <ARRByRiskChart accounts={accounts} />
         </div>
       </div>
 
-      {/* Daily Tasks + Governance + Overdue */}
+      {/* Governance + Alerts + Overdue */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-        <DailyTasks tasks={dailyTasks} />
         <GovernanceUpcoming items={upcoming} />
+        <AlertsPanel alerts={alerts} />
         <OverdueTracker items={overdue} />
       </div>
 
@@ -86,7 +91,7 @@ export default function Dashboard() {
             <RiskScatterPlot data={getRiskHeatmapData()} />
           </div>
 
-          <ComparisonTable data={heatmapData} />
+          <ComparisonTable data={[]} />
           <AMPerformanceTable data={getAMPerformanceData()} />
 
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
