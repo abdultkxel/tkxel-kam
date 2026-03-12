@@ -10,9 +10,6 @@ import Dashboard from "@/pages/Dashboard";
 import Accounts from "@/pages/Accounts";
 import AccountDetail from "@/pages/AccountDetail";
 import Playbook from "@/pages/Playbook";
-import HealthScores from "@/pages/HealthScores";
-import Governance from "@/pages/Governance";
-import Reports from "@/pages/Reports";
 import Admin from "@/pages/Admin";
 import NotFound from "@/pages/NotFound";
 
@@ -33,9 +30,6 @@ const App = () => (
               <Route path="/accounts" element={<Accounts />} />
               <Route path="/accounts/:id" element={<AccountDetail />} />
               <Route path="/playbook" element={<Playbook />} />
-              <Route path="/health-scores" element={<HealthScores />} />
-              <Route path="/governance" element={<Governance />} />
-              <Route path="/reports" element={<Reports />} />
               <Route path="/admin" element={<Admin />} />
             </Route>
             <Route path="*" element={<NotFound />} />

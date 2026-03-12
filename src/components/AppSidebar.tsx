@@ -2,9 +2,6 @@ import {
   LayoutDashboard,
   Building2,
   BookOpen,
-  HeartPulse,
-  Shield,
-  BarChart3,
   Settings,
 } from "lucide-react";
 import { NavLink } from "@/components/NavLink";
@@ -26,9 +23,6 @@ const navItems = [
   { title: "Dashboard", url: "/dashboard", icon: LayoutDashboard },
   { title: "Accounts", url: "/accounts", icon: Building2 },
   { title: "Playbook", url: "/playbook", icon: BookOpen },
-  { title: "Health Scores", url: "/health-scores", icon: HeartPulse },
-  { title: "Governance", url: "/governance", icon: Shield },
-  { title: "Reports", url: "/reports", icon: BarChart3 },
 ];
 
 export function AppSidebar() {
