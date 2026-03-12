@@ -79,7 +79,7 @@ export const MOCK_ACCOUNTS: Account[] = [
   },
   {
     id: "acc-3",
-    name: "Gamma Ltd",
+    name: "ASAP Semiconductor",
     segment: "Growth",
     health: { overall: 2, relationship: 2.5, contract: 2, resource: 1.5 },
     riskStatus: "green",
