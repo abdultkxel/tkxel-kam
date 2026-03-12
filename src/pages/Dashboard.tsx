@@ -62,7 +62,9 @@ export default function Dashboard() {
     return [...baseTasks, ...oppDailyTasks];
   }, [baseTasks, oppTasks, opportunities]);
 
-  return (
+  if (!user) return null;
+
+
     <div className="space-y-6 max-w-[1400px]">
       {/* Header */}
       <div>
