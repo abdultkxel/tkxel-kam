@@ -10,6 +10,7 @@ import { StrategyTab } from "@/components/strategy/StrategyTab";
 import { HealthScoringTab } from "@/components/health/HealthScoringTab";
 import { GovernanceTab } from "@/components/governance/GovernanceTab";
 import { FinancialsTab } from "@/components/financials/FinancialsTab";
+import { AccountOpportunitiesTab } from "@/components/opportunities/AccountOpportunitiesTab";
 import { getLatestGovernanceEvents } from "@/data/governance";
 
 export default function AccountDetail() {
