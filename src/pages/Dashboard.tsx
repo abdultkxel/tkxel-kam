@@ -20,6 +20,7 @@ import { RiskScatterPlot } from "@/components/dashboard/RiskScatterPlot";
 import { RenewalCalendar } from "@/components/dashboard/RenewalCalendar";
 import { BillingForecastChart } from "@/components/dashboard/BillingForecastTable";
 import { ComparisonTable } from "@/components/dashboard/ComparisonTable";
+import { DailyTasks } from "@/components/dashboard/DailyTasks";
 
 export default function Dashboard() {
   const { user } = useAuth();
