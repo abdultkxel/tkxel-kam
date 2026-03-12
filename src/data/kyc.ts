@@ -116,7 +116,7 @@ export const MOCK_KYC_DATA: Record<string, KycData> = {
     ],
   },
   "acc-2": {
-    companyName: "Beta Industries",
+    companyName: "Cafe Zupas",
     industry: "Healthcare",
     hqLocation: "Boston, MA",
     website: "https://beta-ind.com",
