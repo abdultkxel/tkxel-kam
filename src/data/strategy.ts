@@ -105,7 +105,7 @@ export function createDefaultStrategy(segment: SegmentType): StrategyData {
 // Mock data for acc-1
 export const MOCK_STRATEGY_DATA: Record<string, StrategyData> = {
   "acc-1": {
-    vision: "Position Acme Corporation as our flagship FinTech partnership, expanding from cloud migration into AI-driven analytics and mobile platforms within 12 months.",
+    vision: "Position Signal as our flagship FinTech partnership, expanding from cloud migration into AI-driven analytics and mobile platforms within 12 months.",
     mission: "Deliver exceptional value through innovative engineering solutions while deepening executive relationships and achieving 20% ARR growth.",
     segment: "Growth",
     services: SERVICE_CATALOG.flatMap(group =>
