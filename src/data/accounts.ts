@@ -38,7 +38,7 @@ export interface Account {
 export const MOCK_ACCOUNTS: Account[] = [
   {
     id: "acc-1",
-    name: "Acme Corporation",
+    name: "Signal",
     segment: "Growth",
     health: { overall: 2.5, relationship: 3, contract: 2, resource: 2.5 },
     riskStatus: "green",
@@ -59,7 +59,7 @@ export const MOCK_ACCOUNTS: Account[] = [
   },
   {
     id: "acc-2",
-    name: "Beta Industries",
+    name: "Cafe Zupas",
     segment: "Retention",
     health: { overall: 1.5, relationship: 2, contract: 1, resource: 1.5 },
     riskStatus: "amber",
@@ -79,7 +79,7 @@ export const MOCK_ACCOUNTS: Account[] = [
   },
   {
     id: "acc-3",
-    name: "Gamma Ltd",
+    name: "ASAP Semiconductor",
     segment: "Growth",
     health: { overall: 2, relationship: 2.5, contract: 2, resource: 1.5 },
     riskStatus: "green",
@@ -98,7 +98,7 @@ export const MOCK_ACCOUNTS: Account[] = [
   },
   {
     id: "acc-4",
-    name: "Delta Corp",
+    name: "Canvs",
     segment: "Growth",
     health: { overall: 2.8, relationship: 3, contract: 3, resource: 2.5 },
     riskStatus: "green",
@@ -118,7 +118,7 @@ export const MOCK_ACCOUNTS: Account[] = [
   },
   {
     id: "acc-5",
-    name: "Epsilon Tech",
+    name: "Epilogue",
     segment: "Retention",
     health: { overall: 0.8, relationship: 1, contract: 0.5, resource: 1 },
     riskStatus: "red",
