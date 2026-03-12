@@ -112,7 +112,7 @@ export function AccountOpportunitiesTab({ account }: Props) {
         </CardHeader>
         <CardContent className="p-0">
           {openOpps.length === 0 ? (
-            <p className="text-sm text-muted-foreground p-6">No active opportunities. Use whitespace suggestions below or add one manually.</p>
+            <p className="text-sm text-muted-foreground p-6">No opportunities yet. Add one above or convert from Service Mapping suggestions below.</p>
           ) : (
             <Table>
               <TableHeader>
@@ -121,32 +121,41 @@ export function AccountOpportunitiesTab({ account }: Props) {
                   <TableHead>Type</TableHead>
                   <TableHead>Service Line</TableHead>
                   <TableHead className="text-right">Est. Value</TableHead>
-                  <TableHead>Stage</TableHead>
                   <TableHead>Confidence</TableHead>
+                  <TableHead className="text-right">Weighted Value</TableHead>
+                  <TableHead>Stage</TableHead>
                   <TableHead>Owner</TableHead>
-                  <TableHead>Close</TableHead>
+                  <TableHead>Target Close</TableHead>
                   <TableHead></TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {openOpps.map(opp => (
-                  <TableRow key={opp.id}>
-                    <TableCell className="font-medium text-sm">{opp.name}</TableCell>
-                    <TableCell><Badge variant="outline" className="text-[10px]">{opp.type}</Badge></TableCell>
-                    <TableCell className="text-sm text-muted-foreground">{opp.serviceLine}</TableCell>
-                    <TableCell className="text-right font-semibold">{formatCurrency(opp.estimatedValue)}</TableCell>
-                    <TableCell><Badge className={`text-[10px] ${STAGE_COLORS[opp.stage]}`}>{opp.stage}</Badge></TableCell>
-                    <TableCell><Badge variant="outline" className="text-[10px]">{opp.confidence}</Badge></TableCell>
-                    <TableCell className="text-sm">{opp.owner}</TableCell>
-                    <TableCell className="text-sm text-muted-foreground">{opp.targetClose}</TableCell>
-                    <TableCell>
-                      <div className="flex gap-1">
-                        <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => handleEdit(opp)}><Pencil className="h-3 w-3" /></Button>
-                        <Button variant="ghost" size="icon" className="h-7 w-7 text-destructive" onClick={() => deleteOpportunity(opp.id)}><Trash2 className="h-3 w-3" /></Button>
-                      </div>
-                    </TableCell>
-                  </TableRow>
-                ))}
+                {openOpps.map(opp => {
+                  const confidenceColors: Record<string, string> = {
+                    Low: "bg-muted text-muted-foreground",
+                    Medium: "bg-rag-amber/15 text-rag-amber",
+                    High: "bg-rag-green/15 text-rag-green",
+                  };
+                  return (
+                    <TableRow key={opp.id}>
+                      <TableCell className="font-medium text-sm">{opp.name}</TableCell>
+                      <TableCell><Badge variant="outline" className="text-[10px]">{opp.type}</Badge></TableCell>
+                      <TableCell className="text-sm text-muted-foreground">{opp.serviceLine}</TableCell>
+                      <TableCell className="text-right font-semibold">{formatCurrency(opp.estimatedValue)}</TableCell>
+                      <TableCell><Badge className={`text-[10px] ${confidenceColors[opp.confidence]}`}>{opp.confidence}</Badge></TableCell>
+                      <TableCell className="text-right text-sm text-muted-foreground">{formatCurrency(getWeightedValue(opp))}</TableCell>
+                      <TableCell><Badge className={`text-[10px] ${STAGE_COLORS[opp.stage]}`}>{opp.stage}</Badge></TableCell>
+                      <TableCell className="text-sm">{opp.owner}</TableCell>
+                      <TableCell className="text-sm text-muted-foreground">{opp.targetClose}</TableCell>
+                      <TableCell>
+                        <div className="flex gap-1">
+                          <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => handleEdit(opp)}><Pencil className="h-3 w-3" /></Button>
+                          <Button variant="ghost" size="icon" className="h-7 w-7 text-destructive" onClick={() => deleteOpportunity(opp.id)}><Trash2 className="h-3 w-3" /></Button>
+                        </div>
+                      </TableCell>
+                    </TableRow>
+                  );
+                })}
               </TableBody>
             </Table>
           )}
