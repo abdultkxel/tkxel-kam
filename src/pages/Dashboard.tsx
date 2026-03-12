@@ -40,8 +40,8 @@ export default function Dashboard() {
   const segmentData = getSegmentSplit(accounts);
   const baseTasks = getDailyTasks(isAM ? user.id : undefined);
 
-  const { tasks: oppTasks } = useOpportunityDetail();
-  const { opportunities } = useOpportunities();
+
+
 
   // Merge opportunity tasks into daily tasks
   const dailyTasks = useMemo(() => {
