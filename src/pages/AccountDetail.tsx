@@ -67,6 +67,7 @@ export default function AccountDetail() {
           <TabsTrigger value="health" className="text-xs">Health Scores</TabsTrigger>
           <TabsTrigger value="governance" className="text-xs">Governance</TabsTrigger>
           <TabsTrigger value="financials" className="text-xs">Financials</TabsTrigger>
+          <TabsTrigger value="opportunities" className="text-xs">Opportunities</TabsTrigger>
         </TabsList>
 
         {/* Overview Tab */}
