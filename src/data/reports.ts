@@ -82,8 +82,8 @@ export interface RecentExport {
 }
 
 export const MOCK_RECENT_EXPORTS: RecentExport[] = [
-  { id: "exp-1", reportType: "kyc", reportTitle: "KYC Export", accounts: ["Acme Corporation"], format: "pdf", generatedAt: "2026-03-10T14:30:00", generatedBy: "Sarah Mitchell", fileName: "KYC_Acme_Corporation_2026-03-10.pdf" },
-  { id: "exp-2", reportType: "health_score", reportTitle: "Health Score Report", accounts: ["Acme Corporation", "Beta Industries"], format: "csv", generatedAt: "2026-03-09T10:15:00", generatedBy: "Sarah Mitchell", fileName: "HealthScores_Multi_2026-03-09.csv" },
-  { id: "exp-3", reportType: "governance", reportTitle: "Governance Report", accounts: ["Delta Corp"], format: "pdf", generatedAt: "2026-03-08T16:45:00", generatedBy: "James Chen", fileName: "Governance_Delta_Corp_QBR_2026-03-08.pdf" },
+  { id: "exp-1", reportType: "kyc", reportTitle: "KYC Export", accounts: ["Signal"], format: "pdf", generatedAt: "2026-03-10T14:30:00", generatedBy: "Sarah Mitchell", fileName: "KYC_Signal_2026-03-10.pdf" },
+  { id: "exp-2", reportType: "health_score", reportTitle: "Health Score Report", accounts: ["Signal", "Cafe Zupas"], format: "csv", generatedAt: "2026-03-09T10:15:00", generatedBy: "Sarah Mitchell", fileName: "HealthScores_Multi_2026-03-09.csv" },
+  { id: "exp-3", reportType: "governance", reportTitle: "Governance Report", accounts: ["Canvs"], format: "pdf", generatedAt: "2026-03-08T16:45:00", generatedBy: "James Chen", fileName: "Governance_Canvs_QBR_2026-03-08.pdf" },
   { id: "exp-4", reportType: "portfolio_summary", reportTitle: "Portfolio Summary", accounts: ["All Accounts"], format: "pdf", generatedAt: "2026-03-07T09:00:00", generatedBy: "James Chen", fileName: "Portfolio_Summary_2026-03-07.pdf" },
 ];

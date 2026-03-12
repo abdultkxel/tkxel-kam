@@ -2,11 +2,11 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Progress } from "@/components/ui/progress";
 
 const scores = [
-  { account: "Acme Corporation", score: 85, trend: "up" },
-  { account: "Beta Industries", score: 45, trend: "down" },
-  { account: "Gamma Ltd", score: 72, trend: "stable" },
-  { account: "Delta Corp", score: 91, trend: "up" },
-  { account: "Epsilon Tech", score: 28, trend: "down" },
+  { account: "Signal", score: 85, trend: "up" },
+  { account: "Cafe Zupas", score: 45, trend: "down" },
+  { account: "ASAP Semiconductor", score: 72, trend: "stable" },
+  { account: "Canvs", score: 91, trend: "up" },
+  { account: "Epilogue", score: 28, trend: "down" },
 ];
 
 function getScoreColor(score: number) {

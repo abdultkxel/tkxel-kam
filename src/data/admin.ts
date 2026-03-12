@@ -45,12 +45,12 @@ export const MOCK_TEMPLATES: TemplateFile[] = [
 ];
 
 export const MOCK_AUDIT_LOG: AuditEntry[] = [
-  { id: "al1", userId: "u1", userName: "Sarah Mitchell", action: "Updated", recordType: "KYC", recordId: "acc-1", recordName: "Acme Corporation", timestamp: "2026-03-10T14:30:00", details: "Updated key contacts section" },
-  { id: "al2", userId: "u1", userName: "Sarah Mitchell", action: "Submitted", recordType: "Health Score", recordId: "acc-2", recordName: "Beta Industries", timestamp: "2026-03-10T11:00:00", details: "Q1 health scoring submitted" },
-  { id: "al3", userId: "u2", userName: "James Chen", action: "Approved", recordType: "Strategy", recordId: "acc-1", recordName: "Acme Corporation", timestamp: "2026-03-09T16:45:00", details: "Approved account plan v2" },
+  { id: "al1", userId: "u1", userName: "Sarah Mitchell", action: "Updated", recordType: "KYC", recordId: "acc-1", recordName: "Signal", timestamp: "2026-03-10T14:30:00", details: "Updated key contacts section" },
+  { id: "al2", userId: "u1", userName: "Sarah Mitchell", action: "Submitted", recordType: "Health Score", recordId: "acc-2", recordName: "Cafe Zupas", timestamp: "2026-03-10T11:00:00", details: "Q1 health scoring submitted" },
+  { id: "al3", userId: "u2", userName: "James Chen", action: "Approved", recordType: "Strategy", recordId: "acc-1", recordName: "Signal", timestamp: "2026-03-09T16:45:00", details: "Approved account plan v2" },
   { id: "al4", userId: "u3", userName: "Alex Rivera", action: "Created", recordType: "User", recordId: "u4", recordName: "David Park", timestamp: "2026-03-08T09:00:00", details: "New AM user created" },
-  { id: "al5", userId: "u1", userName: "Sarah Mitchell", action: "Exported", recordType: "Report", recordId: "exp-1", recordName: "KYC Export", timestamp: "2026-03-10T14:30:00", details: "KYC export for Acme Corporation" },
+  { id: "al5", userId: "u1", userName: "Sarah Mitchell", action: "Exported", recordType: "Report", recordId: "exp-1", recordName: "KYC Export", timestamp: "2026-03-10T14:30:00", details: "KYC export for Signal" },
   { id: "al6", userId: "u3", userName: "Alex Rivera", action: "Updated", recordType: "Scoring Config", recordId: "rel", recordName: "Relationship Health", timestamp: "2026-03-07T10:15:00", details: "Changed CEO Engagement weight from 20% to 25%" },
-  { id: "al7", userId: "u2", userName: "James Chen", action: "Created", recordType: "QBR", recordId: "m2", recordName: "Q1 QBR - Acme", timestamp: "2026-03-06T14:00:00", details: "Scheduled QBR for Q1 review" },
+  { id: "al7", userId: "u2", userName: "James Chen", action: "Created", recordType: "QBR", recordId: "m2", recordName: "Q1 QBR - Signal", timestamp: "2026-03-06T14:00:00", details: "Scheduled QBR for Q1 review" },
   { id: "al8", userId: "u1", userName: "Sarah Mitchell", action: "Resolved", recordType: "Escalation", recordId: "e1", recordName: "Delayed Module B", timestamp: "2026-03-05T11:30:00", details: "Escalation resolved with additional resources" },
 ];

@@ -2,10 +2,10 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 
 const reviews = [
-  { account: "Acme Corporation", type: "QBR", date: "2026-03-15", status: "Scheduled" },
-  { account: "Delta Corp", type: "Executive Review", date: "2026-03-20", status: "Pending" },
-  { account: "Beta Industries", type: "Escalation Review", date: "2026-03-10", status: "Overdue" },
-  { account: "Gamma Ltd", type: "QBR", date: "2026-04-01", status: "Scheduled" },
+  { account: "Signal", type: "QBR", date: "2026-03-15", status: "Scheduled" },
+  { account: "Canvs", type: "Executive Review", date: "2026-03-20", status: "Pending" },
+  { account: "Cafe Zupas", type: "Escalation Review", date: "2026-03-10", status: "Overdue" },
+  { account: "ASAP Semiconductor", type: "QBR", date: "2026-04-01", status: "Scheduled" },
 ];
 
 const statusColors: Record<string, string> = {

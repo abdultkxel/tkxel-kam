@@ -105,7 +105,7 @@ export function createDefaultStrategy(segment: SegmentType): StrategyData {
 // Mock data for acc-1
 export const MOCK_STRATEGY_DATA: Record<string, StrategyData> = {
   "acc-1": {
-    vision: "Position Acme Corporation as our flagship FinTech partnership, expanding from cloud migration into AI-driven analytics and mobile platforms within 12 months.",
+    vision: "Position Signal as our flagship FinTech partnership, expanding from cloud migration into AI-driven analytics and mobile platforms within 12 months.",
     mission: "Deliver exceptional value through innovative engineering solutions while deepening executive relationships and achieving 20% ARR growth.",
     segment: "Growth",
     services: SERVICE_CATALOG.flatMap(group =>
@@ -123,7 +123,7 @@ export const MOCK_STRATEGY_DATA: Record<string, StrategyData> = {
       }))
     ),
     initiatives: [
-      { id: "init-1", objective: "Expand into mobile", kpi: "Launch MVP by Q3", description: "Build companion mobile app for Acme's platform", owner: "Sarah Mitchell", targetDate: "2026-09-30", status: "In Progress", notes: "Design phase complete. Dev sprint 2 underway." },
+      { id: "init-1", objective: "Expand into mobile", kpi: "Launch MVP by Q3", description: "Build companion mobile app for Signal's platform", owner: "Sarah Mitchell", targetDate: "2026-09-30", status: "In Progress", notes: "Design phase complete. Dev sprint 2 underway." },
       { id: "init-2", objective: "Deepen exec relationships", kpi: "Monthly CTO sync", description: "Establish regular cadence with C-suite stakeholders", owner: "James Chen", targetDate: "2026-06-30", status: "Complete", notes: "Monthly sync established with CTO and VP Eng." },
       { id: "init-3", objective: "AI analytics pilot", kpi: "POC delivered", description: "Prototype predictive churn model using client data", owner: "Priya Sharma", targetDate: "2026-12-31", status: "Not Started", notes: "" },
     ],

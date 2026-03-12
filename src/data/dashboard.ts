@@ -262,14 +262,14 @@ export interface DailyTask {
 export function getDailyTasks(amId?: string): DailyTask[] {
   const today = new Date().toISOString().split("T")[0];
   const tasks: DailyTask[] = [
-    { id: "dt-1", task: "Complete KYC update for Acme Corporation", account: "Acme Corporation", category: "kyc", priority: "high", dueDate: today, completed: false },
-    { id: "dt-2", task: "Submit Q1 health scores for Beta Industries", account: "Beta Industries", category: "health", priority: "high", dueDate: today, completed: false },
-    { id: "dt-3", task: "Prepare QBR deck for Delta Corp", account: "Delta Corp", category: "governance", priority: "medium", dueDate: today, completed: false },
-    { id: "dt-4", task: "Follow up on escalation — Module B delay", account: "Acme Corporation", category: "follow-up", priority: "high", dueDate: today, completed: true },
-    { id: "dt-5", task: "Review strategic plan draft for Epsilon Ltd", account: "Epsilon Ltd", category: "strategy", priority: "medium", dueDate: today, completed: false },
-    { id: "dt-6", task: "Send contract renewal reminder to Gamma LLC", account: "Gamma LLC", category: "follow-up", priority: "low", dueDate: today, completed: false },
+    { id: "dt-1", task: "Complete KYC update for Signal", account: "Signal", category: "kyc", priority: "high", dueDate: today, completed: false },
+    { id: "dt-2", task: "Submit Q1 health scores for Cafe Zupas", account: "Cafe Zupas", category: "health", priority: "high", dueDate: today, completed: false },
+    { id: "dt-3", task: "Prepare QBR deck for Canvs", account: "Canvs", category: "governance", priority: "medium", dueDate: today, completed: false },
+    { id: "dt-4", task: "Follow up on escalation — Module B delay", account: "Signal", category: "follow-up", priority: "high", dueDate: today, completed: true },
+    { id: "dt-5", task: "Review strategic plan draft for Epilogue", account: "Epilogue", category: "strategy", priority: "medium", dueDate: today, completed: false },
+    { id: "dt-6", task: "Send contract renewal reminder to ASAP Semiconductor", account: "ASAP Semiconductor", category: "follow-up", priority: "low", dueDate: today, completed: false },
     { id: "dt-7", task: "Update service line mapping for Theta Inc", account: "Theta Inc", category: "health", priority: "medium", dueDate: today, completed: true },
-    { id: "dt-8", task: "Schedule SteerCo with Zeta Group leadership", account: "Zeta Group", category: "governance", priority: "low", dueDate: today, completed: false },
+    { id: "dt-8", task: "Schedule SteerCo with Zeta Partners leadership", account: "Zeta Partners", category: "governance", priority: "low", dueDate: today, completed: false },
   ];
 
   // For AM role, return only a subset; for leadership, return all

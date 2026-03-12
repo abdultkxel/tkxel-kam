@@ -84,7 +84,7 @@ export function createDefaultKyc(accountName: string, industry: string, segment:
 // Mock KYC data for some accounts
 export const MOCK_KYC_DATA: Record<string, KycData> = {
   "acc-1": {
-    companyName: "Acme Corporation",
+    companyName: "Signal",
     industry: "FinTech",
     hqLocation: "San Francisco, CA",
     website: "https://acme.com",
@@ -116,7 +116,7 @@ export const MOCK_KYC_DATA: Record<string, KycData> = {
     ],
   },
   "acc-2": {
-    companyName: "Beta Industries",
+    companyName: "Cafe Zupas",
     industry: "Healthcare",
     hqLocation: "Boston, MA",
     website: "https://beta-ind.com",
