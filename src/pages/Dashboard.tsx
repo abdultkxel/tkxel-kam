@@ -36,6 +36,7 @@ export default function Dashboard() {
   const alerts = getAlerts(accounts);
   const upcoming = getUpcomingGovernance();
   const overdue = getOverdueActions();
+  const dailyTasks = getDailyTasks(isAM ? user.id : undefined);
 
   return (
     <div className="space-y-6 max-w-[1400px]">
