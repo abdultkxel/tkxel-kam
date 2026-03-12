@@ -118,7 +118,7 @@ export const MOCK_ACCOUNTS: Account[] = [
   },
   {
     id: "acc-5",
-    name: "Epsilon Tech",
+    name: "Epilogue",
     segment: "Retention",
     health: { overall: 0.8, relationship: 1, contract: 0.5, resource: 1 },
     riskStatus: "red",
