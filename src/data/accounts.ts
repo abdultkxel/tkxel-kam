@@ -98,7 +98,7 @@ export const MOCK_ACCOUNTS: Account[] = [
   },
   {
     id: "acc-4",
-    name: "Delta Corp",
+    name: "Canvs",
     segment: "Growth",
     health: { overall: 2.8, relationship: 3, contract: 3, resource: 2.5 },
     riskStatus: "green",
