@@ -38,7 +38,7 @@ export interface Account {
 export const MOCK_ACCOUNTS: Account[] = [
   {
     id: "acc-1",
-    name: "Acme Corporation",
+    name: "Signal",
     segment: "Growth",
     health: { overall: 2.5, relationship: 3, contract: 2, resource: 2.5 },
     riskStatus: "green",
