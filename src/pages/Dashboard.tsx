@@ -30,7 +30,6 @@ export default function Dashboard() {
 
   const accounts = isAM ? MOCK_ACCOUNTS.filter(a => a.amId === user.id) : MOCK_ACCOUNTS;
   const segmentData = getSegmentSplit(accounts);
-  const alerts = getAlerts(accounts);
   const dailyTasks = getDailyTasks(isAM ? user.id : undefined);
 
   return (
