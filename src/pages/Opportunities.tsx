@@ -17,6 +17,7 @@ import { AddOpportunityDrawer } from "@/components/opportunities/AddOpportunityD
 import { differenceInDays, format } from "date-fns";
 
 export default function Opportunities() {
+  const navigate = useNavigate();
   const { opportunities, moveStage } = useOpportunities();
   const [view, setView] = useState<"pipeline" | "list">("pipeline");
   const [drawerOpen, setDrawerOpen] = useState(false);
