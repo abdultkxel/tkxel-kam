@@ -3,6 +3,7 @@ import { useAuth, ROLE_LABELS } from "@/contexts/AuthContext";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { SidebarTrigger } from "@/components/ui/sidebar";
+import { NotificationsDropdown } from "@/components/NotificationsDropdown";
 
 export function TopBar() {
   const { user, logout } = useAuth();
@@ -17,6 +18,7 @@ export function TopBar() {
         </SidebarTrigger>
       </div>
       <div className="flex items-center gap-3">
+        <NotificationsDropdown />
         <div className="text-right hidden sm:block">
           <p className="text-sm font-medium text-foreground leading-tight">{user.name}</p>
           <p className="text-xs text-muted-foreground">{user.email}</p>
