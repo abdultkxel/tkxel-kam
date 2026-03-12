@@ -253,10 +253,11 @@ export interface DailyTask {
   id: string;
   task: string;
   account: string;
-  category: "kyc" | "health" | "governance" | "strategy" | "follow-up";
+  category: "kyc" | "health" | "governance" | "strategy" | "follow-up" | "opportunity";
   priority: "high" | "medium" | "low";
   dueDate: string;
   completed: boolean;
+  contextLabel?: string;
 }
 
 export function getDailyTasks(amId?: string): DailyTask[] {

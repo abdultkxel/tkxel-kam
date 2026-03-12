@@ -1,11 +1,14 @@
+import { useMemo } from "react";
 import { useAuth, ROLE_LABELS } from "@/contexts/AuthContext";
 import { Badge } from "@/components/ui/badge";
 import { MOCK_ACCOUNTS } from "@/data/accounts";
 import {
   getSegmentSplit,
   getPortfolioAverages, getAMPerformanceData, getRiskHeatmapData,
-  getRenewalCalendar, getBillingForecast, getDailyTasks,
+  getRenewalCalendar, getBillingForecast, getDailyTasks, type DailyTask,
 } from "@/data/dashboard";
+import { useOpportunityDetail } from "@/contexts/OpportunityDetailContext";
+import { useOpportunities } from "@/contexts/OpportunitiesContext";
 
 import { SummaryRow } from "@/components/dashboard/SummaryRow";
 import { ActionsPanel } from "@/components/dashboard/ActionsPanel";
@@ -24,14 +27,41 @@ import { PipelineWidget } from "@/components/dashboard/PipelineWidget";
 
 export default function Dashboard() {
   const { user } = useAuth();
-  if (!user) return null;
+  const { tasks: oppTasks } = useOpportunityDetail();
+  const { opportunities } = useOpportunities();
 
-  const isAM = user.role === "am";
-  const isLeadership = user.role === "leadership" || user.role === "admin";
-
-  const accounts = isAM ? MOCK_ACCOUNTS.filter(a => a.amId === user.id) : MOCK_ACCOUNTS;
+  const isAM = user?.role === "am";
+  const isLeadership = user?.role === "leadership" || user?.role === "admin";
+  const accounts = isAM ? MOCK_ACCOUNTS.filter(a => a.amId === user?.id) : MOCK_ACCOUNTS;
   const segmentData = getSegmentSplit(accounts);
-  const dailyTasks = getDailyTasks(isAM ? user.id : undefined);
+  const baseTasks = getDailyTasks(isAM ? user?.id : undefined);
+
+
+
+
+  // Merge opportunity tasks into daily tasks
+  const dailyTasks = useMemo(() => {
+    const today = "2026-03-12";
+    const oppDailyTasks: DailyTask[] = oppTasks
+      .filter(t => !t.completed && t.dueDate <= today)
+      .map(t => {
+        const opp = opportunities.find(o => o.id === t.opportunityId);
+        const acc = opp ? MOCK_ACCOUNTS.find(a => a.id === opp.accountId) : null;
+        return {
+          id: t.id,
+          task: t.title,
+          account: acc?.name || "",
+          category: "opportunity" as const,
+          priority: t.priority.toLowerCase() as DailyTask["priority"],
+          dueDate: t.dueDate,
+          completed: false,
+          contextLabel: opp?.name,
+        };
+      });
+    return [...baseTasks, ...oppDailyTasks];
+  }, [baseTasks, oppTasks, opportunities]);
+
+  if (!user) return null;
 
   return (
     <div className="space-y-6 max-w-[1400px]">

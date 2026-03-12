@@ -2,7 +2,7 @@ import { useState } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Badge } from "@/components/ui/badge";
-import { ClipboardList, FileText, HeartPulse, Shield, Lightbulb, MessageSquare } from "lucide-react";
+import { ClipboardList, FileText, HeartPulse, Shield, Lightbulb, MessageSquare, TrendingUp } from "lucide-react";
 import { DailyTask } from "@/data/dashboard";
 
 const categoryConfig: Record<DailyTask["category"], { label: string; icon: React.ElementType; className: string }> = {
@@ -11,6 +11,7 @@ const categoryConfig: Record<DailyTask["category"], { label: string; icon: React
   governance: { label: "Governance", icon: Shield, className: "bg-chart-3/15 text-chart-3" },
   strategy: { label: "Strategy", icon: Lightbulb, className: "bg-chart-4/15 text-chart-4" },
   "follow-up": { label: "Follow-up", icon: MessageSquare, className: "bg-chart-5/15 text-chart-5" },
+  opportunity: { label: "Opportunity", icon: TrendingUp, className: "bg-primary/15 text-primary" },
 };
 
 const priorityClass: Record<DailyTask["priority"], string> = {
@@ -75,6 +76,9 @@ export function DailyTasks({ tasks: initialTasks }: { tasks: DailyTask[] }) {
                     {cat.label}
                   </span>
                   <span className="text-[10px] text-muted-foreground">{task.account}</span>
+                  {task.contextLabel && (
+                    <span className="text-[10px] text-muted-foreground italic">· {task.contextLabel}</span>
+                  )}
                 </div>
               </div>
               <Badge variant="outline" className={`text-[10px] shrink-0 ${priorityClass[task.priority]}`}>

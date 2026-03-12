@@ -1,4 +1,5 @@
 import { useState, useMemo } from "react";
+import { useNavigate } from "react-router-dom";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -16,6 +17,7 @@ import { AddOpportunityDrawer } from "@/components/opportunities/AddOpportunityD
 import { differenceInDays, format } from "date-fns";
 
 export default function Opportunities() {
+  const navigate = useNavigate();
   const { opportunities, moveStage } = useOpportunities();
   const [view, setView] = useState<"pipeline" | "list">("pipeline");
   const [drawerOpen, setDrawerOpen] = useState(false);
@@ -128,6 +130,7 @@ export default function Opportunities() {
                         key={opp.id}
                         draggable
                         onDragStart={() => handleDragStart(opp.id)}
+                        onClick={() => navigate(`/opportunities/${opp.id}`)}
                         className="bg-card border rounded-lg p-3 cursor-grab active:cursor-grabbing hover:shadow-md transition-shadow"
                       >
                         <div className="flex items-start justify-between gap-1">
@@ -182,7 +185,7 @@ export default function Opportunities() {
                 {filtered.map(opp => {
                   const acc = getAccount(opp.accountId);
                   return (
-                    <TableRow key={opp.id}>
+                    <TableRow key={opp.id} className="cursor-pointer hover:bg-muted/50" onClick={() => navigate(`/opportunities/${opp.id}`)}>
                       <TableCell className="font-medium text-sm">{opp.name}</TableCell>
                       <TableCell className="text-sm">{acc?.name}</TableCell>
                       <TableCell><Badge variant="outline" className="text-[10px]">{opp.type}</Badge></TableCell>
