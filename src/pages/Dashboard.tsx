@@ -2,19 +2,17 @@ import { useAuth, ROLE_LABELS } from "@/contexts/AuthContext";
 import { Badge } from "@/components/ui/badge";
 import { MOCK_ACCOUNTS } from "@/data/accounts";
 import {
-  getSegmentSplit, getAlerts, getUpcomingGovernance, getOverdueActions,
+  getSegmentSplit, getAlerts,
   getPortfolioAverages, getAMPerformanceData, getRiskHeatmapData,
   getRenewalCalendar, getBillingForecast, getDailyTasks,
 } from "@/data/dashboard";
 
 import { SummaryRow } from "@/components/dashboard/SummaryRow";
-import { PriorityActions } from "@/components/dashboard/PriorityActions";
+import { ActionsPanel } from "@/components/dashboard/ActionsPanel";
 import { PortfolioTable } from "@/components/dashboard/PortfolioTable";
 import { SegmentDonut } from "@/components/dashboard/SegmentDonut";
 import { ARRByRiskChart } from "@/components/dashboard/ARRByRiskChart";
 import { AlertsPanel } from "@/components/dashboard/AlertsPanel";
-import { GovernanceUpcoming } from "@/components/dashboard/GovernanceUpcoming";
-import { OverdueTracker } from "@/components/dashboard/OverdueTracker";
 import { DailyTasks } from "@/components/dashboard/DailyTasks";
 import { PortfolioOverview } from "@/components/dashboard/PortfolioOverview";
 import { AMPerformanceTable } from "@/components/dashboard/AMPerformanceTable";
@@ -33,8 +31,6 @@ export default function Dashboard() {
   const accounts = isAM ? MOCK_ACCOUNTS.filter(a => a.amId === user.id) : MOCK_ACCOUNTS;
   const segmentData = getSegmentSplit(accounts);
   const alerts = getAlerts(accounts);
-  const upcoming = getUpcomingGovernance();
-  const overdue = getOverdueActions();
   const dailyTasks = getDailyTasks(isAM ? user.id : undefined);
 
   return (
@@ -55,9 +51,9 @@ export default function Dashboard() {
       {/* KPI Tiles */}
       <SummaryRow accounts={accounts} isAM={isAM} />
 
-      {/* Priority Actions + Today's Tasks */}
+      {/* Actions (with toggle) + Today's Tasks */}
       <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
-        <PriorityActions accounts={accounts} />
+        <ActionsPanel accounts={accounts} />
         <DailyTasks tasks={dailyTasks} />
       </div>
 
@@ -72,12 +68,8 @@ export default function Dashboard() {
         </div>
       </div>
 
-      {/* Governance + Alerts + Overdue */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-        <GovernanceUpcoming items={upcoming} />
-        <AlertsPanel alerts={alerts} />
-        <OverdueTracker items={overdue} />
-      </div>
+      {/* Alerts */}
+      <AlertsPanel alerts={alerts} />
 
       {/* Leadership-only sections */}
       {isLeadership && (
