@@ -46,7 +46,7 @@ export default function Dashboard() {
       .filter(t => !t.completed && t.dueDate <= today)
       .map(t => {
         const opp = opportunities.find(o => o.id === t.opportunityId);
-        const acc = opp ? ACCOUNTS_LIST.find(a => a.id === opp.accountId) : null;
+        const acc = opp ? MOCK_ACCOUNTS.find(a => a.id === opp.accountId) : null;
         return {
           id: t.id,
           task: t.title,
