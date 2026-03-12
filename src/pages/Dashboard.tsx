@@ -20,6 +20,7 @@ import { RiskScatterPlot } from "@/components/dashboard/RiskScatterPlot";
 import { RenewalCalendar } from "@/components/dashboard/RenewalCalendar";
 import { BillingForecastChart } from "@/components/dashboard/BillingForecastTable";
 import { ComparisonTable } from "@/components/dashboard/ComparisonTable";
+import { PipelineWidget } from "@/components/dashboard/PipelineWidget";
 
 export default function Dashboard() {
   const { user } = useAuth();
@@ -50,10 +51,11 @@ export default function Dashboard() {
       {/* KPI Tiles */}
       <SummaryRow accounts={accounts} isAM={isAM} />
 
-      {/* Actions (with toggle) + Today's Tasks */}
-      <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
+      {/* Actions + Today's Tasks + Pipeline */}
+      <div className="grid grid-cols-1 xl:grid-cols-3 gap-4">
         <ActionsPanel accounts={accounts} />
         <DailyTasks tasks={dailyTasks} />
+        <PipelineWidget />
       </div>
 
       {/* Portfolio Table + Sidebar */}

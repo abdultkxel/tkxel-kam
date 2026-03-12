@@ -10,6 +10,7 @@ import { StrategyTab } from "@/components/strategy/StrategyTab";
 import { HealthScoringTab } from "@/components/health/HealthScoringTab";
 import { GovernanceTab } from "@/components/governance/GovernanceTab";
 import { FinancialsTab } from "@/components/financials/FinancialsTab";
+import { AccountOpportunitiesTab } from "@/components/opportunities/AccountOpportunitiesTab";
 import { getLatestGovernanceEvents } from "@/data/governance";
 
 export default function AccountDetail() {
@@ -66,6 +67,7 @@ export default function AccountDetail() {
           <TabsTrigger value="health" className="text-xs">Health Scores</TabsTrigger>
           <TabsTrigger value="governance" className="text-xs">Governance</TabsTrigger>
           <TabsTrigger value="financials" className="text-xs">Financials</TabsTrigger>
+          <TabsTrigger value="opportunities" className="text-xs">Opportunities</TabsTrigger>
         </TabsList>
 
         {/* Overview Tab */}
@@ -164,6 +166,11 @@ export default function AccountDetail() {
         {/* Financials Tab */}
         <TabsContent value="financials">
           <FinancialsTab account={account} />
+        </TabsContent>
+
+        {/* Opportunities Tab */}
+        <TabsContent value="opportunities">
+          <AccountOpportunitiesTab account={account} />
         </TabsContent>
       </Tabs>
     </div>
