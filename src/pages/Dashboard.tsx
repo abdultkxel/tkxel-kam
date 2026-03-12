@@ -12,7 +12,7 @@ import { ActionsPanel } from "@/components/dashboard/ActionsPanel";
 import { PortfolioTable } from "@/components/dashboard/PortfolioTable";
 import { SegmentDonut } from "@/components/dashboard/SegmentDonut";
 import { ARRByRiskChart } from "@/components/dashboard/ARRByRiskChart";
-import { AlertsPanel } from "@/components/dashboard/AlertsPanel";
+import { MeetingsCalendar } from "@/components/dashboard/MeetingsCalendar";
 import { DailyTasks } from "@/components/dashboard/DailyTasks";
 import { PortfolioOverview } from "@/components/dashboard/PortfolioOverview";
 import { AMPerformanceTable } from "@/components/dashboard/AMPerformanceTable";
