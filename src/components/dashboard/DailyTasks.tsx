@@ -76,6 +76,9 @@ export function DailyTasks({ tasks: initialTasks }: { tasks: DailyTask[] }) {
                     {cat.label}
                   </span>
                   <span className="text-[10px] text-muted-foreground">{task.account}</span>
+                  {task.contextLabel && (
+                    <span className="text-[10px] text-muted-foreground italic">· {task.contextLabel}</span>
+                  )}
                 </div>
               </div>
               <Badge variant="outline" className={`text-[10px] shrink-0 ${priorityClass[task.priority]}`}>
