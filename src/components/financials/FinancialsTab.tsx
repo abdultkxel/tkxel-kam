@@ -197,7 +197,7 @@ function RevenueTimeline({ account, arrValue }: { account: Account; arrValue: nu
             <span className="flex items-center gap-1"><span className="h-2 w-2 rounded-sm bg-primary/20" /> Contract Period</span>
             <span className="flex items-center gap-1"><span className="h-2 w-2 rounded-sm bg-rag-amber/15 border border-rag-amber/40" /> Renewal Zone (90d)</span>
             {isExpired && <span className="flex items-center gap-1"><span className="h-2 w-2 rounded-sm bg-rag-red/20" /> Expired</span>}
-            <span className="ml-auto font-medium text-foreground">Quarterly ARR: {formatCurrency(arrValue / 4)}</span>
+            <span className="ml-auto font-medium text-foreground">Quarterly Revenue: {formatCurrency(arrValue / 4)}</span>
           </div>
         </div>
       </CardContent>
