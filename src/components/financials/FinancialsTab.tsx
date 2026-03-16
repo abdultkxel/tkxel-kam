@@ -73,7 +73,7 @@ function ContractSnapshot({ account, arrValue, tcv, contractStatus, daysToRenewa
   return (
     <div className="grid grid-cols-2 lg:grid-cols-3 gap-4">
       <SnapshotTile
-        label="ARR"
+        label="Revenue"
         value={account.arr}
         sub={<span className={`flex items-center gap-1 text-xs ${terms.yoyGrowth >= 0 ? "text-rag-green" : "text-rag-red"}`}>
           {terms.yoyGrowth >= 0 ? <TrendingUp className="h-3 w-3" /> : <TrendingDown className="h-3 w-3" />}
