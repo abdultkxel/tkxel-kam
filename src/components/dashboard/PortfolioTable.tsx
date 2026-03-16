@@ -52,7 +52,7 @@ export function PortfolioTable({ accounts }: { accounts: Account[] }) {
             <TableRow>
               <TableHead className="pl-6">Account</TableHead>
               <TableHead className="text-center">Status</TableHead>
-              <TableHead className="text-right">ARR</TableHead>
+              <TableHead className="text-right">Revenue</TableHead>
               <TableHead className="text-center">Trend</TableHead>
               <TableHead className="text-center">Renewal</TableHead>
               <TableHead className="text-center">Next Gov.</TableHead>

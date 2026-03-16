@@ -66,7 +66,7 @@ export function SegmentDonut({ data, accounts }: { data: { name: string; value: 
                   </div>
                   <div className="ml-5">
                     <p className="text-lg font-bold text-foreground">{pct}%</p>
-                    <p className="text-xs text-muted-foreground">{seg.value} accounts · {formatCurrency(seg.arr)}</p>
+                    <p className="text-xs text-muted-foreground">{seg.value} accounts · {formatCurrency(seg.arr)} revenue</p>
                   </div>
                 </div>
               );

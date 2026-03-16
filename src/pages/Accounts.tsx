@@ -97,7 +97,7 @@ export default function Accounts() {
                 <div className="flex items-start justify-between">
                   <div className="flex-1 min-w-0">
                     <h3 className="font-semibold text-foreground truncate">{account.name}</h3>
-                    <p className="text-xs text-muted-foreground mt-0.5">{account.industry} · {account.arr}</p>
+                    <p className="text-xs text-muted-foreground mt-0.5">{account.industry} · {account.arr} Revenue</p>
                   </div>
                   <div className="flex items-center gap-2 flex-shrink-0 ml-2">
                     <Badge

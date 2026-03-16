@@ -48,7 +48,7 @@ export function ComparisonTable({ data }: { data: HeatmapRow[] }) {
               <TableHead className="pl-6 cursor-pointer" onClick={() => toggleSort("name")}>
                 <span className="inline-flex items-center gap-1">Account <ArrowUpDown className="h-3 w-3" /></span>
               </TableHead>
-              <TableHead className="text-center text-xs">ARR</TableHead>
+              <TableHead className="text-center text-xs">Revenue</TableHead>
               <SortHeader k="relationship" label="Rel." />
               <SortHeader k="contract" label="Contract" />
               <SortHeader k="resource" label="Resource" />

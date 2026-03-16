@@ -353,7 +353,7 @@ function ExpansionOpportunities({ accountId }: { accountId: string }) {
           })}
         </div>
         <div className="mt-4 pt-3 border-t flex items-center justify-between">
-          <span className="text-sm font-medium text-muted-foreground">Estimated Expansion ARR</span>
+          <span className="text-sm font-medium text-muted-foreground">Estimated Expansion Revenue</span>
           <span className="text-lg font-bold text-rag-green">{formatCurrency(totalExpansion)}</span>
         </div>
       </CardContent>

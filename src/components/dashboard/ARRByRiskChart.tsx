@@ -31,7 +31,7 @@ export function ARRByRiskChart({ accounts }: { accounts: Account[] }) {
   return (
     <Card>
       <CardHeader className="pb-2">
-        <CardTitle className="text-base">ARR by Risk Level</CardTitle>
+        <CardTitle className="text-base">Revenue by Risk Level</CardTitle>
       </CardHeader>
       <CardContent>
         <div className="h-[200px]">

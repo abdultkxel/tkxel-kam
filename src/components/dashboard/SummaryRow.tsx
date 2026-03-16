@@ -55,7 +55,7 @@ export function SummaryRow({ accounts, isAM }: Props) {
               </p>
               <p className="text-3xl font-bold text-foreground mt-1">{accounts.length}</p>
               <p className="text-xs text-muted-foreground mt-0.5">
-                {formatCurrency(totalARR)} portfolio ARR
+                {formatCurrency(totalARR)} portfolio revenue
               </p>
             </div>
             <Building2 className="h-7 w-7 text-primary opacity-70" />

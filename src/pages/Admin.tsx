@@ -227,7 +227,7 @@ function AccountManagement() {
               <TableHead className="text-xs">Segment</TableHead>
               <TableHead className="text-xs">AM</TableHead>
               <TableHead className="text-xs">Industry</TableHead>
-              <TableHead className="text-xs">ARR</TableHead>
+              <TableHead className="text-xs">Revenue</TableHead>
               <TableHead className="text-xs">Contract End</TableHead>
               <TableHead className="text-xs">Status</TableHead>
               <TableHead className="text-xs w-20">Actions</TableHead>

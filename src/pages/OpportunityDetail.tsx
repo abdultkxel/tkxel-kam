@@ -472,7 +472,7 @@ export default function OpportunityDetail() {
               </div>
               <div className="space-y-2 text-sm">
                 <SidebarRow label="Industry" value={account.industry} />
-                <SidebarRow label="ARR" value={account.arr} />
+                <SidebarRow label="Revenue" value={account.arr} />
                 <div className="flex items-center justify-between">
                   <span className="text-muted-foreground">Health</span>
                   <div className="flex items-center gap-1.5">
