@@ -51,7 +51,7 @@ export default function AccountDetail() {
             <span>·</span>
             <span>{account.industry}</span>
             <span>·</span>
-            <span>{account.arr} ARR</span>
+            <span>{account.arr} Revenue</span>
             <span>·</span>
             <span className="flex items-center gap-1"><Clock className="h-3 w-3" /> Updated {account.lastUpdated}</span>
           </div>

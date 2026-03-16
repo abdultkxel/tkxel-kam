@@ -73,7 +73,7 @@ function ContractSnapshot({ account, arrValue, tcv, contractStatus, daysToRenewa
   return (
     <div className="grid grid-cols-2 lg:grid-cols-3 gap-4">
       <SnapshotTile
-        label="ARR"
+        label="Revenue"
         value={account.arr}
         sub={<span className={`flex items-center gap-1 text-xs ${terms.yoyGrowth >= 0 ? "text-rag-green" : "text-rag-red"}`}>
           {terms.yoyGrowth >= 0 ? <TrendingUp className="h-3 w-3" /> : <TrendingDown className="h-3 w-3" />}
@@ -197,7 +197,7 @@ function RevenueTimeline({ account, arrValue }: { account: Account; arrValue: nu
             <span className="flex items-center gap-1"><span className="h-2 w-2 rounded-sm bg-primary/20" /> Contract Period</span>
             <span className="flex items-center gap-1"><span className="h-2 w-2 rounded-sm bg-rag-amber/15 border border-rag-amber/40" /> Renewal Zone (90d)</span>
             {isExpired && <span className="flex items-center gap-1"><span className="h-2 w-2 rounded-sm bg-rag-red/20" /> Expired</span>}
-            <span className="ml-auto font-medium text-foreground">Quarterly ARR: {formatCurrency(arrValue / 4)}</span>
+            <span className="ml-auto font-medium text-foreground">Quarterly Revenue: {formatCurrency(arrValue / 4)}</span>
           </div>
         </div>
       </CardContent>
@@ -353,7 +353,7 @@ function ExpansionOpportunities({ accountId }: { accountId: string }) {
           })}
         </div>
         <div className="mt-4 pt-3 border-t flex items-center justify-between">
-          <span className="text-sm font-medium text-muted-foreground">Estimated Expansion ARR</span>
+          <span className="text-sm font-medium text-muted-foreground">Estimated Expansion Revenue</span>
           <span className="text-lg font-bold text-rag-green">{formatCurrency(totalExpansion)}</span>
         </div>
       </CardContent>

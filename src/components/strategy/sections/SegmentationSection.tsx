@@ -13,7 +13,7 @@ interface Props {
 }
 
 const SEGMENTS: { value: SegmentType; label: string; tooltip: string }[] = [
-  { value: "Growth", label: "Growth", tooltip: "Accounts targeted for expansion — upselling new services, increasing ARR, and deepening engagement across business units." },
+  { value: "Growth", label: "Growth", tooltip: "Accounts targeted for expansion — upselling new services, increasing revenue, and deepening engagement across business units." },
   { value: "Retention", label: "Retention", tooltip: "Accounts focused on stability — ensuring service quality, managing risks, and securing renewals with minimal churn." },
 ];
 

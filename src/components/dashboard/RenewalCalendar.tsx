@@ -18,7 +18,7 @@ export function RenewalCalendar({ entries }: { entries: RenewalEntry[] }) {
               <TableRow>
                 <TableHead className="pl-6">Account</TableHead>
                 <TableHead>Contract End</TableHead>
-                <TableHead>ARR</TableHead>
+                <TableHead>Revenue</TableHead>
                 <TableHead>Days Remaining</TableHead>
                 <TableHead>Status</TableHead>
               </TableRow>
