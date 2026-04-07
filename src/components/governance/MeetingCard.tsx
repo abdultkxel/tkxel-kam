@@ -40,7 +40,7 @@ export function MeetingCard({ type, meetings, onUpdate }: Props) {
 
   const addMeeting = () => {
     const newMeeting: MeetingActivity = {
-      id: `m-${Date.now()}`, type, scheduledDate: new Date().toISOString().split("T")[0],
+      id: `m-${Date.now()}`, type, accountId: "", accountName: "", scheduledDate: new Date().toISOString().split("T")[0],
       status: "Planned", agenda: "", recordingUrl: "", mom: "", actionItems: [],
       createdAt: new Date().toISOString().split("T")[0],
     };
