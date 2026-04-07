@@ -1,5 +1,5 @@
 import { useParams, useNavigate } from "react-router-dom";
-import { RAG_STYLES, getRagColor, type RiskStatus } from "@/data/accounts";
+import { RAG_STYLES, getRagColor, type RiskStatus, type Account } from "@/data/accounts";
 import { useAccounts } from "@/contexts/AccountsContext";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -14,22 +14,28 @@ import { FinancialsTab } from "@/components/financials/FinancialsTab";
 import { AccountOpportunitiesTab } from "@/components/opportunities/AccountOpportunitiesTab";
 import { getLatestGovernanceEvents } from "@/data/governance";
 
+const DEFAULT_ACCOUNT: Account = {
+  id: "",
+  name: "Unknown Account",
+  segment: "Growth",
+  health: { overall: 0, relationship: 0, contract: 0, resource: 0 },
+  riskStatus: "green",
+  amId: "",
+  amName: "—",
+  industry: "—",
+  arr: "$0",
+  lastUpdated: new Date().toISOString().split("T")[0],
+  contractStart: "",
+  contractEnd: "",
+  stakeholders: 0,
+  activities: [],
+};
+
 export default function AccountDetail() {
   const { id } = useParams();
   const navigate = useNavigate();
   const { accounts } = useAccounts();
-  const account = accounts.find(a => a.id === id);
-
-  if (!account) {
-    return (
-      <div className="text-center py-12">
-        <p className="text-muted-foreground">Account not found.</p>
-        <Button variant="ghost" onClick={() => navigate("/accounts")} className="mt-4">
-          <ArrowLeft className="h-4 w-4 mr-2" /> Back to Accounts
-        </Button>
-      </div>
-    );
-  }
+  const account = accounts.find(a => a.id === id) ?? { ...DEFAULT_ACCOUNT, id: id ?? "" };
 
   const overallRag = getRagColor(account.health.overall);
 
@@ -49,10 +55,18 @@ export default function AccountDetail() {
             <RiskPill status={account.riskStatus} />
           </div>
           <div className="flex items-center gap-4 mt-1.5 text-sm text-muted-foreground flex-wrap">
-            <span>AM: <span className="font-medium text-foreground">{account.amName}</span></span>
-            <span>·</span>
-            <span>{account.industry}</span>
-            <span>·</span>
+            {account.amName && account.amName !== "—" && (
+              <>
+                <span>AM: <span className="font-medium text-foreground">{account.amName}</span></span>
+                <span>·</span>
+              </>
+            )}
+            {account.industry && account.industry !== "—" && (
+              <>
+                <span>{account.industry}</span>
+                <span>·</span>
+              </>
+            )}
             <span>{account.arr} Revenue</span>
             <span>·</span>
             <span className="flex items-center gap-1"><Clock className="h-3 w-3" /> Updated {account.lastUpdated}</span>
@@ -88,59 +102,61 @@ export default function AccountDetail() {
               <CardTitle className="text-base">Recent Activity</CardTitle>
             </CardHeader>
             <CardContent>
-              <div className="relative">
-                <div className="absolute left-3 top-0 bottom-0 w-px bg-border" />
-                <div className="space-y-6">
-                  {/* Governance events */}
-                  {getLatestGovernanceEvents().map((event, idx) => {
-                    const typeColors: Record<string, string> = {
-                      qbr: "bg-primary",
-                      steerco: "bg-rag-amber",
-                      escalation: "bg-rag-red",
-                      meeting: "bg-info",
-                    };
-                    return (
-                      <div key={`gov-${idx}`} className="relative pl-8">
-                        <div className={`absolute left-1.5 top-1 h-3 w-3 rounded-full border-2 border-background ${typeColors[event.type] || "bg-muted-foreground"}`} />
-                        <div>
-                          <div className="flex items-center gap-2 flex-wrap">
-                            <span className="text-sm font-medium text-foreground">{event.title}</span>
-                            <Badge variant="outline" className="text-[10px] capitalize">{event.type}</Badge>
+              {account.activities.length === 0 && getLatestGovernanceEvents().length === 0 ? (
+                <p className="text-sm text-muted-foreground text-center py-6">No activity recorded yet. Start by updating account details in the tabs above.</p>
+              ) : (
+                <div className="relative">
+                  <div className="absolute left-3 top-0 bottom-0 w-px bg-border" />
+                  <div className="space-y-6">
+                    {getLatestGovernanceEvents().map((event, idx) => {
+                      const typeColors: Record<string, string> = {
+                        qbr: "bg-primary",
+                        steerco: "bg-rag-amber",
+                        escalation: "bg-rag-red",
+                        meeting: "bg-info",
+                      };
+                      return (
+                        <div key={`gov-${idx}`} className="relative pl-8">
+                          <div className={`absolute left-1.5 top-1 h-3 w-3 rounded-full border-2 border-background ${typeColors[event.type] || "bg-muted-foreground"}`} />
+                          <div>
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <span className="text-sm font-medium text-foreground">{event.title}</span>
+                              <Badge variant="outline" className="text-[10px] capitalize">{event.type}</Badge>
+                            </div>
+                            <p className="text-xs text-muted-foreground mt-1 flex items-center gap-1">
+                              <Calendar className="h-3 w-3" /> {event.date}
+                            </p>
                           </div>
-                          <p className="text-xs text-muted-foreground mt-1 flex items-center gap-1">
-                            <Calendar className="h-3 w-3" /> {event.date}
-                          </p>
                         </div>
-                      </div>
-                    );
-                  })}
-                  {/* Account activities */}
-                  {account.activities.map((activity) => {
-                    const typeColors: Record<string, string> = {
-                      meeting: "bg-info",
-                      review: "bg-primary",
-                      escalation: "bg-rag-red",
-                      update: "bg-rag-amber",
-                      milestone: "bg-rag-green",
-                    };
-                    return (
-                      <div key={activity.id} className="relative pl-8">
-                        <div className={`absolute left-1.5 top-1 h-3 w-3 rounded-full border-2 border-background ${typeColors[activity.type] || "bg-muted-foreground"}`} />
-                        <div>
-                          <div className="flex items-center gap-2 flex-wrap">
-                            <span className="text-sm font-medium text-foreground">{activity.title}</span>
-                            <Badge variant="outline" className="text-[10px] capitalize">{activity.type}</Badge>
+                      );
+                    })}
+                    {account.activities.map((activity) => {
+                      const typeColors: Record<string, string> = {
+                        meeting: "bg-info",
+                        review: "bg-primary",
+                        escalation: "bg-rag-red",
+                        update: "bg-rag-amber",
+                        milestone: "bg-rag-green",
+                      };
+                      return (
+                        <div key={activity.id} className="relative pl-8">
+                          <div className={`absolute left-1.5 top-1 h-3 w-3 rounded-full border-2 border-background ${typeColors[activity.type] || "bg-muted-foreground"}`} />
+                          <div>
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <span className="text-sm font-medium text-foreground">{activity.title}</span>
+                              <Badge variant="outline" className="text-[10px] capitalize">{activity.type}</Badge>
+                            </div>
+                            <p className="text-sm text-muted-foreground mt-0.5">{activity.description}</p>
+                            <p className="text-xs text-muted-foreground mt-1 flex items-center gap-1">
+                              <Calendar className="h-3 w-3" /> {activity.date}
+                            </p>
                           </div>
-                          <p className="text-sm text-muted-foreground mt-0.5">{activity.description}</p>
-                          <p className="text-xs text-muted-foreground mt-1 flex items-center gap-1">
-                            <Calendar className="h-3 w-3" /> {activity.date}
-                          </p>
                         </div>
-                      </div>
-                    );
-                  })}
+                      );
+                    })}
+                  </div>
                 </div>
-              </div>
+              )}
             </CardContent>
           </Card>
         </TabsContent>
@@ -201,40 +217,6 @@ function HealthCard({ label, score, icon: Icon }: { label: string; score: number
         </div>
       </CardContent>
     </Card>
-  );
-}
-
-function DetailedHealthCard({ label, score, factors }: { label: string; score: number; factors: string[] }) {
-  const rag = getRagColor(score);
-  return (
-    <Card>
-      <CardContent className="pt-6 space-y-3">
-        <div className="flex items-center justify-between">
-          <h4 className="text-sm font-medium text-foreground">{label}</h4>
-          <span className={`text-xl font-bold ${RAG_STYLES[rag].text}`}>{score.toFixed(1)}</span>
-        </div>
-        <div className="h-2 rounded-full bg-border overflow-hidden">
-          <div className={`h-full rounded-full ${RAG_STYLES[rag].dot}`} style={{ width: `${(score / 3) * 100}%` }} />
-        </div>
-        <div className="space-y-1.5 pt-1">
-          {factors.map((f, i) => (
-            <div key={i} className="flex items-center gap-2 text-xs text-muted-foreground">
-              <span className={`h-1.5 w-1.5 rounded-full ${RAG_STYLES[rag].dot}`} />
-              {f}
-            </div>
-          ))}
-        </div>
-      </CardContent>
-    </Card>
-  );
-}
-
-function InfoRow({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="p-3 rounded-lg bg-muted/50">
-      <p className="text-xs text-muted-foreground">{label}</p>
-      <p className="text-sm font-medium text-foreground mt-0.5">{value}</p>
-    </div>
   );
 }
 
