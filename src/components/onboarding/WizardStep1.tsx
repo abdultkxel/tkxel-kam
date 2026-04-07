@@ -134,18 +134,37 @@ export function WizardStep1({ data, onChange, errors }: Props) {
                 </button>
               )}
             </div>
-            <div className="grid grid-cols-2 gap-3">
-              <Input value={contact.name} onChange={e => updateContact(contact.id, "name", e.target.value)} placeholder="Name" />
-              <Input value={contact.title} onChange={e => updateContact(contact.id, "title", e.target.value)} placeholder="Title" />
-              <Select value={contact.seniority} onValueChange={v => updateContact(contact.id, "seniority", v)}>
-                <SelectTrigger><SelectValue placeholder="Seniority" /></SelectTrigger>
-                <SelectContent>{SENIORITY_LEVELS.map(s => <SelectItem key={s} value={s}>{s}</SelectItem>)}</SelectContent>
-              </Select>
-              <Input value={contact.ownerAtTkxel} onChange={e => updateContact(contact.id, "ownerAtTkxel", e.target.value)} placeholder="Owner at Tkxel" />
-              <Select value={contact.type} onValueChange={v => updateContact(contact.id, "type", v)}>
-                <SelectTrigger><SelectValue placeholder="Type" /></SelectTrigger>
-                <SelectContent>{CONTACT_TYPES.map(t => <SelectItem key={t} value={t}>{t}</SelectItem>)}</SelectContent>
-              </Select>
+            <div className="space-y-3">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div className="space-y-1">
+                  <span className="text-[11px] text-muted-foreground">Name</span>
+                  <Input value={contact.name} onChange={e => updateContact(contact.id, "name", e.target.value)} placeholder="Full name" />
+                </div>
+                <div className="space-y-1">
+                  <span className="text-[11px] text-muted-foreground">Title</span>
+                  <Input value={contact.title} onChange={e => updateContact(contact.id, "title", e.target.value)} placeholder="Job title" />
+                </div>
+              </div>
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                <div className="space-y-1">
+                  <span className="text-[11px] text-muted-foreground">Seniority</span>
+                  <Select value={contact.seniority} onValueChange={v => updateContact(contact.id, "seniority", v)}>
+                    <SelectTrigger><SelectValue placeholder="Seniority" /></SelectTrigger>
+                    <SelectContent>{SENIORITY_LEVELS.map(s => <SelectItem key={s} value={s}>{s}</SelectItem>)}</SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-1">
+                  <span className="text-[11px] text-muted-foreground">Owner at Tkxel</span>
+                  <Input value={contact.ownerAtTkxel} onChange={e => updateContact(contact.id, "ownerAtTkxel", e.target.value)} placeholder="Owner name" />
+                </div>
+                <div className="space-y-1">
+                  <span className="text-[11px] text-muted-foreground">Type</span>
+                  <Select value={contact.type} onValueChange={v => updateContact(contact.id, "type", v)}>
+                    <SelectTrigger><SelectValue placeholder="Type" /></SelectTrigger>
+                    <SelectContent>{CONTACT_TYPES.map(t => <SelectItem key={t} value={t}>{t}</SelectItem>)}</SelectContent>
+                  </Select>
+                </div>
+              </div>
             </div>
           </div>
         ))}

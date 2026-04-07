@@ -107,19 +107,34 @@ export function WizardStep5({ data, onChange, prefillStart, prefillEnd }: Props)
                 <Trash2 className="h-4 w-4" />
               </button>
             </div>
-            <div className="grid grid-cols-5 gap-3">
-              <Input value={inv.invoiceNumber} onChange={e => updateInvoice(inv.id, "invoiceNumber", e.target.value)} placeholder="Invoice #" />
-              <Input value={inv.period} onChange={e => updateInvoice(inv.id, "period", e.target.value)} placeholder="Period" />
-              <Input value={inv.amount} onChange={e => updateInvoice(inv.id, "amount", e.target.value)} placeholder="Amount" />
-              <Input type="date" value={inv.dueDate} onChange={e => updateInvoice(inv.id, "dueDate", e.target.value)} />
-              <Select value={inv.status} onValueChange={v => updateInvoice(inv.id, "status", v)}>
-                <SelectTrigger><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="Paid">Paid</SelectItem>
-                  <SelectItem value="Pending">Pending</SelectItem>
-                  <SelectItem value="Overdue">Overdue</SelectItem>
-                </SelectContent>
-              </Select>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div className="space-y-1">
+                <span className="text-[11px] text-muted-foreground">Invoice #</span>
+                <Input value={inv.invoiceNumber} onChange={e => updateInvoice(inv.id, "invoiceNumber", e.target.value)} placeholder="INV-001" />
+              </div>
+              <div className="space-y-1">
+                <span className="text-[11px] text-muted-foreground">Period</span>
+                <Input value={inv.period} onChange={e => updateInvoice(inv.id, "period", e.target.value)} placeholder="Q1 2026" />
+              </div>
+              <div className="space-y-1">
+                <span className="text-[11px] text-muted-foreground">Amount</span>
+                <Input value={inv.amount} onChange={e => updateInvoice(inv.id, "amount", e.target.value)} placeholder="$50,000" />
+              </div>
+              <div className="space-y-1">
+                <span className="text-[11px] text-muted-foreground">Due Date</span>
+                <Input type="date" value={inv.dueDate} onChange={e => updateInvoice(inv.id, "dueDate", e.target.value)} />
+              </div>
+              <div className="space-y-1">
+                <span className="text-[11px] text-muted-foreground">Status</span>
+                <Select value={inv.status} onValueChange={v => updateInvoice(inv.id, "status", v)}>
+                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="Paid">Paid</SelectItem>
+                    <SelectItem value="Pending">Pending</SelectItem>
+                    <SelectItem value="Overdue">Overdue</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
             </div>
           </div>
         ))}
@@ -139,19 +154,34 @@ export function WizardStep5({ data, onChange, prefillStart, prefillEnd }: Props)
                 <Trash2 className="h-4 w-4" />
               </button>
             </div>
-            <div className="grid grid-cols-5 gap-3">
-              <Input value={sow.reference} onChange={e => updateSow(sow.id, "reference", e.target.value)} placeholder="Reference" />
-              <Input value={sow.description} onChange={e => updateSow(sow.id, "description", e.target.value)} placeholder="Description" />
-              <Input type="date" value={sow.startDate} onChange={e => updateSow(sow.id, "startDate", e.target.value)} />
-              <Input value={sow.value} onChange={e => updateSow(sow.id, "value", e.target.value)} placeholder="Value" />
-              <Select value={sow.status} onValueChange={v => updateSow(sow.id, "status", v)}>
-                <SelectTrigger><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="Active">Active</SelectItem>
-                  <SelectItem value="Completed">Completed</SelectItem>
-                  <SelectItem value="Cancelled">Cancelled</SelectItem>
-                </SelectContent>
-              </Select>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div className="space-y-1">
+                <span className="text-[11px] text-muted-foreground">Reference</span>
+                <Input value={sow.reference} onChange={e => updateSow(sow.id, "reference", e.target.value)} placeholder="SOW-001" />
+              </div>
+              <div className="space-y-1">
+                <span className="text-[11px] text-muted-foreground">Description</span>
+                <Input value={sow.description} onChange={e => updateSow(sow.id, "description", e.target.value)} placeholder="Project description" />
+              </div>
+              <div className="space-y-1">
+                <span className="text-[11px] text-muted-foreground">Start Date</span>
+                <Input type="date" value={sow.startDate} onChange={e => updateSow(sow.id, "startDate", e.target.value)} />
+              </div>
+              <div className="space-y-1">
+                <span className="text-[11px] text-muted-foreground">Value</span>
+                <Input value={sow.value} onChange={e => updateSow(sow.id, "value", e.target.value)} placeholder="$100,000" />
+              </div>
+              <div className="space-y-1">
+                <span className="text-[11px] text-muted-foreground">Status</span>
+                <Select value={sow.status} onValueChange={v => updateSow(sow.id, "status", v)}>
+                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="Active">Active</SelectItem>
+                    <SelectItem value="Completed">Completed</SelectItem>
+                    <SelectItem value="Cancelled">Cancelled</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
             </div>
           </div>
         ))}
