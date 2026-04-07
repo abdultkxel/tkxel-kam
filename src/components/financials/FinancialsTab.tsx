@@ -1,12 +1,13 @@
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import { Account, getRagColor, RAG_STYLES, type RiskStatus } from "@/data/accounts";
-import { MOCK_FINANCIAL_DATA, getContractStatus, getRenewalActionDeadline, getArrNumeric, formatCurrency, type InvoiceStatus } from "@/data/financials";
+import { MOCK_FINANCIAL_DATA, getContractStatus, getRenewalActionDeadline, getArrNumeric, formatCurrency, type InvoiceStatus, type FinancialData } from "@/data/financials";
 import { MOCK_STRATEGY_DATA, SERVICE_CATALOG, createDefaultStrategy } from "@/data/strategy";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { AlertTriangle, TrendingUp, TrendingDown, Calendar, DollarSign, FileText, Clock, Shield, ArrowUpRight, CheckCircle2 } from "lucide-react";
 import { differenceInDays, differenceInMonths, addMonths, format } from "date-fns";
+import { FinancialEntryForm } from "./FinancialEntryForm";
 
 interface FinancialsTabProps {
   account: Account;
