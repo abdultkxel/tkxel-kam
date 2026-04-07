@@ -177,7 +177,7 @@ export function AddAccountWizard({ open, onClose, onAccountCreated }: Props) {
     const generatedTasks: any[] = [];
     steps.filter(s => s.id >= 2 && s.id <= 6).forEach(step => {
       step.subSections.forEach(ss => {
-        ss.tasks.filter(t => t.checked).forEach(task => {
+        ss.tasks.filter(t => (t.value || "").trim().length > 0).forEach(task => {
           generatedTasks.push({
             id: `onb-${id}-${task.id}`,
             title: task.title,
