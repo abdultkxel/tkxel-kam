@@ -131,7 +131,7 @@ export function AddAccountWizard({ open, onClose, onAccountCreated }: Props) {
       contractEnd: wizardData.financials.contractEnd || "",
       stakeholders: k.contacts.filter(c => c.name.trim()).length,
       activities: [],
-      onboardingStatus: "in_progress",
+      onboardingStatus: "complete",
     };
 
     // Generate auto-tasks for skipped steps
