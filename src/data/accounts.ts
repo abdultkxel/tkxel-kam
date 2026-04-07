@@ -33,6 +33,7 @@ export interface Account {
   contractEnd: string;
   stakeholders: number;
   activities: AccountActivity[];
+  onboardingStatus?: "in_progress" | "complete";
 }
 
 export const MOCK_ACCOUNTS: Account[] = [

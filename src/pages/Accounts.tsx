@@ -1,12 +1,14 @@
 import { useState, useMemo } from "react";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "@/contexts/AuthContext";
-import { MOCK_ACCOUNTS, RAG_STYLES, getRagColor, type RiskStatus, type Segment } from "@/data/accounts";
+import { MOCK_ACCOUNTS, RAG_STYLES, getRagColor, type RiskStatus, type Segment, type Account } from "@/data/accounts";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
+import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Search, Users, TrendingUp, FileText, Cpu } from "lucide-react";
+import { Search, Users, TrendingUp, FileText, Cpu, Plus } from "lucide-react";
+import { AddAccountWizard } from "@/components/onboarding/AddAccountWizard";
 
 export default function Accounts() {
   const { user } = useAuth();
@@ -14,11 +16,18 @@ export default function Accounts() {
   const [search, setSearch] = useState("");
   const [segmentFilter, setSegmentFilter] = useState<string>("all");
   const [riskFilter, setRiskFilter] = useState<string>("all");
+  const [wizardOpen, setWizardOpen] = useState(false);
+  const [newAccounts, setNewAccounts] = useState<Account[]>([]);
+  const [onboardingTasks, setOnboardingTasks] = useState<any[]>([]);
+
+  // Check for draft
+  const hasDraft = !!localStorage.getItem("kam-onboarding-draft");
 
   const accounts = useMemo(() => {
+    const all = [...MOCK_ACCOUNTS, ...newAccounts];
     let list = user?.role === "am"
-      ? MOCK_ACCOUNTS.filter(a => a.amId === user.id)
-      : MOCK_ACCOUNTS;
+      ? all.filter(a => a.amId === user.id)
+      : all;
 
     if (search) {
       const q = search.toLowerCase();
@@ -31,17 +40,38 @@ export default function Accounts() {
       list = list.filter(a => a.riskStatus === riskFilter);
     }
     return list;
-  }, [user, search, segmentFilter, riskFilter]);
+  }, [user, search, segmentFilter, riskFilter, newAccounts]);
+
+  const handleAccountCreated = (account: Account, tasks: any[]) => {
+    setNewAccounts(prev => [...prev, account]);
+    setOnboardingTasks(prev => [...prev, ...tasks]);
+    setWizardOpen(false);
+    navigate(`/accounts/${account.id}`);
+  };
 
   if (!user) return null;
 
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="text-2xl font-semibold text-foreground">Accounts</h1>
-        <p className="text-sm text-muted-foreground mt-1">
-          {user.role === "am" ? "Your assigned accounts" : "All managed accounts"} · {accounts.length} accounts
-        </p>
+      <div className="flex items-start justify-between">
+        <div>
+          <h1 className="text-2xl font-semibold text-foreground">Accounts</h1>
+          <p className="text-sm text-muted-foreground mt-1">
+            {user.role === "am" ? "Your assigned accounts" : "All managed accounts"} · {accounts.length} accounts
+          </p>
+        </div>
+        <div className="flex items-center gap-2">
+          {hasDraft && (
+            <Button variant="outline" size="sm" onClick={() => setWizardOpen(true)}
+              className="border-dashed border-primary text-primary">
+              Resume Draft
+            </Button>
+          )}
+          <Button onClick={() => setWizardOpen(true)}
+            className="bg-primary text-primary-foreground hover:bg-primary/90">
+            <Plus className="h-4 w-4 mr-1" /> Add Account
+          </Button>
+        </div>
       </div>
 
       {/* Filters */}
@@ -81,6 +111,32 @@ export default function Accounts() {
       {/* Account Cards Grid */}
       <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
         {accounts.map((account) => {
+          const isOnboarding = account.onboardingStatus === "in_progress";
+
+          if (isOnboarding) {
+            return (
+              <Card key={account.id}
+                className="cursor-pointer hover:shadow-lg transition-all duration-200 hover:-translate-y-0.5 border-dashed border-2 border-primary/30"
+                onClick={() => navigate(`/accounts/${account.id}`)}>
+                <CardContent className="p-5 space-y-3">
+                  <div className="flex items-start justify-between">
+                    <div className="flex-1 min-w-0">
+                      <h3 className="font-semibold text-foreground truncate">{account.name}</h3>
+                      <p className="text-xs text-muted-foreground mt-0.5">{account.industry} · {account.arr} Revenue</p>
+                    </div>
+                    <Badge className="bg-blue-100 text-blue-700 border-blue-200 text-[10px] uppercase tracking-wide font-semibold">
+                      Onboarding
+                    </Badge>
+                  </div>
+                  <div className="flex items-center gap-2 p-3 rounded-lg bg-blue-50 text-blue-700">
+                    <div className="text-sm font-medium">Onboarding In Progress</div>
+                  </div>
+                  <p className="text-xs text-muted-foreground">Complete the onboarding wizard to activate this account.</p>
+                </CardContent>
+              </Card>
+            );
+          }
+
           const overallRag = getRagColor(account.health.overall);
           const relRag = getRagColor(account.health.relationship);
           const conRag = getRagColor(account.health.contract);
@@ -93,7 +149,6 @@ export default function Accounts() {
               onClick={() => navigate(`/accounts/${account.id}`)}
             >
               <CardContent className="p-5 space-y-4">
-                {/* Header */}
                 <div className="flex items-start justify-between">
                   <div className="flex-1 min-w-0">
                     <h3 className="font-semibold text-foreground truncate">{account.name}</h3>
@@ -113,7 +168,6 @@ export default function Accounts() {
                   </div>
                 </div>
 
-                {/* Overall Health Score */}
                 <div className="flex items-center gap-3 p-3 rounded-lg bg-muted/50">
                   <div className={`text-2xl font-bold ${RAG_STYLES[overallRag].text}`}>
                     {account.health.overall.toFixed(1)}
@@ -132,14 +186,12 @@ export default function Accounts() {
                   </div>
                 </div>
 
-                {/* Health Dimensions */}
                 <div className="grid grid-cols-3 gap-2">
                   <HealthDimension icon={Users} label="Relationship" score={account.health.relationship} rag={relRag} />
                   <HealthDimension icon={FileText} label="Contract" score={account.health.contract} rag={conRag} />
                   <HealthDimension icon={Cpu} label="Resource" score={account.health.resource} rag={resRag} />
                 </div>
 
-                {/* Footer */}
                 <div className="flex items-center justify-between pt-1 border-t border-border">
                   {user.role !== "am" && (
                     <span className="text-xs text-muted-foreground">{account.amName}</span>
@@ -157,6 +209,9 @@ export default function Accounts() {
           <p className="text-muted-foreground">No accounts match your filters.</p>
         </div>
       )}
+
+      <AddAccountWizard open={wizardOpen} onClose={() => setWizardOpen(false)}
+        onAccountCreated={handleAccountCreated} />
     </div>
   );
 }
