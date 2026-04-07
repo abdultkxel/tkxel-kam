@@ -357,9 +357,11 @@ export function MeetingsCalendar() {
           </DialogHeader>
           <div className="space-y-4 py-2">
             <div>
-              <label className="text-sm font-medium text-foreground mb-1.5 block">Event Title</label>
+              <label className="text-sm font-medium text-foreground mb-1.5 block">
+                {newEvent.type === "Task" ? "Task Name" : "Event Title"}
+              </label>
               <Input
-                placeholder="e.g. Weekly Sync, QBR Prep..."
+                placeholder={newEvent.type === "Task" ? "e.g. Follow up with client, Prepare proposal..." : "e.g. Weekly Sync, QBR Prep..."}
                 value={newEvent.title}
                 onChange={e => setNewEvent(prev => ({ ...prev, title: e.target.value }))}
               />
