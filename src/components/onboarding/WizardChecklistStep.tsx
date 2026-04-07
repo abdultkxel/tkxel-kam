@@ -1,12 +1,12 @@
 import { useState } from "react";
 import { type OnboardingStep } from "@/data/onboarding";
-import { Checkbox } from "@/components/ui/checkbox";
+import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { ChevronDown, ChevronRight } from "lucide-react";
 
 interface Props {
   step: OnboardingStep;
-  onToggleTask: (taskId: string) => void;
+  onTaskValueChange: (taskId: string, value: string) => void;
   notes: string;
   onNotesChange: (notes: string) => void;
   errors?: Record<string, string>;
@@ -14,9 +14,10 @@ interface Props {
 }
 
 export function WizardChecklistStep({
-  step, onToggleTask, notes, onNotesChange, errors = {}, shakeError,
+  step, onTaskValueChange, notes, onNotesChange, errors = {}, shakeError,
 }: Props) {
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
+  const subSections = step.subSections || [];
 
   const toggleSection = (ssId: string) => {
     setCollapsed(prev => ({ ...prev, [ssId]: !prev[ssId] }));
@@ -56,9 +57,9 @@ export function WizardChecklistStep({
       )}
 
       <div className="space-y-3">
-        {step.subSections.map(ss => {
+        {subSections.map(ss => {
           const isCollapsed = collapsed[ss.id] ?? false;
-          const checkedCount = ss.tasks.filter(t => t.checked).length;
+          const filledCount = ss.tasks.filter(t => (t.value || "").trim().length > 0).length;
           return (
             <div key={ss.id} className="border border-border rounded-md overflow-hidden">
               <button
@@ -72,29 +73,35 @@ export function WizardChecklistStep({
                 }
                 <span className="flex-1 text-sm font-semibold text-foreground">{ss.title}</span>
                 <span className="text-xs text-muted-foreground">
-                  {checkedCount}/{ss.tasks.length}
+                  {filledCount}/{ss.tasks.length}
                 </span>
               </button>
               {!isCollapsed && (
-                <div className="px-4 pb-3 space-y-2">
-                  {ss.tasks.map(task => (
-                    <div key={task.id}
-                      className={`flex items-start gap-3 p-3 rounded-md border transition-all ${
-                        task.checked
-                          ? "border-l-[3px] border-l-[hsl(142,72%,29%)] bg-[hsl(138,76%,97%)]"
-                          : shakeError && step.required
-                            ? "border-destructive animate-[shake_0.3s_ease-in-out] border-l-[3px] border-l-destructive bg-[hsl(0,84%,97%)]"
-                            : "border-border"
-                      }`}
-                    >
-                      <Checkbox checked={task.checked} onCheckedChange={() => onToggleTask(task.id)}
-                        className="mt-0.5" />
-                      <div className="flex-1">
-                        <p className="text-sm font-medium text-foreground">{task.title}</p>
-                        <p className="text-[13px] text-muted-foreground mt-0.5">{task.helper}</p>
+                <div className="px-4 pb-4 space-y-4">
+                  {ss.tasks.map(task => {
+                    const hasValue = (task.value || "").trim().length > 0;
+                    const hasError = shakeError && step.required && !hasValue;
+                    return (
+                      <div key={task.id}
+                        className={`space-y-1.5 p-3 rounded-md border transition-all ${
+                          hasValue
+                            ? "border-l-[3px] border-l-[hsl(142,72%,29%)] bg-[hsl(138,76%,97%)]"
+                            : hasError
+                              ? "border-destructive animate-[shake_0.3s_ease-in-out] border-l-[3px] border-l-destructive bg-[hsl(0,84%,97%)]"
+                              : "border-border"
+                        }`}
+                      >
+                        <label className="text-sm font-medium text-foreground">{task.title}</label>
+                        <p className="text-[13px] text-muted-foreground">{task.helper}</p>
+                        <Input
+                          value={task.value || ""}
+                          onChange={e => onTaskValueChange(task.id, e.target.value)}
+                          placeholder="Enter details..."
+                          className={hasError ? "border-destructive" : ""}
+                        />
                       </div>
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
               )}
             </div>
