@@ -43,7 +43,6 @@ export default function Accounts() {
   const handleAccountCreated = (account: Account, _tasks: any[]) => {
     addAccount(account);
     setWizardOpen(false);
-    navigate(`/accounts/${account.id}`);
   };
 
   if (!user) return null;
