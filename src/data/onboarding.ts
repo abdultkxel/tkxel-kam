@@ -281,7 +281,7 @@ export const STEP_DEFS: StepDef[] = [
   { id: 4, title: "Governance", required: false, tabName: "Governance" },
   { id: 5, title: "Financials", required: false, tabName: "Financials" },
   { id: 6, title: "Opportunities", required: false, tabName: "Opportunities" },
-  { id: 7, title: "Review & Confirm", required: true, tabName: "" },
+  { id: 7, title: "Review & Confirm", required: false, tabName: "" },
 ];
 
 // Auto-generated tasks when steps are skipped
