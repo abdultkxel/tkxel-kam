@@ -50,7 +50,7 @@ export function WizardStep1({ data, onChange, errors }: Props) {
       <fieldset className="space-y-4">
         <legend className="text-sm font-semibold text-foreground uppercase tracking-wide mb-2">Account Record</legend>
         <Field label="Account Name" error={errors.accountName} required>
-          <Input value={data.accountName} onChange={e => onChange({ ...data, accountName: e.target.value, companyName: e.target.value })}
+          <Input value={data.accountName} onChange={e => set("accountName", e.target.value)}
             placeholder="e.g. Acme Corp" className={errors.accountName ? "border-destructive" : ""} />
         </Field>
         <Field label="Segment" error={errors.segment} required>
