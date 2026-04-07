@@ -30,6 +30,7 @@ const App = () => (
         <NotificationsProvider>
           <OpportunitiesProvider>
             <OpportunityDetailProvider>
+            <AccountsProvider>
               <BrowserRouter>
                 <Routes>
                   <Route path="/login" element={<Login />} />
