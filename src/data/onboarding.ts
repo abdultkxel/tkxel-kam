@@ -5,6 +5,12 @@ export interface OnboardingTask {
   checked: boolean;
 }
 
+export interface OnboardingSubSection {
+  id: string;
+  title: string;
+  tasks: OnboardingTask[];
+}
+
 export interface OnboardingStep {
   id: number;
   title: string;
@@ -12,11 +18,13 @@ export interface OnboardingStep {
   required: boolean;
   skipped: boolean;
   completed: boolean;
-  tasks: OnboardingTask[];
+  sectionLabel?: string; // e.g. "A", "B", "C", "D", "E"
+  infoBanner?: string;
+  advisoryBanner?: string;
+  subSections: OnboardingSubSection[];
 }
 
 export interface AccountFormData {
-  // Step 1
   accountName: string;
   industry: string;
   segment: "Growth" | "Retention" | "";
@@ -33,12 +41,6 @@ export interface AccountFormData {
   primaryContactName: string;
   primaryContactRole: string;
   primaryContactEmail: string;
-  // Step 3 KYC fields
-  clientBusinessSummary: string;
-  clientSuccessCriteria: string;
-  keyBusinessChallenges: string;
-  kycDocReference: string;
-  // Notes per step
   stepNotes: Record<number, string>;
 }
 
@@ -58,146 +60,228 @@ export const SERVICE_LINES = [
 
 export const DELIVERY_LOCATIONS = ["Onshore", "Offshore", "Nearshore", "Hybrid"];
 
-export const STEP_DEFINITIONS: Array<{
+export const TOTAL_STEPS = 7;
+
+interface StepDefinition {
   id: number;
   title: string;
   subtitle?: string;
   required: boolean;
-  tasks: Array<{ title: string; helper: string }>;
-}> = [
+  sectionLabel?: string;
+  infoBanner?: string;
+  advisoryBanner?: string;
+  subSections: Array<{
+    title: string;
+    tasks: Array<{ title: string; helper: string }>;
+  }>;
+}
+
+export const STEP_DEFINITIONS: StepDefinition[] = [
+  { id: 1, title: "Account Details", required: true, subSections: [] },
   {
-    id: 1, title: "Account Details", required: true, tasks: [],
-  },
-  {
-    id: 2, title: "Account Setup & Access", required: false,
-    subtitle: "Confirm internal setup and tool access before beginning engagement.",
-    tasks: [
-      { title: "Confirm account assignment by manager", helper: "Ensure the account has been formally assigned to you in the system." },
-      { title: "Verify stakeholders (client + internal team)", helper: "Confirm who the client contacts are and which internal team is supporting." },
-      { title: "Set up communication channels", helper: "Establish email threads, Slack/Teams channels, and shared workspaces." },
-      { title: "Ensure access to tools (JIRA, CRM, repos, dashboards)", helper: "Request and verify access to all required platforms before kickoff." },
+    id: 2, title: "A: Market Research", required: true,
+    sectionLabel: "A",
+    subtitle: "A strategic view of the client's operating environment.",
+    infoBanner: "Market research is required to activate this account.",
+    subSections: [
+      {
+        title: "A1. Industry Overview",
+        tasks: [
+          { title: "Document industry category, sub-segment, and maturity stage", helper: "Classify the client's industry and where it sits in its growth lifecycle." },
+          { title: "Research market size and growth rate", helper: "Find current market size data and projected CAGR for this industry." },
+          { title: "Identify industry disruptions or inflection points", helper: "Note any technology shifts, regulatory changes, or events reshaping this industry." },
+          { title: "Map key value chains and major players", helper: "Identify the main participants in the client's industry ecosystem." },
+        ],
+      },
+      {
+        title: "A2. Market Landscape & Trends",
+        tasks: [
+          { title: "Document typical buying cycles in this industry", helper: "Understand how and when clients in this sector typically procure services." },
+          { title: "Research adoption patterns for engineering, product, or data services", helper: "How mature is the use of outsourced tech services in this sector?" },
+          { title: "Identify tech trends impacting spend", helper: "Note AI, cloud, automation, or other trends driving budget allocation." },
+          { title: "Document macro trends influencing demand", helper: "Economic, geopolitical, or social factors affecting this client's market." },
+        ],
+      },
+      {
+        title: "A3. Competitor Analysis",
+        tasks: [
+          { title: "Identify direct competitors (industry peers)", helper: "List the main companies competing with this client in their market." },
+          { title: "Complete product or feature comparison (if applicable)", helper: "How does the client's product/service compare to competitors?" },
+          { title: "Document competitor partnerships or technology choices", helper: "Note which vendors or platforms competitors are using." },
+          { title: "Assess client's competitive positioning", helper: "Where does the client stand — leader, challenger, niche player?" },
+          { title: "Define how Tkxel can differentiate within this context", helper: "Articulate the Tkxel advantage specific to this client's competitive landscape." },
+        ],
+      },
+      {
+        title: "A4. Regulatory & Compliance Factors",
+        tasks: [
+          { title: "Identify applicable industry standards (HIPAA, SOC2, GDPR, etc.)", helper: "List all compliance frameworks relevant to this client's industry and geography." },
+          { title: "Document compliance obligations affecting architecture, data, or delivery", helper: "Note how regulatory requirements will shape how Tkxel designs and delivers." },
+          { title: "Flag upcoming regulatory changes", helper: "Are any new laws or standards on the horizon that could affect this engagement?" },
+        ],
+      },
     ],
   },
   {
-    id: 3, title: "Initial KYC", required: true,
-    subtitle: "Document the client's business context, goals, and engagement scope. This section is required to activate the account.",
-    tasks: [
-      { title: "Complete company background research", helper: "Review the client's website, recent news, annual reports, and market presence." },
-      { title: "Identify business model, offerings, and market positioning", helper: "Understand what the client sells, who their customers are, and how they compete." },
-      { title: "Map key stakeholders (decision makers, influencers, users)", helper: "Identify who approves budgets, who influences decisions, and who uses the service." },
-      { title: "Capture client goals, expectations, and success criteria", helper: "Document what success looks like for this client over the next 6–12 months." },
-      { title: "Document engagement scope and services in use", helper: "List all active services Tkxel is delivering and the agreed scope of work." },
+    id: 3, title: "B: Client Research", required: true,
+    sectionLabel: "B",
+    subtitle: "A comprehensive understanding of the client as an organisation.",
+    infoBanner: "Client research is required to activate this account.",
+    subSections: [
+      {
+        title: "B1. Company Snapshot",
+        tasks: [
+          { title: "Document year founded, company size (employees and revenue if public)", helper: "Establish the basic facts about the client's scale and maturity." },
+          { title: "Record HQ location, global presence, and regions served", helper: "Understand the client's geographic footprint and where they operate." },
+          { title: "Confirm ownership structure (public, private, venture-backed)", helper: "Note funding status, investors, or listed exchange if applicable." },
+        ],
+      },
+      {
+        title: "B2. Vision, Mission & Strategy",
+        tasks: [
+          { title: "Document stated company direction and key business goals", helper: "Research the client's publicly stated strategy and priorities." },
+          { title: "Capture public statements from leadership", helper: "Note CEO/leadership quotes, blog posts, or earnings call highlights." },
+          { title: "Document product and innovation priorities", helper: "What is the client investing in building or launching?" },
+        ],
+      },
+      {
+        title: "B3. Company History & Evolution",
+        tasks: [
+          { title: "Document founding story and major pivots", helper: "Understand how the company has evolved and what shaped its current form." },
+          { title: "Record acquisitions, mergers, or restructuring events", helper: "Flag any M&A activity that may affect stakeholders or delivery context." },
+          { title: "Note major leadership changes", helper: "Recent C-level or senior leadership changes that could affect the engagement." },
+        ],
+      },
+      {
+        title: "B4. Stakeholder Map",
+        tasks: [
+          { title: "Map each stakeholder: name, role, and seniority level", helper: "Build a complete list of client-side contacts involved in the engagement." },
+          { title: "Assess influence power for each stakeholder (High / Medium / Low)", helper: "Classify how much weight each person carries in decisions." },
+          { title: "Document decision-making authority per stakeholder", helper: "Identify who can approve, block, or accelerate key decisions." },
+          { title: "Record preferred communication style per stakeholder", helper: "Note whether they prefer email, calls, Slack, formal reports, etc." },
+          { title: "Identify sponsorship potential for each stakeholder", helper: "Flag stakeholders who could become internal champions for Tkxel." },
+          { title: "Rate relationship strength baseline per stakeholder", helper: "Score each relationship: Strong / Neutral / At Risk." },
+        ],
+      },
+      {
+        title: "B5. Technical Landscape",
+        tasks: [
+          { title: "Document tech stack overview", helper: "List the primary languages, frameworks, and platforms the client uses." },
+          { title: "Map architecture components", helper: "Understand the client's system architecture at a high level." },
+          { title: "Document APIs and integrations", helper: "Identify key integration points Tkxel's work will need to interact with." },
+          { title: "Map data pipelines and cloud providers", helper: "Note how data flows and which cloud infrastructure is in use." },
+          { title: "Identify dependencies, constraints, and legacy systems", helper: "Flag any technical debt or legacy systems that could impact delivery." },
+        ],
+      },
     ],
   },
   {
-    id: 4, title: "Stakeholder Mapping", required: false,
-    subtitle: "Build a clear picture of the client's internal structure and key contacts.",
-    tasks: [
-      { title: "Identify primary, secondary, and escalation contacts", helper: "Define the go-to contacts at each level of the client organisation." },
-      { title: "Map roles, responsibilities, and influence levels", helper: "Classify each stakeholder by their role (decision maker, champion, blocker, etc.)." },
-      { title: "Document communication preferences and cadence", helper: "Note preferred channels, time zones, and how often each stakeholder wants updates." },
-      { title: "Establish relationship strength baseline", helper: "Rate the current relationship strength (Strong / Neutral / At Risk) for each contact." },
+    id: 4, title: "C: Stakeholder Details", required: true,
+    sectionLabel: "C",
+    subtitle: "Map all client-side and Tkxel-side stakeholders for this engagement.",
+    infoBanner: "Stakeholder details are required to activate this account.",
+    subSections: [
+      {
+        title: "C1. Client-Side Stakeholder Details",
+        tasks: [
+          { title: "Document key decision-makers (name, role, influence level)", helper: "List all client-side people with authority over budget or strategic direction." },
+          { title: "Identify operational contacts (primary day-to-day POCs)", helper: "Who does Tkxel interact with on a regular working basis?" },
+          { title: "Document recent org changes (new hires, departures, restructuring)", helper: "Flag any changes in the client org that could affect the engagement dynamic." },
+          { title: "Build influence map (who impacts decisions, including informal influencers)", helper: "Go beyond org charts — identify who people actually listen to." },
+          { title: "Document communication preferences (email/call cadence, style)", helper: "Note how often and through what channels each client contact prefers to engage." },
+        ],
+      },
+      {
+        title: "C2. Tkxel-Side Stakeholder Mapping",
+        tasks: [
+          { title: "Confirm assigned AM, Delivery Lead, PM, and Technical Leads", helper: "Ensure all internal roles are filled and assigned to this account." },
+          { title: "Identify executive sponsor (if applicable)", helper: "Is there a Tkxel executive sponsoring this relationship?" },
+          { title: "Define internal communication rhythm (sync cadence)", helper: "Set the schedule for internal team check-ins on this account." },
+          { title: "Confirm ownership by function (sales, finance, delivery)", helper: "Ensure each function knows their responsibilities on this account." },
+        ],
+      },
     ],
   },
   {
-    id: 5, title: "Service & Delivery Mapping", required: false,
-    subtitle: "Map all active services and the teams responsible for delivery.",
-    tasks: [
-      { title: "List all active services being delivered", helper: "Create a complete inventory of every service or workstream currently running." },
-      { title: "Map teams/resources against each service", helper: "Identify which Tkxel team members own each service area." },
-      { title: "Identify dependencies across teams or systems", helper: "Document any cross-team handoffs, shared infrastructure, or integration points." },
-      { title: "Validate delivery model and workflows", helper: "Confirm how delivery is structured (Agile sprints, retainers, project-based, etc.)." },
+    id: 5, title: "D: Tkxel Engagement", required: true,
+    sectionLabel: "D",
+    subtitle: "Capture all active engagements, delivery models, and contractual obligations.",
+    infoBanner: "Engagement details are required to activate this account.",
+    subSections: [
+      {
+        title: "D1. Project Charters",
+        tasks: [
+          { title: "Document objectives and scope for each active engagement", helper: "What is each project trying to achieve, and what is in/out of scope?" },
+          { title: "Build milestone roadmap per engagement", helper: "Map out the key delivery milestones and target dates." },
+          { title: "Define success metrics per engagement", helper: "What measurable outcomes define success for each project?" },
+          { title: "Document key contacts and dependencies per engagement", helper: "Note who owns each workstream and what it depends on internally or externally." },
+        ],
+      },
+      {
+        title: "D2. Engagement Models",
+        tasks: [
+          { title: "Specify the delivery model for each engagement", helper: "Confirm whether each workstream is staff aug, dedicated team, fixed-price, managed services, or support/maintenance." },
+          { title: "Document the rationale for each model choice", helper: "Why was this model selected — client preference, risk, scope certainty?" },
+        ],
+      },
+      {
+        title: "D3. Contractual Obligations & SLAs",
+        tasks: [
+          { title: "Document contract terms and delivery commitments", helper: "Capture the key obligations Tkxel has agreed to in writing." },
+          { title: "Record support levels and escalation procedures", helper: "What SLAs apply, and how are escalations handled contractually?" },
+          { title: "Note renewal windows and pricing terms", helper: "When does each contract expire, and what are the renewal conditions?" },
+          { title: "Flag any penalties or legal considerations", helper: "Are there performance penalties, IP clauses, or legal risks to be aware of?" },
+        ],
+      },
+      {
+        title: "D4. Past Engagement Summary",
+        tasks: [
+          { title: "Document what Tkxel has previously delivered for this client", helper: "Summarise completed projects, outcomes, and deliverables." },
+          { title: "Capture issues, blockers, and escalations from past engagements", helper: "What went wrong before, and how was it resolved?" },
+          { title: "Document learnings and best practices", helper: "What worked well and should be repeated on this account?" },
+          { title: "Assess client sentiment over time", helper: "Has the client's satisfaction been improving, stable, or declining?" },
+        ],
+      },
     ],
   },
   {
-    id: 6, title: "Account Health Baseline", required: false,
-    subtitle: "Capture initial health indicators to establish a starting benchmark.",
-    tasks: [
-      { title: "Capture delivery performance baseline", helper: "Document current SLA adherence, sprint velocity, or milestone completion rate." },
-      { title: "Capture financial health baseline", helper: "Note invoice status, payment history, and any outstanding financial concerns." },
-      { title: "Capture CSAT baseline (if available)", helper: "Record any existing satisfaction scores or qualitative client sentiment." },
-      { title: "Capture resource health baseline", helper: "Assess team capacity, morale, and any resourcing gaps." },
-      { title: "Calculate initial account health score", helper: "Enter scores for Relationship, Contract, and Resource health (1–3 scale)." },
-      { title: "Identify early risks or gaps", helper: "Flag any concerns surfaced during baseline capture for immediate attention." },
+    id: 6, title: "E: Financial Landscape", required: false,
+    sectionLabel: "E",
+    subtitle: "A structured financial view enabling forecasting and risk assessment.",
+    advisoryBanner: "Recommended: Complete the financial landscape to enable accurate forecasting and risk scoring for this account.",
+    subSections: [
+      {
+        title: "E1. Renewal Cycle",
+        tasks: [
+          { title: "Document contract end dates and renewal dependencies", helper: "Map out when each contract expires and what triggers renewal discussions." },
+          { title: "Assess renewal risks and pricing sensitivity", helper: "Are there signals the client may not renew, or may push back on pricing?" },
+        ],
+      },
+      {
+        title: "E2. Payment Behaviour",
+        tasks: [
+          { title: "Document payment history (on-time, delays, disputes)", helper: "Review invoice records to establish the client's payment track record." },
+          { title: "Identify any credit risk signals", helper: "Are there signs of financial stress, missed payments, or disputes?" },
+        ],
+      },
+      {
+        title: "E3. Gross Margins",
+        tasks: [
+          { title: "Calculate margin by project and blended across the account", helper: "Understand profitability at both the project and account level." },
+          { title: "Document month-over-month margin trends", helper: "Is the account becoming more or less profitable over time?" },
+          { title: "Identify risks to margin stability", helper: "What could erode margins — scope creep, resource cost, FX, etc.?" },
+        ],
+      },
+      {
+        title: "E4. Billing Models",
+        tasks: [
+          { title: "Document the billing model per engagement", helper: "Is each workstream billed hourly, as a monthly pod, by milestone, or as a managed service?" },
+          { title: "Confirm billing cadence and invoicing contacts", helper: "When are invoices issued, and who approves them on the client side?" },
+        ],
+      },
     ],
   },
-  {
-    id: 7, title: "Risk Assessment", required: false,
-    subtitle: "Identify and document risks before they become issues.",
-    tasks: [
-      { title: "Identify competitors or alternative vendors", helper: "Note any competing vendors the client is evaluating or currently using." },
-      { title: "Identify leadership or organisational changes", helper: "Flag any recent or upcoming changes in client-side leadership or structure." },
-      { title: "Identify payment or billing risks", helper: "Review contract terms and note any payment delays, disputes, or concerns." },
-      { title: "Identify geopolitical or external risks", helper: "Consider macro-level risks that could affect the client's business or engagement." },
-      { title: "Document mitigation considerations", helper: "For each risk identified, note the proposed mitigation or monitoring plan." },
-    ],
-  },
-  {
-    id: 8, title: "Growth Opportunity Mapping", required: false,
-    subtitle: "Identify expansion potential within the account.",
-    tasks: [
-      { title: "Identify unused service areas (white space)", helper: "Map services Tkxel offers that the client is not yet using." },
-      { title: "Map upsell / cross-sell opportunities", helper: "Document specific opportunities with estimated value and likelihood." },
-      { title: "Align opportunities with client business goals", helper: "Tie each opportunity back to a stated client goal or pain point." },
-      { title: "Categorise account as Growth or Retention focus", helper: "Confirm the strategic priority for this account based on opportunity and risk." },
-    ],
-  },
-  {
-    id: 9, title: "Resource Health Assessment", required: false,
-    subtitle: "Evaluate the Tkxel team working on this account.",
-    tasks: [
-      { title: "Identify key resources on the project", helper: "List the team members whose departure would significantly impact the account." },
-      { title: "Evaluate tenure, alignment, and risk exposure", helper: "Assess how long each key resource has been on the account and their engagement level." },
-      { title: "Flag single points of failure", helper: "Identify any tasks or knowledge that only one person holds." },
-      { title: "Assign backup or redundancy plan if needed", helper: "Document who would cover each critical role if a key resource became unavailable." },
-    ],
-  },
-  {
-    id: 10, title: "Planning Frameworks", required: false,
-    subtitle: "Ensure all required strategic plans are in place.",
-    tasks: [
-      { title: "Complete account strategy plan", helper: "Define the 12-month strategic direction for the account." },
-      { title: "Complete growth plan", helper: "Document targeted upsell/cross-sell initiatives and timelines." },
-      { title: "Complete engagement plan", helper: "Outline the cadence, touchpoints, and relationship-building activities." },
-      { title: "Complete risk mitigation plan", helper: "Document identified risks and corresponding mitigation strategies." },
-      { title: "Align internal team on execution approach", helper: "Run an internal alignment session to ensure all team members understand the plan." },
-    ],
-  },
-  {
-    id: 11, title: "Governance Setup", required: false,
-    subtitle: "Establish the meeting and reporting structure for this account.",
-    tasks: [
-      { title: "Define weekly / bi-weekly check-in cadence", helper: "Schedule recurring internal and client-facing check-ins." },
-      { title: "Define monthly review cadence", helper: "Set up a monthly business review structure with agenda template." },
-      { title: "Define QBR cadence", helper: "Schedule QBRs for the year and confirm client-side attendees." },
-      { title: "Set reporting structure and templates", helper: "Agree on the format, frequency, and distribution list for reports." },
-      { title: "Define escalation paths", helper: "Document who gets contacted (and how) at each level of escalation." },
-    ],
-  },
-  {
-    id: 12, title: "CSAT & Feedback Loop", required: false,
-    subtitle: "Put a structured feedback process in place from day one.",
-    tasks: [
-      { title: "Schedule CSAT collection cadence", helper: "Define when and how often satisfaction surveys or calls will be conducted." },
-      { title: "Identify survey respondents", helper: "Confirm which client contacts will participate in CSAT surveys." },
-      { title: "Define feedback channels", helper: "Document whether feedback is collected via calls, surveys, QBRs, or all three." },
-      { title: "Establish improvement loop process", helper: "Define how feedback will be reviewed, actioned, and communicated back to the client." },
-    ],
-  },
-  {
-    id: 13, title: "Documentation & Handover", required: false,
-    subtitle: "Finalise and share all onboarding documentation.",
-    tasks: [
-      { title: "Consolidate KYC document", helper: "Compile all knowledge capture outputs into a single reference document." },
-      { title: "Finalise account profile in system", helper: "Ensure the account record is complete and up to date in the KAM platform." },
-      { title: "Share onboarding summary with stakeholders", helper: "Distribute the onboarding summary to internal team and relevant client contacts." },
-      { title: "Ensure all frameworks are completed and saved", helper: "Do a final check that all planning and governance frameworks have been documented." },
-      { title: "Transition to steady-state account management", helper: "Formally close out onboarding and confirm the account is in active management mode." },
-    ],
-  },
-  {
-    id: 14, title: "Review & Confirm", required: true, tasks: [],
-  },
+  { id: 7, title: "Review & Confirm", required: true, subSections: [] },
 ];
 
 export function getInitialFormData(): AccountFormData {
@@ -208,8 +292,6 @@ export function getInitialFormData(): AccountFormData {
     engagementModel: "", engagementScope: "",
     primaryServiceLines: [], deliveryLocation: "",
     primaryContactName: "", primaryContactRole: "", primaryContactEmail: "",
-    clientBusinessSummary: "", clientSuccessCriteria: "",
-    keyBusinessChallenges: "", kycDocReference: "",
     stepNotes: {},
   };
 }
@@ -222,11 +304,30 @@ export function getInitialSteps(): OnboardingStep[] {
     required: def.required,
     skipped: false,
     completed: false,
-    tasks: def.tasks.map((t, i) => ({
-      id: `step${def.id}-task${i}`,
-      title: t.title,
-      helper: t.helper,
-      checked: false,
+    sectionLabel: def.sectionLabel,
+    infoBanner: def.infoBanner,
+    advisoryBanner: def.advisoryBanner,
+    subSections: def.subSections.map((ss, si) => ({
+      id: `step${def.id}-ss${si}`,
+      title: ss.title,
+      tasks: ss.tasks.map((t, ti) => ({
+        id: `step${def.id}-ss${si}-task${ti}`,
+        title: t.title,
+        helper: t.helper,
+        checked: false,
+      })),
     })),
   }));
+}
+
+export function getAllTasksForStep(step: OnboardingStep): OnboardingTask[] {
+  return step.subSections.flatMap(ss => ss.tasks);
+}
+
+export function getCheckedCountForStep(step: OnboardingStep): number {
+  return getAllTasksForStep(step).filter(t => t.checked).length;
+}
+
+export function getTotalCountForStep(step: OnboardingStep): number {
+  return getAllTasksForStep(step).length;
 }
