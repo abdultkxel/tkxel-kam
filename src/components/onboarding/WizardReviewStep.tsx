@@ -1,6 +1,5 @@
-import { type OnboardingStep, type AccountFormData } from "@/data/onboarding";
+import { type OnboardingStep, type AccountFormData, getCheckedCountForStep, getTotalCountForStep } from "@/data/onboarding";
 import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { ChevronDown, ChevronRight, Lock } from "lucide-react";
 import { useState } from "react";
@@ -21,7 +20,6 @@ export function WizardReviewStep({ formData, steps, onGoToStep }: Props) {
         </p>
       </div>
 
-      {/* Account Summary Card */}
       <Card className="border">
         <CardContent className="p-5">
           <div className="flex items-start justify-between">
@@ -54,9 +52,8 @@ export function WizardReviewStep({ formData, steps, onGoToStep }: Props) {
         </CardContent>
       </Card>
 
-      {/* Steps Summary */}
       <div className="space-y-2">
-        {steps.filter(s => s.id > 1 && s.id < 14).map(step => (
+        {steps.filter(s => s.id >= 2 && s.id <= 6).map(step => (
           <StepSummaryRow key={step.id} step={step} onGoTo={() => onGoToStep(step.id)} />
         ))}
       </div>
@@ -66,7 +63,8 @@ export function WizardReviewStep({ formData, steps, onGoToStep }: Props) {
 
 function StepSummaryRow({ step, onGoTo }: { step: OnboardingStep; onGoTo: () => void }) {
   const [expanded, setExpanded] = useState(false);
-  const checkedCount = step.tasks.filter(t => t.checked).length;
+  const checkedCount = getCheckedCountForStep(step);
+  const totalCount = getTotalCountForStep(step);
   const isSkipped = step.skipped || (checkedCount === 0 && !step.required);
 
   return (
@@ -85,16 +83,21 @@ function StepSummaryRow({ step, onGoTo }: { step: OnboardingStep; onGoTo: () => 
               className="text-xs text-primary hover:underline">Go back & complete</button>
           </div>
         ) : (
-          <Badge variant="secondary" className="text-xs">{checkedCount} task{checkedCount !== 1 ? "s" : ""}</Badge>
+          <Badge variant="secondary" className="text-xs">{checkedCount} / {totalCount} tasks</Badge>
         )}
       </button>
-      {expanded && step.tasks.length > 0 && (
-        <div className="px-3 pb-3 space-y-1">
-          {step.tasks.map(task => (
-            <div key={task.id} className={`text-sm py-1.5 px-2 rounded ${
-              task.checked ? "text-foreground" : "text-muted-foreground line-through"
-            }`}>
-              {task.checked ? "✓" : "○"} {task.title}
+      {expanded && step.subSections.length > 0 && (
+        <div className="px-3 pb-3 space-y-2">
+          {step.subSections.map(ss => (
+            <div key={ss.id}>
+              <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-1">{ss.title}</p>
+              {ss.tasks.map(task => (
+                <div key={task.id} className={`text-sm py-1 px-2 rounded ${
+                  task.checked ? "text-foreground" : "text-muted-foreground line-through"
+                }`}>
+                  {task.checked ? "✓" : "○"} {task.title}
+                </div>
+              ))}
             </div>
           ))}
         </div>

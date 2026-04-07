@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect } from "react";
+import { useState, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent } from "@/components/ui/dialog";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
@@ -7,7 +7,7 @@ import { Badge } from "@/components/ui/badge";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import {
   type OnboardingStep, type AccountFormData,
-  getInitialFormData, getInitialSteps,
+  getInitialFormData, getInitialSteps, getAllTasksForStep, TOTAL_STEPS,
 } from "@/data/onboarding";
 import { WizardStep1 } from "./WizardStep1";
 import { WizardChecklistStep } from "./WizardChecklistStep";
@@ -33,7 +33,6 @@ export function AddAccountWizard({ open, onClose, onAccountCreated }: Props) {
   const [shakeError, setShakeError] = useState(false);
   const [confirmClose, setConfirmClose] = useState(false);
 
-  // Load draft on open
   useEffect(() => {
     if (open) {
       const draft = localStorage.getItem(DRAFT_KEY);
@@ -59,6 +58,7 @@ export function AddAccountWizard({ open, onClose, onAccountCreated }: Props) {
     if (!formData.contractStart) e.contractStart = "Start date is required";
     if (!formData.contractEnd) e.contractEnd = "End date is required";
     if (!formData.engagementModel) e.engagementModel = "Model is required";
+    if (!formData.engagementScope.trim()) e.engagementScope = "Scope is required";
     if (formData.primaryServiceLines.length === 0) e.primaryServiceLines = "Select at least one service line";
     if (!formData.deliveryLocation) e.deliveryLocation = "Location is required";
     if (!formData.primaryContactName.trim()) e.primaryContactName = "Contact name is required";
@@ -70,35 +70,30 @@ export function AddAccountWizard({ open, onClose, onAccountCreated }: Props) {
     return Object.keys(e).length === 0;
   };
 
-  const validateStep3 = (): boolean => {
-    const step = steps.find(s => s.id === 3)!;
-    const unchecked = step.tasks.some(t => !t.checked);
-    const e: Record<string, string> = {};
-    if (!formData.clientBusinessSummary.trim()) e.clientBusinessSummary = "Required";
-    if (!formData.clientSuccessCriteria.trim()) e.clientSuccessCriteria = "Required";
-    if (!formData.keyBusinessChallenges.trim()) e.keyBusinessChallenges = "Required";
-    setErrors(e);
+  const validateRequiredChecklist = (stepId: number): boolean => {
+    const step = steps.find(s => s.id === stepId)!;
+    if (!step.required) return true;
+    const allTasks = getAllTasksForStep(step);
+    const unchecked = allTasks.some(t => !t.checked);
     if (unchecked) {
       setShakeError(true);
       setTimeout(() => setShakeError(false), 400);
-      if (Object.keys(e).length === 0) {
-        setErrors({ _tasks: "Please complete all KYC tasks before proceeding" });
-      }
+      setErrors({ _tasks: "Please complete all tasks before proceeding." });
       return false;
     }
-    return Object.keys(e).length === 0;
+    setErrors({});
+    return true;
   };
 
   const handleNext = () => {
     if (currentStep === 1 && !validateStep1()) return;
-    if (currentStep === 3 && !validateStep3()) return;
+    if (currentStep >= 2 && currentStep <= 5 && !validateRequiredChecklist(currentStep)) return;
 
-    // Mark current step as completed
     setSteps(prev => prev.map(s =>
       s.id === currentStep ? { ...s, completed: true, skipped: false } : s
     ));
     setErrors({});
-    setCurrentStep(prev => Math.min(prev + 1, 14));
+    setCurrentStep(prev => Math.min(prev + 1, TOTAL_STEPS));
   };
 
   const handleBack = () => {
@@ -111,14 +106,17 @@ export function AddAccountWizard({ open, onClose, onAccountCreated }: Props) {
       s.id === currentStep ? { ...s, skipped: true, completed: false } : s
     ));
     setErrors({});
-    setCurrentStep(prev => Math.min(prev + 1, 14));
+    setCurrentStep(prev => Math.min(prev + 1, TOTAL_STEPS));
   };
 
   const handleToggleTask = (stepId: number, taskId: string) => {
     setSteps(prev => prev.map(s =>
       s.id === stepId ? {
         ...s,
-        tasks: s.tasks.map(t => t.id === taskId ? { ...t, checked: !t.checked } : t),
+        subSections: s.subSections.map(ss => ({
+          ...ss,
+          tasks: ss.tasks.map(t => t.id === taskId ? { ...t, checked: !t.checked } : t),
+        })),
       } : s
     ));
   };
@@ -131,16 +129,12 @@ export function AddAccountWizard({ open, onClose, onAccountCreated }: Props) {
   };
 
   const handleSaveDraft = () => {
-    localStorage.setItem(DRAFT_KEY, JSON.stringify({
-      formData, steps, currentStep,
-    }));
+    localStorage.setItem(DRAFT_KEY, JSON.stringify({ formData, steps, currentStep }));
     toast.success("Draft saved. You can resume onboarding later.");
     onClose();
   };
 
-  const handleCancel = () => {
-    setConfirmClose(true);
-  };
+  const handleCancel = () => setConfirmClose(true);
 
   const handleConfirmCancel = () => {
     localStorage.removeItem(DRAFT_KEY);
@@ -154,6 +148,14 @@ export function AddAccountWizard({ open, onClose, onAccountCreated }: Props) {
 
   const handleConfirm = () => {
     const id = `acc-new-${Date.now()}`;
+    const sectionLabels: Record<number, string> = {
+      2: "A: Market Research",
+      3: "B: Client Research",
+      4: "C: Stakeholder Details",
+      5: "D: Tkxel Engagement",
+      6: "E: Financial Landscape",
+    };
+
     const newAccount: Account = {
       id,
       name: formData.accountName,
@@ -172,19 +174,22 @@ export function AddAccountWizard({ open, onClose, onAccountCreated }: Props) {
       onboardingStatus: "in_progress",
     };
 
-    // Generate tasks from checked items
     const generatedTasks: any[] = [];
-    steps.filter(s => s.id > 1 && s.id < 14).forEach(step => {
-      step.tasks.filter(t => t.checked).forEach(task => {
-        generatedTasks.push({
-          id: `onb-${id}-${task.id}`,
-          title: task.title,
-          accountId: id,
-          accountName: formData.accountName,
-          type: step.title,
-          priority: "Medium" as const,
-          status: "pending" as const,
-          source: "onboarding-wizard",
+    steps.filter(s => s.id >= 2 && s.id <= 6).forEach(step => {
+      step.subSections.forEach(ss => {
+        ss.tasks.filter(t => t.checked).forEach(task => {
+          generatedTasks.push({
+            id: `onb-${id}-${task.id}`,
+            title: task.title,
+            accountId: id,
+            accountName: formData.accountName,
+            section: sectionLabels[step.id] || step.title,
+            subSection: ss.title,
+            priority: "Medium" as const,
+            status: "pending" as const,
+            source: "onboarding-wizard",
+            createdAt: new Date().toISOString(),
+          });
         });
       });
     });
@@ -198,21 +203,20 @@ export function AddAccountWizard({ open, onClose, onAccountCreated }: Props) {
     toast.success(`Account "${formData.accountName}" created with ${generatedTasks.length} onboarding tasks.`);
   };
 
-  const stepDef = steps.find(s => s.id === currentStep)!;
-  const isRequired = stepDef.required;
-  const isSkippable = !isRequired && currentStep > 1 && currentStep < 14;
-  const progressPct = (currentStep / 14) * 100;
-
   const goToStep = (stepNum: number) => {
     setErrors({});
     setCurrentStep(stepNum);
   };
 
+  const stepDef = steps.find(s => s.id === currentStep)!;
+  const isSkippable = !stepDef.required && currentStep > 1 && currentStep < TOTAL_STEPS;
+  const progressPct = (currentStep / TOTAL_STEPS) * 100;
+
   const renderContent = () => {
     if (currentStep === 1) {
       return <WizardStep1 data={formData} onChange={setFormData} errors={errors} />;
     }
-    if (currentStep === 14) {
+    if (currentStep === TOTAL_STEPS) {
       return <WizardReviewStep formData={formData} steps={steps} onGoToStep={goToStep} />;
     }
     return (
@@ -221,9 +225,6 @@ export function AddAccountWizard({ open, onClose, onAccountCreated }: Props) {
         onToggleTask={(taskId) => handleToggleTask(currentStep, taskId)}
         notes={formData.stepNotes[currentStep] || ""}
         onNotesChange={(n) => handleNotesChange(currentStep, n)}
-        showKycFields={currentStep === 3}
-        formData={currentStep === 3 ? formData : undefined}
-        onFormChange={currentStep === 3 ? setFormData : undefined}
         errors={errors}
         shakeError={shakeError}
       />
@@ -234,19 +235,17 @@ export function AddAccountWizard({ open, onClose, onAccountCreated }: Props) {
     <>
       <Dialog open={open} onOpenChange={() => handleCancel()}>
         <DialogContent className="max-w-[1100px] w-[95vw] h-[90vh] p-0 gap-0 flex flex-col overflow-hidden [&>button]:hidden">
-          {/* Progress bar */}
           <div className="h-1 w-full bg-border">
             <div className="h-full bg-primary transition-all duration-300" style={{ width: `${progressPct}%` }} />
           </div>
 
-          {/* Top bar */}
           <div className="flex items-center justify-between px-6 py-3 border-b border-border">
             <div className="flex items-center gap-3">
               <Button variant="ghost" size="sm" onClick={handleCancel}
                 className="text-muted-foreground hover:text-foreground">
                 <X className="h-4 w-4 mr-1" /> Cancel
               </Button>
-              <span className="text-sm text-muted-foreground">Step {currentStep} of 14</span>
+              <span className="text-sm text-muted-foreground">Step {currentStep} of {TOTAL_STEPS}</span>
             </div>
             <Button variant="outline" size="sm" onClick={handleSaveDraft}>
               <Save className="h-4 w-4 mr-1" /> Save & Finish Later
@@ -254,7 +253,6 @@ export function AddAccountWizard({ open, onClose, onAccountCreated }: Props) {
           </div>
 
           <div className="flex flex-1 overflow-hidden">
-            {/* Sidebar */}
             <div className="w-[240px] flex-shrink-0 border-r border-border overflow-y-auto"
               style={{ backgroundColor: "hsl(210 33% 98%)" }}>
               <div className="p-3 space-y-0.5">
@@ -297,7 +295,6 @@ export function AddAccountWizard({ open, onClose, onAccountCreated }: Props) {
               </div>
             </div>
 
-            {/* Content */}
             <ScrollArea className="flex-1">
               <div className="p-6 max-w-[780px]">
                 {renderContent()}
@@ -305,7 +302,6 @@ export function AddAccountWizard({ open, onClose, onAccountCreated }: Props) {
             </ScrollArea>
           </div>
 
-          {/* Footer */}
           <div className="flex items-center justify-between px-6 py-3 border-t border-border bg-background">
             <div>
               {errors._tasks && <p className="text-sm text-destructive">{errors._tasks}</p>}
@@ -317,7 +313,7 @@ export function AddAccountWizard({ open, onClose, onAccountCreated }: Props) {
               {isSkippable && (
                 <Button variant="ghost" onClick={handleSkip} className="text-muted-foreground">Skip</Button>
               )}
-              {currentStep < 14 ? (
+              {currentStep < TOTAL_STEPS ? (
                 <Button onClick={handleNext} className="bg-primary text-primary-foreground hover:bg-primary/90">
                   Next
                 </Button>
