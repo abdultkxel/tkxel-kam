@@ -1,12 +1,13 @@
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import { Account, getRagColor, RAG_STYLES, type RiskStatus } from "@/data/accounts";
-import { MOCK_FINANCIAL_DATA, getContractStatus, getRenewalActionDeadline, getArrNumeric, formatCurrency, type InvoiceStatus } from "@/data/financials";
+import { MOCK_FINANCIAL_DATA, getContractStatus, getRenewalActionDeadline, getArrNumeric, formatCurrency, type InvoiceStatus, type FinancialData } from "@/data/financials";
 import { MOCK_STRATEGY_DATA, SERVICE_CATALOG, createDefaultStrategy } from "@/data/strategy";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { AlertTriangle, TrendingUp, TrendingDown, Calendar, DollarSign, FileText, Clock, Shield, ArrowUpRight, CheckCircle2 } from "lucide-react";
 import { differenceInDays, differenceInMonths, addMonths, format } from "date-fns";
+import { FinancialEntryForm } from "./FinancialEntryForm";
 
 interface FinancialsTabProps {
   account: Account;
@@ -15,7 +16,8 @@ interface FinancialsTabProps {
 const TODAY = new Date("2026-03-12");
 
 export function FinancialsTab({ account }: FinancialsTabProps) {
-  const financial = MOCK_FINANCIAL_DATA[account.id];
+  const [savedData, setSavedData] = useState<FinancialData | null>(null);
+  const financial = MOCK_FINANCIAL_DATA[account.id] || savedData;
   const arrValue = getArrNumeric(account.arr);
   const { status: contractStatus, daysToRenewal } = getContractStatus(account.contractEnd);
   const isExpired = contractStatus === "Expired";
@@ -29,7 +31,7 @@ export function FinancialsTab({ account }: FinancialsTabProps) {
   const tcv = arrValue * contractYears;
 
   if (!financial) {
-    return <Card><CardContent className="py-8 text-center text-muted-foreground">No financial data available.</CardContent></Card>;
+    return <FinancialEntryForm accountId={account.id} onSave={setSavedData} />;
   }
 
   return (
