@@ -74,7 +74,7 @@ export function AddAccountWizard({ open, onClose, onAccountCreated }: Props) {
     const step = steps.find(s => s.id === stepId)!;
     if (!step.required) return true;
     const allTasks = getAllTasksForStep(step);
-    const unchecked = allTasks.some(t => !t.checked);
+    const unchecked = allTasks.some(t => !(t.value || "").trim());
     if (unchecked) {
       setShakeError(true);
       setTimeout(() => setShakeError(false), 400);
