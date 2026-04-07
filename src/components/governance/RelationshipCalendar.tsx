@@ -55,6 +55,8 @@ export function RelationshipCalendar({ events, onUpdate }: Props) {
       title: "",
       date: d.toISOString().split("T")[0],
       type: "Meeting",
+      accountId: "",
+      accountName: "",
     });
     setDialogOpen(true);
   };

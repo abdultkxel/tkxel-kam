@@ -14,6 +14,8 @@ export interface ActionItem {
 export interface MeetingActivity {
   id: string;
   type: "QBR" | "SteerCo";
+  accountId: string;
+  accountName: string;
   scheduledDate: string;
   status: ActivityStatus;
   agenda: string;
@@ -39,7 +41,9 @@ export interface CalendarEvent {
   id: string;
   title: string;
   date: string;
-  type: "QBR" | "SteerCo" | "Meeting";
+  type: "QBR" | "SteerCo" | "Meeting" | "Task";
+  accountId: string;
+  accountName: string;
 }
 
 export const TEAM_MEMBERS = [
@@ -55,7 +59,7 @@ function daysFromNow(d: number): string {
 
 export const MOCK_MEETINGS: MeetingActivity[] = [
   {
-    id: "m1", type: "QBR", scheduledDate: daysFromNow(-30), status: "Completed",
+    id: "m1", type: "QBR", accountId: "acc-1", accountName: "Signal", scheduledDate: daysFromNow(-30), status: "Completed",
     agenda: "Review Q4 delivery metrics, discuss Q1 roadmap priorities.",
     recordingUrl: "https://example.com/recordings/qbr-q4",
     mom: "All KPIs met. Client requested additional cloud migration support.",
@@ -66,7 +70,7 @@ export const MOCK_MEETINGS: MeetingActivity[] = [
     createdAt: daysFromNow(-35),
   },
   {
-    id: "m2", type: "QBR", scheduledDate: daysFromNow(5), status: "Planned",
+    id: "m2", type: "QBR", accountId: "acc-4", accountName: "Canvs", scheduledDate: daysFromNow(5), status: "Planned",
     agenda: "Review Q1 deliverables and client satisfaction scores.",
     recordingUrl: "", mom: "",
     actionItems: [
@@ -75,7 +79,7 @@ export const MOCK_MEETINGS: MeetingActivity[] = [
     createdAt: daysFromNow(-5),
   },
   {
-    id: "m3", type: "SteerCo", scheduledDate: daysFromNow(-60), status: "Completed",
+    id: "m3", type: "SteerCo", accountId: "acc-2", accountName: "Cafe Zupas", scheduledDate: daysFromNow(-60), status: "Completed",
     agenda: "Strategic alignment on 2026 engagement model.",
     recordingUrl: "https://example.com/recordings/steerco-jan",
     mom: "Agreed on expanded scope for H2. Budget approved.",
@@ -85,13 +89,27 @@ export const MOCK_MEETINGS: MeetingActivity[] = [
     createdAt: daysFromNow(-65),
   },
   {
-    id: "m4", type: "SteerCo", scheduledDate: daysFromNow(20), status: "Planned",
+    id: "m4", type: "SteerCo", accountId: "acc-3", accountName: "ASAP Semiconductor", scheduledDate: daysFromNow(20), status: "Planned",
     agenda: "Mid-year strategic review and resource planning.",
     recordingUrl: "", mom: "",
     actionItems: [
       { id: "ai5", task: "Compile resource utilization report", owner: "Tom Wilson", dueDate: daysFromNow(15), status: "Not Started" },
     ],
     createdAt: daysFromNow(-2),
+  },
+  {
+    id: "m5", type: "QBR", accountId: "acc-5", accountName: "Epilogue", scheduledDate: daysFromNow(12), status: "Planned",
+    agenda: "Contract renewal discussion and service expansion.",
+    recordingUrl: "", mom: "",
+    actionItems: [],
+    createdAt: daysFromNow(-3),
+  },
+  {
+    id: "m6", type: "SteerCo", accountId: "acc-1", accountName: "Signal", scheduledDate: daysFromNow(25), status: "Planned",
+    agenda: "Cloud migration progress review and budget alignment.",
+    recordingUrl: "", mom: "",
+    actionItems: [],
+    createdAt: daysFromNow(-1),
   },
 ];
 
@@ -120,12 +138,14 @@ export const MOCK_ESCALATIONS: Escalation[] = [
 ];
 
 export const MOCK_CALENDAR_EVENTS: CalendarEvent[] = [
-  { id: "ce1", title: "QBR - Q1 Review", date: daysFromNow(5), type: "QBR" },
-  { id: "ce2", title: "SteerCo - Mid-Year", date: daysFromNow(20), type: "SteerCo" },
-  { id: "ce3", title: "Weekly Sync", date: daysFromNow(1), type: "Meeting" },
-  { id: "ce4", title: "Weekly Sync", date: daysFromNow(8), type: "Meeting" },
-  { id: "ce5", title: "Weekly Sync", date: daysFromNow(15), type: "Meeting" },
-  { id: "ce6", title: "Executive Lunch", date: daysFromNow(12), type: "Meeting" },
+  { id: "ce1", title: "QBR - Q1 Review", date: daysFromNow(5), type: "QBR", accountId: "acc-4", accountName: "Canvs" },
+  { id: "ce2", title: "SteerCo - Mid-Year", date: daysFromNow(20), type: "SteerCo", accountId: "acc-3", accountName: "ASAP Semiconductor" },
+  { id: "ce3", title: "Weekly Sync", date: daysFromNow(1), type: "Meeting", accountId: "acc-1", accountName: "Signal" },
+  { id: "ce4", title: "Weekly Sync", date: daysFromNow(8), type: "Meeting", accountId: "acc-2", accountName: "Cafe Zupas" },
+  { id: "ce5", title: "Weekly Sync", date: daysFromNow(15), type: "Meeting", accountId: "acc-4", accountName: "Canvs" },
+  { id: "ce6", title: "Executive Lunch", date: daysFromNow(12), type: "Meeting", accountId: "acc-5", accountName: "Epilogue" },
+  { id: "ce7", title: "Sprint Review", date: daysFromNow(3), type: "Meeting", accountId: "acc-1", accountName: "Signal" },
+  { id: "ce8", title: "Weekly Sync", date: daysFromNow(22), type: "Meeting", accountId: "acc-3", accountName: "ASAP Semiconductor" },
 ];
 
 export function getDueDateStatus(dateStr: string): "overdue" | "upcoming" | "normal" {

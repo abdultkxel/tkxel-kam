@@ -61,7 +61,7 @@ function derivePriority(accounts: Account[]): ActionRow[] {
       if (ai.status !== "Complete" && getDueDateStatus(ai.dueDate) === "overdue") {
         rows.push({
           icon: Clock, iconClass: "text-destructive", bgClass: "bg-destructive/10",
-          account: m.type, accountId: "",
+          account: m.accountName || m.type, accountId: "",
           issue: `"${ai.task}" overdue (${ai.owner})`,
           actionLabel: "Resolve", badge: "critical", badgeClass: "bg-destructive/10 text-destructive border-destructive/20",
         });
@@ -91,8 +91,8 @@ function deriveUpcoming(accounts: Account[]): ActionRow[] {
     const tc = typeIcons[m.type] || typeIcons.QBR;
     rows.push({
       icon: tc.icon, iconClass: tc.cls, bgClass: tc.bg,
-      account: m.type, accountId: "",
-      issue: `${m.agenda} — ${days}d remaining`,
+      account: m.accountName || m.type, accountId: m.accountId || "",
+      issue: `${m.type}: ${m.agenda} — ${days}d remaining`,
       actionLabel: "Prepare",
       badge: m.type, badgeClass: "bg-muted text-muted-foreground border-border",
     });
@@ -125,7 +125,7 @@ function deriveOverdue(accounts: Account[]): ActionRow[] {
         const daysOver = Math.ceil((Date.now() - new Date(ai.dueDate).getTime()) / (1000 * 60 * 60 * 24));
         rows.push({
           icon: Clock, iconClass: "text-destructive", bgClass: "bg-destructive/10",
-          account: m.type, accountId: "",
+          account: m.accountName || m.type, accountId: m.accountId || "",
           issue: `"${ai.task}" — ${ai.owner} (${daysOver}d overdue)`,
           actionLabel: "Resolve",
           badge: `${daysOver}d late`, badgeClass: "bg-destructive/10 text-destructive border-destructive/20",
