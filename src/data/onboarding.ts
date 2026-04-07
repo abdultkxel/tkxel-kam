@@ -3,6 +3,7 @@ export interface OnboardingTask {
   title: string;
   helper: string;
   checked: boolean;
+  value: string;
 }
 
 export interface OnboardingSubSection {
