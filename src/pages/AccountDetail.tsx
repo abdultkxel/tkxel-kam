@@ -1,5 +1,6 @@
 import { useParams, useNavigate } from "react-router-dom";
-import { MOCK_ACCOUNTS, RAG_STYLES, getRagColor, type RiskStatus } from "@/data/accounts";
+import { RAG_STYLES, getRagColor, type RiskStatus } from "@/data/accounts";
+import { useAccounts } from "@/contexts/AccountsContext";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -16,7 +17,8 @@ import { getLatestGovernanceEvents } from "@/data/governance";
 export default function AccountDetail() {
   const { id } = useParams();
   const navigate = useNavigate();
-  const account = MOCK_ACCOUNTS.find(a => a.id === id);
+  const { accounts } = useAccounts();
+  const account = accounts.find(a => a.id === id);
 
   if (!account) {
     return (
