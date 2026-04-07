@@ -74,7 +74,7 @@ export function AddAccountWizard({ open, onClose, onAccountCreated }: Props) {
     const step = steps.find(s => s.id === stepId)!;
     if (!step.required) return true;
     const allTasks = getAllTasksForStep(step);
-    const unchecked = allTasks.some(t => !t.checked);
+    const unchecked = allTasks.some(t => !(t.value || "").trim());
     if (unchecked) {
       setShakeError(true);
       setTimeout(() => setShakeError(false), 400);
@@ -109,13 +109,13 @@ export function AddAccountWizard({ open, onClose, onAccountCreated }: Props) {
     setCurrentStep(prev => Math.min(prev + 1, TOTAL_STEPS));
   };
 
-  const handleToggleTask = (stepId: number, taskId: string) => {
+  const handleTaskValueChange = (stepId: number, taskId: string, value: string) => {
     setSteps(prev => prev.map(s =>
       s.id === stepId ? {
         ...s,
         subSections: s.subSections.map(ss => ({
           ...ss,
-          tasks: ss.tasks.map(t => t.id === taskId ? { ...t, checked: !t.checked } : t),
+          tasks: ss.tasks.map(t => t.id === taskId ? { ...t, value, checked: value.trim().length > 0 } : t),
         })),
       } : s
     ));
@@ -177,7 +177,7 @@ export function AddAccountWizard({ open, onClose, onAccountCreated }: Props) {
     const generatedTasks: any[] = [];
     steps.filter(s => s.id >= 2 && s.id <= 6).forEach(step => {
       step.subSections.forEach(ss => {
-        ss.tasks.filter(t => t.checked).forEach(task => {
+        ss.tasks.filter(t => (t.value || "").trim().length > 0).forEach(task => {
           generatedTasks.push({
             id: `onb-${id}-${task.id}`,
             title: task.title,
@@ -222,7 +222,7 @@ export function AddAccountWizard({ open, onClose, onAccountCreated }: Props) {
     return (
       <WizardChecklistStep
         step={stepDef}
-        onToggleTask={(taskId) => handleToggleTask(currentStep, taskId)}
+        onTaskValueChange={(taskId, value) => handleTaskValueChange(currentStep, taskId, value)}
         notes={formData.stepNotes[currentStep] || ""}
         onNotesChange={(n) => handleNotesChange(currentStep, n)}
         errors={errors}

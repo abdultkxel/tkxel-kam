@@ -91,13 +91,19 @@ function StepSummaryRow({ step, onGoTo }: { step: OnboardingStep; onGoTo: () => 
           {step.subSections.map(ss => (
             <div key={ss.id}>
               <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-1">{ss.title}</p>
-              {ss.tasks.map(task => (
-                <div key={task.id} className={`text-sm py-1 px-2 rounded ${
-                  task.checked ? "text-foreground" : "text-muted-foreground line-through"
-                }`}>
-                  {task.checked ? "✓" : "○"} {task.title}
-                </div>
-              ))}
+              {ss.tasks.map(task => {
+                const filled = (task.value || "").trim().length > 0;
+                return (
+                  <div key={task.id} className={`text-sm py-1 px-2 rounded ${
+                    filled ? "text-foreground" : "text-muted-foreground line-through"
+                  }`}>
+                    {filled ? "✓" : "○"} {task.title}
+                    {filled && task.value && (
+                      <span className="block text-xs text-muted-foreground ml-4 mt-0.5">{task.value}</span>
+                    )}
+                  </div>
+                );
+              })}
             </div>
           ))}
         </div>
