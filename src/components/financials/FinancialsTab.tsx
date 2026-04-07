@@ -16,7 +16,8 @@ interface FinancialsTabProps {
 const TODAY = new Date("2026-03-12");
 
 export function FinancialsTab({ account }: FinancialsTabProps) {
-  const financial = MOCK_FINANCIAL_DATA[account.id];
+  const [savedData, setSavedData] = useState<FinancialData | null>(null);
+  const financial = MOCK_FINANCIAL_DATA[account.id] || savedData;
   const arrValue = getArrNumeric(account.arr);
   const { status: contractStatus, daysToRenewal } = getContractStatus(account.contractEnd);
   const isExpired = contractStatus === "Expired";
@@ -30,7 +31,7 @@ export function FinancialsTab({ account }: FinancialsTabProps) {
   const tcv = arrValue * contractYears;
 
   if (!financial) {
-    return <Card><CardContent className="py-8 text-center text-muted-foreground">No financial data available.</CardContent></Card>;
+    return <FinancialEntryForm accountId={account.id} onSave={setSavedData} />;
   }
 
   return (
