@@ -7,6 +7,7 @@ import { AuthProvider } from "@/contexts/AuthContext";
 import { NotificationsProvider } from "@/contexts/NotificationsContext";
 import { OpportunitiesProvider } from "@/contexts/OpportunitiesContext";
 import { OpportunityDetailProvider } from "@/contexts/OpportunityDetailContext";
+import { AccountsProvider } from "@/contexts/AccountsContext";
 import { AppLayout } from "@/components/AppLayout";
 import Login from "@/pages/Login";
 import Dashboard from "@/pages/Dashboard";
