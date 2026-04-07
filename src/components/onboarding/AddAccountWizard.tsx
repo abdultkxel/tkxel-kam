@@ -109,13 +109,13 @@ export function AddAccountWizard({ open, onClose, onAccountCreated }: Props) {
     setCurrentStep(prev => Math.min(prev + 1, TOTAL_STEPS));
   };
 
-  const handleToggleTask = (stepId: number, taskId: string) => {
+  const handleTaskValueChange = (stepId: number, taskId: string, value: string) => {
     setSteps(prev => prev.map(s =>
       s.id === stepId ? {
         ...s,
         subSections: s.subSections.map(ss => ({
           ...ss,
-          tasks: ss.tasks.map(t => t.id === taskId ? { ...t, checked: !t.checked } : t),
+          tasks: ss.tasks.map(t => t.id === taskId ? { ...t, value, checked: value.trim().length > 0 } : t),
         })),
       } : s
     ));
@@ -222,7 +222,7 @@ export function AddAccountWizard({ open, onClose, onAccountCreated }: Props) {
     return (
       <WizardChecklistStep
         step={stepDef}
-        onToggleTask={(taskId) => handleToggleTask(currentStep, taskId)}
+        onTaskValueChange={(taskId, value) => handleTaskValueChange(currentStep, taskId, value)}
         notes={formData.stepNotes[currentStep] || ""}
         onNotesChange={(n) => handleNotesChange(currentStep, n)}
         errors={errors}
