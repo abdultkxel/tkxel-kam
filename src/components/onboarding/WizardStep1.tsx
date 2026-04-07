@@ -1,53 +1,57 @@
-import { useState } from "react";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
+import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Badge } from "@/components/ui/badge";
-import { X } from "lucide-react";
+import { Trash2, Plus } from "lucide-react";
 import {
-  type AccountFormData,
-  INDUSTRIES, ENGAGEMENT_MODELS, SERVICE_LINES, DELIVERY_LOCATIONS,
+  type KycFormData, type KycContact,
+  INDUSTRIES, ENGAGEMENT_MODELS, REVENUE_RANGES, SENIORITY_LEVELS, CONTACT_TYPES,
 } from "@/data/onboarding";
 
 interface Props {
-  data: AccountFormData;
-  onChange: (d: AccountFormData) => void;
+  data: KycFormData;
+  onChange: (d: KycFormData) => void;
   errors: Record<string, string>;
 }
 
 export function WizardStep1({ data, onChange, errors }: Props) {
-  const set = (key: keyof AccountFormData, value: any) =>
-    onChange({ ...data, [key]: value });
+  const set = (key: keyof KycFormData, value: any) => onChange({ ...data, [key]: value });
 
-  const toggleServiceLine = (line: string) => {
-    const current = data.primaryServiceLines;
-    set("primaryServiceLines",
-      current.includes(line) ? current.filter(l => l !== line) : [...current, line]
-    );
+  const updateContact = (id: string, field: keyof KycContact, value: string) => {
+    onChange({
+      ...data,
+      contacts: data.contacts.map(c => c.id === id ? { ...c, [field]: value } : c),
+    });
+  };
+
+  const addContact = () => {
+    onChange({
+      ...data,
+      contacts: [...data.contacts, { id: crypto.randomUUID(), name: "", title: "", seniority: "", ownerAtTkxel: "", type: "" }],
+    });
+  };
+
+  const removeContact = (id: string) => {
+    if (data.contacts.length <= 1) return;
+    onChange({ ...data, contacts: data.contacts.filter(c => c.id !== id) });
   };
 
   return (
     <div className="space-y-8">
-      <div>
-        <h2 className="text-xl font-bold text-foreground">Core Account Information</h2>
-        <p className="text-sm text-muted-foreground mt-1">Fill in the essential details for this account.</p>
+      {/* Blue info banner */}
+      <div className="rounded-md p-4 border-l-4" style={{ backgroundColor: "#EFF6FF", borderLeftColor: "#1D4ED8" }}>
+        <p className="text-sm font-medium" style={{ color: "#1D4ED8" }}>
+          KYC must be completed to activate this account.
+        </p>
       </div>
 
-      {/* Account Identity */}
+      {/* Account record fields */}
       <fieldset className="space-y-4">
-        <legend className="text-sm font-semibold text-foreground uppercase tracking-wide mb-2">Account Identity</legend>
+        <legend className="text-sm font-semibold text-foreground uppercase tracking-wide mb-2">Account Record</legend>
         <Field label="Account Name" error={errors.accountName} required>
-          <Input value={data.accountName} onChange={e => set("accountName", e.target.value)}
+          <Input value={data.accountName} onChange={e => { set("accountName", e.target.value); set("companyName", e.target.value); }}
             placeholder="e.g. Acme Corp" className={errors.accountName ? "border-destructive" : ""} />
-        </Field>
-        <Field label="Industry" error={errors.industry} required>
-          <Select value={data.industry} onValueChange={v => set("industry", v)}>
-            <SelectTrigger className={errors.industry ? "border-destructive" : ""}>
-              <SelectValue placeholder="Select industry" />
-            </SelectTrigger>
-            <SelectContent>{INDUSTRIES.map(i => <SelectItem key={i} value={i}>{i}</SelectItem>)}</SelectContent>
-          </Select>
         </Field>
         <Field label="Segment" error={errors.segment} required>
           <div className="flex gap-3">
@@ -61,52 +65,6 @@ export function WizardStep1({ data, onChange, errors }: Props) {
             ))}
           </div>
         </Field>
-        <Field label="Account Status" error={errors.accountStatus} required>
-          <div className="flex gap-3">
-            {(["New Client", "Existing Client"] as const).map(s => (
-              <button key={s} type="button" onClick={() => set("accountStatus", s)}
-                className={`px-4 py-2 rounded-md text-sm font-medium border transition-colors ${
-                  data.accountStatus === s
-                    ? "bg-primary text-primary-foreground border-primary"
-                    : "bg-background text-foreground border-border hover:bg-muted"
-                }`}>{s}</button>
-            ))}
-          </div>
-        </Field>
-      </fieldset>
-
-      {/* Account Value */}
-      <fieldset className="space-y-4">
-        <legend className="text-sm font-semibold text-foreground uppercase tracking-wide mb-2">Account Value</legend>
-        <Field label="Total Contract Value (TCV)" error={errors.tcv} required
-          helper="The total value of all contracts signed with this account.">
-          <Input value={data.tcv} onChange={e => set("tcv", e.target.value)}
-            placeholder="$1,200,000" className={errors.tcv ? "border-destructive" : ""} />
-        </Field>
-        <Field label="Annual Recurring Revenue" error={errors.arr} required
-          helper="The annualised recurring revenue from this account.">
-          <Input value={data.arr} onChange={e => set("arr", e.target.value)}
-            placeholder="$400,000" className={errors.arr ? "border-destructive" : ""} />
-        </Field>
-        <Field label="Portfolio Revenue" helper="Broader revenue this account contributes to your portfolio, if different from Revenue.">
-          <Input value={data.portfolioRevenue} onChange={e => set("portfolioRevenue", e.target.value)}
-            placeholder="Optional" />
-        </Field>
-        <div className="grid grid-cols-2 gap-4">
-          <Field label="Contract Start Date" error={errors.contractStart} required>
-            <Input type="date" value={data.contractStart} onChange={e => set("contractStart", e.target.value)}
-              className={errors.contractStart ? "border-destructive" : ""} />
-          </Field>
-          <Field label="Contract End Date" error={errors.contractEnd} required>
-            <Input type="date" value={data.contractEnd} onChange={e => set("contractEnd", e.target.value)}
-              className={errors.contractEnd ? "border-destructive" : ""} />
-          </Field>
-        </div>
-      </fieldset>
-
-      {/* Engagement Details */}
-      <fieldset className="space-y-4">
-        <legend className="text-sm font-semibold text-foreground uppercase tracking-wide mb-2">Engagement Details</legend>
         <Field label="Engagement Model" error={errors.engagementModel} required>
           <Select value={data.engagementModel} onValueChange={v => set("engagementModel", v)}>
             <SelectTrigger className={errors.engagementModel ? "border-destructive" : ""}>
@@ -115,46 +73,120 @@ export function WizardStep1({ data, onChange, errors }: Props) {
             <SelectContent>{ENGAGEMENT_MODELS.map(m => <SelectItem key={m} value={m}>{m}</SelectItem>)}</SelectContent>
           </Select>
         </Field>
-        <Field label="Engagement Scope Summary" helper="Brief description of what Tkxel is delivering for this account.">
-          <Textarea rows={3} value={data.engagementScope}
-            onChange={e => set("engagementScope", e.target.value)} placeholder="Describe the engagement scope..." />
+      </fieldset>
+
+      {/* Section 1 — Client Overview */}
+      <fieldset className="space-y-4">
+        <legend className="text-sm font-semibold text-foreground uppercase tracking-wide mb-2">Section 1 — Client Overview</legend>
+        <Field label="Company Name" error={errors.companyName} required>
+          <Input value={data.companyName} onChange={e => set("companyName", e.target.value)}
+            className={`${errors.companyName ? "border-destructive" : ""} ${data.companyName === data.accountName && data.accountName ? "bg-[#EFF6FF]" : ""}`}
+            placeholder="Pre-filled from Account Name" />
         </Field>
-        <Field label="Primary Service Lines" error={errors.primaryServiceLines} required>
-          <div className="flex flex-wrap gap-2">
-            {SERVICE_LINES.map(line => (
-              <button key={line} type="button" onClick={() => toggleServiceLine(line)}
-                className={`px-3 py-1.5 rounded-full text-xs font-medium border transition-colors ${
-                  data.primaryServiceLines.includes(line)
-                    ? "bg-primary text-primary-foreground border-primary"
-                    : "bg-background text-foreground border-border hover:bg-muted"
-                }`}>{line}</button>
-            ))}
-          </div>
-        </Field>
-        <Field label="Delivery Location" error={errors.deliveryLocation} required>
-          <Select value={data.deliveryLocation} onValueChange={v => set("deliveryLocation", v)}>
-            <SelectTrigger className={errors.deliveryLocation ? "border-destructive" : ""}>
-              <SelectValue placeholder="Select location" />
-            </SelectTrigger>
-            <SelectContent>{DELIVERY_LOCATIONS.map(l => <SelectItem key={l} value={l}>{l}</SelectItem>)}</SelectContent>
+        <Field label="Industry" error={errors.industry} required>
+          <Select value={data.industry} onValueChange={v => set("industry", v)}>
+            <SelectTrigger className={errors.industry ? "border-destructive" : ""}><SelectValue placeholder="Select industry" /></SelectTrigger>
+            <SelectContent>{INDUSTRIES.map(i => <SelectItem key={i} value={i}>{i}</SelectItem>)}</SelectContent>
           </Select>
+        </Field>
+        <div className="grid grid-cols-2 gap-4">
+          <Field label="HQ Location" error={errors.hqLocation} required>
+            <Input value={data.hqLocation} onChange={e => set("hqLocation", e.target.value)} placeholder="San Francisco, CA"
+              className={errors.hqLocation ? "border-destructive" : ""} />
+          </Field>
+          <Field label="Website" error={errors.website} required>
+            <Input type="url" value={data.website} onChange={e => set("website", e.target.value)} placeholder="https://example.com"
+              className={errors.website ? "border-destructive" : ""} />
+          </Field>
+        </div>
+        <div className="grid grid-cols-2 gap-4">
+          <Field label="LinkedIn" helper="Optional">
+            <Input type="url" value={data.linkedin} onChange={e => set("linkedin", e.target.value)} placeholder="https://linkedin.com/company/..." />
+          </Field>
+          <Field label="Founded Year" helper="Optional">
+            <Input type="number" value={data.foundedYear} onChange={e => set("foundedYear", e.target.value)} placeholder="2015" />
+          </Field>
+        </div>
+        <div className="grid grid-cols-2 gap-4">
+          <Field label="Revenue Range">
+            <Select value={data.revenueRange} onValueChange={v => set("revenueRange", v)}>
+              <SelectTrigger><SelectValue placeholder="Select range" /></SelectTrigger>
+              <SelectContent>{REVENUE_RANGES.map(r => <SelectItem key={r} value={r}>{r}</SelectItem>)}</SelectContent>
+            </Select>
+          </Field>
+          <Field label="Employee Count" helper="Optional">
+            <Input type="number" value={data.employeeCount} onChange={e => set("employeeCount", e.target.value)} placeholder="500" />
+          </Field>
+        </div>
+      </fieldset>
+
+      {/* Section 2 — Key Contacts */}
+      <fieldset className="space-y-4">
+        <legend className="text-sm font-semibold text-foreground uppercase tracking-wide mb-2">Section 2 — Key Contacts</legend>
+        {errors.contacts && <p className="text-sm text-destructive">{errors.contacts}</p>}
+        {data.contacts.map((contact, idx) => (
+          <div key={contact.id} className="relative border border-border rounded-lg p-4 space-y-3">
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-medium text-muted-foreground">Contact {idx + 1}</span>
+              {data.contacts.length > 1 && (
+                <button type="button" onClick={() => removeContact(contact.id)} className="text-destructive hover:text-destructive/80">
+                  <Trash2 className="h-4 w-4" />
+                </button>
+              )}
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <Input value={contact.name} onChange={e => updateContact(contact.id, "name", e.target.value)} placeholder="Name" />
+              <Input value={contact.title} onChange={e => updateContact(contact.id, "title", e.target.value)} placeholder="Title" />
+              <Select value={contact.seniority} onValueChange={v => updateContact(contact.id, "seniority", v)}>
+                <SelectTrigger><SelectValue placeholder="Seniority" /></SelectTrigger>
+                <SelectContent>{SENIORITY_LEVELS.map(s => <SelectItem key={s} value={s}>{s}</SelectItem>)}</SelectContent>
+              </Select>
+              <Input value={contact.ownerAtTkxel} onChange={e => updateContact(contact.id, "ownerAtTkxel", e.target.value)} placeholder="Owner at Tkxel" />
+              <Select value={contact.type} onValueChange={v => updateContact(contact.id, "type", v)}>
+                <SelectTrigger><SelectValue placeholder="Type" /></SelectTrigger>
+                <SelectContent>{CONTACT_TYPES.map(t => <SelectItem key={t} value={t}>{t}</SelectItem>)}</SelectContent>
+              </Select>
+            </div>
+          </div>
+        ))}
+        <Button type="button" variant="outline" size="sm" onClick={addContact}>
+          <Plus className="h-4 w-4 mr-1" /> Add Contact
+        </Button>
+      </fieldset>
+
+      {/* Section 3 — Engagement History */}
+      <fieldset className="space-y-4">
+        <legend className="text-sm font-semibold text-foreground uppercase tracking-wide mb-2">Section 3 — Engagement History</legend>
+        <div className="grid grid-cols-2 gap-4">
+          <Field label="Start Date" error={errors.startDate} required>
+            <Input type="date" value={data.startDate} onChange={e => set("startDate", e.target.value)}
+              className={errors.startDate ? "border-destructive" : ""} />
+          </Field>
+          <Field label="Contract Value" error={errors.contractValue} required>
+            <Input value={data.contractValue} onChange={e => set("contractValue", e.target.value)}
+              placeholder="$1,200,000" className={errors.contractValue ? "border-destructive" : ""} />
+          </Field>
+        </div>
+        <Field label="Services Engaged" error={errors.servicesEngaged} required>
+          <Input value={data.servicesEngaged} onChange={e => set("servicesEngaged", e.target.value)}
+            placeholder="Cloud Migration, Staff Augmentation" className={errors.servicesEngaged ? "border-destructive" : ""} />
+        </Field>
+        <Field label="Key Milestones" helper="Optional">
+          <Textarea value={data.keyMilestones} onChange={e => set("keyMilestones", e.target.value)}
+            placeholder="Phase 1 completed Jan 2026..." rows={3} />
         </Field>
       </fieldset>
 
-      {/* Primary Contact */}
+      {/* Section 4 — Strategic Importance */}
       <fieldset className="space-y-4">
-        <legend className="text-sm font-semibold text-foreground uppercase tracking-wide mb-2">Primary Contact</legend>
-        <Field label="Contact Name" error={errors.primaryContactName} required>
-          <Input value={data.primaryContactName} onChange={e => set("primaryContactName", e.target.value)}
-            placeholder="Jane Doe" className={errors.primaryContactName ? "border-destructive" : ""} />
+        <legend className="text-sm font-semibold text-foreground uppercase tracking-wide mb-2">Section 4 — Strategic Importance</legend>
+        <Field label="Strategic Notes" helper="Optional">
+          <Textarea value={data.strategicNotes} onChange={e => set("strategicNotes", e.target.value)}
+            placeholder="Notes on strategic direction..." rows={3} />
         </Field>
-        <Field label="Role / Title" error={errors.primaryContactRole} required>
-          <Input value={data.primaryContactRole} onChange={e => set("primaryContactRole", e.target.value)}
-            placeholder="VP Engineering" className={errors.primaryContactRole ? "border-destructive" : ""} />
-        </Field>
-        <Field label="Email" error={errors.primaryContactEmail} required>
-          <Input type="email" value={data.primaryContactEmail} onChange={e => set("primaryContactEmail", e.target.value)}
-            placeholder="jane@acme.com" className={errors.primaryContactEmail ? "border-destructive" : ""} />
+        <Field label="Risk Flags" helper="Optional">
+          <Textarea value={data.riskFlags} onChange={e => set("riskFlags", e.target.value)}
+            placeholder="Any risk flags to note..." rows={2} />
         </Field>
       </fieldset>
     </div>
