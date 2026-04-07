@@ -80,8 +80,8 @@ export function WizardStep1({ data, onChange, errors }: Props) {
         <legend className="text-sm font-semibold text-foreground uppercase tracking-wide mb-2">Section 1 — Client Overview</legend>
         <Field label="Company Name" error={errors.companyName} required>
           <Input value={data.companyName} onChange={e => set("companyName", e.target.value)}
-            className={`${errors.companyName ? "border-destructive" : ""} ${data.companyName === data.accountName && data.accountName ? "bg-[#EFF6FF]" : ""}`}
-            placeholder="Pre-filled from Account Name" />
+            className={errors.companyName ? "border-destructive" : ""}
+            placeholder="e.g. Acme Corporation" />
         </Field>
         <Field label="Industry" error={errors.industry} required>
           <Select value={data.industry} onValueChange={v => set("industry", v)}>
