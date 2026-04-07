@@ -1,7 +1,8 @@
 import { useState, useMemo } from "react";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "@/contexts/AuthContext";
-import { MOCK_ACCOUNTS, RAG_STYLES, getRagColor, type RiskStatus, type Segment, type Account } from "@/data/accounts";
+import { useAccounts } from "@/contexts/AccountsContext";
+import { RAG_STYLES, getRagColor, type RiskStatus, type Account } from "@/data/accounts";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
@@ -12,22 +13,19 @@ import { AddAccountWizard } from "@/components/onboarding/AddAccountWizard";
 
 export default function Accounts() {
   const { user } = useAuth();
+  const { accounts: allAccounts, addAccount } = useAccounts();
   const navigate = useNavigate();
   const [search, setSearch] = useState("");
   const [segmentFilter, setSegmentFilter] = useState<string>("all");
   const [riskFilter, setRiskFilter] = useState<string>("all");
   const [wizardOpen, setWizardOpen] = useState(false);
-  const [newAccounts, setNewAccounts] = useState<Account[]>([]);
-  const [onboardingTasks, setOnboardingTasks] = useState<any[]>([]);
 
-  // Check for draft
   const hasDraft = !!localStorage.getItem("kam-onboarding-draft");
 
   const accounts = useMemo(() => {
-    const all = [...MOCK_ACCOUNTS, ...newAccounts];
     let list = user?.role === "am"
-      ? all.filter(a => a.amId === user.id)
-      : all;
+      ? allAccounts.filter(a => a.amId === user.id)
+      : allAccounts;
 
     if (search) {
       const q = search.toLowerCase();
@@ -40,11 +38,10 @@ export default function Accounts() {
       list = list.filter(a => a.riskStatus === riskFilter);
     }
     return list;
-  }, [user, search, segmentFilter, riskFilter, newAccounts]);
+  }, [user, search, segmentFilter, riskFilter, allAccounts]);
 
-  const handleAccountCreated = (account: Account, tasks: any[]) => {
-    setNewAccounts(prev => [...prev, account]);
-    setOnboardingTasks(prev => [...prev, ...tasks]);
+  const handleAccountCreated = (account: Account, _tasks: any[]) => {
+    addAccount(account);
     setWizardOpen(false);
     navigate(`/accounts/${account.id}`);
   };
@@ -78,17 +75,10 @@ export default function Accounts() {
       <div className="flex flex-col sm:flex-row gap-3">
         <div className="relative flex-1 max-w-md">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-          <Input
-            placeholder="Search accounts..."
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            className="pl-9"
-          />
+          <Input placeholder="Search accounts..." value={search} onChange={(e) => setSearch(e.target.value)} className="pl-9" />
         </div>
         <Select value={segmentFilter} onValueChange={setSegmentFilter}>
-          <SelectTrigger className="w-[160px]">
-            <SelectValue placeholder="Segment" />
-          </SelectTrigger>
+          <SelectTrigger className="w-[160px]"><SelectValue placeholder="Segment" /></SelectTrigger>
           <SelectContent>
             <SelectItem value="all">All Segments</SelectItem>
             <SelectItem value="Growth">Growth</SelectItem>
@@ -96,9 +86,7 @@ export default function Accounts() {
           </SelectContent>
         </Select>
         <Select value={riskFilter} onValueChange={setRiskFilter}>
-          <SelectTrigger className="w-[160px]">
-            <SelectValue placeholder="Risk Status" />
-          </SelectTrigger>
+          <SelectTrigger className="w-[160px]"><SelectValue placeholder="Risk Status" /></SelectTrigger>
           <SelectContent>
             <SelectItem value="all">All Risk</SelectItem>
             <SelectItem value="green">Green</SelectItem>
@@ -143,11 +131,9 @@ export default function Accounts() {
           const resRag = getRagColor(account.health.resource);
 
           return (
-            <Card
-              key={account.id}
+            <Card key={account.id}
               className="cursor-pointer hover:shadow-lg transition-all duration-200 hover:-translate-y-0.5 border"
-              onClick={() => navigate(`/accounts/${account.id}`)}
-            >
+              onClick={() => navigate(`/accounts/${account.id}`)}>
               <CardContent className="p-5 space-y-4">
                 <div className="flex items-start justify-between">
                   <div className="flex-1 min-w-0">
@@ -155,14 +141,10 @@ export default function Accounts() {
                     <p className="text-xs text-muted-foreground mt-0.5">{account.industry} · {account.arr} Revenue</p>
                   </div>
                   <div className="flex items-center gap-2 flex-shrink-0 ml-2">
-                    <Badge
-                      variant="secondary"
+                    <Badge variant="secondary"
                       className={`text-[10px] uppercase tracking-wide font-semibold ${
-                        account.segment === "Growth"
-                          ? "bg-primary/10 text-primary"
-                          : "bg-muted text-muted-foreground"
-                      }`}
-                    >
+                        account.segment === "Growth" ? "bg-primary/10 text-primary" : "bg-muted text-muted-foreground"
+                      }`}>
                       {account.segment}
                     </Badge>
                   </div>
@@ -175,11 +157,9 @@ export default function Accounts() {
                   <div className="flex-1">
                     <p className="text-xs font-medium text-foreground">Overall Health</p>
                     <div className="flex items-center gap-1.5 mt-1">
-                      <div className={`h-1.5 flex-1 rounded-full bg-border overflow-hidden`}>
-                        <div
-                          className={`h-full rounded-full ${RAG_STYLES[overallRag].dot}`}
-                          style={{ width: `${(account.health.overall / 3) * 100}%` }}
-                        />
+                      <div className="h-1.5 flex-1 rounded-full bg-border overflow-hidden">
+                        <div className={`h-full rounded-full ${RAG_STYLES[overallRag].dot}`}
+                          style={{ width: `${(account.health.overall / 3) * 100}%` }} />
                       </div>
                       <span className="text-[10px] text-muted-foreground">/3</span>
                     </div>
@@ -217,10 +197,7 @@ export default function Accounts() {
 }
 
 function HealthDimension({ icon: Icon, label, score, rag }: {
-  icon: React.ElementType;
-  label: string;
-  score: number;
-  rag: RiskStatus;
+  icon: React.ElementType; label: string; score: number; rag: RiskStatus;
 }) {
   return (
     <div className={`rounded-md p-2 text-center ${RAG_STYLES[rag].bg}`}>
