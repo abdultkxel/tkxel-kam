@@ -316,6 +316,7 @@ export function getInitialSteps(): OnboardingStep[] {
         title: t.title,
         helper: t.helper,
         checked: false,
+        value: "",
       })),
     })),
   }));
@@ -326,7 +327,7 @@ export function getAllTasksForStep(step: OnboardingStep): OnboardingTask[] {
 }
 
 export function getCheckedCountForStep(step: OnboardingStep): number {
-  return getAllTasksForStep(step).filter(t => t.checked).length;
+  return getAllTasksForStep(step).filter(t => (t.value || "").trim().length > 0).length;
 }
 
 export function getTotalCountForStep(step: OnboardingStep): number {
