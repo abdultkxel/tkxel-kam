@@ -145,7 +145,7 @@ export function WizardStep1({ data, onChange, errors }: Props) {
                   <Input value={contact.title} onChange={e => updateContact(contact.id, "title", e.target.value)} placeholder="Job title" />
                 </div>
               </div>
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div className="space-y-1">
                   <span className="text-[11px] text-muted-foreground">Seniority</span>
                   <Select value={contact.seniority} onValueChange={v => updateContact(contact.id, "seniority", v)}>
@@ -156,13 +156,6 @@ export function WizardStep1({ data, onChange, errors }: Props) {
                 <div className="space-y-1">
                   <span className="text-[11px] text-muted-foreground">Owner at Tkxel</span>
                   <Input value={contact.ownerAtTkxel} onChange={e => updateContact(contact.id, "ownerAtTkxel", e.target.value)} placeholder="Owner name" />
-                </div>
-                <div className="space-y-1">
-                  <span className="text-[11px] text-muted-foreground">Type</span>
-                  <Select value={contact.type} onValueChange={v => updateContact(contact.id, "type", v)}>
-                    <SelectTrigger><SelectValue placeholder="Type" /></SelectTrigger>
-                    <SelectContent>{CONTACT_TYPES.map(t => <SelectItem key={t} value={t}>{t}</SelectItem>)}</SelectContent>
-                  </Select>
                 </div>
               </div>
             </div>
