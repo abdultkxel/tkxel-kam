@@ -42,12 +42,12 @@ export function KeyContactsSection({ kyc, onChange, disabled }: Props) {
       )}
       <div className="space-y-3">
         {kyc.contacts.map((contact) => (
-          <div key={contact.id} className="grid grid-cols-1 sm:grid-cols-6 gap-2 p-3 rounded-lg bg-muted/30 border border-border items-end">
-            <div className="space-y-1 sm:col-span-1">
+          <div key={contact.id} className="grid grid-cols-1 sm:grid-cols-5 gap-2 p-3 rounded-lg bg-muted/30 border border-border items-end">
+            <div className="space-y-1">
               <span className="text-[11px] text-muted-foreground">Name</span>
               <Input value={contact.name} onChange={e => updateContact(contact.id, { name: e.target.value })} disabled={disabled} className="h-8 text-sm" />
             </div>
-            <div className="space-y-1 sm:col-span-1">
+            <div className="space-y-1">
               <span className="text-[11px] text-muted-foreground">Title</span>
               <Input value={contact.title} onChange={e => updateContact(contact.id, { title: e.target.value })} disabled={disabled} className="h-8 text-sm" />
             </div>
@@ -61,13 +61,6 @@ export function KeyContactsSection({ kyc, onChange, disabled }: Props) {
             <div className="space-y-1">
               <span className="text-[11px] text-muted-foreground">Owner (Tkxel)</span>
               <Input value={contact.relationshipOwner} onChange={e => updateContact(contact.id, { relationshipOwner: e.target.value })} disabled={disabled} className="h-8 text-sm" />
-            </div>
-            <div className="space-y-1">
-              <span className="text-[11px] text-muted-foreground">Type</span>
-              <Select value={contact.contactType} onValueChange={v => updateContact(contact.id, { contactType: v as ContactType })} disabled={disabled}>
-                <SelectTrigger className="h-8 text-sm"><SelectValue /></SelectTrigger>
-                <SelectContent>{CONTACT_TYPES.map(t => <SelectItem key={t} value={t}>{t}</SelectItem>)}</SelectContent>
-              </Select>
             </div>
             <div className="flex justify-end">
               <Button variant="ghost" size="icon" className="h-8 w-8 text-muted-foreground hover:text-rag-red" onClick={() => removeContact(contact.id)} disabled={disabled}>
