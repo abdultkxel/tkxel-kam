@@ -1,0 +1,69 @@
+@import url('https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@600;700;800&family=Poppins:wght@400;500;600;700;800&display=swap');
+@import 'react-day-picker/dist/style.css';
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  * {
+    @apply border-surface-border;
+  }
+
+  html {
+    @apply bg-surface-secondary font-sans text-ink;
+  }
+
+  body {
+    @apply min-h-screen bg-surface-secondary font-sans text-sm text-ink antialiased;
+  }
+
+  button,
+  a,
+  input,
+  textarea,
+  select {
+    @apply focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-blue/30 focus-visible:ring-offset-2 focus-visible:ring-offset-surface-secondary;
+  }
+}
+
+@layer components {
+  .tk-card {
+    @apply rounded-lg border border-surface-border bg-white shadow-card;
+  }
+
+  .tk-button-primary {
+    @apply inline-flex min-h-[44px] items-center justify-center gap-2 rounded-md bg-brand-blue px-4 py-2 text-sm font-semibold tracking-wide text-white transition-colors hover:bg-brand-blue-dark disabled:cursor-not-allowed disabled:opacity-60;
+  }
+
+  .tk-button-secondary {
+    @apply inline-flex min-h-[44px] items-center justify-center gap-2 rounded-md border border-surface-border bg-white px-4 py-2 text-sm font-semibold text-ink transition-colors hover:bg-surface-tertiary disabled:cursor-not-allowed disabled:opacity-60;
+  }
+
+  .tk-icon-button {
+    @apply inline-flex min-h-[44px] min-w-[44px] items-center justify-center rounded-md text-ink-secondary transition-colors hover:bg-surface-tertiary hover:text-ink;
+  }
+
+  .tk-input {
+    @apply min-h-[44px] min-w-0 w-full rounded-md border border-surface-border bg-white px-3 py-2 text-sm text-ink placeholder:text-ink-tertiary focus:border-brand-blue focus:ring-2 focus:ring-brand-blue/30;
+  }
+
+  .tk-label {
+    @apply text-sm font-medium text-ink;
+  }
+}
+
+@media print {
+  .no-print {
+    display: none !important;
+  }
+
+  .print-section {
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
+
+  body {
+    background: white;
+  }
+}
