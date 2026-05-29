@@ -13,6 +13,12 @@ class UserRepository:
     def get_by_id(self, user_id: str) -> User | None:
         return self.db.scalar(select(User).where(User.id == user_id))
 
+    def list_users(self) -> list[User]:
+        return list(self.db.scalars(select(User).order_by(User.full_name, User.email)))
+
+    def list_manageable_users(self) -> list[User]:
+        return list(self.db.scalars(select(User).where(User.role != "super_admin").order_by(User.full_name, User.email)))
+
     def get_by_email(self, email: str) -> User | None:
         return self.db.scalar(select(User).where(User.email == normalize_email(email)))
 
@@ -36,3 +42,13 @@ class UserRepository:
         if refresh:
             self.db.refresh(user)
         return user
+
+    def create_user(self, user: User) -> User:
+        self.db.add(user)
+        self.db.commit()
+        self.db.refresh(user)
+        return user
+
+    def delete_user(self, user: User) -> None:
+        self.db.delete(user)
+        self.db.commit()

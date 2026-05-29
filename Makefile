@@ -32,8 +32,8 @@ seed:
 	$(COMPOSE) run --rm backend python -m app.cli seed
 
 test:
-	$(COMPOSE) run --rm backend pytest
-	$(COMPOSE) run --rm frontend npm test
+	$(COMPOSE) run --rm --no-deps backend pytest
+	$(COMPOSE) run --rm --no-deps frontend npm test
 
 down:
 	$(COMPOSE) down

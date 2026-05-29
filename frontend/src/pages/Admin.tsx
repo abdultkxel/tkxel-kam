@@ -2,10 +2,12 @@ import * as Switch from '@radix-ui/react-switch'
 import { BellRing, Download, PlugZap, Plus, Save, ShieldCheck, SlidersHorizontal } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import { nanoid } from 'nanoid'
-import { FormEvent, useEffect, useState } from 'react'
+import { FormEvent, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { toast } from 'sonner'
 import { AdminCustomizationPanel } from '@/components/admin/AdminCustomizationPanel'
+import { AdminRolesPanel } from '@/components/admin/AdminRolesPanel'
+import { AdminUsersPanel } from '@/components/admin/AdminUsersPanel'
 import { AlertRulesPanel } from '@/components/admin/AlertRulesPanel'
 import { IntegrationsPanel } from '@/components/admin/IntegrationsPanel'
 import { RetentionJobHistory } from '@/components/admin/RetentionJobHistory'
@@ -33,6 +35,8 @@ const swatchClass: Record<string, string> = {
 }
 
 const adminSections = [
+  { id: 'users', label: 'Users' },
+  { id: 'roles', label: 'Roles' },
   { id: 'scoring', label: 'Scoring' },
   { id: 'customization', label: 'Customization' },
   { id: 'alerts', label: 'Alert rules' },
@@ -83,7 +87,7 @@ export function Admin() {
   const [eventType, setEventType] = useState<TimelineEventType>('manual_note')
   const [module, setModule] = useState<TimelineModule>('manual')
   const activeSection = searchParams.get('section') ?? ''
-  const highlightedSection = activeSection || 'scoring'
+  const highlightedSection = activeSection || 'users'
   const activeTimelineTypes = configs.filter(config => config.active).length
   const connectedIntegrations = integrations.filter(config => config.status === 'connected').length
   const activeAlertRules = alertRules.filter(rule => rule.active).length
@@ -119,25 +123,11 @@ export function Admin() {
     },
   ]
 
-  function scrollToSection(id: string) {
-    const target = document.getElementById(id)
-    if (!target) return
-    const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches
-    const top = Math.max(target.getBoundingClientRect().top + window.scrollY - 84, 0)
-    window.scrollTo({ top, behavior: reducedMotion ? 'auto' : 'smooth' })
-  }
-
   function chooseSection(id: string) {
     const next = new URLSearchParams(searchParams)
     next.set('section', id)
     setSearchParams(next, { replace: true })
-    scrollToSection(id)
   }
-
-  useEffect(() => {
-    if (!activeSection) return
-    window.requestAnimationFrame(() => scrollToSection(activeSection))
-  }, [activeSection])
 
   function submit(event: FormEvent) {
     event.preventDefault()
@@ -182,12 +172,13 @@ export function Admin() {
           <p className="text-[10px] font-extrabold uppercase tracking-widest text-brand-blue">Admin sections</p>
           <p className="text-xs font-medium text-ink-secondary">{adminSections.length} areas</p>
         </div>
-        <div className="flex gap-2 overflow-x-auto pb-1">
+        <div className="flex gap-2 overflow-x-auto pb-1" role="tablist" aria-label="Admin sections">
           {adminSections.map(section => (
             <button
               key={section.id}
               type="button"
-              aria-current={highlightedSection === section.id ? 'page' : undefined}
+              role="tab"
+              aria-selected={highlightedSection === section.id}
               onClick={() => chooseSection(section.id)}
               className={cn(
                 'min-h-[44px] shrink-0 rounded-md px-3 text-xs font-semibold uppercase tracking-wider transition-colors',
@@ -201,18 +192,20 @@ export function Admin() {
           ))}
         </div>
       </section>
-      <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_440px]">
+      <div className="space-y-4">
         <div className="min-w-0 space-y-4">
-          <div id="scoring" className="scroll-mt-24">
+          {highlightedSection === 'users' ? <AdminUsersPanel /> : null}
+          {highlightedSection === 'roles' ? <AdminRolesPanel /> : null}
+          <div id="scoring" className={cn('scroll-mt-24', highlightedSection !== 'scoring' && 'hidden')}>
             <ScoringEngineBuilder />
           </div>
-          <div id="customization" className="scroll-mt-24">
+          <div id="customization" className={cn('scroll-mt-24', highlightedSection !== 'customization' && 'hidden')}>
             <AdminCustomizationPanel />
           </div>
-          <div id="alerts" className="scroll-mt-24">
+          <div id="alerts" className={cn('scroll-mt-24', highlightedSection !== 'alerts' && 'hidden')}>
             <AlertRulesPanel />
           </div>
-          <section id="timeline" className="tk-card scroll-mt-24 overflow-hidden">
+          <section id="timeline" className={cn('tk-card scroll-mt-24 overflow-hidden', highlightedSection !== 'timeline' && 'hidden')}>
             <div className="border-b border-surface-border p-5">
               <p className="text-[10px] font-extrabold uppercase tracking-widest text-brand-blue">FR-87 / FR-96</p>
               <h2 className="text-base font-semibold text-ink">Timeline Event Types</h2>
@@ -293,22 +286,22 @@ export function Admin() {
         </div>
 
         <aside className="min-w-0 space-y-4">
-          <div id="integrations" className="scroll-mt-24">
+          <div id="integrations" className={cn('scroll-mt-24', highlightedSection !== 'integrations' && 'hidden')}>
             <IntegrationsPanel />
           </div>
-          <div id="settings" className="scroll-mt-24">
+          <div id="settings" className={cn('scroll-mt-24', highlightedSection !== 'settings' && 'hidden')}>
             <NotificationSettingsPanel />
           </div>
-          <div id="segments" className="scroll-mt-24">
+          <div id="segments" className={cn('scroll-mt-24', highlightedSection !== 'segments' && 'hidden')}>
             <SegmentSettings />
           </div>
-          <div id="policies" className="scroll-mt-24">
+          <div id="policies" className={cn('scroll-mt-24', highlightedSection !== 'policies' && 'hidden')}>
             <SensitivePolicyTable />
           </div>
-          <div id="retention" className="scroll-mt-24">
+          <div id="retention" className={cn('scroll-mt-24', highlightedSection !== 'retention' && 'hidden')}>
             <RetentionJobHistory />
           </div>
-          <section id="audit" className="tk-card scroll-mt-24 p-5">
+          <section id="audit" className={cn('tk-card scroll-mt-24 p-5', highlightedSection !== 'audit' && 'hidden')}>
             <h3 className="text-base font-semibold text-ink">Audit Log</h3>
             <div className="mt-3 rounded-lg border border-surface-border p-3 text-sm text-ink-secondary">Timeline config reviewed by Admin.</div>
             <div className="mt-2 rounded-lg border border-surface-border p-3 text-sm text-ink-secondary">Sensitive entry access filter enabled.</div>

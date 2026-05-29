@@ -47,7 +47,7 @@ OpenAPI:  http://127.0.0.1:8001/openapi.json
 
 ## Default Login
 
-The seed command creates the default super admin.
+The seed command creates the hidden default super admin used for setup and platform ownership.
 
 ```text
 Email: admin@tkxelkam.com
@@ -74,6 +74,12 @@ POSTGRES_HOST_PORT=5432 make dev-run
 
 Use that override only when host port `5432` is free.
 
+If local frontend or backend ports are already busy, run Docker on alternate host ports:
+
+```bash
+BACKEND_HOST_PORT=8002 FRONTEND_HOST_PORT=5174 VITE_API_BASE_URL=http://127.0.0.1:8002 make run
+```
+
 ## Migrations And Seed Data
 
 ```bash
@@ -82,7 +88,35 @@ make seed
 ```
 
 `make migrate` creates/updates tables from SQLAlchemy metadata.
-`make seed` creates required default data, including the super admin user.
+`make seed` creates required default data, including the hidden super admin user, PRD roles, one visible user for every non-super-admin seeded role, and the module/action permission catalog.
+
+Default seeded roles from `requirements/KAM PRD.pdf`:
+
+```text
+super_admin
+admin
+account_manager
+ops_lead
+kam_head
+leadership_viewer
+content_specialist
+commercial_stakeholder
+delivery_stakeholder
+```
+
+`super_admin` is kept out of Admin user/role listings and assignment dropdowns. Seeded visible role users use this pattern:
+
+```text
+admin.user@tkxelkam.com
+account.manager.user@tkxelkam.com
+ops.lead.user@tkxelkam.com
+kam.head.user@tkxelkam.com
+leadership.viewer.user@tkxelkam.com
+content.specialist.user@tkxelkam.com
+commercial.stakeholder.user@tkxelkam.com
+delivery.stakeholder.user@tkxelkam.com
+Password: User@12345
+```
 
 ## Authentication Features
 
@@ -101,6 +135,51 @@ Swagger documentation for each API
 ```
 
 Frontend forms display backend validation errors directly below the matching field.
+
+## User Management And RBAC
+
+The Admin screen includes PRD-backed user and role permission management:
+
+```text
+Tabbed Admin sections instead of a long scrollable settings page
+Create users
+Edit users
+Delete users with confirmation
+Assign roles
+Activate/deactivate users
+Create custom roles
+Edit roles
+Delete custom roles with confirmation
+Grant or revoke module/action permissions
+Select all permissions or clear all permissions in one click
+Refresh seeded access data
+```
+
+Backend APIs:
+
+```text
+GET    /api/admin/users
+POST   /api/admin/users
+GET    /api/admin/users/{user_id}
+PATCH  /api/admin/users/{user_id}
+DELETE /api/admin/users/{user_id}
+GET    /api/admin/roles
+POST   /api/admin/roles
+GET    /api/admin/roles/{role_slug}
+PATCH  /api/admin/roles/{role_slug}
+DELETE /api/admin/roles/{role_slug}
+GET    /api/admin/permissions
+PUT    /api/admin/roles/{role_slug}/permissions
+```
+
+RBAC data is implemented with repository and service layers:
+
+```text
+backend/app/repositories/rbac.py
+backend/app/repositories/users.py
+backend/app/services/rbac.py
+backend/app/services/user_management.py
+```
 
 ## API Documentation
 
@@ -135,10 +214,15 @@ Backend auth/profile flows
 Backend validation error messages
 Backend Swagger/OpenAPI assertions
 Backend snake_case database schema assertions
+Backend seeded PRD roles and permissions
+Backend user management and RBAC permission APIs
+Backend admin authorization and forbidden access checks
+Backend user and role delete protections
 Frontend login flow
 Frontend reset password flow
 Frontend profile/password flow
 Frontend field-level validation error rendering
+Frontend Admin tabs, user CRUD validation/deletion, and role permission CRUD
 ```
 
 ## Project Rules
