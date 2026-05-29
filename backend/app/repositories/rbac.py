@@ -1,4 +1,4 @@
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session, selectinload
 
 from app.models import Permission, Role, RolePermission, User
@@ -11,15 +11,26 @@ class RbacRepository:
     def list_roles(self) -> list[Role]:
         return list(self.db.scalars(select(Role).options(selectinload(Role.permissions).selectinload(RolePermission.permission)).order_by(Role.name)))
 
-    def list_manageable_roles(self) -> list[Role]:
-        return list(
+    def list_manageable_roles(
+        self,
+        search: str | None = None,
+        role_type: str = "all",
+        page: int = 1,
+        page_size: int = 10,
+    ) -> tuple[list[Role], int]:
+        conditions = self._manageable_role_conditions(search, role_type)
+        total = self.db.scalar(select(func.count(Role.id)).where(*conditions)) or 0
+        roles = list(
             self.db.scalars(
                 select(Role)
-                .where(Role.slug != "super_admin")
+                .where(*conditions)
                 .options(selectinload(Role.permissions).selectinload(RolePermission.permission))
                 .order_by(Role.name)
+                .offset((page - 1) * page_size)
+                .limit(page_size)
             )
         )
+        return roles, total
 
     def get_role_by_slug(self, slug: str) -> Role | None:
         return self.db.scalar(
@@ -99,3 +110,15 @@ class RbacRepository:
 
     def commit(self) -> None:
         self.db.commit()
+
+    @staticmethod
+    def _manageable_role_conditions(search: str | None, role_type: str) -> list:
+        conditions = [Role.slug != "super_admin"]
+        if search and search.strip():
+            term = f"%{search.strip()}%"
+            conditions.append(or_(Role.slug.ilike(term), Role.name.ilike(term), Role.description.ilike(term)))
+        if role_type == "system":
+            conditions.append(Role.is_system.is_(True))
+        if role_type == "custom":
+            conditions.append(Role.is_system.is_(False))
+        return conditions

@@ -50,11 +50,21 @@ function jsonResponse(body: unknown, status = 200) {
   })
 }
 
+function paginated<T>(items: T[], page = 1, pageSize = 10) {
+  return {
+    items,
+    total: items.length,
+    page,
+    page_size: pageSize,
+    pages: items.length ? Math.ceil(items.length / pageSize) : 0,
+  }
+}
+
 function setupFetch() {
   const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input)
     const method = init?.method ?? 'GET'
-    if (url.endsWith('/api/admin/roles') && method === 'GET') return jsonResponse(roles)
+    if (url.includes('/api/admin/roles') && method === 'GET') return jsonResponse(paginated(roles))
     if (url.endsWith('/api/admin/permissions') && method === 'GET') return jsonResponse(permissions)
     if (url.endsWith('/api/admin/roles') && method === 'POST') {
       return jsonResponse({ ...roles[1], slug: 'portfolio_viewer', name: 'Portfolio Viewer', permissions: [] }, 201)
@@ -111,5 +121,25 @@ describe('AdminRolesPanel', () => {
 
     await waitFor(() => expect(fetchMock.mock.calls.some(call => String(call[0]).endsWith('/api/admin/roles/regional_director'))).toBe(true))
     expect(toast.success).toHaveBeenCalledWith('Role deleted successfully')
+  })
+
+  it('requests roles with search, type, and page size filters', async () => {
+    const fetchMock = setupFetch()
+    render(<AdminRolesPanel />)
+
+    expect(await screen.findByText('Regional Director')).toBeInTheDocument()
+    await userEvent.type(screen.getByPlaceholderText(/search by slug, name, or description/i), 'regional')
+    await userEvent.selectOptions(screen.getByLabelText(/filter roles by type/i), 'custom')
+    await userEvent.selectOptions(screen.getByLabelText(/roles per page/i), '5')
+
+    await waitFor(() => expect(fetchMock.mock.calls.some(call => {
+      const url = String(call[0])
+      return (
+        url.includes('/api/admin/roles?') &&
+        url.includes('search=regional') &&
+        url.includes('type=custom') &&
+        url.includes('page_size=5')
+      )
+    })).toBe(true))
   })
 })

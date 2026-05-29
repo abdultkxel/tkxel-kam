@@ -145,11 +145,17 @@ Tabbed Admin sections instead of a long scrollable settings page
 Create users
 Edit users
 Delete users with confirmation
+Search users by email or name
+Filter users by status and role
+Paginate users with selectable page sizes
 Assign roles
 Activate/deactivate users
 Create custom roles
 Edit roles
 Delete custom roles with confirmation
+Search roles by slug, name, or description
+Filter roles by system/custom type
+Paginate roles with selectable page sizes
 Grant or revoke module/action permissions
 Select all permissions or clear all permissions in one click
 Refresh seeded access data
@@ -216,13 +222,14 @@ Backend Swagger/OpenAPI assertions
 Backend snake_case database schema assertions
 Backend seeded PRD roles and permissions
 Backend user management and RBAC permission APIs
+Backend user and role search/filter/pagination APIs
 Backend admin authorization and forbidden access checks
 Backend user and role delete protections
 Frontend login flow
 Frontend reset password flow
 Frontend profile/password flow
 Frontend field-level validation error rendering
-Frontend Admin tabs, user CRUD validation/deletion, and role permission CRUD
+Frontend Admin tabs, user/role filters, pagination, CRUD validation/deletion, and role permission CRUD
 ```
 
 ## Project Rules

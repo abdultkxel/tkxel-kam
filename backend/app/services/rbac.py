@@ -6,7 +6,8 @@ from sqlalchemy.orm import Session
 from app.models import Permission, Role, User
 from app.rbac import ACTIONS, DEFAULT_ROLES, MODULES, default_permission_keys_for, permission_key
 from app.repositories.rbac import RbacRepository
-from app.schemas import MessageResponse, RoleCreateRequest, RolePermissionsUpdateRequest, RoleUpdateRequest
+from app.schemas import MessageResponse, RoleCreateRequest, RolePageRead, RolePermissionsUpdateRequest, RoleUpdateRequest
+from app.services.user_management import page_count
 
 
 def permission_description(module_name: str, action: str) -> str:
@@ -42,8 +43,15 @@ class RbacService:
         self.repository.commit()
         return {"roles": roles_seeded, "permissions": len(permissions_by_key)}
 
-    def list_roles(self) -> list[Role]:
-        return self.repository.list_manageable_roles()
+    def list_roles(
+        self,
+        search: str | None = None,
+        role_type: str = "all",
+        page: int = 1,
+        page_size: int = 10,
+    ) -> RolePageRead:
+        roles, total = self.repository.list_manageable_roles(search, role_type, page, page_size)
+        return RolePageRead(items=roles, total=total, page=page, page_size=page_size, pages=page_count(total, page_size))
 
     def get_role(self, slug: str) -> Role:
         role = self.repository.get_role_by_slug(slug)

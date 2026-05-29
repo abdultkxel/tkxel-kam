@@ -28,12 +28,22 @@ function jsonResponse(body: unknown) {
   })
 }
 
+function paginated<T>(items: T[]) {
+  return {
+    items,
+    total: items.length,
+    page: 1,
+    page_size: 10,
+    pages: items.length ? 1 : 0,
+  }
+}
+
 describe('Admin', () => {
   it('uses tabs so only the selected admin section is shown', async () => {
     vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input)
-      if (url.endsWith('/api/admin/users')) return jsonResponse([])
-      if (url.endsWith('/api/admin/roles')) return jsonResponse(roles)
+      if (url.includes('/api/admin/users')) return jsonResponse(paginated([]))
+      if (url.includes('/api/admin/roles')) return jsonResponse(paginated(roles))
       if (url.endsWith('/api/admin/permissions')) return jsonResponse([])
       return jsonResponse({})
     }))

@@ -72,12 +72,22 @@ function jsonResponse(body: unknown, status = 200) {
   })
 }
 
+function paginated<T>(items: T[], page = 1, pageSize = 10) {
+  return {
+    items,
+    total: items.length,
+    page,
+    page_size: pageSize,
+    pages: items.length ? Math.ceil(items.length / pageSize) : 0,
+  }
+}
+
 function setupFetch() {
   const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input)
     const method = init?.method ?? 'GET'
-    if (url.endsWith('/api/admin/users') && method === 'GET') return jsonResponse(users)
-    if (url.endsWith('/api/admin/roles') && method === 'GET') return jsonResponse(roles)
+    if (url.includes('/api/admin/users') && method === 'GET') return jsonResponse(paginated(users))
+    if (url.includes('/api/admin/roles') && method === 'GET') return jsonResponse(paginated(roles, 1, 100))
     if (url.endsWith('/api/admin/users') && method === 'POST') {
       return jsonResponse(
         {
@@ -125,5 +135,27 @@ describe('AdminUsersPanel', () => {
 
     await waitFor(() => expect(fetchMock.mock.calls.some(call => String(call[0]).endsWith('/api/admin/users/usr-2'))).toBe(true))
     expect(toast.success).toHaveBeenCalledWith('User deleted successfully')
+  })
+
+  it('requests users with search, status, role, and page size filters', async () => {
+    const fetchMock = setupFetch()
+    render(<AdminUsersPanel />)
+
+    expect(await screen.findByText('Managed User')).toBeInTheDocument()
+    await userEvent.type(screen.getByPlaceholderText(/search by email or name/i), 'managed')
+    await userEvent.selectOptions(screen.getByLabelText(/filter users by status/i), 'active')
+    await userEvent.selectOptions(screen.getByLabelText(/filter users by role/i), 'account_manager')
+    await userEvent.selectOptions(screen.getByLabelText(/users per page/i), '5')
+
+    await waitFor(() => expect(fetchMock.mock.calls.some(call => {
+      const url = String(call[0])
+      return (
+        url.includes('/api/admin/users?') &&
+        url.includes('search=managed') &&
+        url.includes('status=active') &&
+        url.includes('role=account_manager') &&
+        url.includes('page_size=5')
+      )
+    })).toBe(true))
   })
 })

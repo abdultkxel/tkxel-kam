@@ -62,7 +62,7 @@ def test_seed_creates_required_prd_roles_and_permissions(client: TestClient) -> 
     assert roles_response.status_code == 200
     assert permissions_response.status_code == 200
     expected_roles = {role.slug for role in DEFAULT_ROLES if role.slug != "super_admin"}
-    listed_roles = {role["slug"] for role in roles_response.json()}
+    listed_roles = {role["slug"] for role in roles_response.json()["items"]}
     assert expected_roles.issubset(listed_roles)
     assert "super_admin" not in listed_roles
     assert len(permissions_response.json()) == len(MODULES) * len(ACTIONS)
@@ -74,9 +74,11 @@ def test_seed_creates_manageable_user_for_each_default_role_and_hides_super_admi
     response = client.get("/api/admin/users", headers=headers)
 
     assert response.status_code == 200
-    users = response.json()
-    listed_roles = {user["role"] for user in users}
+    body = response.json()
+    users = body["items"]
     expected_roles = {role.slug for role in DEFAULT_ROLES if role.slug != "super_admin"}
+    assert body["total"] >= len(expected_roles)
+    listed_roles = {user["role"] for user in users}
     assert expected_roles.issubset(listed_roles)
     assert all(user["role"] != "super_admin" for user in users)
     assert all(not user["email"].startswith("admin@") for user in users)
@@ -115,7 +117,7 @@ def test_super_admin_can_create_update_and_delete_managed_users(client: TestClie
 
     list_response = client.get("/api/admin/users", headers=headers)
     assert list_response.status_code == 200
-    assert any(user["email"] == "kam.user@example.com" for user in list_response.json())
+    assert any(user["email"] == "kam.user@example.com" for user in list_response.json()["items"])
 
     delete_response = client.delete(f"/api/admin/users/{created_user['id']}", headers=headers)
     assert delete_response.status_code == 200
@@ -157,6 +159,43 @@ def test_role_permissions_can_be_updated(client: TestClient) -> None:
 
     assert response.status_code == 200
     assert permission_is_allowed(response.json(), "admin_audit_security_rbac", "configure")
+
+
+def test_user_list_supports_search_status_role_and_pagination(client: TestClient) -> None:
+    headers = auth_headers(client)
+
+    response = client.get(
+        "/api/admin/users",
+        headers=headers,
+        params={"search": "account.manager", "status": "active", "role": "account_manager", "page": 1, "page_size": 1},
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["page"] == 1
+    assert body["page_size"] == 1
+    assert body["total"] >= 1
+    assert body["items"][0]["email"] == "account.manager.user@tkxelkam.com"
+    assert body["items"][0]["is_active"] is True
+    assert body["items"][0]["role"] == "account_manager"
+
+
+def test_role_list_supports_search_type_and_pagination(client: TestClient) -> None:
+    headers = auth_headers(client)
+
+    response = client.get(
+        "/api/admin/roles",
+        headers=headers,
+        params={"search": "account", "type": "system", "page": 1, "page_size": 2},
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["page"] == 1
+    assert body["page_size"] == 2
+    assert body["total"] >= 1
+    assert all(role["is_system"] for role in body["items"])
+    assert all("account" in f"{role['slug']} {role['name']} {role.get('description') or ''}".lower() for role in body["items"])
 
 
 def test_super_admin_can_create_update_and_delete_custom_roles(client: TestClient) -> None:
@@ -242,10 +281,14 @@ def test_openapi_documents_admin_rbac_apis(client: TestClient) -> None:
 
     assert response.status_code == 200
     paths = response.json()["paths"]
+    user_list_params = [param["name"] for param in paths["/api/admin/users"]["get"]["parameters"]]
+    role_list_params = [param["name"] for param in paths["/api/admin/roles"]["get"]["parameters"]]
     assert paths["/api/admin/users"]["get"]["summary"] == "List managed users"
+    assert {"search", "status", "role", "page", "page_size"}.issubset(user_list_params)
     assert paths["/api/admin/users"]["post"]["summary"] == "Create a managed user"
     assert paths["/api/admin/users/{user_id}"]["delete"]["summary"] == "Delete a managed user"
     assert paths["/api/admin/roles"]["get"]["summary"] == "List roles"
+    assert {"search", "type", "page", "page_size"}.issubset(role_list_params)
     assert paths["/api/admin/roles/{role_slug}"]["delete"]["summary"] == "Delete a role"
     assert paths["/api/admin/roles/{role_slug}/permissions"]["put"]["summary"] == "Update role permissions"
     assert "403" in paths["/api/admin/roles"]["get"]["responses"]

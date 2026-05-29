@@ -1,5 +1,5 @@
 import * as Dialog from '@radix-ui/react-dialog'
-import { Edit3, Plus, RefreshCw, ShieldCheck, Trash2, X } from 'lucide-react'
+import { ChevronLeft, ChevronRight, Edit3, Plus, RefreshCw, Search, ShieldCheck, Trash2, X } from 'lucide-react'
 import { FormEvent, useEffect, useMemo, useState } from 'react'
 import { toast } from 'sonner'
 import { ConfirmDialog } from '@/components/admin/ConfirmDialog'
@@ -62,6 +62,12 @@ export function AdminRolesPanel() {
   const { token } = useAuth()
   const [roles, setRoles] = useState<Role[]>([])
   const [permissions, setPermissions] = useState<Permission[]>([])
+  const [search, setSearch] = useState('')
+  const [typeFilter, setTypeFilter] = useState<'all' | 'system' | 'custom'>('all')
+  const [page, setPage] = useState(1)
+  const [pageSize, setPageSize] = useState(10)
+  const [total, setTotal] = useState(0)
+  const [pages, setPages] = useState(0)
   const [loading, setLoading] = useState(false)
   const [saving, setSaving] = useState(false)
   const [deleting, setDeleting] = useState(false)
@@ -73,7 +79,6 @@ export function AdminRolesPanel() {
   const [deleteTarget, setDeleteTarget] = useState<Role | null>(null)
   const [form, setForm] = useState<RoleFormState>(emptyForm)
 
-  const sortedRoles = useMemo(() => [...roles].sort((first, second) => first.name.localeCompare(second.name)), [roles])
   const groupedPermissions = useMemo(() => {
     const groups = new Map<string, Permission[]>()
     permissions.forEach(permission => groups.set(permission.module, [...(groups.get(permission.module) ?? []), permission]))
@@ -82,22 +87,50 @@ export function AdminRolesPanel() {
 
   useEffect(() => {
     if (!token) return
-    void loadData()
+    void loadPermissions()
   }, [token])
 
-  async function loadData() {
+  useEffect(() => {
+    if (!token) return
+    void loadRoles(page)
+  }, [token, search, typeFilter, page, pageSize])
+
+  async function loadPermissions() {
+    if (!token) return
+    setError('')
+    try {
+      const nextPermissions = await listPermissions(token)
+      setPermissions(nextPermissions)
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : 'Unable to load permissions')
+    }
+  }
+
+  async function loadRoles(nextPage = page) {
     if (!token) return
     setLoading(true)
     setError('')
     try {
-      const [nextRoles, nextPermissions] = await Promise.all([listRoles(token), listPermissions(token)])
-      setRoles(nextRoles.filter(role => role.slug !== 'super_admin'))
-      setPermissions(nextPermissions)
+      const response = await listRoles(token, {
+        search,
+        type: typeFilter,
+        page: nextPage,
+        page_size: pageSize,
+      })
+      setRoles(response.items.filter(role => role.slug !== 'super_admin'))
+      setTotal(response.total)
+      setPages(response.pages)
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Unable to load roles')
     } finally {
       setLoading(false)
     }
+  }
+
+  function resetFilters() {
+    setSearch('')
+    setTypeFilter('all')
+    setPage(1)
   }
 
   function openCreateDialog() {
@@ -155,11 +188,10 @@ export function AdminRolesPanel() {
         ? await updateRole(token, editingRole.slug, { name: form.name, description: form.description || undefined })
         : await createRole(token, { slug: form.slug, name: form.name, description: form.description || undefined })
       const permissionUpdates = buildPermissionUpdates(role, permissions, form.permissions, Boolean(editingRole))
-      const savedRole = permissionUpdates.length ? await updateRolePermissions(token, role.slug, permissionUpdates) : role
-      setRoles(current => {
-        const exists = current.some(item => item.slug === savedRole.slug)
-        return exists ? current.map(item => item.slug === savedRole.slug ? savedRole : item) : [...current, savedRole]
-      })
+      if (permissionUpdates.length) await updateRolePermissions(token, role.slug, permissionUpdates)
+      const nextPage = editingRole ? page : 1
+      if (!editingRole) setPage(1)
+      await loadRoles(nextPage)
       setDialogOpen(false)
       toast.success(editingRole ? 'Role updated successfully' : 'Role created successfully')
     } catch (err) {
@@ -178,7 +210,9 @@ export function AdminRolesPanel() {
     setDeleting(true)
     try {
       await deleteRole(token, deleteTarget.slug)
-      setRoles(current => current.filter(role => role.slug !== deleteTarget.slug))
+      const nextPage = page > 1 && roles.length === 1 ? page - 1 : page
+      if (nextPage !== page) setPage(nextPage)
+      await loadRoles(nextPage)
       setDeleteTarget(null)
       toast.success('Role deleted successfully')
     } catch (err) {
@@ -196,7 +230,7 @@ export function AdminRolesPanel() {
           <h2 className="text-base font-semibold text-ink">Roles Management</h2>
         </div>
         <div className="flex flex-wrap gap-2">
-          <button type="button" className="tk-button-secondary" onClick={() => void loadData()} disabled={loading}>
+          <button type="button" className="tk-button-secondary" onClick={() => void loadRoles(page)} disabled={loading}>
             <RefreshCw className={cn('h-4 w-4', loading && 'animate-spin')} />
             Refresh
           </button>
@@ -207,6 +241,50 @@ export function AdminRolesPanel() {
         </div>
       </div>
       {error ? <p className="m-5 rounded-md border border-rag-red/20 bg-rag-red/10 px-3 py-2 text-sm font-medium text-rag-red">{error}</p> : null}
+      <div className="grid gap-3 border-b border-surface-border bg-surface-tertiary p-4 lg:grid-cols-[minmax(260px,1fr)_180px_140px_auto]">
+        <label className="block">
+          <span className="sr-only">Search roles</span>
+          <div className="relative">
+            <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-ink-tertiary" />
+            <input
+              className="tk-input pl-9"
+              value={search}
+              onChange={event => {
+                setSearch(event.target.value)
+                setPage(1)
+              }}
+              placeholder="Search by slug, name, or description"
+            />
+          </div>
+        </label>
+        <select
+          className="tk-input"
+          value={typeFilter}
+          onChange={event => {
+            setTypeFilter(event.target.value as typeof typeFilter)
+            setPage(1)
+          }}
+          aria-label="Filter roles by type"
+        >
+          <option value="all">All types</option>
+          <option value="system">System</option>
+          <option value="custom">Custom</option>
+        </select>
+        <select
+          className="tk-input"
+          value={pageSize}
+          onChange={event => {
+            setPageSize(Number(event.target.value))
+            setPage(1)
+          }}
+          aria-label="Roles per page"
+        >
+          <option value={5}>5 per page</option>
+          <option value={10}>10 per page</option>
+          <option value={25}>25 per page</option>
+        </select>
+        <button type="button" className="tk-button-secondary" onClick={resetFilters}>Clear</button>
+      </div>
       <div className="overflow-x-auto">
         <table className="w-full min-w-[940px] text-left text-sm">
           <thead className="border-b border-surface-border bg-surface-tertiary text-xs font-semibold uppercase tracking-wider text-ink-secondary">
@@ -219,7 +297,7 @@ export function AdminRolesPanel() {
             </tr>
           </thead>
           <tbody>
-            {sortedRoles.map(role => (
+            {roles.map(role => (
               <tr key={role.slug} className="border-b border-surface-border last:border-b-0">
                 <td className="px-4 py-3">
                   <p className="font-semibold text-ink">{role.name}</p>
@@ -246,9 +324,25 @@ export function AdminRolesPanel() {
                 </td>
               </tr>
             ))}
+            {!roles.length ? (
+              <tr>
+                <td className="px-4 py-8 text-center text-sm font-medium text-ink-secondary" colSpan={5}>
+                  No roles match the current filters.
+                </td>
+              </tr>
+            ) : null}
           </tbody>
         </table>
       </div>
+      <PaginationBar
+        page={page}
+        pages={pages}
+        pageSize={pageSize}
+        total={total}
+        visibleCount={roles.length}
+        onPrevious={() => setPage(current => Math.max(1, current - 1))}
+        onNext={() => setPage(current => Math.min(Math.max(pages, 1), current + 1))}
+      />
       <RoleFormDialog
         open={dialogOpen}
         form={form}
@@ -272,6 +366,45 @@ export function AdminRolesPanel() {
         onConfirm={() => void confirmDelete()}
       />
     </section>
+  )
+}
+
+function PaginationBar({
+  page,
+  pages,
+  pageSize,
+  total,
+  visibleCount,
+  onPrevious,
+  onNext,
+}: {
+  page: number
+  pages: number
+  pageSize: number
+  total: number
+  visibleCount: number
+  onPrevious: () => void
+  onNext: () => void
+}) {
+  const firstItem = total ? (page - 1) * pageSize + 1 : 0
+  const lastItem = total ? firstItem + visibleCount - 1 : 0
+  return (
+    <div className="flex flex-wrap items-center justify-between gap-3 border-t border-surface-border bg-white px-4 py-3 text-sm text-ink-secondary">
+      <span>{firstItem}-{lastItem} of {total} roles</span>
+      <div className="flex items-center gap-2">
+        <button type="button" className="tk-button-secondary min-h-[38px] px-3 py-1.5" onClick={onPrevious} disabled={page <= 1}>
+          <ChevronLeft className="h-4 w-4" />
+          Previous
+        </button>
+        <span className="min-w-[88px] text-center text-xs font-bold uppercase tracking-wider text-ink-secondary">
+          Page {total ? page : 0} of {pages}
+        </span>
+        <button type="button" className="tk-button-secondary min-h-[38px] px-3 py-1.5" onClick={onNext} disabled={!pages || page >= pages}>
+          Next
+          <ChevronRight className="h-4 w-4" />
+        </button>
+      </div>
+    </div>
   )
 }
 

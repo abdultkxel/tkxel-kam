@@ -1,4 +1,4 @@
-from sqlalchemy import select
+from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
 from app.models import PasswordResetToken, User
@@ -16,8 +16,26 @@ class UserRepository:
     def list_users(self) -> list[User]:
         return list(self.db.scalars(select(User).order_by(User.full_name, User.email)))
 
-    def list_manageable_users(self) -> list[User]:
-        return list(self.db.scalars(select(User).where(User.role != "super_admin").order_by(User.full_name, User.email)))
+    def list_manageable_users(
+        self,
+        search: str | None = None,
+        status_filter: str = "all",
+        role: str | None = None,
+        page: int = 1,
+        page_size: int = 10,
+    ) -> tuple[list[User], int]:
+        conditions = self._manageable_user_conditions(search, status_filter, role)
+        total = self.db.scalar(select(func.count(User.id)).where(*conditions)) or 0
+        users = list(
+            self.db.scalars(
+                select(User)
+                .where(*conditions)
+                .order_by(User.full_name, User.email)
+                .offset((page - 1) * page_size)
+                .limit(page_size)
+            )
+        )
+        return users, total
 
     def get_by_email(self, email: str) -> User | None:
         return self.db.scalar(select(User).where(User.email == normalize_email(email)))
@@ -52,3 +70,17 @@ class UserRepository:
     def delete_user(self, user: User) -> None:
         self.db.delete(user)
         self.db.commit()
+
+    @staticmethod
+    def _manageable_user_conditions(search: str | None, status_filter: str, role: str | None) -> list:
+        conditions = [User.role != "super_admin"]
+        if search and search.strip():
+            term = f"%{search.strip()}%"
+            conditions.append(or_(User.email.ilike(term), User.full_name.ilike(term)))
+        if status_filter == "active":
+            conditions.append(User.is_active.is_(True))
+        if status_filter == "inactive":
+            conditions.append(User.is_active.is_(False))
+        if role and role.strip():
+            conditions.append(User.role == role.strip())
+        return conditions
