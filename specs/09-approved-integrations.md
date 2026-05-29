@@ -25,10 +25,11 @@ Bring governed external context into account workflows without expanding integra
 
 - Only Google Calendar, Fathom, CSAT, and AI/LLM Gateway are approved MVP integration adapters.
 - Support adapter configuration, test connection, sync status, last synced timestamp, retry, deduplication, error logging, and Admin notifications on repeated failures.
-- Google Calendar supports governance events, tagged meetings, reminders, and timeline event generation.
+- Google Calendar supports OAuth, inbound/outbound governance scheduling, tagged meetings, reminders, event type mapping, account mapping, deduplication, and timeline event generation.
 - Fathom supports meeting summaries/transcripts for tagged governance/account meetings after review or configured approval.
-- CSAT supports score intake, trend display, scoring input, account/engagement mapping, and timeline events.
-- AI/LLM Gateway supports governed extraction, KYC enrichment, summaries, search, explanations, semantic retrieval, logs, and guardrails.
+- CSAT supports score intake, trend display, freshness, scoring input, account/engagement mapping, score impact, and timeline events.
+- AI/LLM Gateway supports governed extraction, KYC enrichment, summaries, search, explanations, semantic retrieval, research-source governance, response disclaimers, logs, and guardrails.
+- External systems outside approved adapters are handled through manual entry, uploaded/linked evidence, CSV/manual input, or future scope review.
 - Provide unmapped item review queues and mapping rules.
 
 ## Non-Functional Requirements
@@ -49,6 +50,7 @@ Bring governed external context into account workflows without expanding integra
 
 - Adapter type must be in the approved integration list.
 - Required credentials/config fields vary by adapter and must validate before activation.
+- OAuth adapters must validate token status, expiry, scopes, and reconnect requirements before sync.
 - Calendar/Fathom events require account tagging or configured mapping before timeline write.
 - CSAT score requires account or engagement mapping.
 - AI Gateway requests require source context and permission-filtered retrieval payload.
@@ -136,6 +138,7 @@ Bring governed external context into account workflows without expanding integra
 - Fathom transcript may be sensitive and require review/redaction.
 - Deduplication windows prevent duplicate timeline events.
 - Integration-created records still respect module permissions.
+- Manual/CSV fallback records from non-approved systems must be labeled as manual evidence, not as integration-synced records.
 
 ## Missing Requirements
 
@@ -188,4 +191,3 @@ Bring governed external context into account workflows without expanding integra
 - Every integration supports test, sync, status, retry, dedupe, and logs.
 - Imported records are mapped, reviewed where required, and source-linked.
 - Integration failures are visible to Admin and do not block core workflows.
-

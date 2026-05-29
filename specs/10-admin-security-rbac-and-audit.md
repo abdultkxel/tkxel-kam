@@ -34,8 +34,9 @@ Provide a secure, configurable administration layer that enforces least privileg
 - Support field-level security for protected commercial, executive, escalation, legal, stakeholder, attachment, report, timeline, and AI context data.
 - Configure reference data: account statuses, stages, segments, industries, regions, opportunity types, stakeholder roles, signal types, escalation severities, governance types, content tags.
 - Configure scoring, signal, playbook, timeline event, retention, notification, SLA, and dashboard rules.
-- Validate, version, and audit configuration changes.
+- Validate, version, test, publish, roll back where supported, and audit configuration changes.
 - Maintain audit logs for critical business and configuration actions.
+- Maintain access logs for sensitive record and field retrieval where required by policy.
 - Manage retention policies for timeline entries, AI outputs, KYC snapshots, score snapshots, audit logs, attachments, and reports.
 
 ## Non-Functional Requirements
@@ -65,6 +66,8 @@ Provide a secure, configurable administration layer that enforces least privileg
 - In-use taxonomy item cannot be hard deleted.
 - Required default taxonomy value cannot be deactivated without replacement.
 - Configuration publish requires validation success.
+- Configuration test mode must not affect authoritative production rules until published.
+- Configuration rollback must preserve original version, rollback actor, timestamp, and reason where supported.
 - Retention action requires reason and target entity type.
 
 ## Search Requirements
@@ -74,6 +77,7 @@ Provide a secure, configurable administration layer that enforces least privileg
 - Search access assignments by account, engagement, user, role.
 - Search reference data by name/slug.
 - Search audit logs by entity ID/name and reason.
+- Search access logs by actor, entity, field, account, and source IP/session where captured.
 - Search configuration changes by module, actor, and entity.
 
 ## Filter Requirements
@@ -83,6 +87,7 @@ Provide a secure, configurable administration layer that enforces least privileg
 - Access: account, engagement, user, role, access level.
 - Reference data: taxonomy, active/inactive.
 - Audit logs: actor, entity, action, source, date range, reason.
+- Access logs: actor, entity, field, sensitivity level, date range, access result.
 - Retention policies: entity type, action, active state.
 
 ## Sort Requirements
@@ -96,6 +101,7 @@ Provide a secure, configurable administration layer that enforces least privileg
 ## Pagination Requirements
 
 - User, role, permission, access, reference data, audit log, configuration change, and retention policy lists are paginated.
+- Access logs are paginated.
 
 ## API Requirements
 
@@ -119,6 +125,7 @@ Provide a secure, configurable administration layer that enforces least privileg
 - `PATCH /api/admin/reference-data/{taxonomy}/{item_id}`
 - `DELETE /api/admin/reference-data/{taxonomy}/{item_id}`
 - `GET /api/admin/audit-logs`
+- `GET /api/admin/access-logs`
 - `GET /api/admin/configuration-changes`
 - `GET /api/admin/retention-policies`
 - `POST /api/admin/retention-policies`
@@ -132,8 +139,9 @@ Provide a secure, configurable administration layer that enforces least privileg
 - Account/engagement access assignment screens.
 - Field permission configuration screen.
 - Reference data screen with taxonomy tabs.
-- Configuration screens with version history, validation, and publish controls.
+- Configuration screens with version history, validation, test mode, publish, and rollback controls where supported.
 - Audit log screen with filters and detail drawer.
+- Sensitive access log screen with filters and detail drawer.
 - Retention policy screen with simulation/test action.
 - Confirmation dialogs for destructive actions.
 
@@ -178,6 +186,7 @@ Provide a secure, configurable administration layer that enforces least privileg
 - Exact field permission catalog is not defined.
 - Access levels for account/engagement access are not enumerated.
 - Retention durations and critical entity definitions are not specified.
+- Sensitive access log retention and viewer permissions are not specified.
 - Super admin lifecycle policy is not fully described.
 
 ## Ambiguous Requirements
@@ -224,4 +233,3 @@ Provide a secure, configurable administration layer that enforces least privileg
 - Admin can manage users, roles, access, reference data, configuration, audit, and retention through governed UI/API.
 - RBAC and field security are enforced before data leaves the backend.
 - Configuration and security changes are validated, versioned where applicable, and auditable.
-

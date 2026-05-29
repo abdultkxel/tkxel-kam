@@ -26,6 +26,7 @@ Improve speed and quality of account intelligence while keeping human review as 
 
 - Trigger AI KYC from Account Overview, onboarding drafts, or selected charter/SOW documents.
 - Generate draft KYC from charters/SOWs, approved account and engagement records, prior snapshots, attachments, user notes, and approved research sources.
+- Approved AI research sources include Travoly/Trivoly, ZoomInfo, and CrunchBase through the AI/LLM Gateway; they are not standalone integration adapters.
 - Display citations, confidence, conflicts, missing fields, and differences from previous approved snapshot.
 - Allow review, edit, enrich, approve, or reject draft content.
 - Store approved KYC snapshots as immutable versions.
@@ -39,6 +40,7 @@ Improve speed and quality of account intelligence while keeping human review as 
 
 - AI failure must not block manual KYC entry.
 - AI output must be labeled as AI-assisted and source-backed.
+- KYC drafts and agent outputs must display the platform-level non-dismissible AI disclaimer.
 - AI must not fabricate unsupported values.
 - KYC indicators must load on Account Overview, KYC page, and KAM Head Portfolio without blocking other page sections.
 
@@ -55,6 +57,7 @@ Improve speed and quality of account intelligence while keeping human review as 
 - Low-confidence or conflicting fields require explicit review acknowledgement.
 - Snapshots are immutable after approval.
 - Completion percentage uses configured required fields.
+- Completion percentage updates when required fields are approved, edited, or cleared.
 - Stale status uses configured freshness threshold.
 - Refresh AI Data is available only to authorized users.
 
@@ -140,11 +143,13 @@ Improve speed and quality of account intelligence while keeping human review as 
 - Freshness threshold and stale rules are not defined.
 - KYC confidence scale and approval thresholds are not specified.
 - Exact research sources and per-source reliability policy are not defined.
+- The PRD uses both "Travoly" and "Trivoly"; the canonical research-source spelling is not resolved.
 
 ## Ambiguous Requirements
 
 - "Authorized owner" approval is mentioned but not mapped to concrete roles.
 - It is unclear whether KAM can approve their own edited AI draft.
+- MVP scope mentions "AM approval" while functional requirements mention "KAM Head or authorized owner"; approval authority needs product confirmation.
 - Workstreams may run sequentially or in parallel "as configured"; default behavior is unspecified.
 
 ## Conflicting Requirements
@@ -182,4 +187,3 @@ Improve speed and quality of account intelligence while keeping human review as 
 - Official metrics and platform intelligence use only approved KYC.
 - Every approved KYC fact is source-backed where available.
 - Freshness, completeness, and confidence indicators are visible in required surfaces.
-

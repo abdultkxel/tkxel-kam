@@ -31,7 +31,9 @@ Make account health explainable and actionable by connecting metrics, weak signa
 
 - Configure metric definitions with name, scope, weight, thresholds, formula, freshness rule, owner, source, and effective date.
 - Validate and publish versioned metric configurations.
+- Support AM-submitted account scores and mapped scoring calculators where configured.
 - Calculate account and engagement scores from approved KYC, opportunities, stakeholders, activities, escalations, governance, CSAT, commercial fields, and Ops updates.
+- Classify consolidated account health using RAG status: Red, Amber, Green.
 - Support event-driven, scheduled, and manual recalculation.
 - Store score snapshots with drivers, freshness, trend, status, and reason codes.
 - Generate deterministic signals from configured rules.
@@ -39,6 +41,7 @@ Make account health explainable and actionable by connecting metrics, weak signa
 - Support signal lifecycle: New, Reviewed, Accepted, Dismissed, Converted, Resolved.
 - Provide Attention Center for urgent operational items.
 - Configure playbook templates and mappings from signals/weak metrics.
+- Suggest improvement actions from the approved activity set when score or RAG movement indicates a weak metric.
 - Execute playbooks only after AM selection.
 - Create tasks with owners, due dates, status, priority, notes, evidence, outcomes, and source links.
 - Display tasks and key dates in unified calendar.
@@ -62,6 +65,7 @@ Make account health explainable and actionable by connecting metrics, weak signa
 
 - Metric publish blocks invalid formulas, missing weights, conflicting thresholds, circular dependencies, invalid freshness rules, and invalid effective dates.
 - Recalculation uses only published metric versions and approved authoritative records.
+- Manual score submissions require metric/calculator mapping, score value, submitter, timestamp, and source/evidence where configured.
 - Missing required score inputs mark score incomplete/dirty rather than silently calculating.
 - Signal requires account or engagement, rule, severity, evidence, owner, and lifecycle status.
 - Duplicate active signal for same account/rule/source is suppressed or merged.
@@ -84,6 +88,7 @@ Make account health explainable and actionable by connecting metrics, weak signa
 
 - Metrics: scope, active state, source, owner, effective date.
 - Score snapshots: date range, metric, RAG status, stale/dirty.
+- Manual score submissions: submitter, calculator, account, engagement, submission date.
 - Signals: severity, age, lifecycle status, owner, account, engagement, signal type, SLA status, renewal window.
 - Attention Center: severity, owner, account, status, age, SLA, playbook availability, renewal/notice window, signal type.
 - Playbooks: active state, signal type, weak metric, owner rule.
@@ -190,6 +195,7 @@ Make account health explainable and actionable by connecting metrics, weak signa
 ## Missing Requirements
 
 - Metric formula syntax and supported operators are not specified.
+- Manual score submission/calculator schema is not specified.
 - RAG threshold defaults are not specified.
 - Signal rule configuration model is not specified.
 - Task statuses and priority values are not fully enumerated.
@@ -198,6 +204,7 @@ Make account health explainable and actionable by connecting metrics, weak signa
 ## Ambiguous Requirements
 
 - "AM submits account scores" appears in workflow, but metric engine also calculates scores from data; manual score input boundaries need clarification.
+- Whether score-triggered improvement actions are tasks, playbook recommendations, or both is not fully specified.
 - Whether bulk signal lifecycle updates are allowed is not specified.
 - Which evidence is mandatory for task completion is configuration-dependent and undefined.
 
@@ -243,4 +250,3 @@ Make account health explainable and actionable by connecting metrics, weak signa
 - Signals are deterministic and lifecycle-managed.
 - Playbooks require user selection.
 - Tasks and calendar items are searchable, filterable, sortable, paginated, and permission-aware.
-

@@ -34,6 +34,7 @@ Improve account governance and client engagement by linking content, escalation 
 - Track content shared with clients and link to timeline.
 - Manually create and manage formal escalations.
 - Track escalation severity, priority, owner, SLA, impact, summary, mitigation, Watchlist, resolution, RCA, and notifications.
+- Preserve escalation operations updates, client communication cadence, and resolution history.
 - Suppress duplicate escalation notifications within the same SLA window.
 - Schedule and manage QBRs, SteerCos, monthly reviews, and executive reviews.
 - Capture governance agendas, notes, decisions, action items, attendees, and status.
@@ -68,6 +69,7 @@ Improve account governance and client engagement by linking content, escalation 
 - Governance event requires account, governance type, date, status, and owner.
 - Governance completion requires notes/decisions where configured.
 - Action items require owner and due date.
+- Sent-content recipient email must be valid where captured.
 - AI brief requires authorized source retrieval.
 
 ## Search Requirements
@@ -85,6 +87,7 @@ Improve account governance and client engagement by linking content, escalation 
 - Escalations: account, engagement, severity, priority, owner, status, SLA, Watchlist, created date.
 - Notification logs: recipient, channel, trigger, escalation, delivery status, date range.
 - Governance: account, engagement, type, status, date range, owner, attendee.
+- Governance source filters: manual, Google Calendar, Fathom-enriched, unmapped/review required where applicable.
 
 ## Sort Requirements
 
@@ -99,8 +102,9 @@ Improve account governance and client engagement by linking content, escalation 
 - Content catalog is paginated.
 - Sent-content history is paginated.
 - Escalation list and update history are paginated.
+- Escalation communication/resolution history is paginated.
 - Notification logs are paginated.
-- Governance list is paginated and calendar supports date navigation.
+- Governance list, notes, decisions, and action-item history are paginated where records grow; calendar supports date navigation.
 
 ## API Requirements
 
@@ -231,4 +235,3 @@ Improve account governance and client engagement by linking content, escalation 
 - Escalations are manually created and cannot close without required evidence.
 - Governance outputs can be generated but remain editable and human-owned.
 - All list views support required search, filters, sorting, and pagination.
-

@@ -37,9 +37,12 @@ Protect retention and grow strategic accounts by making relationships, whitespac
 - Maintain account plan with retention focus, growth focus, risks, opportunities, commitments, service gaps, and next actions.
 - Configure service catalog and adjacency rules.
 - Capture whitespace inputs and generate adjacency recommendations.
+- Allow whitespace inputs and adjacent-service recommendations to influence growth/opportunity scoring and account planning where configured.
 - Manage account-level and engagement-level opportunities in board and list views.
 - Configure opportunity types.
 - Track renewal readiness, renewal risk, SOW dates, notice deadlines, commercial exposure, owner, confidence, and source citation.
+- Support manually entered and CSV/manual-imported commercial fields where approved integrations do not provide a source.
+- Create renewal signals, notice-window tasks, and calendar items from approved SOW terms.
 - Create retention, renewal, and stabilization plans with actions, owners, due dates, success criteria, milestones, and timeline history.
 
 ## Non-Functional Requirements
@@ -67,6 +70,7 @@ Protect retention and grow strategic accounts by making relationships, whitespac
 - Stage transition must be allowed by configuration.
 - Renewal dates must align with approved SOW terms or manual override reason.
 - Notice deadline must be before renewal/end date.
+- CSV/manual commercial imports must validate required columns, numeric values, currency, duplicate rows, and source provenance.
 - Retention plan requires type, owner, due dates, and success criteria.
 
 ## Search Requirements
@@ -87,6 +91,7 @@ Protect retention and grow strategic accounts by making relationships, whitespac
 - Recommendations: service line and relevance/rationale type.
 - Opportunities: account, engagement, type, service line, owner, stage, target date, value range, source.
 - Renewals: renewal window, notice deadline window, risk, owner, confidence, auto-renewal.
+- Renewals/commercial fields: extracted vs manual source, source confidence, commercial exposure range.
 - Retention plans: type, status, owner, due date, renewal milestone.
 
 ## Sort Requirements
@@ -204,6 +209,7 @@ Protect retention and grow strategic accounts by making relationships, whitespac
 - Service catalog taxonomy and adjacency scoring formula are not specified.
 - Opportunity stage names and allowed transitions are not specified.
 - Renewal risk formula and confidence scale are not specified.
+- CSV/manual commercial import schema and ownership of imported commercial values are not specified.
 
 ## Ambiguous Requirements
 
@@ -251,4 +257,3 @@ Protect retention and grow strategic accounts by making relationships, whitespac
 - Filters/search/sort/pagination work for operational lists.
 - Sensitive and commercial data remain permission-aware.
 - Material changes are audited and timeline-linked.
-

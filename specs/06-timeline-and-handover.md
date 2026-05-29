@@ -27,14 +27,16 @@ Preserve institutional memory across account activity and ownership changes whil
 
 - Maintain account and engagement timelines from creation onward.
 - Automatically create events for account setup, document upload, AI extraction, KYC, scores, stages, signals, tasks, opportunities, content, escalations, governance, approvals, executive decisions, integrations, and AI usage.
-- Link entries to source records.
-- Show before/after values for configured key changes.
+- Link entries to source records, including account, engagement, charter, SOW, KYC snapshot, score, signal, task, opportunity, content item, escalation, governance event, approval, AI output, and attachment.
+- Show before/after values for configured key changes, including score, stage, owner, status, threshold, weight, signal status, escalation severity, SOW end date, renewal date, notice deadline, and approval changes.
 - Allow manual timeline notes with event type, date, owner, description, mentions, attachments, and sensitivity.
+- Notify mentioned users where notification policy permits without granting access to restricted content.
 - Configure timeline event types, categories, visibility, retention, active state, and source module.
 - Enforce sensitive-entry rules at the data layer.
 - Retain, archive, restrict, or delete eligible entries according to policy.
 - Use audit-preserving tombstones for deletion.
 - Generate handover summaries with citations to account data and timeline entries.
+- Handover summaries include account, engagements, stage, health, score history, risks, signals, escalations, opportunities, governance, stakeholders, content, decisions, and recent timeline.
 
 ## Non-Functional Requirements
 
@@ -200,4 +202,3 @@ Preserve institutional memory across account activity and ownership changes whil
 - Sensitive and retained entries comply with RBAC and retention policy.
 - Handover summaries cite source records and preserve context across ownership changes.
 - Performance targets for timeline loading are achievable through pagination.
-

@@ -35,8 +35,10 @@ Keep the platform scalable, secure, observable, accessible, and aligned to MVP s
 ## Non-Functional Requirements
 
 - Role-based access and least privilege enforced across accounts, engagements, timeline, attachments, AI context, reports, and fields.
+- Sensitive notes, attachments, stakeholder data, commercial fields, and executive decisions follow access controls, access logging where required, and audit policy.
 - Web UI targets WCAG 2.1 AA across desktop, laptop, and tablet breakpoints.
 - Initial deployment supports 1,000+ key accounts, multiple engagements per account, and 250+ internal users.
+- Keyword search and structured AI Search return standard results within 5 seconds where backend services are healthy.
 - Background jobs and integration failures are observable.
 - AI outputs are labeled, source-backed, permission-aware, and human-reviewed before authoritative acceptance.
 
@@ -181,4 +183,3 @@ Keep the platform scalable, secure, observable, accessible, and aligned to MVP s
 - MVP out-of-scope actions are blocked or absent.
 - Architecture decisions do not prevent future tenant isolation.
 - Accessibility, auditability, and logging expectations are explicit and testable.
-

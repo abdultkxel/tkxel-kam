@@ -29,6 +29,7 @@ Replace fragmented onboarding and account context with a governed, source-backed
 
 - Support upload/link of charters, SOWs, attachments, and source references.
 - Generate draft accounts and draft engagements from approved source material.
+- Support manual entry and CSV/manual-import fallback when charter/SOW source quality is unclear.
 - Allow KAM Head/Admin review, edit, approve, reject, and link-to-existing account decisions.
 - Create official account workspace only after approval.
 - Maintain account lifecycle statuses: Onboarding, Active, At Risk, Renewal Focus, Expansion Focus, Dormant, Archived.
@@ -36,6 +37,7 @@ Replace fragmented onboarding and account context with a governed, source-backed
 - Preserve ownership history and rationale.
 - Maintain multiple engagements per account and multiple charters/SOWs per engagement.
 - Provide Account Overview as the unified workspace with profile, engagements, KYC, stakeholders, plans, scores, signals, activities, opportunities, education, escalations, governance, attachments, timeline, and AI brief entry points.
+- Surface governance completeness indicators for active accounts: accountable AM, current KYC, engagement records, and next governance date.
 - Provide Engagement 360 with profile, evidence, delivery health, dependencies, commercial context, renewal posture, activities, risks, escalations, attachments, and timeline.
 - Roll engagement health into Account Health using published metric rules.
 
@@ -67,6 +69,8 @@ Replace fragmented onboarding and account context with a governed, source-backed
 - Renewal date and notice deadline must be consistent with SOW terms.
 - Value fields must be non-negative and use configured currency.
 - Archived accounts are read-only except for authorized Admin/KAM Head actions.
+- CSV/manual imports must validate required columns, row-level errors, duplicate candidates, and source provenance before creating drafts.
+- Active accounts missing accountable AM, current KYC, engagement records, or next governance date must be flagged for governance attention.
 
 ## Search Requirements
 
@@ -80,6 +84,7 @@ Replace fragmented onboarding and account context with a governed, source-backed
 
 - Draft filters: status, lifecycle status, segment, region, uploader, owner, created date.
 - Account filters: lifecycle status, primary AM, supporting AM, Ops Lead, leadership sponsor.
+- Account governance filters: missing AM, missing current KYC, missing engagement records, missing next governance date.
 - Engagement filters: status, owner, service line, renewal window, risk status.
 - Attachment filters: source type, uploaded date, sensitivity where permitted.
 - Health filters: stale, dirty, RAG status.
@@ -99,6 +104,7 @@ Replace fragmented onboarding and account context with a governed, source-backed
 - Attachment list is paginated.
 - Ownership history is paginated.
 - Health snapshot/history list is paginated newest first.
+- CSV/manual import row preview and validation errors are paginated.
 
 ## API Requirements
 
@@ -132,8 +138,10 @@ Replace fragmented onboarding and account context with a governed, source-backed
 ## UI Requirements
 
 - Onboarding upload page with drag/drop, link entry, source list, extraction status, and draft preview.
+- Manual/CSV onboarding fallback with row preview, validation errors, and source provenance.
 - Draft review page with editable fields and source citations.
 - Account Overview with summary cards, section tabs, quick actions, and read-only behavior for leadership.
+- Governance completeness indicators on Account Overview and portfolio lists.
 - Ownership editor with matrix owner roles and history drawer.
 - Lifecycle badge and status-change control.
 - Attachment/evidence panel with source links and preview.
@@ -160,6 +168,7 @@ Replace fragmented onboarding and account context with a governed, source-backed
 
 - Unsupported file type or file size exceeded.
 - Extraction failed with retry available.
+- CSV/manual import validation failures with row-level messages.
 - Duplicate account match requires user decision.
 - Selected owner inactive or unauthorized.
 - Engagement not found or no longer accessible.
@@ -180,6 +189,7 @@ Replace fragmented onboarding and account context with a governed, source-backed
 - Exact file size/type limits are not specified.
 - Account duplicate matching algorithm and confidence threshold are not specified.
 - Required account segments, regions, lifecycle defaults, and currency catalog are not specified.
+- CSV/manual import schema and required columns are not specified.
 - Archive/unarchive workflow is not fully specified.
 
 ## Ambiguous Requirements
@@ -229,4 +239,3 @@ Replace fragmented onboarding and account context with a governed, source-backed
 - Account Overview gives a complete authorized current-state view.
 - Engagement 360 gives a complete authorized engagement-state view.
 - Ownership, status, source, and health changes are auditable and timeline-linked.
-

@@ -26,6 +26,8 @@ Give KAM Heads and leadership measurable portfolio intelligence to identify heal
 - Filter analytics by date range, AM, segment, industry, stage, and engagement type.
 - Benchmark accounts across segments, industries, and engagement types.
 - Generate proactive account-change alerts for score drops, stale KYC, opportunity stagnation, escalation aging, renewal risk, stakeholder gaps, and governance overdue.
+- Include CSAT decline as a proactive alert and analytics driver where CSAT data is available.
+- Track PRD success-metric analytics for red/critical account action plans, active-account governance completeness, score snapshot freshness, SLA review compliance, and handover completion.
 - Allow account-change alert status updates.
 - Suppress or group duplicate active alerts.
 
@@ -58,7 +60,7 @@ Give KAM Heads and leadership measurable portfolio intelligence to identify heal
 
 - Analytics filters: date range, AM, segment, industry, stage, engagement type.
 - Benchmark filters: cohort, segment, industry, engagement type, health band.
-- Alerts: alert type, severity, account, AM, date range, status.
+- Alerts: alert type, severity, account, AM, date range, status, CSAT trend, SLA compliance.
 
 ## Sort Requirements
 
@@ -124,6 +126,7 @@ Give KAM Heads and leadership measurable portfolio intelligence to identify heal
 - Benchmark cohort minimum size is not specified.
 - KAM performance metric definitions are not specified.
 - Alert status lifecycle values are not enumerated.
+- PRD success-metric thresholds are defined, but calculation windows and dashboard ownership are not specified.
 - Content effectiveness calculations are not defined.
 
 ## Ambiguous Requirements
@@ -166,4 +169,3 @@ Give KAM Heads and leadership measurable portfolio intelligence to identify heal
 - Analytics and benchmarks are filterable, permission-aware, and based on correct historical data.
 - Proactive alerts identify meaningful changes and provide source evidence.
 - Drilldowns and alerts support search, filters, sort, pagination, and audit.
-

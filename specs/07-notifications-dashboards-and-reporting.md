@@ -38,6 +38,8 @@ Surface what needs attention today for every role while enabling leadership visi
 - Provide KAM Head Portfolio dashboard with health distribution, high-risk accounts, stale KYC, escalations, renewal focus, AM workload, overdue actions, and governance cadence.
 - Provide Leadership Dashboard with strategic health, retention, growth, revenue risk, major escalations, executive summaries, and decision queue.
 - Provide configurable report builder with fields, filters, date ranges, grouping, layout, preview, and export format.
+- Support report or digest scheduling where selected by an authorized user.
+- Track product-goal compliance metrics: critical/red accounts with owner, signal review, and action plan; active accounts with current KYC, accountable AM, engagement records, and next governance date; fresh score snapshots; critical signal/escalation SLA review rates; ownership changes with handover summary.
 
 ## Non-Functional Requirements
 
@@ -62,6 +64,7 @@ Surface what needs attention today for every role while enabling leadership visi
 - SLA window must be positive duration.
 - SLA rule requires item type, inactivity window, qualifying activities, and recipient policy.
 - Digest schedule requires cadence, recipients, and section selection.
+- Digest/report schedules require timezone, cadence, recipient list, permission-scoped sections, and delivery channel.
 - Report selected fields must be permitted for the user and compatible with selected data source.
 
 ## Search Requirements
@@ -79,6 +82,7 @@ Surface what needs attention today for every role while enabling leadership visi
 - Digests: cadence, recipient, date range, status.
 - AM Home: account, date range, item type, priority, due date.
 - KAM Head dashboard: AM, segment, region, industry, lifecycle status, risk, date range.
+- KAM Head governance filters: KYC freshness, score freshness, governance cadence, missing action plan, SLA compliance.
 - Leadership dashboard: date range, segment, industry, region, stage, risk.
 - Reports: data-source-specific filters, date range, grouping.
 
@@ -179,12 +183,14 @@ Surface what needs attention today for every role while enabling leadership visi
 - Digest cadence values are not enumerated.
 - Dashboard widget layouts and exact KPIs are not fully defined.
 - Report export formats are not specified.
+- Scheduled report behavior, recipients, and cadence defaults are not specified separately from executive digests.
 
 ## Ambiguous Requirements
 
 - Whether KAM Head can configure SLA rules or only Admin can is described in multiple ways.
 - Whether executive digests are user-scheduled or centrally scheduled by Admin is unclear.
 - Whether reports can be scheduled separately from digests is not specified.
+- Product-goal thresholds are listed in the PRD but ownership of monitoring/alerting for each threshold is not assigned.
 
 ## Conflicting Requirements
 
@@ -224,4 +230,3 @@ Surface what needs attention today for every role while enabling leadership visi
 - Dashboards answer "what needs attention today" for the relevant role.
 - Reports and digests never leak restricted fields.
 - Lists and embedded tables support expected filters, sorting, search, and pagination.
-
