@@ -11,6 +11,8 @@ from app.repositories.users import UserRepository
 from app.security import decode_access_token
 from app.services.auth import AuthService
 from app.services.profile import ProfileService
+from app.services.rbac import RbacService
+from app.services.user_management import UserManagementService
 
 bearer_scheme = HTTPBearer(
     bearerFormat="JWT",
@@ -45,3 +47,23 @@ def get_auth_service(db: Annotated[Session, Depends(get_db)]) -> AuthService:
 
 def get_profile_service(db: Annotated[Session, Depends(get_db)]) -> ProfileService:
     return ProfileService(db)
+
+
+def get_rbac_service(db: Annotated[Session, Depends(get_db)]) -> RbacService:
+    return RbacService(db)
+
+
+def get_user_management_service(db: Annotated[Session, Depends(get_db)]) -> UserManagementService:
+    return UserManagementService(db)
+
+
+def require_permission(module: str, action: str):
+    def permission_dependency(
+        current_user: Annotated[User, Depends(get_current_user)],
+        service: Annotated[RbacService, Depends(get_rbac_service)],
+    ) -> User:
+        if service.user_has_permission(current_user, module, action):
+            return current_user
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="You do not have permission to perform this action")
+
+    return permission_dependency

@@ -7,15 +7,15 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.config import get_settings
 from app.database import SessionLocal, init_db
 from app.exceptions import validation_exception_handler
-from app.routers import auth, users
-from app.services.seed import seed_super_admin
+from app.routers import admin, auth, users
+from app.services.seed import seed_default_data
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     init_db()
     with SessionLocal() as db:
-        seed_super_admin(db)
+        seed_default_data(db)
     yield
 
 
@@ -33,6 +33,10 @@ openapi_tags = [
     {
         "name": "Users & Profile",
         "description": "Authenticated user profile read and update APIs.",
+    },
+    {
+        "name": "Admin RBAC",
+        "description": "PRD-backed user management, roles, and module permission administration APIs.",
     },
 ]
 
@@ -57,6 +61,7 @@ app.add_exception_handler(RequestValidationError, validation_exception_handler)
 
 app.include_router(auth.router)
 app.include_router(users.router)
+app.include_router(admin.router)
 
 
 @app.get(

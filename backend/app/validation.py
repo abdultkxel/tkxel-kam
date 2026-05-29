@@ -7,6 +7,7 @@ PASSWORD_NUMBER = re.compile(r"\d")
 PASSWORD_SPECIAL = re.compile(r"[^A-Za-z0-9]")
 PHONE_PATTERN = re.compile(r"^[0-9+\-()\s.]+$")
 AVATAR_PATTERN = re.compile(r"^[A-Za-z0-9]{1,8}$")
+SLUG_PATTERN = re.compile(r"^[a-z][a-z0-9_]*$")
 
 
 def require_text(value: Any, field_label: str) -> str:
@@ -73,3 +74,10 @@ def validate_avatar_initials(value: Any) -> str | None:
     if not AVATAR_PATTERN.fullmatch(initials):
         raise ValueError("Avatar initials can contain only letters and numbers.")
     return initials.upper()
+
+
+def validate_slug(value: Any, field_label: str = "Slug") -> str:
+    slug = require_text(value, field_label).lower()
+    if not SLUG_PATTERN.fullmatch(slug):
+        raise ValueError(f"{field_label} must use snake_case lowercase letters, numbers, and underscores.")
+    return slug

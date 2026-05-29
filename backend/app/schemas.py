@@ -1,5 +1,4 @@
 from datetime import datetime
-from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator, model_validator
 
@@ -10,9 +9,10 @@ from app.validation import (
     validate_password,
     validate_phone,
     validate_reset_token,
+    validate_slug,
 )
 
-UserRole = Literal["super_admin", "admin", "leadership", "account_manager"]
+UserRole = str
 
 
 class UserRead(BaseModel):
@@ -28,6 +28,198 @@ class UserRead(BaseModel):
     is_active: bool
     created_at: datetime
     updated_at: datetime
+
+
+class PermissionRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    module: str
+    action: str
+    description: str | None = None
+
+
+class RolePermissionRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    permission: PermissionRead
+    allowed: bool
+
+
+class RoleRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    slug: str
+    name: str
+    description: str | None = None
+    is_system: bool
+    permissions: list[RolePermissionRead] = Field(default_factory=list)
+    created_at: datetime
+    updated_at: datetime
+
+
+class RoleCreateRequest(BaseModel):
+    model_config = ConfigDict(json_schema_extra={"examples": [{"slug": "regional_director", "name": "Regional Director", "description": "Regional portfolio visibility and governance."}]})
+
+    slug: str = Field(..., description="Role slug in snake_case.")
+    name: str = Field(..., description="Human-readable role name.")
+    description: str | None = Field(default=None, description="Role purpose and scope.")
+
+    @field_validator("slug")
+    @classmethod
+    def slug_is_valid(cls, value: str) -> str:
+        return validate_slug(value, "Role slug")
+
+    @field_validator("name")
+    @classmethod
+    def name_is_valid(cls, value: str) -> str:
+        return optional_text(value, "Role name", max_length=120, min_length=2) or value
+
+    @field_validator("description")
+    @classmethod
+    def description_is_valid(cls, value: str | None) -> str | None:
+        return optional_text(value, "Role description", max_length=500)
+
+
+class RoleUpdateRequest(BaseModel):
+    name: str | None = Field(default=None, description="Human-readable role name.")
+    description: str | None = Field(default=None, description="Role purpose and scope.")
+
+    @field_validator("name")
+    @classmethod
+    def name_is_valid(cls, value: str | None) -> str | None:
+        return optional_text(value, "Role name", max_length=120, min_length=2)
+
+    @field_validator("description")
+    @classmethod
+    def description_is_valid(cls, value: str | None) -> str | None:
+        return optional_text(value, "Role description", max_length=500)
+
+
+class PermissionGrantRequest(BaseModel):
+    module: str = Field(..., description="Module slug from the PRD module catalog.")
+    action: str = Field(..., description="Permission action such as view, create, update, delete, approve, configure, assign, or export.")
+    allowed: bool = Field(default=True, description="Whether this role is allowed to perform the action.")
+
+    @field_validator("module")
+    @classmethod
+    def module_is_valid(cls, value: str) -> str:
+        return validate_slug(value, "Module")
+
+    @field_validator("action")
+    @classmethod
+    def action_is_valid(cls, value: str) -> str:
+        return validate_slug(value, "Action")
+
+
+class RolePermissionsUpdateRequest(BaseModel):
+    model_config = ConfigDict(
+        json_schema_extra={
+            "examples": [
+                {
+                    "permissions": [
+                        {"module": "account_overview", "action": "view", "allowed": True},
+                        {"module": "account_overview", "action": "update", "allowed": True},
+                    ]
+                }
+            ]
+        }
+    )
+
+    permissions: list[PermissionGrantRequest] = Field(..., min_length=1, description="Role permission grants to upsert.")
+
+
+class UserCreateRequest(BaseModel):
+    model_config = ConfigDict(
+        json_schema_extra={
+            "examples": [
+                {
+                    "email": "new.user@tkxel.com",
+                    "password": "User@12345",
+                    "full_name": "New User",
+                    "role": "account_manager",
+                    "title": "Account Manager",
+                    "phone": "+1 555 0100",
+                    "avatar_initials": "NU",
+                    "is_active": True,
+                }
+            ]
+        }
+    )
+
+    email: EmailStr
+    password: str
+    full_name: str
+    role: str = Field(default="account_manager", description="Role slug assigned to the user.")
+    title: str | None = None
+    phone: str | None = None
+    avatar_initials: str | None = None
+    is_active: bool = True
+
+    @field_validator("password")
+    @classmethod
+    def password_is_valid(cls, value: str) -> str:
+        return validate_password(value)
+
+    @field_validator("full_name")
+    @classmethod
+    def full_name_is_valid(cls, value: str) -> str:
+        return optional_text(value, "Full name", max_length=160, min_length=2) or value
+
+    @field_validator("role")
+    @classmethod
+    def role_is_valid(cls, value: str) -> str:
+        return validate_slug(value, "Role")
+
+    @field_validator("title")
+    @classmethod
+    def title_is_valid(cls, value: str | None) -> str | None:
+        return optional_text(value, "Title", max_length=120)
+
+    @field_validator("phone")
+    @classmethod
+    def phone_is_valid(cls, value: str | None) -> str | None:
+        return validate_phone(value)
+
+    @field_validator("avatar_initials")
+    @classmethod
+    def avatar_initials_are_valid(cls, value: str | None) -> str | None:
+        return validate_avatar_initials(value)
+
+
+class UserUpdateRequest(BaseModel):
+    full_name: str | None = None
+    role: str | None = Field(default=None, description="Role slug assigned to the user.")
+    title: str | None = None
+    phone: str | None = None
+    avatar_initials: str | None = None
+    is_active: bool | None = None
+
+    @field_validator("full_name")
+    @classmethod
+    def full_name_is_valid(cls, value: str | None) -> str | None:
+        return optional_text(value, "Full name", max_length=160, min_length=2)
+
+    @field_validator("role")
+    @classmethod
+    def role_is_valid(cls, value: str | None) -> str | None:
+        return validate_slug(value, "Role") if value is not None else None
+
+    @field_validator("title")
+    @classmethod
+    def title_is_valid(cls, value: str | None) -> str | None:
+        return optional_text(value, "Title", max_length=120)
+
+    @field_validator("phone")
+    @classmethod
+    def phone_is_valid(cls, value: str | None) -> str | None:
+        return validate_phone(value)
+
+    @field_validator("avatar_initials")
+    @classmethod
+    def avatar_initials_are_valid(cls, value: str | None) -> str | None:
+        return validate_avatar_initials(value)
 
 
 class LoginRequest(BaseModel):

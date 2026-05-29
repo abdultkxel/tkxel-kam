@@ -1,4 +1,16 @@
-export type UserRole = 'am' | 'account_manager' | 'leadership' | 'admin' | 'super_admin'
+export type UserRole =
+  | 'am'
+  | 'account_manager'
+  | 'leadership'
+  | 'leadership_viewer'
+  | 'admin'
+  | 'super_admin'
+  | 'ops_lead'
+  | 'kam_head'
+  | 'content_specialist'
+  | 'commercial_stakeholder'
+  | 'delivery_stakeholder'
+  | (string & {})
 
 export type TimelineEventType =
   | 'account_setup'
@@ -91,7 +103,7 @@ export function canViewTimelineEntry(entry: TimelineEntry, role: UserRole, userI
   switch (entry.sensitivityLevel) {
     case 'escalation':
     case 'commercial':
-      return role === 'leadership' || role === 'admin' || role === 'super_admin'
+      return role === 'leadership' || role === 'leadership_viewer' || role === 'kam_head' || role === 'admin' || role === 'super_admin'
     case 'executive':
     case 'legal':
       return role === 'admin' || role === 'super_admin'
