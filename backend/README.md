@@ -19,7 +19,18 @@ Email: admin@tkxelkam.com
 Password: Admin@12345
 ```
 
-## Local Development
+## Docker Development
+
+Run backend through the root Makefile:
+
+```bash
+make dev-run
+make migrate
+make seed
+make test
+```
+
+## Local Development Fallback
 
 ```bash
 python3 -m venv .venv
