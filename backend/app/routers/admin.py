@@ -1,6 +1,6 @@
-from typing import Annotated
+from typing import Annotated, Literal
 
-from fastapi import APIRouter, Depends, status
+from fastapi import APIRouter, Depends, Query, status
 
 from app.dependencies import get_rbac_service, get_user_management_service, require_permission
 from app.models import Permission, Role, User
@@ -10,9 +10,11 @@ from app.schemas import (
     MessageResponse,
     RoleCreateRequest,
     RolePermissionsUpdateRequest,
+    RolePageRead,
     RoleRead,
     RoleUpdateRequest,
     UserCreateRequest,
+    UserPageRead,
     UserRead,
     UserUpdateRequest,
 )
@@ -20,29 +22,38 @@ from app.services.rbac import RbacService
 from app.services.user_management import UserManagementService
 
 AdminAccess = Annotated[User, Depends(require_permission(ADMIN_MODULE, "configure"))]
+UserStatusFilter = Literal["all", "active", "inactive"]
+RoleTypeFilter = Literal["all", "system", "custom"]
 
 router = APIRouter(prefix="/api/admin", tags=["Admin RBAC"])
 
 
 @router.get(
     "/users",
-    response_model=list[UserRead],
+    response_model=UserPageRead,
     summary="List managed users",
     description=(
-        "Step 1 of user administration. Returns all platform users for the Admin/RBAC workspace. "
-        "Requires configure permission for the Admin, Audit, Security, and RBAC module."
+        "Step 1 of user administration. Returns a paginated, searchable list of non-super-admin users for the "
+        "Admin/RBAC workspace. Supports search by email/name, role filtering, active/inactive status filtering, "
+        "and page/page_size pagination. Requires configure permission for the Admin, Audit, Security, and RBAC module."
     ),
-    response_description="List of users with assigned role slugs and activation status.",
+    response_description="Paginated users with assigned role slugs and activation status.",
     responses={
         401: {"description": "Missing, invalid, or expired bearer token."},
         403: {"description": "Authenticated user does not have Admin/RBAC configure permission."},
+        422: {"description": "Invalid pagination or filter query parameters."},
     },
 )
 def list_users(
     _: AdminAccess,
     service: Annotated[UserManagementService, Depends(get_user_management_service)],
-) -> list[User]:
-    return service.list_users()
+    search: Annotated[str | None, Query(description="Search users by email or full name.")] = None,
+    status_filter: Annotated[UserStatusFilter, Query(alias="status", description="Filter by active/inactive status.")] = "all",
+    role: Annotated[str | None, Query(description="Filter by assigned role slug.")] = None,
+    page: Annotated[int, Query(ge=1, description="One-based page number.")] = 1,
+    page_size: Annotated[int, Query(ge=1, le=100, description="Number of records per page.")] = 10,
+) -> UserPageRead:
+    return service.list_users(search, status_filter, role, page, page_size)
 
 
 @router.post(
@@ -143,17 +154,29 @@ def delete_user(
 
 @router.get(
     "/roles",
-    response_model=list[RoleRead],
+    response_model=RolePageRead,
     summary="List roles",
-    description="Step 1 of RBAC administration. Returns all seeded and custom roles with their granted permissions.",
-    response_description="List of roles and permission grants.",
+    description=(
+        "Step 1 of RBAC administration. Returns a paginated, searchable list of non-super-admin roles with their "
+        "granted permissions. Supports search by slug/name/description, system/custom type filtering, and "
+        "page/page_size pagination."
+    ),
+    response_description="Paginated roles and permission grants.",
     responses={
         401: {"description": "Missing, invalid, or expired bearer token."},
         403: {"description": "Authenticated user does not have Admin/RBAC configure permission."},
+        422: {"description": "Invalid pagination or filter query parameters."},
     },
 )
-def list_roles(_: AdminAccess, service: Annotated[RbacService, Depends(get_rbac_service)]) -> list[Role]:
-    return service.list_roles()
+def list_roles(
+    _: AdminAccess,
+    service: Annotated[RbacService, Depends(get_rbac_service)],
+    search: Annotated[str | None, Query(description="Search roles by slug, name, or description.")] = None,
+    role_type: Annotated[RoleTypeFilter, Query(alias="type", description="Filter by system or custom role type.")] = "all",
+    page: Annotated[int, Query(ge=1, description="One-based page number.")] = 1,
+    page_size: Annotated[int, Query(ge=1, le=100, description="Number of records per page.")] = 10,
+) -> RolePageRead:
+    return service.list_roles(search, role_type, page, page_size)
 
 
 @router.post(

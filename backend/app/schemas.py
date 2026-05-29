@@ -59,6 +59,22 @@ class RoleRead(BaseModel):
     updated_at: datetime
 
 
+class UserPageRead(BaseModel):
+    items: list[UserRead]
+    total: int
+    page: int
+    page_size: int
+    pages: int
+
+
+class RolePageRead(BaseModel):
+    items: list[RoleRead]
+    total: int
+    page: int
+    page_size: int
+    pages: int
+
+
 class RoleCreateRequest(BaseModel):
     model_config = ConfigDict(json_schema_extra={"examples": [{"slug": "regional_director", "name": "Regional Director", "description": "Regional portfolio visibility and governance."}]})
 

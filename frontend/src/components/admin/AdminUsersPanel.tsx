@@ -1,6 +1,6 @@
 import * as Dialog from '@radix-ui/react-dialog'
-import { Edit3, Plus, RefreshCw, Trash2, X } from 'lucide-react'
-import { FormEvent, useEffect, useMemo, useState } from 'react'
+import { ChevronLeft, ChevronRight, Edit3, Plus, RefreshCw, Search, Trash2, X } from 'lucide-react'
+import { FormEvent, useEffect, useState } from 'react'
 import { toast } from 'sonner'
 import { ConfirmDialog } from '@/components/admin/ConfirmDialog'
 import { FieldError } from '@/components/form/FieldError'
@@ -58,6 +58,13 @@ export function AdminUsersPanel() {
   const { token } = useAuth()
   const [users, setUsers] = useState<AdminUser[]>([])
   const [roles, setRoles] = useState<Role[]>([])
+  const [search, setSearch] = useState('')
+  const [statusFilter, setStatusFilter] = useState<'all' | 'active' | 'inactive'>('all')
+  const [roleFilter, setRoleFilter] = useState('')
+  const [page, setPage] = useState(1)
+  const [pageSize, setPageSize] = useState(10)
+  const [total, setTotal] = useState(0)
+  const [pages, setPages] = useState(0)
   const [loading, setLoading] = useState(false)
   const [saving, setSaving] = useState(false)
   const [deleting, setDeleting] = useState(false)
@@ -69,28 +76,57 @@ export function AdminUsersPanel() {
   const [deleteTarget, setDeleteTarget] = useState<AdminUser | null>(null)
   const [form, setForm] = useState<UserFormState>(emptyForm)
 
-  const sortedUsers = useMemo(() => [...users].sort((first, second) => first.full_name.localeCompare(second.full_name)), [users])
   const dialogTitle = editingUser ? 'Edit user' : 'Create user'
 
   useEffect(() => {
     if (!token) return
-    void loadData()
+    void loadRoles()
   }, [token])
 
-  async function loadData() {
+  useEffect(() => {
+    if (!token) return
+    void loadUsers(page)
+  }, [token, search, statusFilter, roleFilter, page, pageSize])
+
+  async function loadRoles() {
+    if (!token) return
+    try {
+      const nextRoles = await listRoles(token, { page: 1, page_size: 100 })
+      const manageableRoles = nextRoles.items.filter(role => role.slug !== 'super_admin')
+      setRoles(manageableRoles)
+      setForm(current => ({ ...current, role: current.role || manageableRoles[0]?.slug || 'account_manager' }))
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : 'Unable to load roles')
+    }
+  }
+
+  async function loadUsers(nextPage = page) {
     if (!token) return
     setLoading(true)
     setError('')
     try {
-      const [nextUsers, nextRoles] = await Promise.all([listAdminUsers(token), listRoles(token)])
-      setUsers(nextUsers.filter(user => user.role !== 'super_admin'))
-      setRoles(nextRoles.filter(role => role.slug !== 'super_admin'))
-      setForm(current => ({ ...current, role: current.role || nextRoles[0]?.slug || 'account_manager' }))
+      const response = await listAdminUsers(token, {
+        search,
+        status: statusFilter,
+        role: roleFilter,
+        page: nextPage,
+        page_size: pageSize,
+      })
+      setUsers(response.items.filter(user => user.role !== 'super_admin'))
+      setTotal(response.total)
+      setPages(response.pages)
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Unable to load users')
     } finally {
       setLoading(false)
     }
+  }
+
+  function resetFilters() {
+    setSearch('')
+    setStatusFilter('all')
+    setRoleFilter('')
+    setPage(1)
   }
 
   function openCreateDialog() {
@@ -122,7 +158,7 @@ export function AdminUsersPanel() {
     setFormError('')
     try {
       if (editingUser) {
-        const updatedUser = await updateAdminUser(token, editingUser.id, {
+        await updateAdminUser(token, editingUser.id, {
           full_name: form.fullName,
           role: form.role,
           title: form.title || null,
@@ -130,10 +166,10 @@ export function AdminUsersPanel() {
           avatar_initials: form.avatarInitials || initialsForName(form.fullName),
           is_active: form.isActive,
         })
-        setUsers(current => current.map(user => user.id === updatedUser.id ? updatedUser : user))
+        await loadUsers()
         toast.success('User updated successfully')
       } else {
-        const createdUser = await createAdminUser(token, {
+        await createAdminUser(token, {
           email: form.email,
           password: form.password,
           full_name: form.fullName,
@@ -143,7 +179,8 @@ export function AdminUsersPanel() {
           avatar_initials: form.avatarInitials || undefined,
           is_active: form.isActive,
         })
-        setUsers(current => [...current, createdUser])
+        setPage(1)
+        await loadUsers(1)
         toast.success('User created successfully')
       }
       setDialogOpen(false)
@@ -163,7 +200,9 @@ export function AdminUsersPanel() {
     setDeleting(true)
     try {
       await deleteAdminUser(token, deleteTarget.id)
-      setUsers(current => current.filter(user => user.id !== deleteTarget.id))
+      const nextPage = page > 1 && users.length === 1 ? page - 1 : page
+      if (nextPage !== page) setPage(nextPage)
+      await loadUsers(nextPage)
       setDeleteTarget(null)
       toast.success('User deleted successfully')
     } catch (err) {
@@ -181,7 +220,7 @@ export function AdminUsersPanel() {
           <h2 className="text-base font-semibold text-ink">Users Management</h2>
         </div>
         <div className="flex flex-wrap gap-2">
-          <button type="button" className="tk-button-secondary" onClick={() => void loadData()} disabled={loading}>
+          <button type="button" className="tk-button-secondary" onClick={() => void loadUsers(page)} disabled={loading}>
             <RefreshCw className={cn('h-4 w-4', loading && 'animate-spin')} />
             Refresh
           </button>
@@ -192,6 +231,62 @@ export function AdminUsersPanel() {
         </div>
       </div>
       {error ? <p className="m-5 rounded-md border border-rag-red/20 bg-rag-red/10 px-3 py-2 text-sm font-medium text-rag-red">{error}</p> : null}
+      <div className="grid gap-3 border-b border-surface-border bg-surface-tertiary p-4 lg:grid-cols-[minmax(260px,1fr)_180px_220px_140px_auto]">
+        <label className="block">
+          <span className="sr-only">Search users</span>
+          <div className="relative">
+            <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-ink-tertiary" />
+            <input
+              className="tk-input pl-9"
+              value={search}
+              onChange={event => {
+                setSearch(event.target.value)
+                setPage(1)
+              }}
+              placeholder="Search by email or name"
+            />
+          </div>
+        </label>
+        <select
+          className="tk-input"
+          value={statusFilter}
+          onChange={event => {
+            setStatusFilter(event.target.value as typeof statusFilter)
+            setPage(1)
+          }}
+          aria-label="Filter users by status"
+        >
+          <option value="all">All statuses</option>
+          <option value="active">Active</option>
+          <option value="inactive">Inactive</option>
+        </select>
+        <select
+          className="tk-input"
+          value={roleFilter}
+          onChange={event => {
+            setRoleFilter(event.target.value)
+            setPage(1)
+          }}
+          aria-label="Filter users by role"
+        >
+          <option value="">All roles</option>
+          {roles.map(role => <option key={role.slug} value={role.slug}>{role.name}</option>)}
+        </select>
+        <select
+          className="tk-input"
+          value={pageSize}
+          onChange={event => {
+            setPageSize(Number(event.target.value))
+            setPage(1)
+          }}
+          aria-label="Users per page"
+        >
+          <option value={5}>5 per page</option>
+          <option value={10}>10 per page</option>
+          <option value={25}>25 per page</option>
+        </select>
+        <button type="button" className="tk-button-secondary" onClick={resetFilters}>Clear</button>
+      </div>
       <div className="overflow-x-auto">
         <table className="w-full min-w-[980px] text-left text-sm">
           <thead className="border-b border-surface-border bg-surface-tertiary text-xs font-semibold uppercase tracking-wider text-ink-secondary">
@@ -204,7 +299,7 @@ export function AdminUsersPanel() {
             </tr>
           </thead>
           <tbody>
-            {sortedUsers.map(user => (
+            {users.map(user => (
               <tr key={user.id} className="border-b border-surface-border last:border-b-0">
                 <td className="px-4 py-3">
                   <p className="font-semibold text-ink">{user.full_name}</p>
@@ -231,9 +326,25 @@ export function AdminUsersPanel() {
                 </td>
               </tr>
             ))}
+            {!users.length ? (
+              <tr>
+                <td className="px-4 py-8 text-center text-sm font-medium text-ink-secondary" colSpan={5}>
+                  No users match the current filters.
+                </td>
+              </tr>
+            ) : null}
           </tbody>
         </table>
       </div>
+      <PaginationBar
+        page={page}
+        pages={pages}
+        pageSize={pageSize}
+        total={total}
+        visibleCount={users.length}
+        onPrevious={() => setPage(current => Math.max(1, current - 1))}
+        onNext={() => setPage(current => Math.min(Math.max(pages, 1), current + 1))}
+      />
       <UserFormDialog
         open={dialogOpen}
         title={dialogTitle}
@@ -256,6 +367,45 @@ export function AdminUsersPanel() {
         onConfirm={() => void confirmDelete()}
       />
     </section>
+  )
+}
+
+function PaginationBar({
+  page,
+  pages,
+  pageSize,
+  total,
+  visibleCount,
+  onPrevious,
+  onNext,
+}: {
+  page: number
+  pages: number
+  pageSize: number
+  total: number
+  visibleCount: number
+  onPrevious: () => void
+  onNext: () => void
+}) {
+  const firstItem = total ? (page - 1) * pageSize + 1 : 0
+  const lastItem = total ? firstItem + visibleCount - 1 : 0
+  return (
+    <div className="flex flex-wrap items-center justify-between gap-3 border-t border-surface-border bg-white px-4 py-3 text-sm text-ink-secondary">
+      <span>{firstItem}-{lastItem} of {total} users</span>
+      <div className="flex items-center gap-2">
+        <button type="button" className="tk-button-secondary min-h-[38px] px-3 py-1.5" onClick={onPrevious} disabled={page <= 1}>
+          <ChevronLeft className="h-4 w-4" />
+          Previous
+        </button>
+        <span className="min-w-[88px] text-center text-xs font-bold uppercase tracking-wider text-ink-secondary">
+          Page {total ? page : 0} of {pages}
+        </span>
+        <button type="button" className="tk-button-secondary min-h-[38px] px-3 py-1.5" onClick={onNext} disabled={!pages || page >= pages}>
+          Next
+          <ChevronRight className="h-4 w-4" />
+        </button>
+      </div>
+    </div>
   )
 }
 

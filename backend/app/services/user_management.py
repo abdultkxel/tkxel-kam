@@ -4,7 +4,7 @@ from sqlalchemy.orm import Session
 from app.models import User
 from app.repositories.rbac import RbacRepository
 from app.repositories.users import UserRepository
-from app.schemas import MessageResponse, UserCreateRequest, UserUpdateRequest
+from app.schemas import MessageResponse, UserCreateRequest, UserPageRead, UserUpdateRequest
 from app.security import hash_password
 from app.services.users import initials_for_name, normalize_email
 
@@ -19,8 +19,16 @@ class UserManagementService:
         self.users = user_repository or UserRepository(db)
         self.rbac = rbac_repository or RbacRepository(db)
 
-    def list_users(self) -> list[User]:
-        return self.users.list_manageable_users()
+    def list_users(
+        self,
+        search: str | None = None,
+        status_filter: str = "all",
+        role: str | None = None,
+        page: int = 1,
+        page_size: int = 10,
+    ) -> UserPageRead:
+        users, total = self.users.list_manageable_users(search, status_filter, role, page, page_size)
+        return UserPageRead(items=users, total=total, page=page, page_size=page_size, pages=page_count(total, page_size))
 
     def get_user(self, user_id: str) -> User:
         user = self.users.get_by_id(user_id)
@@ -79,3 +87,7 @@ class UserManagementService:
                 setattr(user, field, value.strip() if isinstance(value, str) else value)
         if "is_active" in updates and updates["is_active"] is not None:
             user.is_active = updates["is_active"]
+
+
+def page_count(total: int, page_size: int) -> int:
+    return (total + page_size - 1) // page_size if total else 0

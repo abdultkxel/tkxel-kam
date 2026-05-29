@@ -36,6 +36,29 @@ export interface Role {
   updated_at: string
 }
 
+export interface PaginatedResponse<T> {
+  items: T[]
+  total: number
+  page: number
+  page_size: number
+  pages: number
+}
+
+export interface UserListParams {
+  search?: string
+  status?: 'all' | 'active' | 'inactive'
+  role?: string
+  page?: number
+  page_size?: number
+}
+
+export interface RoleListParams {
+  search?: string
+  type?: 'all' | 'system' | 'custom'
+  page?: number
+  page_size?: number
+}
+
 export interface CreateUserPayload {
   email: string
   password: string
@@ -68,8 +91,8 @@ export interface RolePermissionGrant {
   allowed: boolean
 }
 
-export function listAdminUsers(token: string) {
-  return apiRequest<AdminUser[]>('/api/admin/users', { token })
+export function listAdminUsers(token: string, params: UserListParams = {}) {
+  return apiRequest<PaginatedResponse<AdminUser>>(`/api/admin/users${queryString(params)}`, { token })
 }
 
 export function createAdminUser(token: string, payload: CreateUserPayload) {
@@ -95,8 +118,8 @@ export function deleteAdminUser(token: string, userId: string) {
   })
 }
 
-export function listRoles(token: string) {
-  return apiRequest<Role[]>('/api/admin/roles', { token })
+export function listRoles(token: string, params: RoleListParams = {}) {
+  return apiRequest<PaginatedResponse<Role>>(`/api/admin/roles${queryString(params)}`, { token })
 }
 
 export function createRole(token: string, payload: CreateRolePayload) {
@@ -132,4 +155,13 @@ export function updateRolePermissions(token: string, roleSlug: string, permissio
     token,
     body: JSON.stringify({ permissions }),
   })
+}
+
+function queryString(params: UserListParams | RoleListParams) {
+  const searchParams = new URLSearchParams()
+  Object.entries(params).forEach(([key, value]: [string, string | number | undefined]) => {
+    if (value !== undefined && value !== '') searchParams.set(key, String(value))
+  })
+  const query = searchParams.toString()
+  return query ? `?${query}` : ''
 }
