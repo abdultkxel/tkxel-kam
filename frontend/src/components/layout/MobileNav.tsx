@@ -11,7 +11,7 @@ export function MobileNav() {
   const user = useRole()
   const open = useUIStore(state => state.mobileNavOpen)
   const setOpen = useUIStore(state => state.setMobileNavOpen)
-  const links = sidebarLinks.filter(link => !link.privileged || user.role === 'leadership' || user.role === 'admin')
+  const links = sidebarLinks.filter(link => !link.privileged || user.role === 'leadership' || user.role === 'admin' || user.role === 'super_admin')
 
   return (
     <Dialog.Root open={open} onOpenChange={setOpen}>

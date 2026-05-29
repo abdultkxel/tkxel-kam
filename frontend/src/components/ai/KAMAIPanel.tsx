@@ -72,7 +72,7 @@ export function KAMAIPanel() {
 
   const assignedAccounts = useMemo(() => {
     const owned = accounts.filter(account => account.ownerId === user.id)
-    return user.role === 'am' ? owned : accounts
+    return user.role === 'am' || user.role === 'account_manager' ? owned : accounts
   }, [accounts, user.id, user.role])
   const assignedAccountIds = useMemo(() => new Set(assignedAccounts.map(account => account.id)), [assignedAccounts])
   const assignedTimeline = useMemo(() => timelineEntries.filter(entry => assignedAccountIds.has(entry.accountId)), [assignedAccountIds, timelineEntries])

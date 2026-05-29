@@ -84,7 +84,7 @@ export function Dashboard() {
   const lowestHealth = accounts.length ? Math.min(...accounts.map(account => account.health.overall)) : 0
   const nextGovernance = [...governanceEvents].filter(event => new Date(event.date) >= new Date()).sort(sortByDate)[0]
   const daysToNextGovernance = nextGovernance ? Math.max(0, differenceInCalendarDays(new Date(nextGovernance.date), new Date())) : 0
-  const roleLabel = user.role === 'am' ? 'Account Manager' : user.role === 'admin' ? 'Admin' : 'KAM Head'
+  const roleLabel = user.role === 'am' || user.role === 'account_manager' ? 'Account Manager' : user.role === 'super_admin' ? 'Super Admin' : user.role === 'admin' ? 'Admin' : 'KAM Head'
 
   const taskAISummary = useMemo(() => buildTaskAISummary(tasks, signals), [signals, tasks])
   const criticalOverdueRows = useMemo(() => buildCriticalOverdueRows(tasks, signals), [signals, tasks])

@@ -22,7 +22,7 @@ export function TimelineFilters({
   const allEventTypes = useTimelineStore(state => state.eventTypes)
   const eventTypes = useMemo(() => allEventTypes.filter(item => item.active), [allEventTypes])
   const user = useRole()
-  const canSeeSensitive = user.role === 'leadership' || user.role === 'admin'
+  const canSeeSensitive = user.role === 'leadership' || user.role === 'admin' || user.role === 'super_admin'
   const eventTypeValue = useMemo(() => filters.eventTypes[0] ?? '', [filters.eventTypes])
   const moduleValue = useMemo(() => filters.modules[0] ?? '', [filters.modules])
 

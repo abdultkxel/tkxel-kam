@@ -1,4 +1,4 @@
-import { BriefcaseBusiness, Building2, ChevronLeft, Home, ListChecks, PlaySquare, Settings } from 'lucide-react'
+import { BriefcaseBusiness, Building2, ChevronLeft, Home, ListChecks, PlaySquare, Settings, UserRound } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import { NavLink } from 'react-router-dom'
 import { useRole } from '@/hooks/useRole'
@@ -12,7 +12,8 @@ export const sidebarLinks: { to: string; label: string; icon: LucideIcon; privil
   { to: '/opportunities', label: 'Opportunities', icon: BriefcaseBusiness },
   { to: '/tasks', label: 'Tasks', icon: ListChecks },
   { to: '/playbook', label: 'Playbook', icon: PlaySquare },
-  { to: '/admin', label: 'Admin', icon: Settings },
+  { to: '/admin', label: 'Admin', icon: Settings, privileged: true },
+  { to: '/profile', label: 'Profile', icon: UserRound },
 ]
 
 export function Sidebar() {
@@ -32,7 +33,7 @@ export function Sidebar() {
       </div>
 
       <nav className="relative z-10 flex-1 space-y-1 px-3 py-4">
-        {sidebarLinks.filter(link => !link.privileged || user.role === 'leadership' || user.role === 'admin').map(link => (
+        {sidebarLinks.filter(link => !link.privileged || user.role === 'leadership' || user.role === 'admin' || user.role === 'super_admin').map(link => (
           <NavLink
             key={link.to}
             to={link.to}

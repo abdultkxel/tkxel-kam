@@ -298,7 +298,7 @@ export function PortfolioAnalytics({ embedded = false }: { embedded?: boolean })
     })
   }, [accounts, params])
 
-  if (user.role === 'am') {
+  if (user.role === 'am' || user.role === 'account_manager') {
     const restricted = (
       <section className="tk-card">
         <EmptyState icon={Lock} heading="Analytics restricted" body="Portfolio analytics are available to leadership and admin users only." />

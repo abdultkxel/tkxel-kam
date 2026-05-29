@@ -64,7 +64,7 @@ export function AIBriefCard({
   const setFeedback = useAISummaryStore(state => state.setFeedback)
   const markEdited = useAISummaryStore(state => state.markEdited)
   const summary = useMemo(() => summaries.find(item => item.accountId === account.id && item.type === type), [account.id, summaries, type])
-  const privileged = role === 'leadership' || role === 'admin'
+  const privileged = role === 'leadership' || role === 'admin' || role === 'super_admin'
 
   async function buildSummary(force = false) {
     if (!force && isFresh(summary)) return

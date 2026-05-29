@@ -58,7 +58,7 @@ export function TimelineCard({ entry, searchQuery, flash = false }: { entry: Tim
     [allComments, entry.id],
   )
   const rows = diffRows(entry)
-  const canAnnotate = user.role === 'admin' && entry.isImmutable
+  const canAnnotate = (user.role === 'admin' || user.role === 'super_admin') && entry.isImmutable
 
   useEffect(() => {
     if (!entry.isSensitive || loggedSensitiveView.current) return

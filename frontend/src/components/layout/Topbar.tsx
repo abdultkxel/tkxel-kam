@@ -1,13 +1,15 @@
-import { ArrowLeft, Menu, Sparkles } from 'lucide-react'
+import { ArrowLeft, LogOut, Menu, Sparkles, UserRound } from 'lucide-react'
 import { useLocation, useNavigate } from 'react-router-dom'
 import { AISearchBar } from '@/components/ai/AISearchBar'
 import { NotificationTray } from '@/components/notifications/NotificationTray'
 import { TkxelLogo } from '@/components/ui/TkxelLogo'
+import { useAuth } from '@/contexts/AuthContext'
 import { useUIStore } from '@/stores/uiStore'
 
 export function Topbar() {
   const location = useLocation()
   const navigate = useNavigate()
+  const { logout, user } = useAuth()
   const setMobileNavOpen = useUIStore(state => state.setMobileNavOpen)
   const openAI = useUIStore(state => state.openAI)
   const title = location.pathname.split('/').filter(Boolean)[0] ?? 'dashboard'
@@ -19,6 +21,11 @@ export function Topbar() {
     if (backDisabled) return
     if (historyIndex > 0) navigate(-1)
     else navigate('/dashboard')
+  }
+
+  async function handleLogout() {
+    await logout()
+    navigate('/login', { replace: true })
   }
 
   return (
@@ -71,6 +78,20 @@ export function Topbar() {
             <Sparkles className="h-4 w-4" />
           </button>
           <NotificationTray />
+          <button
+            type="button"
+            className="hidden min-h-[44px] items-center justify-center gap-2 rounded-md border border-surface-border bg-white px-3 text-sm font-semibold text-ink transition-colors hover:bg-surface-tertiary lg:inline-flex"
+            onClick={() => navigate('/profile')}
+            title="Open profile"
+          >
+            <span className="flex h-7 w-7 items-center justify-center rounded-full bg-brand-blue text-[11px] font-bold text-white">
+              {user?.avatarInitials ?? <UserRound className="h-4 w-4" />}
+            </span>
+            <span className="max-w-28 truncate">{user?.name ?? 'Profile'}</span>
+          </button>
+          <button className="tk-icon-button" type="button" onClick={handleLogout} aria-label="Logout" title="Logout">
+            <LogOut className="h-4 w-4" />
+          </button>
         </div>
       </div>
       <div className="border-t border-surface-border px-3 py-2 md:hidden">

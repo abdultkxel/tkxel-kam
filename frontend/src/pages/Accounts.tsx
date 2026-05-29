@@ -51,7 +51,7 @@ export function Accounts() {
   const stage = params.get('stage') ?? ''
   const risk = params.get('risk') ?? ''
   const segments = params.getAll('segment')
-  const privileged = user.role === 'leadership' || user.role === 'admin'
+  const privileged = user.role === 'leadership' || user.role === 'admin' || user.role === 'super_admin'
 
   function setFilter(key: string, value: string) {
     const next = new URLSearchParams(params)
@@ -95,7 +95,7 @@ export function Accounts() {
   function saveCurrentFilters() {
     const name = draftViewName.trim()
     if (!name) return
-    saveFilter({ name, query: search, stage, risk, segments, creatorId: user.id, shared: user.role === 'admin' })
+    saveFilter({ name, query: search, stage, risk, segments, creatorId: user.id, shared: user.role === 'admin' || user.role === 'super_admin' })
     setDraftViewName('')
     setSaveViewOpen(false)
   }
@@ -208,7 +208,7 @@ export function Accounts() {
             {visibleSavedViews.map(filter => (
               <div key={filter.id} className="inline-flex min-h-[44px] items-center gap-1 rounded-md border border-surface-border bg-surface-secondary p-1">
                 <button className="min-h-[44px] rounded-md px-3 text-sm font-semibold text-ink transition-colors hover:bg-white" onClick={() => applySavedView(filter.id)}>{filter.name}</button>
-                {user.role === 'admin' ? (
+                {user.role === 'admin' || user.role === 'super_admin' ? (
                   <button className="min-h-[44px] rounded-md px-2 text-xs font-semibold text-brand-blue transition-colors hover:bg-blue-tint-20" onClick={() => toggleFilterShared(filter.id)}>
                     {filter.shared ? 'Shared' : 'Personal'}
                   </button>

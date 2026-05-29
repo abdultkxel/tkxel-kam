@@ -41,7 +41,7 @@ export function AddNoteModal({ accountId, open: controlledOpen, onOpenChange, on
   const allEventTypes = useTimelineStore(state => state.eventTypes)
   const eventTypes = useMemo(() => allEventTypes.filter(item => item.active), [allEventTypes])
   const open = controlledOpen ?? internalOpen
-  const leadership = user.role === 'leadership' || user.role === 'admin'
+  const leadership = user.role === 'leadership' || user.role === 'admin' || user.role === 'super_admin'
   const {
     register,
     handleSubmit,

@@ -95,7 +95,7 @@ export function Account360({ account }: { account: Account }) {
     [account, accountDocuments, accountEngagements, accountKYCDraft, opportunities, visibleEntries],
   )
   const recentDecisions = visibleEntries.filter(entry => entry.eventType === 'approval_event' || entry.eventType === 'executive_event').length
-  const privileged = user.role === 'leadership' || user.role === 'admin'
+  const privileged = user.role === 'leadership' || user.role === 'admin' || user.role === 'super_admin'
   const accountAlerts = useMemo(
     () => alerts.filter(alert => alert.accountId === account.id && !alert.dismissedAt),
     [account.id, alerts],

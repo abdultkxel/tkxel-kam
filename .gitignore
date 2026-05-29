@@ -1,6 +1,9 @@
 frontend/node_modules/
 frontend/dist/
+frontend/.env
+frontend/.env.local
 backend/.venv/
+backend/.env
 __pycache__/
 backend/.pytest_cache/
 *.py[cod]

@@ -1,0 +1,47 @@
+from typing import Annotated
+
+import jwt
+from fastapi import Depends, HTTPException, status
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from sqlalchemy.orm import Session
+
+from app.database import get_db
+from app.models import User
+from app.repositories.users import UserRepository
+from app.security import decode_access_token
+from app.services.auth import AuthService
+from app.services.profile import ProfileService
+
+bearer_scheme = HTTPBearer(
+    bearerFormat="JWT",
+    description="Paste the access_token returned by POST /api/auth/login.",
+)
+
+
+def get_current_user(
+    credentials: Annotated[HTTPAuthorizationCredentials, Depends(bearer_scheme)],
+    db: Annotated[Session, Depends(get_db)],
+) -> User:
+    token = credentials.credentials
+    try:
+        payload = decode_access_token(token)
+        user_id = payload.get("sub")
+    except jwt.PyJWTError as exc:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid or expired token") from exc
+
+    if not user_id:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token subject")
+
+    user = UserRepository(db).get_by_id(user_id)
+    if user is None or not user.is_active:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User is inactive or no longer exists")
+
+    return user
+
+
+def get_auth_service(db: Annotated[Session, Depends(get_db)]) -> AuthService:
+    return AuthService(db)
+
+
+def get_profile_service(db: Annotated[Session, Depends(get_db)]) -> ProfileService:
+    return ProfileService(db)
