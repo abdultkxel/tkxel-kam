@@ -3,7 +3,7 @@ from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends, Query, status
 
-from app.dependencies import get_account_service, get_current_user, get_engagement_service
+from app.dependencies import get_account_service, get_current_user, get_custom_field_service, get_engagement_service, require_permission
 from app.models import User
 from app.schemas import (
     AccountOverviewRead,
@@ -17,6 +17,7 @@ from app.schemas import (
     AccountRead,
     AccountStatusUpdateRequest,
     AccountSummaryCardsRead,
+    CustomFieldDefinitionRead,
     EngagementCreateRequest,
     EngagementPageRead,
     EngagementRead,
@@ -26,10 +27,11 @@ from app.schemas import (
     SourceDocumentRead,
 )
 from app.services.accounts import AccountService
+from app.services.custom_fields import CustomFieldService
 from app.services.engagements import EngagementService
 
 Direction = Literal["asc", "desc"]
-AccountSort = Literal["name", "lifecycle_status", "segment", "commercial_value", "health", "next_governance_at", "updated_at"]
+AccountSort = Literal["name", "lifecycle_status", "risk_status", "owner_name", "segment", "commercial_value", "health", "next_governance_at", "updated_at"]
 AttachmentSort = Literal["uploaded_date", "source_type", "name"]
 SensitivityFilter = Literal["sensitive", "standard"]
 EngagementSort = Literal["renewal_date", "end_date", "value", "delivery_status", "updated_date"]
@@ -37,6 +39,7 @@ RenewalWindow = Literal["next_30", "next_60", "next_90", "expired", "notice_due"
 RiskFilter = Literal["healthy", "warning", "critical"]
 
 router = APIRouter(prefix="/api/accounts", tags=["Account Workspace"])
+AccountCreateAccess = Annotated[User, Depends(require_permission("account_onboarding_workspace", "create"))]
 
 
 @router.get(
@@ -94,6 +97,26 @@ def list_accounts(
         page=page,
         page_size=page_size,
     )
+
+
+@router.get(
+    "/custom-fields",
+    response_model=list[CustomFieldDefinitionRead],
+    summary="List account custom fields",
+    description=(
+        "Returns active Field Builder definitions that should render in the account creation form. "
+        "Requires account onboarding create permission."
+    ),
+    responses={
+        401: {"description": "Missing, invalid, or expired bearer token."},
+        403: {"description": "Authenticated user cannot create onboarding accounts."},
+    },
+)
+def list_account_custom_fields(
+    _: AccountCreateAccess,
+    service: Annotated[CustomFieldService, Depends(get_custom_field_service)],
+) -> list[CustomFieldDefinitionRead]:
+    return service.list_active_definitions(["account_onboarding_workspace", "account_overview"])
 
 
 @router.get(

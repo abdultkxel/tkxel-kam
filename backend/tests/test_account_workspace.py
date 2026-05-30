@@ -8,6 +8,7 @@ from sqlalchemy.pool import StaticPool
 
 from app.database import Base, get_db
 from app.main import app
+from app.models import CustomFieldValue
 from app.services.seed import seed_default_data
 
 
@@ -230,3 +231,79 @@ def test_account_filters_owner_history_engagement_health_and_openapi_docs(client
     assert paths["/api/onboarding/drafts"]["post"]["summary"] == "Create onboarding draft"
     assert paths["/api/accounts/{account_id}/overview"]["get"]["summary"] == "Read account overview"
     assert paths["/api/engagements/{engagement_id}/health/recalculate"]["post"]["summary"] == "Recalculate engagement health"
+
+
+def test_account_list_supports_server_sorting(client: TestClient) -> None:
+    headers = auth_headers(client)
+    create_approved_account(client, headers, "Aardvark Workspace")
+    create_approved_account(client, headers, "Zenith Workspace")
+
+    name_desc = client.get(
+        "/api/accounts",
+        headers=headers,
+        params={"sort": "name", "direction": "desc", "page": 1, "page_size": 2},
+    )
+    assert name_desc.status_code == 200
+    assert [item["name"] for item in name_desc.json()["items"]] == ["Zenith Workspace", "Aardvark Workspace"]
+
+    value_desc = client.get(
+        "/api/accounts",
+        headers=headers,
+        params={"sort": "commercial_value", "direction": "desc", "page": 1, "page_size": 2},
+    )
+    assert value_desc.status_code == 200
+    assert value_desc.json()["items"][0]["commercial_value"] >= value_desc.json()["items"][1]["commercial_value"]
+
+    owner_sort = client.get(
+        "/api/accounts",
+        headers=headers,
+        params={"sort": "owner_name", "direction": "asc", "page": 1, "page_size": 2},
+    )
+    assert owner_sort.status_code == 200
+    assert owner_sort.json()["items"][0]["primary_owner"]["user_name"] == "Account Manager KAM"
+
+
+def test_account_creation_accepts_field_builder_values(client: TestClient, db_session: Session) -> None:
+    headers = auth_headers(client)
+    owner = seeded_user(client, headers, "account_manager")
+
+    field_response = client.post(
+        "/api/admin/custom-fields",
+        headers=headers,
+        json={
+            "module": "account_onboarding_workspace",
+            "field_key": "customer_tier",
+            "label": "Customer Tier",
+            "field_type": "single_select",
+            "options": ["Gold", "Silver"],
+            "is_required": True,
+            "show_in_detail": True,
+        },
+    )
+    assert field_response.status_code == 201
+
+    definitions = client.get("/api/accounts/custom-fields", headers=headers)
+    assert definitions.status_code == 200
+    assert any(item["field_key"] == "customer_tier" for item in definitions.json())
+
+    missing_required = client.post(
+        "/api/onboarding/drafts",
+        headers=headers,
+        json=draft_payload("Required Field Workspace", owner["id"]),
+    )
+    assert missing_required.status_code == 422
+    assert missing_required.json()["detail"]["errors"][0]["field"] == "custom_field_values.customer_tier"
+
+    draft_response = client.post(
+        "/api/onboarding/drafts",
+        headers=headers,
+        json={**draft_payload("Field Builder Workspace", owner["id"]), "custom_field_values": {"customer_tier": "Gold"}},
+    )
+    assert draft_response.status_code == 201
+    approve_response = client.post(f"/api/onboarding/drafts/{draft_response.json()['id']}/approve", headers=headers)
+    assert approve_response.status_code == 200
+    account_id = approve_response.json()["approved_account_id"]
+
+    values = [value for value in db_session.query(CustomFieldValue).filter(CustomFieldValue.record_id == account_id).all()]
+    assert values
+    assert values[0].value == "Gold"

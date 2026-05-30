@@ -31,12 +31,16 @@ export function SortableTable<T extends { id: string }>({
   items,
   columns,
   defaultSort,
+  sort: controlledSort,
+  onSortChange,
   onRowClick,
   selection,
 }: {
   items: T[]
   columns: Column<T>[]
   defaultSort: SortState
+  sort?: SortState
+  onSortChange?: (sort: SortState) => void
   onRowClick?: (item: T) => void
   selection?: {
     selectedIds: string[]
@@ -44,14 +48,18 @@ export function SortableTable<T extends { id: string }>({
     onToggleAll: (ids: string[]) => void
   }
 }) {
-  const { sorted, sort, setSort } = useSortableData(items, defaultSort)
+  const { sorted: locallySorted, sort: localSort, setSort } = useSortableData(items, defaultSort)
+  const sort = controlledSort ?? localSort
+  const sorted = controlledSort ? items : locallySorted
 
   function handleSort(column: Column<T>) {
     if (!column.sortable) return
-    setSort(current => ({
+    const nextSort = {
       column: column.key,
-      direction: current.column === column.key && current.direction === 'asc' ? 'desc' : 'asc',
-    }))
+      direction: sort.column === column.key && sort.direction === 'asc' ? 'desc' : 'asc',
+    } as SortState
+    if (onSortChange) onSortChange(nextSort)
+    else setSort(nextSort)
   }
 
   return (

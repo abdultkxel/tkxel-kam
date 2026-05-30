@@ -21,21 +21,35 @@ import { cn } from '@/utils/cn'
 import { emitTimelineEvent } from '@/utils/emitTimelineEvent'
 import { formatCompactCurrency } from '@/utils/formatters'
 
-function AccountStat({ label, value, tone = 'default' }: { label: string; value: string | number; tone?: 'default' | 'warning' | 'success' }) {
-  const valueClass = tone === 'warning' ? 'text-brand-orange' : tone === 'success' ? 'text-rag-green' : 'text-ink'
+type AccountLayout = 'cards' | 'table'
+type AccountSortOption = 'name' | 'lifecycle_status' | 'risk_status' | 'owner_name' | 'segment' | 'commercial_value' | 'health' | 'next_governance_at' | 'updated_at'
+type SortDirection = 'asc' | 'desc'
 
-  return (
-    <div className="rounded-lg bg-surface-secondary px-4 py-3">
-      <p className="text-[10px] font-semibold uppercase tracking-wider text-ink-secondary">{label}</p>
-      <p className={`mt-1 font-display text-2xl font-bold ${valueClass}`}>{value}</p>
-    </div>
-  )
+const accountSortOptions: AccountSortOption[] = ['name', 'lifecycle_status', 'risk_status', 'owner_name', 'segment', 'commercial_value', 'health', 'next_governance_at', 'updated_at']
+const tableColumnToApiSort: Record<string, AccountSortOption> = {
+  name: 'name',
+  stage: 'lifecycle_status',
+  riskStatus: 'risk_status',
+  ownerName: 'owner_name',
+  segment: 'segment',
+  arr: 'commercial_value',
+}
+const apiSortToTableColumn: Record<AccountSortOption, string> = {
+  name: 'name',
+  lifecycle_status: 'stage',
+  risk_status: 'riskStatus',
+  owner_name: 'ownerName',
+  segment: 'segment',
+  commercial_value: 'arr',
+  health: 'name',
+  next_governance_at: 'name',
+  updated_at: 'name',
 }
 
 export function Accounts() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
-  const [view, setView] = useState<'cards' | 'table'>('cards')
+  const [view, setView] = useState<AccountLayout>('cards')
   const [selectedIds, setSelectedIds] = useState<string[]>([])
   const [saveViewOpen, setSaveViewOpen] = useState(false)
   const [draftViewName, setDraftViewName] = useState('')
@@ -58,10 +72,12 @@ export function Accounts() {
   const risk = params.get('risk') ?? ''
   const segments = params.getAll('segment')
   const segmentsKey = segments.join('|')
-  const sort = params.get('sort') ?? 'name'
-  const direction = params.get('direction') ?? 'asc'
+  const requestedSort = params.get('sort') ?? 'name'
+  const sort: AccountSortOption = accountSortOptions.includes(requestedSort as AccountSortOption) ? requestedSort as AccountSortOption : 'name'
+  const direction: SortDirection = params.get('direction') === 'desc' ? 'desc' : 'asc'
   const page = Number(params.get('page') ?? '1')
   const privileged = user.role === 'leadership' || user.role === 'admin' || user.role === 'super_admin'
+  const tableSort = { column: apiSortToTableColumn[sort] ?? 'name', direction }
 
   function setFilter(key: string, value: string) {
     const next = new URLSearchParams(params)
@@ -77,6 +93,18 @@ export function Accounts() {
     values.forEach(value => next.append(key, value))
     next.set('page', '1')
     setParams(next, { replace: true })
+  }
+
+  function setSortState(nextSort: AccountSortOption, nextDirection: SortDirection) {
+    const next = new URLSearchParams(params)
+    next.set('sort', nextSort)
+    next.set('direction', nextDirection)
+    next.set('page', '1')
+    setParams(next, { replace: true })
+  }
+
+  function handleTableSort(nextSort: { column: string; direction: SortDirection }) {
+    setSortState(tableColumnToApiSort[nextSort.column] ?? 'name', nextSort.direction)
   }
 
   function toggleSegment(segment: string) {
@@ -96,26 +124,29 @@ export function Accounts() {
     if (viewConfig.stage) next.set('stage', viewConfig.stage)
     if (viewConfig.risk) next.set('risk', viewConfig.risk)
     viewConfig.segments.forEach(item => next.append('segment', item))
+    if (viewConfig.sort) next.set('sort', viewConfig.sort)
+    if (viewConfig.direction) next.set('direction', viewConfig.direction)
+    next.set('page', '1')
+    if (viewConfig.layout) setView(viewConfig.layout)
     setParams(next, { replace: true })
   }
 
   function openSaveView() {
     setSaveViewOpen(true)
-    if (!draftViewName) setDraftViewName(search || stage || risk || segments[0] || 'Portfolio view')
+    if (!draftViewName) setDraftViewName(search || stage || risk || segments[0] || (sort !== 'name' ? 'Sorted portfolio' : view === 'table' ? 'Table view' : 'Portfolio view'))
   }
 
   function saveCurrentFilters() {
     const name = draftViewName.trim()
     if (!name) return
-    saveFilter({ name, query: search, stage, risk, segments, creatorId: user.id, shared: user.role === 'admin' || user.role === 'super_admin' })
+    saveFilter({ name, query: search, stage, risk, segments, sort, direction, layout: view, creatorId: user.id, shared: user.role === 'admin' || user.role === 'super_admin' })
     setDraftViewName('')
     setSaveViewOpen(false)
   }
 
   const visibleSavedViews = savedFilters.filter(filter => filter.shared || filter.creatorId === user.id)
   const activeFilterCount = [search, stage, risk].filter(Boolean).length + segments.length
-  const filteredArr = accounts.reduce((sum, account) => sum + account.arr, 0)
-  const filteredAtRisk = accounts.filter(account => account.riskStatus !== 'healthy').length
+  const activeViewStateCount = activeFilterCount + (sort !== 'name' ? 1 : 0) + (direction !== 'asc' ? 1 : 0) + (view !== 'cards' ? 1 : 0)
 
   const columns: Column<Account>[] = [
     { key: 'name', header: 'Account', sortable: true, render: account => <span className="font-semibold text-ink">{account.name}</span> },
@@ -225,13 +256,6 @@ export function Accounts() {
           </>
         }
       />
-      <section className="tk-card mb-4 p-4">
-        <div className="grid gap-3 md:grid-cols-3">
-          <AccountStat label="Matched accounts" value={pagination.total} />
-          <AccountStat label="Page ARR" value={formatCompactCurrency(filteredArr)} />
-          <AccountStat label="At risk" value={filteredAtRisk} tone={filteredAtRisk ? 'warning' : 'success'} />
-        </div>
-      </section>
 
       {visibleSavedViews.length ? (
         <section className="mb-4 flex flex-col gap-3 rounded-lg border border-surface-border bg-white p-3 sm:flex-row sm:items-center">
@@ -328,6 +352,8 @@ export function Accounts() {
               <select className="tk-input min-w-[170px]" value={sort} onChange={event => setFilter('sort', event.target.value)}>
                 <option value="name">Name</option>
                 <option value="lifecycle_status">Lifecycle</option>
+                <option value="risk_status">Risk</option>
+                <option value="owner_name">Account manager</option>
                 <option value="segment">Segment</option>
                 <option value="commercial_value">Commercial value</option>
                 <option value="health">Health</option>
@@ -362,7 +388,7 @@ export function Accounts() {
                 </button>
               </div>
             ) : (
-              <button className="tk-button-secondary" onClick={openSaveView} disabled={!activeFilterCount}>
+              <button className="tk-button-secondary" onClick={openSaveView} disabled={!activeViewStateCount}>
                 <Save className="h-4 w-4" />
                 Save view
               </button>
@@ -391,6 +417,8 @@ export function Accounts() {
           items={accounts}
           columns={columns}
           defaultSort={{ column: 'name', direction: 'asc' }}
+          sort={tableSort}
+          onSortChange={handleTableSort}
           onRowClick={account => navigate(`/accounts/${account.id}`)}
           selection={privileged ? { selectedIds, onToggle: toggleSelected, onToggleAll: toggleAll } : undefined}
         />

@@ -38,6 +38,9 @@ export interface SavedAccountFilter {
   stage: string
   risk: string
   segments: string[]
+  sort?: string
+  direction?: 'asc' | 'desc'
+  layout?: 'cards' | 'table'
   creatorId: string
   shared: boolean
 }

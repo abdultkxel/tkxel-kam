@@ -45,9 +45,22 @@ class AccountRepository:
             missing_next_governance=missing_next_governance,
         )
         total = self.db.scalar(select(func.count(Account.id)).where(*conditions)) or 0
+        primary_owner_name = (
+            select(AccountOwner.user_name)
+            .where(
+                AccountOwner.account_id == Account.id,
+                AccountOwner.ownership_role == "primary_am",
+                AccountOwner.is_active.is_(True),
+            )
+            .order_by(AccountOwner.user_name)
+            .limit(1)
+            .scalar_subquery()
+        )
         order_column = {
             "name": Account.name,
             "lifecycle_status": Account.lifecycle_status,
+            "risk_status": Account.risk_status,
+            "owner_name": primary_owner_name,
             "segment": Account.segment,
             "commercial_value": Account.commercial_value,
             "health": Account.health_overall,

@@ -1,7 +1,7 @@
 from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
-from app.models import CustomFieldDefinition
+from app.models import CustomFieldDefinition, CustomFieldValue
 
 
 class CustomFieldRepository:
@@ -46,10 +46,36 @@ class CustomFieldRepository:
             )
         )
 
+    def list_active_definitions(self, modules: list[str]) -> list[CustomFieldDefinition]:
+        return list(
+            self.db.scalars(
+                select(CustomFieldDefinition)
+                .where(
+                    CustomFieldDefinition.module.in_(modules),
+                    CustomFieldDefinition.is_active.is_(True),
+                )
+                .order_by(CustomFieldDefinition.sort_order, CustomFieldDefinition.label)
+            )
+        )
+
+    def list_values_for_record(self, module: str, record_id: str) -> list[CustomFieldValue]:
+        return list(
+            self.db.scalars(
+                select(CustomFieldValue)
+                .where(CustomFieldValue.module == module, CustomFieldValue.record_id == record_id)
+                .order_by(CustomFieldValue.created_at)
+            )
+        )
+
     def create(self, definition: CustomFieldDefinition) -> CustomFieldDefinition:
         self.db.add(definition)
         self.db.flush()
         return definition
+
+    def add_value(self, value: CustomFieldValue) -> CustomFieldValue:
+        self.db.add(value)
+        self.db.flush()
+        return value
 
     def delete(self, definition: CustomFieldDefinition) -> None:
         self.db.delete(definition)
