@@ -4,19 +4,19 @@ import { nanoid } from 'nanoid'
 import { FormEvent, forwardRef, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { toast } from 'sonner'
+import { useAuth } from '@/contexts/AuthContext'
 import { users } from '@/data/mock'
-import { useRole } from '@/hooks/useRole'
+import { ApiError } from '@/services/api'
+import { approveOnboardingDraft, createOnboardingDraft, getAccount } from '@/services/accountWorkspace'
 import { useAccountStore } from '@/stores/accountStore'
-import { Account } from '@/types/account'
 import { cn } from '@/utils/cn'
-import { emitTimelineEvent } from '@/utils/emitTimelineEvent'
 
 type CreateAccountField = 'accountName' | 'projectName' | 'companyUrl' | 'managerName' | 'managerEmail'
 
 export function CreateAccountDialog({ label = 'Create account' }: { label?: string }) {
-  const user = useRole()
+  const { token } = useAuth()
   const navigate = useNavigate()
-  const importAccounts = useAccountStore(state => state.importAccounts)
+  const upsertAccount = useAccountStore(state => state.upsertAccount)
   const firstAm = users.find(item => item.role === 'am') ?? users[0]
   const [open, setOpen] = useState(false)
   const [accountName, setAccountName] = useState('')
@@ -107,58 +107,43 @@ export function CreateAccountDialog({ label = 'Create account' }: { label?: stri
   async function createAccount(event: FormEvent) {
     event.preventDefault()
     if (!validate()) return
-    setCreating(true)
-    await new Promise(resolve => window.setTimeout(resolve, 400))
-
-    const matchedAm = users.find(item => item.email.toLowerCase() === managerEmail.trim().toLowerCase()) ?? users.find(item => item.name.toLowerCase() === managerName.trim().toLowerCase())
-    const ownerId = matchedAm?.id ?? `am-${slugify(managerEmail)}`
-    const ownerName = matchedAm?.name ?? managerName.trim()
-    const id = `acct-${slugify(accountName)}-${nanoid(4)}`
-    const normalizedUrl = normalizeCompanyUrl(companyUrl)
-    const account: Account = {
-      id,
-      name: accountName.trim(),
-      projectName: projectName.trim(),
-      companyUrl: normalizedUrl,
-      segment: 'Growth',
-      tags: ['Growth'],
-      ownerId,
-      ownerName,
-      stage: 'Onboarding',
-      riskStatus: 'warning',
-      arr: 0,
-      nextQbr: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),
-      health: { overall: 45, relationship: 45, usage: 40, delivery: 45, commercial: 50 },
-      stakeholders: [`Account Manager: ${ownerName}`, `AM Email: ${managerEmail.trim()}`],
-      risks: ['KYC has not been completed yet'],
+    if (!token) {
+      toast.error('Please log in again before creating an account')
+      return
     }
-
-    importAccounts([account])
-    emitTimelineEvent({
-      accountId: account.id,
-      eventType: 'account_setup',
-      module: 'manual',
-      title: 'Account created from SOW/charter intake',
-      description: `${account.name} was created for ${projectName.trim()} and assigned to ${ownerName}. KYC remains pending in Account Overview.`,
-      performedBy: user.id,
-      performedByName: user.name,
-      sourceRecordId: account.id,
-      sourceRecordType: 'account',
-      sourceRecordRoute: `/accounts/${account.id}`,
-      metadata: {
+    setCreating(true)
+    try {
+      const draft = await createOnboardingDraft(token, {
+        accountName: accountName.trim(),
         projectName: projectName.trim(),
-        companyUrl: normalizedUrl,
-        accountManagerEmail: managerEmail.trim(),
-        sourceDocuments: fileNames,
-      },
-      isSensitive: false,
-      isSystemGenerated: true,
-      isImmutable: false,
-    })
-    setOpen(false)
-    setCreating(false)
-    toast.success('Account created. Complete KYC in Account Overview.')
-    navigate(`/accounts/${account.id}`)
+        companyUrl: normalizeCompanyUrl(companyUrl),
+        managerEmail: managerEmail.trim(),
+        managerName: managerName.trim(),
+        fileNames,
+      })
+      const approved = await approveOnboardingDraft(token, draft.id)
+      if (!approved.approvedAccountId) throw new Error('Draft approved without an account reference')
+      const account = await getAccount(token, approved.approvedAccountId)
+      upsertAccount(account)
+      setOpen(false)
+      toast.success('Account created. Complete KYC in Account Overview.')
+      navigate(`/accounts/${account.id}`)
+    } catch (error) {
+      applyApiErrors(error)
+      toast.error(error instanceof Error ? error.message : 'Account could not be created')
+    } finally {
+      setCreating(false)
+    }
+  }
+
+  function applyApiErrors(error: unknown) {
+    if (!(error instanceof ApiError) || !error.fieldErrors.length) return
+    const nextErrors: Partial<Record<CreateAccountField, string>> = {}
+    for (const fieldError of error.fieldErrors) {
+      const field = mapApiField(fieldError.field)
+      if (field) nextErrors[field] = fieldError.message
+    }
+    setErrors(current => ({ ...current, ...nextErrors }))
   }
 
   return (
@@ -338,4 +323,17 @@ function normalizeCompanyUrl(value: string) {
   const trimmed = value.trim()
   if (!trimmed) return ''
   return /^https?:\/\//i.test(trimmed) ? trimmed : `https://${trimmed}`
+}
+
+function mapApiField(field: string): CreateAccountField | undefined {
+  const fieldMap: Record<string, CreateAccountField> = {
+    account_name: 'accountName',
+    project_name: 'projectName',
+    company_url: 'companyUrl',
+    primary_owner_name: 'managerName',
+    primary_owner_email: 'managerEmail',
+    source_citation: 'accountName',
+    'engagement_drafts.0.name': 'projectName',
+  }
+  return fieldMap[field]
 }

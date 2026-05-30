@@ -1,25 +1,70 @@
 import { AlertTriangle, ArrowRight, CalendarClock, FileText, ShieldCheck, UserRound } from 'lucide-react'
 import type { ReactNode } from 'react'
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { KYCIntakeFlow } from '@/components/account/KYCIntakeFlow'
+import { EmptyState } from '@/components/ui/EmptyState'
+import { Skeleton } from '@/components/ui/Skeleton'
+import { useAuth } from '@/contexts/AuthContext'
+import { listEngagements } from '@/services/accountWorkspace'
 import { Account } from '@/types/account'
 import { EngagementRecord } from '@/types/v3'
-import { useV3Store } from '@/stores/v3Store'
 import { cn } from '@/utils/cn'
 import { formatCompactCurrency, formatDate } from '@/utils/formatters'
 
 export function EngagementsPanel({ account }: { account: Account }) {
-  const engagements = useV3Store(state => state.engagements).filter(engagement => engagement.accountId === account.id)
-  const documents = useV3Store(state => state.sourceDocuments)
-  const signals = useV3Store(state => state.signals)
-  const [selectedId, setSelectedId] = useState(engagements[0]?.id ?? '')
+  const { token } = useAuth()
+  const [engagements, setEngagements] = useState<EngagementRecord[]>([])
+  const [selectedId, setSelectedId] = useState('')
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState('')
   const selected = engagements.find(engagement => engagement.id === selectedId) ?? engagements[0]
-  const selectedDocs = useMemo(
-    () => selected ? documents.filter(document => selected.sourceDocumentIds.includes(document.id)) : [],
-    [documents, selected],
-  )
-  const selectedSignals = selected ? signals.filter(signal => signal.engagementId === selected.id) : []
+  const selectedDocs = useMemo(() => [] as { id: string; name: string; type: string; confidence: number; citations: { id: string; page: number; excerpt: string }[] }[], [])
+  const selectedSignals: { headline: string }[] = []
+
+  useEffect(() => {
+    if (!token) return
+    let active = true
+    setLoading(true)
+    setError('')
+    listEngagements(token, account.id, new URLSearchParams({ page: '1', page_size: '25' }))
+      .then(result => {
+        if (!active) return
+        setEngagements(result.items)
+        setSelectedId(current => current || result.items[0]?.id || '')
+      })
+      .catch(err => {
+        if (!active) return
+        setError(err instanceof Error ? err.message : 'Unable to load engagements')
+      })
+      .finally(() => {
+        if (active) setLoading(false)
+      })
+    return () => {
+      active = false
+    }
+  }, [account.id, token])
+
+  if (loading) {
+    return (
+      <div className="space-y-5">
+        <KYCIntakeFlow account={account} />
+        <div className="grid gap-5 xl:grid-cols-[360px_minmax(0,1fr)]">
+          <Skeleton className="h-80 w-full" />
+          <Skeleton className="h-80 w-full" />
+        </div>
+      </div>
+    )
+  }
+
+  if (error) {
+    return (
+      <div className="space-y-5">
+        <KYCIntakeFlow account={account} />
+        <EmptyState icon={AlertTriangle} heading="Engagements could not be loaded" body={error} />
+      </div>
+    )
+  }
 
   if (!engagements.length) {
     return (

@@ -7,6 +7,8 @@ interface AccountStore {
   accounts: Account[]
   segmentTags: string[]
   savedFilters: SavedAccountFilter[]
+  setAccounts: (accounts: Account[]) => void
+  upsertAccount: (account: Account) => void
   setStage: (accountId: string, stage: AccountStage) => void
   setHealth: (accountId: string, health: HealthScore) => void
   importAccounts: (accounts: Account[]) => void
@@ -23,6 +25,14 @@ export const useAccountStore = create<AccountStore>(set => ({
   savedFilters: [
     { id: 'view-risk', name: 'At-risk book', query: '', stage: '', risk: 'warning', segments: [], creatorId: 'usr-001', shared: true },
   ],
+  setAccounts: nextAccounts =>
+    set(() => ({
+      accounts: nextAccounts,
+    })),
+  upsertAccount: account =>
+    set(state => ({
+      accounts: [account, ...state.accounts.filter(item => item.id !== account.id)],
+    })),
   setStage: (accountId, stage) =>
     set(state => ({
       accounts: state.accounts.map(account => (account.id === accountId ? { ...account, stage } : account)),

@@ -60,6 +60,9 @@ DEFAULT_ROLES: tuple[DefaultRole, ...] = (
         description="Platform administration for users, roles, access, reference data, integrations, audit, and retention.",
         permission_rules=(
             ("admin_audit_security_rbac", ALL_ACTIONS),
+            ("account_onboarding_workspace", LEADERSHIP_ACTIONS),
+            ("account_overview", LEADERSHIP_ACTIONS),
+            ("engagement_sow_management", ("view", "create", "update", "delete", "assign", "export")),
             ("integrations", CONFIG_ACTIONS),
             ("notifications_digests", CONFIG_ACTIONS),
             ("scoring_engine", CONFIG_ACTIONS),
@@ -133,6 +136,7 @@ DEFAULT_ROLES: tuple[DefaultRole, ...] = (
         description="Strategic visibility consumer for portfolio, risk, retention, growth, and decisions.",
         permission_rules=(
             ("account_overview", VIEW_ONLY_ACTIONS),
+            ("engagement_sow_management", VIEW_ONLY_ACTIONS),
             ("opportunity_management", VIEW_ONLY_ACTIONS),
             ("retention_stability", VIEW_ONLY_ACTIONS),
             ("escalation_management", VIEW_ONLY_ACTIONS),

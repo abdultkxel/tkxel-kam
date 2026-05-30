@@ -1,6 +1,6 @@
 import * as Dialog from '@radix-ui/react-dialog'
-import { Building2, Download, FileText, LayoutGrid, Save, Table2, Tags, Upload, UserRound, X } from 'lucide-react'
-import { useEffect, useMemo, useState } from 'react'
+import { AlertTriangle, Building2, ChevronLeft, ChevronRight, Download, FileText, LayoutGrid, Loader2, Save, Table2, Tags, Upload, UserRound, X } from 'lucide-react'
+import { useEffect, useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { AccountCard } from '@/components/account/AccountCard'
 import { CreateAccountDialog } from '@/components/account/CreateAccountDialog'
@@ -10,8 +10,10 @@ import { FilterBar } from '@/components/ui/FilterBar'
 import { PageHeader } from '@/components/ui/PageHeader'
 import { Skeleton } from '@/components/ui/Skeleton'
 import { Column, SortableTable } from '@/components/ui/SortableTable'
+import { useAuth } from '@/contexts/AuthContext'
 import { users } from '@/data/mock'
 import { useRole } from '@/hooks/useRole'
+import { listAccounts } from '@/services/accountWorkspace'
 import { useAccountStore } from '@/stores/accountStore'
 import { useTimelineStore } from '@/stores/timelineStore'
 import { Account } from '@/types/account'
@@ -32,14 +34,18 @@ function AccountStat({ label, value, tone = 'default' }: { label: string; value:
 
 export function Accounts() {
   const [loading, setLoading] = useState(true)
+  const [error, setError] = useState('')
   const [view, setView] = useState<'cards' | 'table'>('cards')
   const [selectedIds, setSelectedIds] = useState<string[]>([])
   const [saveViewOpen, setSaveViewOpen] = useState(false)
   const [draftViewName, setDraftViewName] = useState('')
+  const [pagination, setPagination] = useState({ total: 0, page: 1, pageSize: 12, pages: 1 })
   const [params, setParams] = useSearchParams()
   const navigate = useNavigate()
   const user = useRole()
+  const { token } = useAuth()
   const accounts = useAccountStore(state => state.accounts)
+  const setAccounts = useAccountStore(state => state.setAccounts)
   const segmentTags = useAccountStore(state => state.segmentTags)
   const savedFilters = useAccountStore(state => state.savedFilters)
   const saveFilter = useAccountStore(state => state.saveFilter)
@@ -51,12 +57,17 @@ export function Accounts() {
   const stage = params.get('stage') ?? ''
   const risk = params.get('risk') ?? ''
   const segments = params.getAll('segment')
+  const segmentsKey = segments.join('|')
+  const sort = params.get('sort') ?? 'name'
+  const direction = params.get('direction') ?? 'asc'
+  const page = Number(params.get('page') ?? '1')
   const privileged = user.role === 'leadership' || user.role === 'admin' || user.role === 'super_admin'
 
   function setFilter(key: string, value: string) {
     const next = new URLSearchParams(params)
     if (value) next.set(key, value)
     else next.delete(key)
+    if (key !== 'page') next.set('page', '1')
     setParams(next, { replace: true })
   }
 
@@ -64,6 +75,7 @@ export function Accounts() {
     const next = new URLSearchParams(params)
     next.delete(key)
     values.forEach(value => next.append(key, value))
+    next.set('page', '1')
     setParams(next, { replace: true })
   }
 
@@ -100,21 +112,10 @@ export function Accounts() {
     setSaveViewOpen(false)
   }
 
-  const filtered = useMemo(
-    () =>
-      accounts.filter(account => {
-        const matchesSearch = !search || account.name.toLowerCase().includes(search.toLowerCase()) || account.ownerName.toLowerCase().includes(search.toLowerCase())
-        const matchesSegment = !segments.length || segments.some(segment => account.segment === segment || account.tags.includes(segment))
-        const matchesRisk = !risk || (risk === 'at_risk' ? account.riskStatus !== 'healthy' : account.riskStatus === risk)
-        return matchesSearch && (!stage || account.stage === stage) && matchesRisk && matchesSegment
-      }),
-    [accounts, risk, search, segments, stage],
-  )
-
   const visibleSavedViews = savedFilters.filter(filter => filter.shared || filter.creatorId === user.id)
   const activeFilterCount = [search, stage, risk].filter(Boolean).length + segments.length
-  const filteredArr = filtered.reduce((sum, account) => sum + account.arr, 0)
-  const filteredAtRisk = filtered.filter(account => account.riskStatus !== 'healthy').length
+  const filteredArr = accounts.reduce((sum, account) => sum + account.arr, 0)
+  const filteredAtRisk = accounts.filter(account => account.riskStatus !== 'healthy').length
 
   const columns: Column<Account>[] = [
     { key: 'name', header: 'Account', sortable: true, render: account => <span className="font-semibold text-ink">{account.name}</span> },
@@ -176,9 +177,40 @@ export function Accounts() {
   }
 
   useEffect(() => {
-    const timer = window.setTimeout(() => setLoading(false), 400)
-    return () => window.clearTimeout(timer)
-  }, [])
+    if (!token) return
+    const query = new URLSearchParams()
+    if (search) query.set('search', search)
+    if (stage) query.set('lifecycle_status', stage)
+    if (risk) query.set('risk_status', risk === 'at_risk' ? 'critical' : risk)
+    if (segments[0]) query.set('segment', segments[0])
+    query.set('sort', sort)
+    query.set('direction', direction)
+    query.set('page', String(Number.isFinite(page) && page > 0 ? page : 1))
+    query.set('page_size', '12')
+
+    let active = true
+    setLoading(true)
+    setError('')
+    listAccounts(token, query)
+      .then(result => {
+        if (!active) return
+        setAccounts(result.items)
+        setPagination({ total: result.total, page: result.page, pageSize: result.page_size, pages: result.pages })
+        setSelectedIds([])
+      })
+      .catch(err => {
+        if (!active) return
+        setError(err instanceof Error ? err.message : 'Unable to load accounts')
+        setAccounts([])
+      })
+      .finally(() => {
+        if (active) setLoading(false)
+      })
+
+    return () => {
+      active = false
+    }
+  }, [direction, page, risk, search, segmentsKey, setAccounts, sort, stage, token])
 
   return (
     <div>
@@ -195,8 +227,8 @@ export function Accounts() {
       />
       <section className="tk-card mb-4 p-4">
         <div className="grid gap-3 md:grid-cols-3">
-          <AccountStat label="Matched accounts" value={filtered.length} />
-          <AccountStat label="Matched ARR" value={formatCompactCurrency(filteredArr)} />
+          <AccountStat label="Matched accounts" value={pagination.total} />
+          <AccountStat label="Page ARR" value={formatCompactCurrency(filteredArr)} />
           <AccountStat label="At risk" value={filteredAtRisk} tone={filteredAtRisk ? 'warning' : 'success'} />
         </div>
       </section>
@@ -283,8 +315,33 @@ export function Accounts() {
           <p className="mt-1 text-xs text-ink-secondary">
             {activeFilterCount ? `${activeFilterCount} active filter${activeFilterCount === 1 ? '' : 's'}` : 'All accounts visible'}
           </p>
+          {loading ? (
+            <p className="mt-1 inline-flex items-center gap-1 text-xs font-medium text-brand-blue">
+              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              Loading accounts
+            </p>
+          ) : null}
         </div>
         <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-end">
+            <label className="flex items-center gap-2">
+              <span className="text-xs font-semibold uppercase tracking-wider text-ink-secondary">Sort</span>
+              <select className="tk-input min-w-[170px]" value={sort} onChange={event => setFilter('sort', event.target.value)}>
+                <option value="name">Name</option>
+                <option value="lifecycle_status">Lifecycle</option>
+                <option value="segment">Segment</option>
+                <option value="commercial_value">Commercial value</option>
+                <option value="health">Health</option>
+                <option value="next_governance_at">Next governance</option>
+                <option value="updated_at">Updated</option>
+              </select>
+            </label>
+            <label className="flex items-center gap-2">
+              <span className="text-xs font-semibold uppercase tracking-wider text-ink-secondary">Order</span>
+              <select className="tk-input min-w-[120px]" value={direction} onChange={event => setFilter('direction', event.target.value)}>
+                <option value="asc">Asc</option>
+                <option value="desc">Desc</option>
+              </select>
+            </label>
             <div className="inline-flex w-fit rounded-lg border border-surface-border bg-white p-1">
               <button className={cn('tk-icon-button', view === 'cards' ? 'bg-brand-blue text-white hover:bg-brand-blue-dark hover:text-white' : '')} onClick={() => setView('cards')} aria-label="Card view" aria-pressed={view === 'cards'}>
                 <LayoutGrid className="h-4 w-4" />
@@ -319,23 +376,42 @@ export function Accounts() {
           <Skeleton className="h-52 w-full" />
           <Skeleton className="h-52 w-full" />
         </div>
-      ) : filtered.length === 0 ? (
+      ) : error ? (
+        <EmptyState icon={AlertTriangle} heading="Accounts could not be loaded" body={error} />
+      ) : accounts.length === 0 ? (
         <EmptyState icon={Building2} heading="No accounts found" body="Clear filters or search for a different account." />
       ) : view === 'cards' ? (
         <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-          {filtered.map(account => (
+          {accounts.map(account => (
             <AccountCard key={account.id} account={account} />
           ))}
         </div>
       ) : (
         <SortableTable
-          items={filtered}
+          items={accounts}
           columns={columns}
           defaultSort={{ column: 'name', direction: 'asc' }}
           onRowClick={account => navigate(`/accounts/${account.id}`)}
           selection={privileged ? { selectedIds, onToggle: toggleSelected, onToggleAll: toggleAll } : undefined}
         />
       )}
+      {!loading && !error && pagination.pages > 1 ? (
+        <div className="mt-4 flex flex-col gap-3 rounded-lg border border-surface-border bg-white p-3 sm:flex-row sm:items-center sm:justify-between">
+          <p className="text-sm font-medium text-ink-secondary">
+            Page {pagination.page} of {pagination.pages} | {pagination.total} accounts
+          </p>
+          <div className="flex gap-2">
+            <button className="tk-button-secondary" onClick={() => setFilter('page', String(Math.max(1, pagination.page - 1)))} disabled={pagination.page <= 1}>
+              <ChevronLeft className="h-4 w-4" />
+              Previous
+            </button>
+            <button className="tk-button-secondary" onClick={() => setFilter('page', String(Math.min(pagination.pages, pagination.page + 1)))} disabled={pagination.page >= pagination.pages}>
+              Next
+              <ChevronRight className="h-4 w-4" />
+            </button>
+          </div>
+        </div>
+      ) : null}
       {privileged && view === 'table' && selectedIds.length ? (
         <div className="fixed bottom-4 left-1/2 z-40 flex w-[min(960px,calc(100vw-2rem))] -translate-x-1/2 flex-wrap items-center justify-between gap-3 rounded-xl border border-surface-border bg-white p-3 shadow-panel">
           <span className="text-sm font-semibold text-ink">{selectedIds.length} selected</span>
