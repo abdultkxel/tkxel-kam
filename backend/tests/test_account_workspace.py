@@ -175,6 +175,14 @@ def test_account_filters_owner_history_engagement_health_and_openapi_docs(client
     assert account_list.status_code == 200
     assert account_list.json()["items"][0]["id"] == account_id
 
+    email_search = client.get(
+        "/api/accounts",
+        headers=headers,
+        params={"search": "account.manager.user@tkxelkam.com", "page": 1, "page_size": 5},
+    )
+    assert email_search.status_code == 200
+    assert any(item["id"] == account_id for item in email_search.json()["items"])
+
     owner_response = client.post(
         f"/api/accounts/{account_id}/owners",
         headers=headers,

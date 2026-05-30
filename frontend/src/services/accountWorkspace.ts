@@ -324,6 +324,7 @@ function mapApiAccount(account: ApiAccount): Account {
     tags: [account.segment, account.region].filter(Boolean) as string[],
     ownerId: owner?.user_id ?? owner?.id ?? '',
     ownerName: owner?.user_name ?? 'Unassigned',
+    ownerEmail: owner?.user_email ?? undefined,
     stage: toStage(account.lifecycle_status),
     riskStatus: account.risk_status,
     arr: Number(account.commercial_value ?? 0),

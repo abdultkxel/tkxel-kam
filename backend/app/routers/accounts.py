@@ -44,7 +44,7 @@ router = APIRouter(prefix="/api/accounts", tags=["Account Workspace"])
     response_model=AccountPageRead,
     summary="List accounts",
     description=(
-        "Account selector and portfolio listing. Supports search, lifecycle/segment/region filters, ownership "
+        "Account selector and portfolio listing. Supports search by account, project, service, owner name, or owner email; lifecycle/segment/region filters; ownership "
         "filters, governance-completeness filters, sorting, and pagination."
     ),
     responses={
@@ -56,7 +56,7 @@ router = APIRouter(prefix="/api/accounts", tags=["Account Workspace"])
 def list_accounts(
     current_user: Annotated[User, Depends(get_current_user)],
     service: Annotated[AccountService, Depends(get_account_service)],
-    search: Annotated[str | None, Query(description="Search by account name, project name, or service context.")] = None,
+    search: Annotated[str | None, Query(description="Search by account name, project name, service context, owner name, or owner email.")] = None,
     lifecycle_status: Annotated[str | None, Query(description="Lifecycle status filter.")] = None,
     segment: Annotated[str | None, Query(description="Account segment filter.")] = None,
     region: Annotated[str | None, Query(description="Account region filter.")] = None,

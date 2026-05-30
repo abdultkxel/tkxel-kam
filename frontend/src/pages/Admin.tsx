@@ -6,6 +6,7 @@ import { FormEvent, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { toast } from 'sonner'
 import { AdminCustomizationPanel } from '@/components/admin/AdminCustomizationPanel'
+import { AdminFieldBuilderPanel } from '@/components/admin/AdminFieldBuilderPanel'
 import { AdminRolesPanel } from '@/components/admin/AdminRolesPanel'
 import { AdminUsersPanel } from '@/components/admin/AdminUsersPanel'
 import { AlertRulesPanel } from '@/components/admin/AlertRulesPanel'
@@ -37,6 +38,7 @@ const swatchClass: Record<string, string> = {
 const adminSections = [
   { id: 'users', label: 'Users' },
   { id: 'roles', label: 'Roles' },
+  { id: 'fields', label: 'Field builder' },
   { id: 'scoring', label: 'Scoring' },
   { id: 'customization', label: 'Customization' },
   { id: 'alerts', label: 'Alert rules' },
@@ -196,6 +198,7 @@ export function Admin() {
         <div className="min-w-0 space-y-4">
           {highlightedSection === 'users' ? <AdminUsersPanel /> : null}
           {highlightedSection === 'roles' ? <AdminRolesPanel /> : null}
+          {highlightedSection === 'fields' ? <AdminFieldBuilderPanel /> : null}
           <div id="scoring" className={cn('scroll-mt-24', highlightedSection !== 'scoring' && 'hidden')}>
             <ScoringEngineBuilder />
           </div>

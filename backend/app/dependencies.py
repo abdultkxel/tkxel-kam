@@ -11,6 +11,7 @@ from app.repositories.users import UserRepository
 from app.security import decode_access_token
 from app.services.auth import AuthService
 from app.services.accounts import AccountService
+from app.services.custom_fields import CustomFieldService
 from app.services.engagements import EngagementService
 from app.services.onboarding import OnboardingService
 from app.services.profile import ProfileService
@@ -58,6 +59,10 @@ def get_rbac_service(db: Annotated[Session, Depends(get_db)]) -> RbacService:
 
 def get_user_management_service(db: Annotated[Session, Depends(get_db)]) -> UserManagementService:
     return UserManagementService(db)
+
+
+def get_custom_field_service(db: Annotated[Session, Depends(get_db)]) -> CustomFieldService:
+    return CustomFieldService(db)
 
 
 def get_account_service(db: Annotated[Session, Depends(get_db)]) -> AccountService:

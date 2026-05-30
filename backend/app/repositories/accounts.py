@@ -247,7 +247,19 @@ class AccountRepository:
         conditions = []
         if search and search.strip():
             term = f"%{search.strip()}%"
-            conditions.append(or_(Account.name.ilike(term), Account.project_name.ilike(term), Account.service_context.ilike(term)))
+            conditions.append(
+                or_(
+                    Account.name.ilike(term),
+                    Account.project_name.ilike(term),
+                    Account.service_context.ilike(term),
+                    Account.owners.any(
+                        and_(
+                            AccountOwner.is_active.is_(True),
+                            or_(AccountOwner.user_name.ilike(term), AccountOwner.user_email.ilike(term)),
+                        )
+                    ),
+                )
+            )
         if lifecycle_status:
             conditions.append(Account.lifecycle_status == lifecycle_status)
         if segment:

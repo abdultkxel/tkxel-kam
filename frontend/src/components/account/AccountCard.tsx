@@ -47,7 +47,10 @@ export function AccountCard({ account, className, style }: { account: Account; c
           <Link to={`/accounts/${account.id}`} className="mt-1 flex min-h-[44px] items-center rounded-md text-base font-semibold text-ink hover:text-brand-blue">
             {account.name}
           </Link>
-          <p className="mt-1 text-xs text-ink-secondary">Owner: {account.ownerName}</p>
+          <p className="mt-1 text-xs text-ink-secondary">
+            Owner: {account.ownerName}
+            {account.ownerEmail ? <span className="block truncate">{account.ownerEmail}</span> : null}
+          </p>
         </div>
         <div className="mt-5 grid grid-cols-1 gap-3 sm:grid-cols-3">
           <div className="rounded-md bg-surface-secondary p-3">

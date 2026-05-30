@@ -260,6 +260,114 @@ def test_system_and_assigned_roles_are_protected_from_delete(client: TestClient)
     assert assigned_response.json()["detail"] == "Role is assigned to users and cannot be deleted"
 
 
+def test_field_builder_crud_filters_pagination_validation_and_docs(client: TestClient) -> None:
+    headers = auth_headers(client)
+
+    modules_response = client.get("/api/admin/custom-fields/modules", headers=headers)
+    assert modules_response.status_code == 200
+    assert any(module["slug"] == "account_overview" for module in modules_response.json())
+
+    invalid_response = client.post(
+        "/api/admin/custom-fields",
+        headers=headers,
+        json={
+            "module": "account_overview",
+            "field_key": "customer_tier",
+            "label": "Customer Tier",
+            "field_type": "single_select",
+            "options": [],
+        },
+    )
+    assert invalid_response.status_code == 422
+    assert invalid_response.json()["errors"][0]["field"] == "options"
+    assert invalid_response.json()["errors"][0]["message"] == "Options are required for select fields."
+
+    create_response = client.post(
+        "/api/admin/custom-fields",
+        headers=headers,
+        json={
+            "module": "account_overview",
+            "field_key": "customer_tier",
+            "label": "Customer Tier",
+            "description": "Tier configured by account leadership.",
+            "field_type": "single_select",
+            "options": ["Gold", "Silver"],
+            "is_required": True,
+            "is_sensitive": False,
+            "is_active": True,
+            "show_in_list": True,
+            "show_in_detail": True,
+            "sort_order": 5,
+        },
+    )
+    assert create_response.status_code == 201
+    field_id = create_response.json()["id"]
+    assert create_response.json()["field_key"] == "customer_tier"
+    assert create_response.json()["options"] == ["Gold", "Silver"]
+
+    duplicate_response = client.post(
+        "/api/admin/custom-fields",
+        headers=headers,
+        json={
+            "module": "account_overview",
+            "field_key": "customer_tier",
+            "label": "Customer Tier",
+            "field_type": "single_select",
+            "options": ["Platinum"],
+        },
+    )
+    assert duplicate_response.status_code == 409
+
+    list_response = client.get(
+        "/api/admin/custom-fields",
+        headers=headers,
+        params={
+            "search": "tier",
+            "module": "account_overview",
+            "field_type": "single_select",
+            "status": "active",
+            "sort": "label",
+            "direction": "asc",
+            "page": 1,
+            "page_size": 1,
+        },
+    )
+    assert list_response.status_code == 200
+    list_body = list_response.json()
+    assert list_body["page"] == 1
+    assert list_body["page_size"] == 1
+    assert list_body["total"] == 1
+    assert list_body["items"][0]["id"] == field_id
+
+    update_response = client.patch(
+        f"/api/admin/custom-fields/{field_id}",
+        headers=headers,
+        json={"label": "Customer Tier Updated", "is_active": False},
+    )
+    assert update_response.status_code == 200
+    assert update_response.json()["label"] == "Customer Tier Updated"
+    assert update_response.json()["is_active"] is False
+
+    inactive_response = client.get(
+        "/api/admin/custom-fields",
+        headers=headers,
+        params={"status": "inactive", "page": 1, "page_size": 10},
+    )
+    assert inactive_response.status_code == 200
+    assert any(item["id"] == field_id for item in inactive_response.json()["items"])
+
+    docs_response = client.get("/openapi.json")
+    assert docs_response.status_code == 200
+    assert "/api/admin/custom-fields" in docs_response.json()["paths"]
+
+    delete_response = client.delete(f"/api/admin/custom-fields/{field_id}", headers=headers)
+    assert delete_response.status_code == 200
+    assert delete_response.json()["message"] == "Custom field deleted successfully"
+
+    missing_response = client.get(f"/api/admin/custom-fields/{field_id}", headers=headers)
+    assert missing_response.status_code == 404
+
+
 def test_role_validation_returns_meaningful_field_errors(client: TestClient) -> None:
     headers = auth_headers(client)
 

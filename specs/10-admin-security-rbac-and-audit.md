@@ -2,7 +2,7 @@
 
 ## Feature Overview
 
-Manage users, roles, account/engagement access, field permissions, reference data, controlled taxonomies, configuration versions, audit logs, and retention policies.
+Manage users, roles, account/engagement access, product field builder definitions, field permissions, reference data, controlled taxonomies, configuration versions, audit logs, and retention policies.
 
 ## Business Goal
 
@@ -31,6 +31,7 @@ Provide a secure, configurable administration layer that enforces least privileg
 
 - Manage users, roles, role inheritance, account access, engagement access, matrix ownership, and restricted permissions.
 - Manage role permission matrix by module/action.
+- Manage product custom field definitions by PRD module, including field key, label, type, options, required/sensitive flags, active state, visibility, and display order.
 - Support field-level security for protected commercial, executive, escalation, legal, stakeholder, attachment, report, timeline, and AI context data.
 - Configure reference data: account statuses, stages, segments, industries, regions, opportunity types, stakeholder roles, signal types, escalation severities, governance types, content tags.
 - Configure scoring, signal, playbook, timeline event, retention, notification, SLA, and dashboard rules.
@@ -62,6 +63,12 @@ Provide a secure, configurable administration layer that enforces least privileg
 - Assigned roles cannot be deleted.
 - At least one setup/super admin must remain active.
 - Field permission must map to known entity/field.
+- Custom field module must map to a known PRD module slug.
+- Custom field key must use snake_case and be unique within its module.
+- Custom field label is required.
+- Select custom fields require at least one unique option.
+- Non-select custom fields cannot define select options.
+- Custom field sort order must be non-negative.
 - Reference data slug/name unique within taxonomy.
 - In-use taxonomy item cannot be hard deleted.
 - Required default taxonomy value cannot be deactivated without replacement.
@@ -76,6 +83,7 @@ Provide a secure, configurable administration layer that enforces least privileg
 - Search roles by slug/name/description.
 - Search access assignments by account, engagement, user, role.
 - Search reference data by name/slug.
+- Search custom fields by label, field key, module, and description.
 - Search audit logs by entity ID/name and reason.
 - Search access logs by actor, entity, field, account, and source IP/session where captured.
 - Search configuration changes by module, actor, and entity.
@@ -86,6 +94,7 @@ Provide a secure, configurable administration layer that enforces least privileg
 - Roles: system/custom, active state where supported.
 - Access: account, engagement, user, role, access level.
 - Reference data: taxonomy, active/inactive.
+- Custom fields: module, field type, active/inactive status.
 - Audit logs: actor, entity, action, source, date range, reason.
 - Access logs: actor, entity, field, sensitivity level, date range, access result.
 - Retention policies: entity type, action, active state.
@@ -96,11 +105,12 @@ Provide a secure, configurable administration layer that enforces least privileg
 - Roles: name, updated date.
 - Access assignments: account, user, role, updated date.
 - Reference data: display order, name, updated date.
+- Custom fields: display order, label, module, field type, updated date.
 - Audit/configuration logs: newest first.
 
 ## Pagination Requirements
 
-- User, role, permission, access, reference data, audit log, configuration change, and retention policy lists are paginated.
+- User, role, permission, access, custom field, reference data, audit log, configuration change, and retention policy lists are paginated.
 - Access logs are paginated.
 
 ## API Requirements
@@ -108,6 +118,12 @@ Provide a secure, configurable administration layer that enforces least privileg
 - Existing: `/api/admin/users`
 - Existing: `/api/admin/roles`
 - Existing: `/api/admin/permissions`
+- `GET /api/admin/custom-fields/modules`
+- `GET /api/admin/custom-fields`
+- `POST /api/admin/custom-fields`
+- `GET /api/admin/custom-fields/{field_id}`
+- `PATCH /api/admin/custom-fields/{field_id}`
+- `DELETE /api/admin/custom-fields/{field_id}`
 - `GET /api/admin/account-access`
 - `POST /api/admin/account-access`
 - `PATCH /api/admin/account-access/{access_id}`
@@ -137,6 +153,7 @@ Provide a secure, configurable administration layer that enforces least privileg
 - Separate Users Management and Roles Management screens.
 - Role permission matrix with select-all/clear-all permission controls.
 - Preserve current URL-backed tabbed Admin section navigation (`section` query parameter) as Admin grows; do not reintroduce a single long scroll-only admin page.
+- Field Builder screen as a separate Admin tab with searchable/filterable/paginated custom field definitions, create/edit form, field-level validation errors, select options editor, visibility toggles, sensitive/required flags, and delete confirmation.
 - Account/engagement access assignment screens.
 - Field permission configuration screen.
 - Reference data screen with taxonomy tabs.
@@ -150,6 +167,7 @@ Provide a secure, configurable administration layer that enforces least privileg
 
 - User/role/access list loading.
 - Permission matrix loading.
+- Field Builder list and save loading.
 - Reference taxonomy loading.
 - Configuration validation/publish loading.
 - Audit log loading.
@@ -159,6 +177,7 @@ Provide a secure, configurable administration layer that enforces least privileg
 
 - No users/roles/access assignments beyond defaults.
 - No custom roles.
+- No custom fields in selected filters/module.
 - No reference data in selected taxonomy.
 - No audit logs for selected filters.
 - No retention policies.
@@ -166,7 +185,7 @@ Provide a secure, configurable administration layer that enforces least privileg
 ## Error States
 
 - Validation errors at matching fields.
-- Duplicate email, duplicate role slug, duplicate taxonomy item.
+- Duplicate email, duplicate role slug, duplicate custom field module/key, duplicate taxonomy item.
 - Attempt to delete system or assigned role.
 - Forbidden access/field permission.
 - Invalid configuration publish.
@@ -180,11 +199,14 @@ Provide a secure, configurable administration layer that enforces least privileg
 - Audit records cannot be edited.
 - Retention cannot silently delete critical events.
 - User deactivation must not orphan required ownership without policy handling.
+- Inactive custom fields remain configured and auditable but should not render in module data-entry surfaces.
+- Deleting a custom field with captured values requires a future data-retention policy decision.
 
 ## Missing Requirements
 
 - Role inheritance model is named but not specified.
 - Exact field permission catalog is not defined.
+- Runtime rendering rules for custom field values across every module are not fully specified.
 - Access levels for account/engagement access are not enumerated.
 - Retention durations and critical entity definitions are not specified.
 - Sensitive access log retention and viewer permissions are not specified.
@@ -206,12 +228,14 @@ Provide a secure, configurable administration layer that enforces least privileg
 - Reassigning records from a deleted/deactivated user.
 - Permission cache invalidation.
 - Field permission conflicts between role, account access, and sensitivity flag.
+- Custom field value migration/export behavior when field type changes.
 
 ## Audit/Logging Requirements
 
 - Audit user create/update/delete/deactivate and role assignment changes.
 - Audit role create/update/delete and permission changes.
 - Audit account/engagement access and field permission changes.
+- Audit custom field create/update/delete changes.
 - Audit taxonomy changes.
 - Audit configuration validation, publish, rollback if supported.
 - Audit retention policy changes and simulations.
@@ -221,6 +245,8 @@ Provide a secure, configurable administration layer that enforces least privileg
 - Create, update, deactivate, and delete managed user.
 - Prevent deleting self/last required admin.
 - Create custom role and assign permissions.
+- Create, update, filter, paginate, and delete a custom field definition.
+- Validate select field options and duplicate module/key handling.
 - Prevent deleting system role and assigned role.
 - Apply field permission and verify serialization excludes protected field.
 - Configure taxonomy item and verify active values appear in forms.
@@ -232,5 +258,6 @@ Provide a secure, configurable administration layer that enforces least privileg
 ## Acceptance Criteria
 
 - Admin can manage users, roles, access, reference data, configuration, audit, and retention through governed UI/API.
+- Admin can create and manage module-scoped custom field definitions through Field Builder with validation, pagination, filters, delete confirmation, and audit logging.
 - RBAC and field security are enforced before data leaves the backend.
 - Configuration and security changes are validated, versioned where applicable, and auditable.

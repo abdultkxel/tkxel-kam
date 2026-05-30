@@ -1,8 +1,9 @@
 from datetime import datetime
-from typing import Literal
+from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, EmailStr, Field, ValidationInfo, field_validator, model_validator
 
+from app.rbac import ALL_MODULE_SLUGS, MODULES
 from app.validation import (
     optional_text,
     require_text,
@@ -23,6 +24,11 @@ OwnershipRole = Literal["primary_am", "supporting_am", "ops_lead", "leadership_s
 EngagementStatus = Literal["draft", "active", "renewal_watch", "at_risk", "completed", "archived"]
 DeliveryStatus = Literal["planned", "active", "watch", "blocked", "completed"]
 SourceType = Literal["project_charter", "sow", "attachment", "source_link", "commercial_note", "research", "manual_import"]
+CustomFieldType = Literal["text", "textarea", "number", "currency", "date", "datetime", "boolean", "single_select", "multi_select", "email", "url", "phone"]
+CustomFieldStatus = Literal["all", "active", "inactive"]
+CustomFieldSort = Literal["label", "module", "field_type", "sort_order", "updated_at"]
+
+SELECT_FIELD_TYPES = {"single_select", "multi_select"}
 
 
 def validate_short_text(value: str, field_label: str, max_length: int = 180) -> str:
@@ -54,6 +60,26 @@ def validate_percent(value: int, field_label: str) -> int:
     if value < 0 or value > 100:
         raise ValueError(f"{field_label} must be between 0 and 100.")
     return value
+
+
+def validate_module_slug(value: str) -> str:
+    module = validate_slug(value, "Module")
+    if module not in ALL_MODULE_SLUGS:
+        raise ValueError("Module must be one of the configured PRD module slugs.")
+    return module
+
+
+def validate_custom_field_options(value: list[str]) -> list[str]:
+    seen_options: set[str] = set()
+    options = []
+    for item in value:
+        option = validate_short_text(item, "Option", 120)
+        option_key = option.lower()
+        if option_key in seen_options:
+            raise ValueError("Options must be unique.")
+        seen_options.add(option_key)
+        options.append(option)
+    return options
 
 
 class UserRead(BaseModel):
@@ -114,6 +140,170 @@ class RolePageRead(BaseModel):
     page: int
     page_size: int
     pages: int
+
+
+class CustomFieldModuleRead(BaseModel):
+    slug: str
+    name: str
+
+
+class CustomFieldDefinitionRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    module: str
+    field_key: str
+    label: str
+    description: str | None = None
+    field_type: str
+    placeholder: str | None = None
+    help_text: str | None = None
+    options: list[str] = Field(default_factory=list)
+    validation_rules: dict[str, Any] = Field(default_factory=dict)
+    default_value: Any | None = None
+    is_required: bool
+    is_sensitive: bool
+    is_active: bool
+    show_in_list: bool
+    show_in_detail: bool
+    sort_order: int
+    created_by_id: str | None = None
+    updated_by_id: str | None = None
+    created_at: datetime
+    updated_at: datetime
+
+
+class CustomFieldDefinitionPageRead(BaseModel):
+    items: list[CustomFieldDefinitionRead]
+    total: int
+    page: int
+    page_size: int
+    pages: int
+
+
+class CustomFieldDefinitionCreateRequest(BaseModel):
+    model_config = ConfigDict(
+        json_schema_extra={
+            "examples": [
+                {
+                    "module": "account_overview",
+                    "field_key": "customer_tier",
+                    "label": "Customer Tier",
+                    "description": "Commercial segmentation used by account teams.",
+                    "field_type": "single_select",
+                    "options": ["Platinum", "Gold", "Silver"],
+                    "is_required": True,
+                    "is_sensitive": False,
+                    "is_active": True,
+                    "show_in_list": True,
+                    "show_in_detail": True,
+                    "sort_order": 10,
+                }
+            ]
+        }
+    )
+
+    module: str = Field(..., description="PRD module slug that will receive this custom field.")
+    field_key: str = Field(..., description="Unique snake_case key within the selected module.")
+    label: str = Field(..., description="User-facing field label.")
+    description: str | None = Field(default=None, description="Admin-facing purpose or usage note.")
+    field_type: CustomFieldType = Field(..., description="Control type used to render and validate the field.")
+    placeholder: str | None = Field(default=None, description="Optional input placeholder.")
+    help_text: str | None = Field(default=None, description="Optional helper text for users completing the field.")
+    options: list[str] = Field(default_factory=list, description="Required for single_select and multi_select fields.")
+    validation_rules: dict[str, Any] = Field(default_factory=dict, description="Reserved JSON validation metadata for future renderers.")
+    default_value: Any | None = Field(default=None, description="Optional JSON-compatible default value.")
+    is_required: bool = Field(default=False, description="Whether users must complete this field.")
+    is_sensitive: bool = Field(default=False, description="Whether field access should be treated as sensitive.")
+    is_active: bool = Field(default=True, description="Inactive fields remain configured but are not rendered.")
+    show_in_list: bool = Field(default=False, description="Whether the field can appear in list/card summaries.")
+    show_in_detail: bool = Field(default=True, description="Whether the field appears on detail pages.")
+    sort_order: int = Field(default=0, ge=0, le=10000, description="Display order within the target module.")
+
+    @field_validator("module")
+    @classmethod
+    def module_is_valid(cls, value: str) -> str:
+        return validate_module_slug(value)
+
+    @field_validator("field_key")
+    @classmethod
+    def field_key_is_valid(cls, value: str) -> str:
+        return validate_slug(value, "Field key")
+
+    @field_validator("label")
+    @classmethod
+    def label_is_valid(cls, value: str) -> str:
+        return validate_short_text(value, "Field label", 160)
+
+    @field_validator("description", "placeholder")
+    @classmethod
+    def optional_short_text_is_valid(cls, value: str | None) -> str | None:
+        return optional_text(value, "Field text", max_length=500)
+
+    @field_validator("help_text")
+    @classmethod
+    def help_text_is_valid(cls, value: str | None) -> str | None:
+        return optional_text(value, "Help text", max_length=1000)
+
+    @field_validator("options")
+    @classmethod
+    def options_are_valid(cls, value: list[str], info: ValidationInfo) -> list[str]:
+        options = validate_custom_field_options(value)
+        field_type = info.data.get("field_type")
+        if field_type in SELECT_FIELD_TYPES and not options:
+            raise ValueError("Options are required for select fields.")
+        if field_type not in SELECT_FIELD_TYPES and options:
+            raise ValueError("Options can only be configured for select fields.")
+        return options
+
+
+class CustomFieldDefinitionUpdateRequest(BaseModel):
+    module: str | None = Field(default=None, description="PRD module slug that will receive this custom field.")
+    field_key: str | None = Field(default=None, description="Unique snake_case key within the selected module.")
+    label: str | None = Field(default=None, description="User-facing field label.")
+    description: str | None = Field(default=None, description="Admin-facing purpose or usage note.")
+    field_type: CustomFieldType | None = Field(default=None, description="Control type used to render and validate the field.")
+    placeholder: str | None = Field(default=None, description="Optional input placeholder.")
+    help_text: str | None = Field(default=None, description="Optional helper text for users completing the field.")
+    options: list[str] | None = Field(default=None, description="Required for single_select and multi_select fields.")
+    validation_rules: dict[str, Any] | None = Field(default=None, description="Reserved JSON validation metadata for future renderers.")
+    default_value: Any | None = Field(default=None, description="Optional JSON-compatible default value.")
+    is_required: bool | None = None
+    is_sensitive: bool | None = None
+    is_active: bool | None = None
+    show_in_list: bool | None = None
+    show_in_detail: bool | None = None
+    sort_order: int | None = Field(default=None, ge=0, le=10000, description="Display order within the target module.")
+
+    @field_validator("module")
+    @classmethod
+    def optional_module_is_valid(cls, value: str | None) -> str | None:
+        return validate_module_slug(value) if value is not None else None
+
+    @field_validator("field_key")
+    @classmethod
+    def optional_field_key_is_valid(cls, value: str | None) -> str | None:
+        return validate_slug(value, "Field key") if value is not None else None
+
+    @field_validator("label")
+    @classmethod
+    def optional_label_is_valid(cls, value: str | None) -> str | None:
+        return validate_short_text(value, "Field label", 160) if value is not None else None
+
+    @field_validator("description", "placeholder")
+    @classmethod
+    def optional_short_text_is_valid(cls, value: str | None) -> str | None:
+        return optional_text(value, "Field text", max_length=500)
+
+    @field_validator("help_text")
+    @classmethod
+    def optional_help_text_is_valid(cls, value: str | None) -> str | None:
+        return optional_text(value, "Help text", max_length=1000)
+
+    @field_validator("options")
+    @classmethod
+    def optional_options_are_valid(cls, value: list[str] | None) -> list[str] | None:
+        return validate_custom_field_options(value) if value is not None else None
 
 
 class RoleCreateRequest(BaseModel):

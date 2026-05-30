@@ -44,6 +44,39 @@ export interface PaginatedResponse<T> {
   pages: number
 }
 
+export type CustomFieldType = 'text' | 'textarea' | 'number' | 'currency' | 'date' | 'datetime' | 'boolean' | 'single_select' | 'multi_select' | 'email' | 'url' | 'phone'
+export type CustomFieldStatus = 'all' | 'active' | 'inactive'
+export type CustomFieldSort = 'label' | 'module' | 'field_type' | 'sort_order' | 'updated_at'
+
+export interface CustomFieldModule {
+  slug: string
+  name: string
+}
+
+export interface CustomFieldDefinition {
+  id: string
+  module: string
+  field_key: string
+  label: string
+  description?: string | null
+  field_type: CustomFieldType
+  placeholder?: string | null
+  help_text?: string | null
+  options: string[]
+  validation_rules: Record<string, unknown>
+  default_value?: unknown
+  is_required: boolean
+  is_sensitive: boolean
+  is_active: boolean
+  show_in_list: boolean
+  show_in_detail: boolean
+  sort_order: number
+  created_by_id?: string | null
+  updated_by_id?: string | null
+  created_at: string
+  updated_at: string
+}
+
 export interface UserListParams {
   search?: string
   status?: 'all' | 'active' | 'inactive'
@@ -55,6 +88,17 @@ export interface UserListParams {
 export interface RoleListParams {
   search?: string
   type?: 'all' | 'system' | 'custom'
+  page?: number
+  page_size?: number
+}
+
+export interface CustomFieldListParams {
+  search?: string
+  module?: string
+  field_type?: CustomFieldType | ''
+  status?: CustomFieldStatus
+  sort?: CustomFieldSort
+  direction?: 'asc' | 'desc'
   page?: number
   page_size?: number
 }
@@ -89,6 +133,25 @@ export interface RolePermissionGrant {
   module: string
   action: string
   allowed: boolean
+}
+
+export interface CustomFieldPayload {
+  module: string
+  field_key: string
+  label: string
+  description?: string | null
+  field_type: CustomFieldType
+  placeholder?: string | null
+  help_text?: string | null
+  options?: string[]
+  validation_rules?: Record<string, unknown>
+  default_value?: unknown
+  is_required: boolean
+  is_sensitive: boolean
+  is_active: boolean
+  show_in_list: boolean
+  show_in_detail: boolean
+  sort_order: number
 }
 
 export function listAdminUsers(token: string, params: UserListParams = {}) {
@@ -157,9 +220,42 @@ export function updateRolePermissions(token: string, roleSlug: string, permissio
   })
 }
 
-function queryString(params: UserListParams | RoleListParams) {
+export function listCustomFieldModules(token: string) {
+  return apiRequest<CustomFieldModule[]>('/api/admin/custom-fields/modules', { token })
+}
+
+export function listCustomFields(token: string, params: CustomFieldListParams = {}) {
+  return apiRequest<PaginatedResponse<CustomFieldDefinition>>(`/api/admin/custom-fields${queryString(params)}`, { token })
+}
+
+export function createCustomField(token: string, payload: CustomFieldPayload) {
+  return apiRequest<CustomFieldDefinition>('/api/admin/custom-fields', {
+    method: 'POST',
+    token,
+    body: JSON.stringify(payload),
+  })
+}
+
+export function updateCustomField(token: string, fieldId: string, payload: Partial<CustomFieldPayload>) {
+  return apiRequest<CustomFieldDefinition>(`/api/admin/custom-fields/${fieldId}`, {
+    method: 'PATCH',
+    token,
+    body: JSON.stringify(payload),
+  })
+}
+
+export function deleteCustomField(token: string, fieldId: string) {
+  return apiRequest<{ message: string }>(`/api/admin/custom-fields/${fieldId}`, {
+    method: 'DELETE',
+    token,
+  })
+}
+
+type QueryParams = UserListParams | RoleListParams | CustomFieldListParams
+
+function queryString(params: QueryParams) {
   const searchParams = new URLSearchParams()
-  Object.entries(params).forEach(([key, value]: [string, string | number | undefined]) => {
+  Object.entries(params).forEach(([key, value]) => {
     if (value !== undefined && value !== '') searchParams.set(key, String(value))
   })
   const query = searchParams.toString()
