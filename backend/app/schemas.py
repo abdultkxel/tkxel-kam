@@ -1,5 +1,6 @@
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Literal
+from urllib.parse import urlparse
 
 from pydantic import BaseModel, ConfigDict, EmailStr, Field, ValidationInfo, field_validator, model_validator
 
@@ -27,6 +28,18 @@ SourceType = Literal["project_charter", "sow", "attachment", "source_link", "com
 CustomFieldType = Literal["text", "textarea", "number", "currency", "date", "datetime", "boolean", "single_select", "multi_select", "email", "url", "phone"]
 CustomFieldStatus = Literal["all", "active", "inactive"]
 CustomFieldSort = Literal["label", "module", "field_type", "sort_order", "updated_at"]
+ContentSourceKind = Literal["manual", "url", "file"]
+ContentFollowUpStatus = Literal["not_required", "pending", "completed", "overdue"]
+EscalationSeverity = Literal["low", "medium", "high", "critical"]
+EscalationPriority = Literal["low", "medium", "high", "urgent"]
+EscalationStatus = Literal["open", "watchlist", "mitigated", "resolved", "closed", "reopened", "cancelled"]
+EscalationUpdateType = Literal["operations_update", "client_communication", "mitigation", "recovery", "status_change", "owner_change", "evidence", "closure", "reopen"]
+GovernanceEventType = Literal["QBR", "SteerCo", "Monthly Review", "Executive Review"]
+GovernanceEventStatus = Literal["draft", "scheduled", "completed", "overdue", "cancelled", "review_required"]
+GovernanceCadence = Literal["weekly", "monthly", "quarterly", "yearly"]
+GovernanceEndPolicy = Literal["never", "after_occurrences", "on_date"]
+IntegrationProvider = Literal["google-calendar", "fathom"]
+IntegrationStatus = Literal["configuration_required", "connected", "syncing", "error", "disabled"]
 
 SELECT_FIELD_TYPES = {"single_select", "multi_select"}
 
@@ -54,6 +67,39 @@ def validate_non_negative(value: float | int, field_label: str) -> float:
     if number < 0:
         raise ValueError(f"{field_label} must be zero or greater.")
     return number
+
+
+def validate_positive_int(value: int, field_label: str, max_value: int = 10000) -> int:
+    if value < 1 or value > max_value:
+        raise ValueError(f"{field_label} must be between 1 and {max_value}.")
+    return value
+
+
+def validate_string_list(value: list[str], field_label: str, max_items: int = 30) -> list[str]:
+    if len(value) > max_items:
+        raise ValueError(f"{field_label} can include at most {max_items} items.")
+    seen: set[str] = set()
+    items: list[str] = []
+    for item in value:
+        text = validate_short_text(item, field_label, 120)
+        key = text.lower()
+        if key in seen:
+            raise ValueError(f"{field_label} must not contain duplicates.")
+        seen.add(key)
+        items.append(text)
+    return items
+
+
+def validate_http_url(value: str | None, field_label: str = "URL") -> str | None:
+    if value is None:
+        return None
+    url = optional_text(value, field_label, max_length=1000)
+    if url is None:
+        return None
+    parsed = urlparse(url)
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+        raise ValueError(f"{field_label} must be a valid http or https URL.")
+    return url
 
 
 def validate_percent(value: int, field_label: str) -> int:
@@ -1317,3 +1363,794 @@ class AccountOverviewRead(BaseModel):
     permissions: AccountPermissionsRead
     engagements: EngagementPageRead
     attachments: SourceDocumentPageRead
+
+
+class ContentItemRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    title: str
+    description: str | None = None
+    content_type: str
+    category: str
+    tags: list[str] = Field(default_factory=list)
+    service_lines: list[str] = Field(default_factory=list)
+    account_stages: list[str] = Field(default_factory=list)
+    source_kind: str
+    url: str | None = None
+    body_content: str | None = None
+    file_name: str | None = None
+    file_path: str | None = None
+    file_storage_backend: str | None = None
+    file_mime_type: str | None = None
+    file_size_bytes: int | None = None
+    is_active: bool
+    popularity_count: int
+    created_by_id: str | None = None
+    updated_by_id: str | None = None
+    created_at: datetime
+    updated_at: datetime
+    archived_at: datetime | None = None
+    custom_field_values: dict[str, Any] = Field(default_factory=dict)
+
+
+class ContentItemPageRead(BaseModel):
+    items: list[ContentItemRead]
+    total: int
+    page: int
+    page_size: int
+    pages: int
+
+
+class ContentItemCreateRequest(BaseModel):
+    model_config = ConfigDict(
+        json_schema_extra={
+            "examples": [
+                {
+                    "title": "Executive guide to FinOps governance",
+                    "description": "Client education asset for executive stakeholders.",
+                    "content_type": "Guide",
+                    "category": "Cloud",
+                    "tags": ["FinOps", "Executive"],
+                    "service_lines": ["Cloud", "Customer Success"],
+                    "account_stages": ["Expansion Focus"],
+                    "source_kind": "url",
+                    "url": "https://example.com/finops-guide",
+                }
+            ]
+        }
+    )
+
+    title: str
+    description: str | None = None
+    content_type: str
+    category: str
+    tags: list[str] = Field(default_factory=list)
+    service_lines: list[str] = Field(default_factory=list)
+    account_stages: list[str] = Field(default_factory=list)
+    source_kind: ContentSourceKind = "manual"
+    url: str | None = None
+    body_content: str | None = None
+    is_active: bool = True
+    custom_field_values: dict[str, Any] = Field(default_factory=dict, description="Field Builder values keyed by field_key.")
+
+    @field_validator("title")
+    @classmethod
+    def title_is_valid(cls, value: str) -> str:
+        return validate_short_text(value, "Content title", 220)
+
+    @field_validator("description", "body_content")
+    @classmethod
+    def optional_content_text_is_valid(cls, value: str | None) -> str | None:
+        return validate_optional_long_text(value, "Content text", 8000)
+
+    @field_validator("content_type", "category")
+    @classmethod
+    def content_taxonomy_is_valid(cls, value: str) -> str:
+        return validate_short_text(value, "Content taxonomy", 120)
+
+    @field_validator("tags", "service_lines", "account_stages")
+    @classmethod
+    def lists_are_valid(cls, value: list[str], info: ValidationInfo) -> list[str]:
+        return validate_string_list(value, info.field_name.replace("_", " ").title())
+
+    @field_validator("url")
+    @classmethod
+    def url_is_valid(cls, value: str | None) -> str | None:
+        return validate_http_url(value, "Content URL")
+
+    @field_validator("custom_field_values")
+    @classmethod
+    def custom_field_keys_are_valid(cls, value: dict[str, Any]) -> dict[str, Any]:
+        return {validate_slug(key, "Custom field key"): item for key, item in value.items()}
+
+    @model_validator(mode="after")
+    def source_has_payload(self) -> "ContentItemCreateRequest":
+        if self.source_kind == "url" and not self.url:
+            raise ValueError("Content URL is required when source kind is URL.")
+        if self.source_kind == "file":
+            raise ValueError("Use the content upload endpoint when source kind is file.")
+        if self.source_kind == "manual" and not self.body_content and not self.url:
+            raise ValueError("Manual content requires body content or a source URL.")
+        return self
+
+
+class ContentItemUpdateRequest(BaseModel):
+    title: str | None = None
+    description: str | None = None
+    content_type: str | None = None
+    category: str | None = None
+    tags: list[str] | None = None
+    service_lines: list[str] | None = None
+    account_stages: list[str] | None = None
+    source_kind: ContentSourceKind | None = None
+    url: str | None = None
+    body_content: str | None = None
+    is_active: bool | None = None
+    custom_field_values: dict[str, Any] | None = Field(default=None, description="Full replacement Field Builder values keyed by field_key.")
+
+    @field_validator("title")
+    @classmethod
+    def title_is_valid(cls, value: str | None) -> str | None:
+        return validate_short_text(value, "Content title", 220) if value is not None else None
+
+    @field_validator("description", "body_content")
+    @classmethod
+    def optional_content_text_is_valid(cls, value: str | None) -> str | None:
+        return validate_optional_long_text(value, "Content text", 8000)
+
+    @field_validator("content_type", "category")
+    @classmethod
+    def content_taxonomy_is_valid(cls, value: str | None) -> str | None:
+        return validate_short_text(value, "Content taxonomy", 120) if value is not None else None
+
+    @field_validator("tags", "service_lines", "account_stages")
+    @classmethod
+    def lists_are_valid(cls, value: list[str] | None, info: ValidationInfo) -> list[str] | None:
+        return validate_string_list(value, info.field_name.replace("_", " ").title()) if value is not None else None
+
+    @field_validator("url")
+    @classmethod
+    def url_is_valid(cls, value: str | None) -> str | None:
+        return validate_http_url(value, "Content URL")
+
+    @field_validator("custom_field_values")
+    @classmethod
+    def optional_custom_field_keys_are_valid(cls, value: dict[str, Any] | None) -> dict[str, Any] | None:
+        return {validate_slug(key, "Custom field key"): item for key, item in value.items()} if value is not None else None
+
+
+class ContentRecommendationRead(BaseModel):
+    content: ContentItemRead
+    rationale: str
+    source_context: str
+    relevance_score: int
+    stale: bool = False
+
+
+class SentContentRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    account_id: str
+    engagement_id: str | None = None
+    content_item_id: str | None = None
+    content_title_snapshot: str
+    content_type_snapshot: str
+    sender_id: str | None = None
+    sender_name: str
+    recipient_name: str
+    recipient_email: EmailStr | None = None
+    shared_at: datetime
+    follow_up_status: str
+    follow_up_due_at: datetime | None = None
+    notes: str | None = None
+    timeline_entry_id: str | None = None
+    created_at: datetime
+    updated_at: datetime
+
+
+class SentContentPageRead(BaseModel):
+    items: list[SentContentRead]
+    total: int
+    page: int
+    page_size: int
+    pages: int
+
+
+class SentContentCreateRequest(BaseModel):
+    content_item_id: str
+    engagement_id: str | None = None
+    recipient_name: str
+    recipient_email: EmailStr | None = None
+    shared_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    follow_up_status: ContentFollowUpStatus = "not_required"
+    follow_up_due_at: datetime | None = None
+    notes: str | None = None
+
+    @field_validator("recipient_name")
+    @classmethod
+    def recipient_name_is_valid(cls, value: str) -> str:
+        return validate_short_text(value, "Recipient name", 160)
+
+    @field_validator("notes")
+    @classmethod
+    def notes_are_valid(cls, value: str | None) -> str | None:
+        return validate_optional_long_text(value, "Share notes")
+
+
+class SentContentUpdateRequest(BaseModel):
+    follow_up_status: ContentFollowUpStatus | None = None
+    follow_up_due_at: datetime | None = None
+    notes: str | None = None
+
+    @field_validator("notes")
+    @classmethod
+    def notes_are_valid(cls, value: str | None) -> str | None:
+        return validate_optional_long_text(value, "Share notes")
+
+
+class EscalationRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    account_id: str
+    engagement_id: str | None = None
+    summary: str
+    impact: str
+    severity: str
+    priority: str
+    status: str
+    owner_id: str | None = None
+    owner_name: str
+    sla_due_at: datetime
+    watchlist: bool
+    mitigation: str | None = None
+    recovery_actions: str | None = None
+    communication_cadence: str | None = None
+    resolution_summary: str | None = None
+    rca: str | None = None
+    closure_evidence: str | None = None
+    closure_override_reason: str | None = None
+    closed_by_id: str | None = None
+    closed_at: datetime | None = None
+    reopened_at: datetime | None = None
+    created_by_id: str | None = None
+    created_by_name: str
+    created_at: datetime
+    updated_at: datetime
+    custom_field_values: dict[str, Any] = Field(default_factory=dict)
+
+
+class EscalationPageRead(BaseModel):
+    items: list[EscalationRead]
+    total: int
+    page: int
+    page_size: int
+    pages: int
+
+
+class EscalationCreateRequest(BaseModel):
+    account_id: str
+    engagement_id: str | None = None
+    summary: str
+    impact: str
+    severity: EscalationSeverity
+    priority: EscalationPriority = "medium"
+    owner_id: str
+    sla_due_at: datetime | None = None
+    watchlist: bool = False
+    mitigation: str | None = None
+    recovery_actions: str | None = None
+    communication_cadence: str | None = None
+    custom_field_values: dict[str, Any] = Field(default_factory=dict, description="Field Builder values keyed by field_key.")
+
+    @field_validator("summary")
+    @classmethod
+    def summary_is_valid(cls, value: str) -> str:
+        return validate_short_text(value, "Escalation summary", 260)
+
+    @field_validator("impact")
+    @classmethod
+    def impact_is_valid(cls, value: str) -> str:
+        return validate_short_text(value, "Escalation impact", 2000)
+
+    @field_validator("mitigation", "recovery_actions")
+    @classmethod
+    def long_text_is_valid(cls, value: str | None) -> str | None:
+        return validate_optional_long_text(value, "Escalation text")
+
+    @field_validator("communication_cadence")
+    @classmethod
+    def cadence_is_valid(cls, value: str | None) -> str | None:
+        return optional_text(value, "Communication cadence", max_length=120)
+
+    @field_validator("custom_field_values")
+    @classmethod
+    def custom_field_keys_are_valid(cls, value: dict[str, Any]) -> dict[str, Any]:
+        return {validate_slug(key, "Custom field key"): item for key, item in value.items()}
+
+
+class EscalationUpdateRequest(BaseModel):
+    summary: str | None = None
+    impact: str | None = None
+    severity: EscalationSeverity | None = None
+    priority: EscalationPriority | None = None
+    status: EscalationStatus | None = None
+    owner_id: str | None = None
+    sla_due_at: datetime | None = None
+    watchlist: bool | None = None
+    mitigation: str | None = None
+    recovery_actions: str | None = None
+    communication_cadence: str | None = None
+    custom_field_values: dict[str, Any] | None = Field(default=None, description="Full replacement Field Builder values keyed by field_key.")
+
+    @field_validator("summary")
+    @classmethod
+    def summary_is_valid(cls, value: str | None) -> str | None:
+        return validate_short_text(value, "Escalation summary", 260) if value is not None else None
+
+    @field_validator("impact", "mitigation", "recovery_actions")
+    @classmethod
+    def text_is_valid(cls, value: str | None) -> str | None:
+        return validate_optional_long_text(value, "Escalation text")
+
+    @field_validator("communication_cadence")
+    @classmethod
+    def cadence_is_valid(cls, value: str | None) -> str | None:
+        return optional_text(value, "Communication cadence", max_length=120)
+
+    @field_validator("custom_field_values")
+    @classmethod
+    def optional_custom_field_keys_are_valid(cls, value: dict[str, Any] | None) -> dict[str, Any] | None:
+        return {validate_slug(key, "Custom field key"): item for key, item in value.items()} if value is not None else None
+
+
+class EscalationUpdateRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    escalation_id: str
+    update_type: str
+    body: str
+    actor_id: str | None = None
+    actor_name: str
+    metadata_json: dict | None = None
+    created_at: datetime
+
+
+class EscalationUpdatePageRead(BaseModel):
+    items: list[EscalationUpdateRead]
+    total: int
+    page: int
+    page_size: int
+    pages: int
+
+
+class EscalationAddUpdateRequest(BaseModel):
+    update_type: EscalationUpdateType = "operations_update"
+    body: str
+
+    @field_validator("body")
+    @classmethod
+    def body_is_valid(cls, value: str) -> str:
+        return validate_short_text(value, "Escalation update", 4000)
+
+
+class EscalationCloseRequest(BaseModel):
+    resolution_summary: str
+    closure_evidence: str | None = None
+    rca: str | None = None
+    override_reason: str | None = None
+
+    @field_validator("resolution_summary")
+    @classmethod
+    def resolution_is_valid(cls, value: str) -> str:
+        return validate_short_text(value, "Resolution summary", 4000)
+
+    @field_validator("closure_evidence", "rca", "override_reason")
+    @classmethod
+    def closure_text_is_valid(cls, value: str | None) -> str | None:
+        return validate_optional_long_text(value, "Closure text", 4000)
+
+
+class EscalationNotificationRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    escalation_id: str
+    recipient_user_id: str | None = None
+    recipient_name: str
+    recipient_email: EmailStr | None = None
+    channel: str
+    trigger: str
+    reason: str
+    sla_window_key: str
+    delivery_status: str
+    deduplication_key: str
+    retry_count: int
+    delivered_at: datetime | None = None
+    error_message: str | None = None
+    created_at: datetime
+
+
+class EscalationNotificationPageRead(BaseModel):
+    items: list[EscalationNotificationRead]
+    total: int
+    page: int
+    page_size: int
+    pages: int
+
+
+class GovernanceRecurrenceRuleRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    name: str
+    governance_type: str
+    cadence: str
+    interval: int
+    start_at: datetime
+    day_of_week: int | None = None
+    day_of_month: int | None = None
+    end_policy: str
+    occurrences: int | None = None
+    end_at: datetime | None = None
+    account_id: str | None = None
+    segment: str | None = None
+    owner_id: str | None = None
+    owner_name: str
+    is_active: bool
+    created_by_id: str | None = None
+    updated_by_id: str | None = None
+    created_at: datetime
+    updated_at: datetime
+
+
+class GovernanceRecurrenceRulePageRead(BaseModel):
+    items: list[GovernanceRecurrenceRuleRead]
+    total: int
+    page: int
+    page_size: int
+    pages: int
+
+
+class GovernanceRecurrenceRuleCreateRequest(BaseModel):
+    name: str
+    governance_type: GovernanceEventType
+    cadence: GovernanceCadence
+    interval: int = 1
+    start_at: datetime
+    day_of_week: int | None = Field(default=None, ge=0, le=6)
+    day_of_month: int | None = Field(default=None, ge=1, le=31)
+    end_policy: GovernanceEndPolicy = "never"
+    occurrences: int | None = None
+    end_at: datetime | None = None
+    account_id: str | None = None
+    segment: str | None = None
+    owner_id: str
+    is_active: bool = True
+
+    @field_validator("name")
+    @classmethod
+    def name_is_valid(cls, value: str) -> str:
+        return validate_short_text(value, "Recurrence rule name", 180)
+
+    @field_validator("interval")
+    @classmethod
+    def interval_is_valid(cls, value: int) -> int:
+        return validate_positive_int(value, "Recurrence interval", 24)
+
+    @field_validator("occurrences")
+    @classmethod
+    def occurrences_are_valid(cls, value: int | None) -> int | None:
+        return validate_positive_int(value, "Occurrences", 120) if value is not None else None
+
+    @field_validator("segment")
+    @classmethod
+    def segment_is_valid(cls, value: str | None) -> str | None:
+        return optional_text(value, "Segment", max_length=80)
+
+    @model_validator(mode="after")
+    def end_policy_is_complete(self) -> "GovernanceRecurrenceRuleCreateRequest":
+        if self.end_policy == "after_occurrences" and not self.occurrences:
+            raise ValueError("Occurrences are required when end policy is after occurrences.")
+        if self.end_policy == "on_date" and not self.end_at:
+            raise ValueError("End date is required when end policy is on date.")
+        if not self.account_id and not self.segment:
+            raise ValueError("Recurrence rule requires either account scope or segment scope.")
+        return self
+
+
+class GovernanceRecurrenceRuleUpdateRequest(BaseModel):
+    name: str | None = None
+    governance_type: GovernanceEventType | None = None
+    cadence: GovernanceCadence | None = None
+    interval: int | None = None
+    day_of_week: int | None = Field(default=None, ge=0, le=6)
+    day_of_month: int | None = Field(default=None, ge=1, le=31)
+    end_policy: GovernanceEndPolicy | None = None
+    occurrences: int | None = None
+    end_at: datetime | None = None
+    account_id: str | None = None
+    segment: str | None = None
+    owner_id: str | None = None
+    is_active: bool | None = None
+
+    @field_validator("name")
+    @classmethod
+    def name_is_valid(cls, value: str | None) -> str | None:
+        return validate_short_text(value, "Recurrence rule name", 180) if value is not None else None
+
+    @field_validator("interval")
+    @classmethod
+    def interval_is_valid(cls, value: int | None) -> int | None:
+        return validate_positive_int(value, "Recurrence interval", 24) if value is not None else None
+
+    @field_validator("occurrences")
+    @classmethod
+    def occurrences_are_valid(cls, value: int | None) -> int | None:
+        return validate_positive_int(value, "Occurrences", 120) if value is not None else None
+
+
+class GovernanceEventRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    account_id: str | None = None
+    engagement_id: str | None = None
+    owner_id: str | None = None
+    owner_name: str
+    governance_type: str
+    source: str
+    external_provider: str | None = None
+    external_event_id: str | None = None
+    deduplication_key: str
+    mapping_confidence: int
+    review_required: bool
+    scheduled_at: datetime
+    end_at: datetime | None = None
+    status: str
+    agenda: str | None = None
+    notes: str | None = None
+    attendees: list[str] = Field(default_factory=list)
+    recurrence_rule_id: str | None = None
+    created_by_id: str | None = None
+    created_by_name: str
+    completed_at: datetime | None = None
+    created_at: datetime
+    updated_at: datetime
+    custom_field_values: dict[str, Any] = Field(default_factory=dict)
+
+
+class GovernanceEventPageRead(BaseModel):
+    items: list[GovernanceEventRead]
+    total: int
+    page: int
+    page_size: int
+    pages: int
+
+
+class GovernanceEventCreateRequest(BaseModel):
+    account_id: str
+    engagement_id: str | None = None
+    owner_id: str
+    governance_type: GovernanceEventType
+    scheduled_at: datetime
+    end_at: datetime | None = None
+    status: GovernanceEventStatus = "scheduled"
+    agenda: str | None = None
+    notes: str | None = None
+    attendees: list[str] = Field(default_factory=list)
+    recurrence_rule_id: str | None = None
+    custom_field_values: dict[str, Any] = Field(default_factory=dict, description="Field Builder values keyed by field_key.")
+
+    @field_validator("agenda", "notes")
+    @classmethod
+    def text_is_valid(cls, value: str | None) -> str | None:
+        return validate_optional_long_text(value, "Governance text", 8000)
+
+    @field_validator("attendees")
+    @classmethod
+    def attendees_are_valid(cls, value: list[str]) -> list[str]:
+        return validate_string_list(value, "Attendees", max_items=100)
+
+    @field_validator("custom_field_values")
+    @classmethod
+    def custom_field_keys_are_valid(cls, value: dict[str, Any]) -> dict[str, Any]:
+        return {validate_slug(key, "Custom field key"): item for key, item in value.items()}
+
+
+class GovernanceEventUpdateRequest(BaseModel):
+    account_id: str | None = None
+    engagement_id: str | None = None
+    owner_id: str | None = None
+    governance_type: GovernanceEventType | None = None
+    scheduled_at: datetime | None = None
+    end_at: datetime | None = None
+    status: GovernanceEventStatus | None = None
+    agenda: str | None = None
+    notes: str | None = None
+    attendees: list[str] | None = None
+    custom_field_values: dict[str, Any] | None = Field(default=None, description="Full replacement Field Builder values keyed by field_key.")
+
+    @field_validator("agenda", "notes")
+    @classmethod
+    def text_is_valid(cls, value: str | None) -> str | None:
+        return validate_optional_long_text(value, "Governance text", 8000)
+
+    @field_validator("attendees")
+    @classmethod
+    def attendees_are_valid(cls, value: list[str] | None) -> list[str] | None:
+        return validate_string_list(value, "Attendees", max_items=100) if value is not None else None
+
+    @field_validator("custom_field_values")
+    @classmethod
+    def optional_custom_field_keys_are_valid(cls, value: dict[str, Any] | None) -> dict[str, Any] | None:
+        return {validate_slug(key, "Custom field key"): item for key, item in value.items()} if value is not None else None
+
+
+class GovernanceDecisionRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    governance_event_id: str
+    decision_text: str
+    owner_id: str | None = None
+    owner_name: str
+    timeline_entry_id: str | None = None
+    created_at: datetime
+
+
+class GovernanceDecisionPageRead(BaseModel):
+    items: list[GovernanceDecisionRead]
+    total: int
+    page: int
+    page_size: int
+    pages: int
+
+
+class GovernanceDecisionCreateRequest(BaseModel):
+    decision_text: str
+    owner_id: str | None = None
+
+    @field_validator("decision_text")
+    @classmethod
+    def decision_is_valid(cls, value: str) -> str:
+        return validate_short_text(value, "Decision", 4000)
+
+
+class GovernanceActionItemRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    governance_event_id: str
+    title: str
+    owner_id: str | None = None
+    owner_name: str
+    due_at: datetime
+    status: str
+    priority: str
+    completed_at: datetime | None = None
+    completed_by_id: str | None = None
+    created_at: datetime
+    updated_at: datetime
+
+
+class GovernanceActionItemPageRead(BaseModel):
+    items: list[GovernanceActionItemRead]
+    total: int
+    page: int
+    page_size: int
+    pages: int
+
+
+class GovernanceActionItemCreateRequest(BaseModel):
+    title: str
+    owner_id: str
+    due_at: datetime
+    priority: EscalationPriority = "medium"
+
+    @field_validator("title")
+    @classmethod
+    def title_is_valid(cls, value: str) -> str:
+        return validate_short_text(value, "Action item", 220)
+
+
+class GovernanceActionItemUpdateRequest(BaseModel):
+    title: str | None = None
+    owner_id: str | None = None
+    due_at: datetime | None = None
+    status: Literal["open", "in_progress", "completed", "cancelled"] | None = None
+    priority: EscalationPriority | None = None
+
+    @field_validator("title")
+    @classmethod
+    def title_is_valid(cls, value: str | None) -> str | None:
+        return validate_short_text(value, "Action item", 220) if value is not None else None
+
+
+class GovernanceSourceCitationRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    governance_event_id: str
+    source_module: str
+    source_entity_type: str
+    source_entity_id: str | None = None
+    source_route: str | None = None
+    label: str
+    excerpt: str
+    created_at: datetime
+
+
+class GovernanceAIBriefRead(BaseModel):
+    summary: str
+    talking_points: list[str]
+    open_risks: list[str]
+    pending_decisions: list[str]
+    action_items: list[str]
+    citations: list[GovernanceSourceCitationRead]
+    disclaimer: str
+
+
+class IntegrationConnectionRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    provider: str
+    enabled: bool
+    status: str
+    auth_type: str
+    settings_json: dict = Field(default_factory=dict)
+    scopes: list[str] = Field(default_factory=list)
+    last_synced_at: datetime | None = None
+    last_error: str | None = None
+    created_at: datetime
+    updated_at: datetime
+
+
+class IntegrationConnectionUpdateRequest(BaseModel):
+    enabled: bool | None = None
+    auth_type: str | None = None
+    credentials_json: dict | None = None
+    settings_json: dict | None = None
+    scopes: list[str] | None = None
+    status: IntegrationStatus | None = None
+
+    @field_validator("auth_type")
+    @classmethod
+    def auth_type_is_valid(cls, value: str | None) -> str | None:
+        return validate_short_text(value, "Auth type", 60) if value is not None else None
+
+
+class IntegrationSyncLogRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    provider: str
+    source_record_id: str | None = None
+    action: str
+    status: str
+    deduplication_key: str | None = None
+    message: str | None = None
+    payload: dict | None = None
+    created_at: datetime
+
+
+class IntegrationSyncLogPageRead(BaseModel):
+    items: list[IntegrationSyncLogRead]
+    total: int
+    page: int
+    page_size: int
+    pages: int
+
+
+class IntegrationSyncResponse(BaseModel):
+    provider: str
+    status: str
+    created: int = 0
+    updated: int = 0
+    skipped: int = 0
+    errors: int = 0
+    message: str

@@ -5,6 +5,7 @@ import { AccountDetail } from '@/pages/AccountDetail'
 import { Accounts } from '@/pages/Accounts'
 import { Admin } from '@/pages/Admin'
 import { Dashboard } from '@/pages/Dashboard'
+import { Escalations } from '@/pages/Escalations'
 import { Governance } from '@/pages/Governance'
 import { Login } from '@/pages/Login'
 import { Onboarding } from '@/pages/Onboarding'
@@ -29,6 +30,7 @@ export default function App() {
         <Route path="/accounts/:id" element={<AccountDetail />} />
         <Route path="/attention" element={<Navigate to="/tasks" replace />} />
         <Route path="/opportunities" element={<Opportunities />} />
+        <Route path="/escalations" element={<Escalations />} />
         <Route path="/tasks" element={<Tasks />} />
         <Route path="/governance" element={<Governance />} />
         <Route path="/health-scores" element={<Navigate to="/accounts" replace />} />

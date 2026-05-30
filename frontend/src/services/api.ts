@@ -25,10 +25,11 @@ interface ApiRequestOptions extends RequestInit {
 
 export async function apiRequest<T>(path: string, options: ApiRequestOptions = {}): Promise<T> {
   const { token, headers, body, ...requestOptions } = options
+  const isFormData = typeof FormData !== 'undefined' && body instanceof FormData
   const response = await fetch(`${API_BASE_URL}${path}`, {
     ...requestOptions,
     headers: {
-      ...(body ? { 'Content-Type': 'application/json' } : {}),
+      ...(body && !isFormData ? { 'Content-Type': 'application/json' } : {}),
       ...(token ? { Authorization: `Bearer ${token}` } : {}),
       ...headers,
     },

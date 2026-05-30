@@ -5,8 +5,10 @@ from sqlalchemy.orm import Session
 
 from app.models import CustomFieldDefinition, CustomFieldValue, User
 from app.rbac import MODULES
+from app.repositories.accounts import AccountRepository
 from app.repositories.audit import AuditRepository
 from app.repositories.custom_fields import CustomFieldRepository
+from app.repositories.rbac import RbacRepository
 from app.schemas import (
     CustomFieldDefinitionCreateRequest,
     CustomFieldDefinitionPageRead,
@@ -14,6 +16,7 @@ from app.schemas import (
     CustomFieldModuleRead,
 )
 from app.services.audit import AuditService
+from app.services.account_access import AccountAccessService
 from app.services.user_management import page_count
 
 SELECT_FIELD_TYPES = {"single_select", "multi_select"}
@@ -40,6 +43,7 @@ def field_validation_errors(errors: list[dict[str, str]]) -> HTTPException:
 class CustomFieldService:
     def __init__(self, db: Session, repository: CustomFieldRepository | None = None) -> None:
         self.repository = repository or CustomFieldRepository(db)
+        self.access = AccountAccessService(AccountRepository(db), RbacRepository(db))
         self.audit = AuditService(AuditRepository(db))
 
     def list_modules(self) -> list[CustomFieldModuleRead]:
@@ -47,6 +51,10 @@ class CustomFieldService:
 
     def list_active_definitions(self, modules: list[str]) -> list[CustomFieldDefinition]:
         return self.repository.list_active_definitions(modules)
+
+    def list_active_definitions_for_user(self, module: str, actor: User) -> list[CustomFieldDefinition]:
+        self.access.require_module_permission(actor, module, "view")
+        return self.repository.list_active_definitions([module])
 
     def list_definitions(
         self,
@@ -148,7 +156,7 @@ class CustomFieldService:
         self.repository.commit()
         return {"message": "Custom field deleted successfully"}
 
-    def save_record_values(self, modules: str | list[str], record_id: str, values: dict[str, Any], actor: User) -> None:
+    def save_record_values(self, modules: str | list[str], record_id: str, values: dict[str, Any], actor: User, audit_module: str = "account_onboarding_workspace") -> None:
         module_list = [modules] if isinstance(modules, str) else modules
         definitions = self.repository.list_active_definitions(module_list)
         values_to_save = self._validated_values(definitions, values)
@@ -166,13 +174,43 @@ class CustomFieldService:
             )
         if values_to_save:
             self.audit.log(
-                module="account_onboarding_workspace",
+                module=audit_module,
                 action="custom_field_values_saved",
                 entity_type="custom_field_values",
                 entity_id=record_id,
                 actor=actor,
                 after_value=values_to_save,
             )
+
+    def replace_record_values(self, modules: str | list[str], record_id: str, values: dict[str, Any], actor: User, audit_module: str) -> None:
+        module_list = [modules] if isinstance(modules, str) else modules
+        definitions = self.repository.list_active_definitions(module_list)
+        values_to_save = self._validated_values(definitions, values)
+        self.repository.delete_values_for_record(module_list, record_id)
+        for field_key, value in values_to_save.items():
+            definition = next(item for item in definitions if item.field_key == field_key)
+            self.repository.add_value(
+                CustomFieldValue(
+                    field_definition_id=definition.id,
+                    module=definition.module,
+                    record_id=record_id,
+                    value=value,
+                    created_by_id=actor.id,
+                    updated_by_id=actor.id,
+                )
+            )
+        self.audit.log(
+            module=audit_module,
+            action="custom_field_values_replaced",
+            entity_type="custom_field_values",
+            entity_id=record_id,
+            actor=actor,
+            after_value=values_to_save,
+        )
+
+    def record_values(self, module: str, record_id: str) -> dict[str, Any]:
+        values = self.repository.list_values_for_record(module, record_id)
+        return {item.field_definition.field_key: item.value for item in values if item.field_definition is not None}
 
     def copy_record_values(self, modules: str | list[str], source_record_id: str, target_record_id: str, actor: User) -> None:
         module_list = [modules] if isinstance(modules, str) else modules
