@@ -48,6 +48,21 @@ class RbacRepository:
     def get_permission_by_id(self, permission_id: str) -> Permission | None:
         return self.db.get(Permission, permission_id)
 
+    def delete_orphaned_role_permissions(self) -> int:
+        role_permissions = list(
+            self.db.scalars(
+                select(RolePermission)
+                .outerjoin(Role, Role.id == RolePermission.role_id)
+                .outerjoin(Permission, Permission.id == RolePermission.permission_id)
+                .where(or_(Role.id.is_(None), Permission.id.is_(None)))
+            )
+        )
+        for role_permission in role_permissions:
+            self.db.delete(role_permission)
+        if role_permissions:
+            self.db.flush()
+        return len(role_permissions)
+
     def upsert_role(self, slug: str, name: str, description: str | None, is_system: bool = True) -> Role:
         role = self.get_role_by_slug(slug)
         if role is None:

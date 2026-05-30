@@ -1,12 +1,14 @@
 import * as Tabs from '@radix-ui/react-tabs'
 import { differenceInCalendarDays } from 'date-fns'
-import { AlertTriangle, ArrowRight, BriefcaseBusiness, CalendarClock, CalendarPlus, CheckCircle2, Clock3, FileText, History, Loader2, PhoneCall, RefreshCcw, ShieldCheck, Sparkles, Target, TrendingUp } from 'lucide-react'
+import { AlertTriangle, ArrowRight, BriefcaseBusiness, CalendarClock, CalendarPlus, CheckCircle2, Clock3, FileText, History, Loader2, PhoneCall, Plus, RefreshCcw, ShieldCheck, Sparkles, Target, TrendingUp } from 'lucide-react'
 import { nanoid } from 'nanoid'
 import { useEffect, useMemo, useState } from 'react'
-import { useSearchParams } from 'react-router-dom'
+import { Link, useSearchParams } from 'react-router-dom'
 import { toast } from 'sonner'
+import { AccountHealthRollupPanel } from '@/components/account/AccountHealthRollupPanel'
 import { HealthScoreRing } from '@/components/account/HealthScoreRing'
 import { AccountWorkspacePanel } from '@/components/account/AccountWorkspacePanel'
+import { EngagementFormDialog } from '@/components/account/EngagementFormDialog'
 import { EngagementsPanel } from '@/components/account/EngagementsPanel'
 import { KYCAgentOverview } from '@/components/account/KYCAgentOverview'
 import { KYCAssistedReview } from '@/components/account/KYCAssistedReview'
@@ -17,7 +19,10 @@ import { OpportunityBoard } from '@/components/opportunities/OpportunityBoard'
 import { EmptyState } from '@/components/ui/EmptyState'
 import { TimelineFeed } from '@/components/timeline/TimelineFeed'
 import { HandoverSummary } from '@/components/timeline/HandoverSummary'
+import { useAuth } from '@/contexts/AuthContext'
 import { useRole } from '@/hooks/useRole'
+import { ApiError } from '@/services/api'
+import { listAccountEngagements } from '@/services/engagements'
 import { useAccountStore } from '@/stores/accountStore'
 import { useAlertStore } from '@/stores/alertStore'
 import { useGovernanceStore } from '@/stores/governanceStore'
@@ -38,10 +43,13 @@ const tabs = ['Overview', 'Engagements', 'KYC', 'Health', 'Stage', 'Opportunitie
 
 export function Account360({ account }: { account: Account }) {
   const user = useRole()
+  const { token } = useAuth()
   const [searchParams, setSearchParams] = useSearchParams()
   const [handoverOpen, setHandoverOpen] = useState(false)
   const [savingHealth, setSavingHealth] = useState(false)
   const [savingStage, setSavingStage] = useState(false)
+  const [loadingEngagements, setLoadingEngagements] = useState(false)
+  const [engagementLoadError, setEngagementLoadError] = useState<string | null>(null)
   const requestedTab = searchParams.get('tab')
   const [activeTab, setActiveTab] = useState(() => tabs.find(tab => tab.toLowerCase() === requestedTab?.toLowerCase()) ?? 'Overview')
   const setHealth = useAccountStore(state => state.setHealth)
@@ -56,6 +64,7 @@ export function Account360({ account }: { account: Account }) {
   const entries = useTimelineStore(state => state.entries)
   const setActiveAccountId = useUIStore(state => state.setActiveAccountId)
   const v3Engagements = useV3Store(state => state.engagements)
+  const replaceAccountEngagements = useV3Store(state => state.replaceAccountEngagements)
   const sourceDocuments = useV3Store(state => state.sourceDocuments)
   const onboardingDrafts = useV3Store(state => state.onboardingDrafts)
   const visibleEntries = useMemo(
@@ -96,6 +105,7 @@ export function Account360({ account }: { account: Account }) {
   )
   const recentDecisions = visibleEntries.filter(entry => entry.eventType === 'approval_event' || entry.eventType === 'executive_event').length
   const privileged = user.role === 'leadership' || user.role === 'admin' || user.role === 'super_admin'
+  const canManageEngagements = ['account_manager', 'kam_head', 'admin', 'super_admin'].includes(user.role)
   const accountAlerts = useMemo(
     () => alerts.filter(alert => alert.accountId === account.id && !alert.dismissedAt),
     [account.id, alerts],
@@ -116,6 +126,29 @@ export function Account360({ account }: { account: Account }) {
   useEffect(() => {
     setActiveAccountId(account.id)
   }, [account.id, setActiveAccountId])
+
+  useEffect(() => {
+    if (!token) return
+
+    let active = true
+    setLoadingEngagements(true)
+    setEngagementLoadError(null)
+    listAccountEngagements(token, account.id, { page_size: 100, sort_by: 'updated_date', sort_dir: 'desc' })
+      .then(response => {
+        if (active) replaceAccountEngagements(account.id, response.items)
+      })
+      .catch(error => {
+        if (!active) return
+        setEngagementLoadError(error instanceof ApiError ? error.message : 'Unable to load engagement records')
+      })
+      .finally(() => {
+        if (active) setLoadingEngagements(false)
+      })
+
+    return () => {
+      active = false
+    }
+  }, [account.id, replaceAccountEngagements, token])
 
   useEffect(() => {
     const nextTab = tabs.find(tab => tab.toLowerCase() === requestedTab?.toLowerCase())
@@ -372,6 +405,56 @@ export function Account360({ account }: { account: Account }) {
               <p className="mt-1 text-xs text-ink-secondary">{recentDecisions} decision events visible in this account</p>
             </section>
           </div>
+          <section className="tk-card overflow-hidden">
+            <div className="flex flex-col gap-4 border-b border-surface-border bg-surface-secondary p-5 lg:flex-row lg:items-start lg:justify-between">
+              <div>
+                <p className="text-[10px] font-extrabold uppercase tracking-widest text-brand-blue">Engagements on this account</p>
+                <h3 className="mt-1 text-base font-semibold text-ink">{accountEngagements.length} Engagement/SOW record{accountEngagements.length === 1 ? '' : 's'}</h3>
+                <p className="mt-1 max-w-2xl text-sm text-ink-secondary">Operational, commercial, renewal, risk, and health context rolls up from these records.</p>
+                {loadingEngagements ? <p className="mt-2 text-xs font-semibold text-ink-secondary">Refreshing engagement records from API...</p> : null}
+                {engagementLoadError ? <p className="mt-2 text-xs font-semibold text-brand-orange">{engagementLoadError}</p> : null}
+              </div>
+              <div className="flex flex-wrap gap-2">
+                <button className="tk-button-secondary" onClick={() => changeTab('Engagements')}>
+                  Manage list
+                  <ArrowRight className="h-4 w-4" />
+                </button>
+                {canManageEngagements ? (
+                  <EngagementFormDialog
+                    account={account}
+                    trigger={<button className="tk-button-primary"><Plus className="h-4 w-4" />Create engagement</button>}
+                  />
+                ) : null}
+              </div>
+            </div>
+            {accountEngagements.length ? (
+              <div className="grid gap-3 p-5 md:grid-cols-2 xl:grid-cols-3">
+                {accountEngagements
+                  .slice()
+                  .sort((a, b) => new Date(a.renewalTerms.renewalDate).getTime() - new Date(b.renewalTerms.renewalDate).getTime())
+                  .slice(0, 3)
+                  .map(engagement => (
+                    <Link key={engagement.id} className="rounded-lg border border-surface-border bg-white p-4 transition-colors hover:border-brand-blue/40 hover:bg-surface-tertiary" to={`/engagements/${engagement.id}`}>
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="min-w-0">
+                          <h4 className="truncate text-sm font-semibold text-ink">{engagement.name}</h4>
+                          <p className="mt-1 truncate text-xs text-ink-secondary">{engagement.serviceLines.join(', ')}</p>
+                        </div>
+                        <AccountFlag label={engagement.status.replace('_', ' ')} tone={engagement.status === 'at_risk' ? 'red' : engagement.status === 'renewal_watch' ? 'orange' : 'green'} />
+                      </div>
+                      <div className="mt-4 grid grid-cols-2 gap-2 text-xs">
+                        <MiniOverview label="Value" value={formatCompactCurrency(engagement.value)} />
+                        <MiniOverview label="Renewal" value={formatDate(engagement.renewalTerms.renewalDate)} />
+                      </div>
+                    </Link>
+                  ))}
+              </div>
+            ) : (
+              <div className="p-5">
+                <EmptyState icon={FileText} heading="No engagement records yet" body="Create one manually or approve a SOW intake draft to start Engagement 360." />
+              </div>
+            )}
+          </section>
           <AIBriefCard
             account={account}
             entries={visibleEntries}
@@ -427,6 +510,7 @@ export function Account360({ account }: { account: Account }) {
                 </div>
               </div>
             </section>
+            <AccountHealthRollupPanel account={account} />
             <ScoreCalculators account={account} saving={savingHealth} onApply={applyCalculatorScores} />
             <ScoreHistoryPanel accountId={account.id} />
           </div>
@@ -519,6 +603,15 @@ function OverviewMetric({ icon: Icon, label, value, detail }: { icon: typeof Bri
       </div>
       <p className="mt-3 text-xs leading-5 text-ink-secondary">{detail}</p>
     </div>
+  )
+}
+
+function MiniOverview({ label, value }: { label: string; value: string }) {
+  return (
+    <span className="min-w-0 rounded-md bg-surface-secondary px-2 py-1">
+      <span className="block text-[10px] font-semibold uppercase tracking-wider text-ink-secondary">{label}</span>
+      <span className="block truncate font-semibold text-ink">{value}</span>
+    </span>
   )
 }
 

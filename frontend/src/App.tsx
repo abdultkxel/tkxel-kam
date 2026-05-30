@@ -5,6 +5,7 @@ import { AccountDetail } from '@/pages/AccountDetail'
 import { Accounts } from '@/pages/Accounts'
 import { Admin } from '@/pages/Admin'
 import { Dashboard } from '@/pages/Dashboard'
+import { EngagementDetail } from '@/pages/EngagementDetail'
 import { Governance } from '@/pages/Governance'
 import { Login } from '@/pages/Login'
 import { Onboarding } from '@/pages/Onboarding'
@@ -27,6 +28,7 @@ export default function App() {
         <Route path="/accounts" element={<Accounts />} />
         <Route path="/accounts/onboarding" element={<Onboarding />} />
         <Route path="/accounts/:id" element={<AccountDetail />} />
+        <Route path="/engagements/:id" element={<EngagementDetail />} />
         <Route path="/attention" element={<Navigate to="/tasks" replace />} />
         <Route path="/opportunities" element={<Opportunities />} />
         <Route path="/tasks" element={<Tasks />} />

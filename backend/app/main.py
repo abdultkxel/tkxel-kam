@@ -7,7 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.config import get_settings
 from app.database import SessionLocal, init_db
 from app.exceptions import validation_exception_handler
-from app.routers import admin, auth, users
+from app.routers import admin, auth, engagements, users
 from app.services.seed import seed_default_data
 
 
@@ -38,6 +38,10 @@ openapi_tags = [
         "name": "Admin RBAC",
         "description": "PRD-backed user management, roles, and module permission administration APIs.",
     },
+    {
+        "name": "Engagement/SOW",
+        "description": "Engagement/SOW record management, Engagement 360, and engagement health rollup APIs.",
+    },
 ]
 
 app = FastAPI(
@@ -62,6 +66,7 @@ app.add_exception_handler(RequestValidationError, validation_exception_handler)
 app.include_router(auth.router)
 app.include_router(users.router)
 app.include_router(admin.router)
+app.include_router(engagements.router)
 
 
 @app.get(

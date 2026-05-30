@@ -8,7 +8,10 @@ from sqlalchemy.pool import StaticPool
 
 from app.database import Base, get_db
 from app.main import app
+from app.models import RolePermission
 from app.rbac import ACTIONS, DEFAULT_ROLES, MODULES
+from app.repositories.rbac import RbacRepository
+from app.services.rbac import RbacService
 from app.services.seed import seed_default_data
 
 
@@ -66,6 +69,19 @@ def test_seed_creates_required_prd_roles_and_permissions(client: TestClient) -> 
     assert expected_roles.issubset(listed_roles)
     assert "super_admin" not in listed_roles
     assert len(permissions_response.json()) == len(MODULES) * len(ACTIONS)
+
+
+def test_seed_removes_orphaned_role_permission_rows(db_session: Session) -> None:
+    role = RbacRepository(db_session).get_role_by_slug("account_manager")
+    assert role is not None
+    orphan = RolePermission(role_id=role.id, permission_id="missing-permission-id", allowed=True)
+    db_session.add(orphan)
+    db_session.commit()
+
+    result = RbacService(db_session).seed_defaults()
+
+    assert result["roles"] == len(DEFAULT_ROLES)
+    assert db_session.get(RolePermission, orphan.id) is None
 
 
 def test_seed_creates_manageable_user_for_each_default_role_and_hides_super_admin(client: TestClient) -> None:

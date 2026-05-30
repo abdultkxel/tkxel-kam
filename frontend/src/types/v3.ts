@@ -3,6 +3,8 @@ import { Account, RiskStatus } from '@/types/account'
 export type SourceDocumentType = 'project_charter' | 'sow' | 'commercial_note' | 'research'
 export type DraftStatus = 'ready_for_review' | 'approved' | 'rejected'
 export type EngagementStatus = 'draft' | 'active' | 'renewal_watch' | 'at_risk' | 'completed'
+export type EngagementDeliveryStatus = 'on_track' | 'watch' | 'at_risk' | 'blocked' | 'complete'
+export type HealthRagStatus = 'green' | 'amber' | 'red' | 'dirty'
 export type SignalStatus = 'new' | 'reviewed' | 'accepted' | 'dismissed' | 'converted' | 'resolved'
 export type SignalSeverity = 'info' | 'warning' | 'critical'
 
@@ -28,6 +30,12 @@ export interface SourceDocument {
   citations: SourceCitation[]
 }
 
+export interface SourceDocumentLink {
+  title: string
+  url: string
+  type?: SourceDocumentType | 'amendment' | 'evidence'
+}
+
 export interface RenewalTerms {
   startDate: string
   endDate: string
@@ -43,6 +51,33 @@ export interface RenewalTerms {
   sourceCitation: string
 }
 
+export interface EngagementAttachment {
+  id: string
+  name: string
+  url: string
+  uploadedByName: string
+  uploadedAt: string
+}
+
+export interface EngagementActivity {
+  id: string
+  title: string
+  detail: string
+  occurredAt: string
+  performedByName: string
+}
+
+export interface EngagementHealth {
+  score: number
+  ragStatus: HealthRagStatus
+  drivers: string[]
+  freshness: 'current' | 'dirty' | 'draft' | 'source_missing' | 'not_calculated'
+  contributionToAccountHealth: number
+  formulaVersion: string
+  dirty: boolean
+  calculatedAt?: string
+}
+
 export interface EngagementRecord {
   id: string
   accountId: string
@@ -55,12 +90,50 @@ export interface EngagementRecord {
   opsLeadName: string
   serviceLines: string[]
   value: number
+  currency?: 'USD'
+  deliveryStatus?: EngagementDeliveryStatus
   deliveryHealth: number
   resourceDependency: string
   commercialContext: string
   risks: string[]
   sourceDocumentIds: string[]
+  sourceDocumentLinks?: SourceDocumentLink[]
+  attachments?: EngagementAttachment[]
+  activities?: EngagementActivity[]
+  health?: EngagementHealth
+  createdAt?: string
+  updatedAt?: string
   renewalTerms: RenewalTerms
+}
+
+export interface EngagementContribution {
+  engagementId: string
+  engagementName: string
+  status: EngagementStatus
+  value: number
+  score?: number
+  ragStatus: HealthRagStatus
+  dirty: boolean
+  contributionToAccountHealth: number
+  freshness: EngagementHealth['freshness']
+  drivers: string[]
+}
+
+export interface AccountHealthRollup {
+  accountId: string
+  rollupScore: number
+  formulaVersion: string
+  contributions: EngagementContribution[]
+  dirtyCount: number
+  snapshots: {
+    id: string
+    accountId: string
+    rollupScore: number
+    formulaVersion: string
+    contributions: EngagementContribution[]
+    dirtyCount: number
+    createdAt: string
+  }[]
 }
 
 export interface KYCDraft {

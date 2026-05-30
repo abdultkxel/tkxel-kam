@@ -53,12 +53,31 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 function getApiErrorMessage(payload: unknown): string {
   if (!isRecord(payload)) return 'Request failed'
   if (typeof payload.detail === 'string') return payload.detail
+  if (Array.isArray(payload.detail)) {
+    const firstMessage = payload.detail
+      .map(item => (isRecord(item) && typeof item.msg === 'string' ? item.msg : null))
+      .find(Boolean)
+    if (firstMessage) return firstMessage
+  }
   if (typeof payload.message === 'string') return payload.message
   return 'Request failed'
 }
 
 function getApiFieldErrors(payload: unknown): ApiFieldError[] {
-  if (!isRecord(payload) || !Array.isArray(payload.errors)) return []
+  if (!isRecord(payload)) return []
+
+  if (Array.isArray(payload.detail)) {
+    return payload.detail.flatMap(error => {
+      if (!isRecord(error) || typeof error.msg !== 'string' || !Array.isArray(error.loc)) return []
+      const field = error.loc
+        .filter(part => typeof part === 'string')
+        .filter(part => part !== 'body')
+        .join('.')
+      return field ? [{ field, message: error.msg }] : []
+    })
+  }
+
+  if (!Array.isArray(payload.errors)) return []
 
   return payload.errors.flatMap(error => {
     if (!isRecord(error) || typeof error.field !== 'string' || typeof error.message !== 'string') return []

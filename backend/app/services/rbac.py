@@ -24,6 +24,7 @@ class RbacService:
 
     def seed_defaults(self) -> dict[str, int]:
         permissions_by_key = self._seed_permissions()
+        self.repository.delete_orphaned_role_permissions()
         roles_seeded = 0
 
         for default_role in DEFAULT_ROLES:
@@ -121,4 +122,7 @@ class RbacService:
 
     @staticmethod
     def _role_has_permission_row(role: Role, key: str) -> bool:
-        return any(permission_key(item.permission.module, item.permission.action) == key for item in role.permissions)
+        return any(
+            item.permission is not None and permission_key(item.permission.module, item.permission.action) == key
+            for item in role.permissions
+        )

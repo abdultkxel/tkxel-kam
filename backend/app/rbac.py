@@ -60,6 +60,7 @@ DEFAULT_ROLES: tuple[DefaultRole, ...] = (
         description="Platform administration for users, roles, access, reference data, integrations, audit, and retention.",
         permission_rules=(
             ("admin_audit_security_rbac", ALL_ACTIONS),
+            ("engagement_sow_management", CONFIG_ACTIONS),
             ("integrations", CONFIG_ACTIONS),
             ("notifications_digests", CONFIG_ACTIONS),
             ("scoring_engine", CONFIG_ACTIONS),
@@ -116,8 +117,9 @@ DEFAULT_ROLES: tuple[DefaultRole, ...] = (
         slug="kam_head",
         name="KAM Head / VP",
         description="Portfolio governance and configuration owner.",
-        permission_rules=tuple((module, LEADERSHIP_ACTIONS) for module in OPERATIONAL_MODULES)
+        permission_rules=tuple((module, LEADERSHIP_ACTIONS) for module in OPERATIONAL_MODULES if module != "engagement_sow_management")
         + (
+            ("engagement_sow_management", ("view", "create", "update", "delete", "approve", "assign", "export")),
             ("scoring_engine", CONFIG_ACTIONS),
             ("signals_attention", CONFIG_ACTIONS),
             ("playbooks_tasks_calendar", CONFIG_ACTIONS),
@@ -132,6 +134,7 @@ DEFAULT_ROLES: tuple[DefaultRole, ...] = (
         name="Leadership Viewer / Executive",
         description="Strategic visibility consumer for portfolio, risk, retention, growth, and decisions.",
         permission_rules=(
+            ("engagement_sow_management", VIEW_ONLY_ACTIONS),
             ("account_overview", VIEW_ONLY_ACTIONS),
             ("opportunity_management", VIEW_ONLY_ACTIONS),
             ("retention_stability", VIEW_ONLY_ACTIONS),

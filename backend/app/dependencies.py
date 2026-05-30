@@ -10,6 +10,7 @@ from app.models import User
 from app.repositories.users import UserRepository
 from app.security import decode_access_token
 from app.services.auth import AuthService
+from app.services.engagements import EngagementService
 from app.services.profile import ProfileService
 from app.services.rbac import RbacService
 from app.services.user_management import UserManagementService
@@ -55,6 +56,10 @@ def get_rbac_service(db: Annotated[Session, Depends(get_db)]) -> RbacService:
 
 def get_user_management_service(db: Annotated[Session, Depends(get_db)]) -> UserManagementService:
     return UserManagementService(db)
+
+
+def get_engagement_service(db: Annotated[Session, Depends(get_db)]) -> EngagementService:
+    return EngagementService(db)
 
 
 def require_permission(module: str, action: str):
