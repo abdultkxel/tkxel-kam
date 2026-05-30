@@ -1,4 +1,4 @@
-export type GovernanceEventType = 'QBR' | 'SteerCo' | 'Executive Review'
+export type GovernanceEventType = 'QBR' | 'SteerCo' | 'Monthly Review' | 'Executive Review'
 
 export interface GovernanceEventRecord {
   id: string

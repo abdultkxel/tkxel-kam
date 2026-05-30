@@ -34,7 +34,7 @@ import { emit } from '@/utils/emitTimelineEvent'
 import { emitTimelineEvent } from '@/utils/emitTimelineEvent'
 import { formatCompactCurrency, formatCurrency, formatDate, formatRelative } from '@/utils/formatters'
 
-const tabs = ['Overview', 'Engagements', 'KYC', 'Health', 'Stage', 'Opportunities', 'Education', 'Governance', 'Notes', 'Timeline', 'Documents']
+const tabs = ['Overview', 'Engagements', 'KYC', 'Health', 'Stage', 'Opportunities', 'Education', 'Escalation', 'Governance', 'Notes', 'Timeline', 'Documents']
 
 export function Account360({ account }: { account: Account }) {
   const user = useRole()

@@ -67,6 +67,14 @@ class CustomFieldRepository:
             )
         )
 
+    def get_value_for_definition(self, definition_id: str, record_id: str) -> CustomFieldValue | None:
+        return self.db.scalar(
+            select(CustomFieldValue).where(
+                CustomFieldValue.field_definition_id == definition_id,
+                CustomFieldValue.record_id == record_id,
+            )
+        )
+
     def create(self, definition: CustomFieldDefinition) -> CustomFieldDefinition:
         self.db.add(definition)
         self.db.flush()
@@ -76,6 +84,19 @@ class CustomFieldRepository:
         self.db.add(value)
         self.db.flush()
         return value
+
+    def delete_values_for_record(self, modules: list[str], record_id: str) -> None:
+        values = list(
+            self.db.scalars(
+                select(CustomFieldValue).where(
+                    CustomFieldValue.module.in_(modules),
+                    CustomFieldValue.record_id == record_id,
+                )
+            )
+        )
+        for value in values:
+            self.db.delete(value)
+        self.db.flush()
 
     def delete(self, definition: CustomFieldDefinition) -> None:
         self.db.delete(definition)

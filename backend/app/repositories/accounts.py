@@ -112,6 +112,15 @@ class AccountRepository:
             )
         )
 
+    def list_account_ids_for_user(self, user_id: str) -> list[str]:
+        return list(
+            self.db.scalars(
+                select(AccountOwner.account_id)
+                .where(AccountOwner.user_id == user_id, AccountOwner.is_active.is_(True))
+                .distinct()
+            )
+        )
+
     def get_owner(self, owner_id: str) -> AccountOwner | None:
         return self.db.get(AccountOwner, owner_id)
 
