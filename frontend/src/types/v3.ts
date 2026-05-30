@@ -2,7 +2,12 @@ import { Account, RiskStatus } from '@/types/account'
 
 export type SourceDocumentType = 'project_charter' | 'sow' | 'commercial_note' | 'research'
 export type DraftStatus = 'ready_for_review' | 'approved' | 'rejected'
-export type EngagementStatus = 'draft' | 'active' | 'renewal_watch' | 'at_risk' | 'completed'
+export type EngagementStatus = 'draft' | 'active' | 'on_hold' | 'renewal_watch' | 'at_risk' | 'completed' | 'archived'
+export type EngagementDeliveryStatus = 'not_started' | 'planned' | 'active' | 'watch' | 'blocked' | 'at_risk' | 'completed'
+export type EngagementCommercialStatus = 'healthy' | 'watch' | 'risk'
+export type EngagementHealthStatus = 'green' | 'amber' | 'red' | 'unknown'
+export type EngagementRenewalRisk = 'low' | 'medium' | 'high' | 'unknown'
+export type EngagementRenewalStatus = 'expired' | 'renewal_due' | 'notice_due' | 'upcoming_notice_window' | 'not_due' | 'unknown'
 export type SignalStatus = 'new' | 'reviewed' | 'accepted' | 'dismissed' | 'converted' | 'resolved'
 export type SignalSeverity = 'info' | 'warning' | 'critical'
 
@@ -28,6 +33,11 @@ export interface SourceDocument {
   citations: SourceCitation[]
 }
 
+export interface EngagementSourceLink {
+  title?: string | null
+  url: string
+}
+
 export interface RenewalTerms {
   startDate: string
   endDate: string
@@ -37,6 +47,7 @@ export interface RenewalTerms {
   autoRenewal: boolean
   commercialExposure: number
   daysToExpiry: number
+  renewalStatus?: EngagementRenewalStatus
   riskStatus: RiskStatus
   confidence: number
   sourceDocumentId: string
@@ -48,6 +59,7 @@ export interface EngagementRecord {
   accountId: string
   accountName: string
   name: string
+  description?: string | null
   status: EngagementStatus
   ownerId: string
   ownerName: string
@@ -55,11 +67,28 @@ export interface EngagementRecord {
   opsLeadName: string
   serviceLines: string[]
   value: number
+  contractValue?: number
+  currency?: string
+  deliveryStatus?: EngagementDeliveryStatus
+  commercialStatus?: EngagementCommercialStatus
   deliveryHealth: number
+  healthScore?: number
+  healthStatus?: EngagementHealthStatus
+  renewalRisk?: EngagementRenewalRisk
+  renewalStatus?: EngagementRenewalStatus
   resourceDependency: string
+  resourceDependencyNotes?: string | null
   commercialContext: string
   risks: string[]
   sourceDocumentIds: string[]
+  sourceLinks?: EngagementSourceLink[]
+  sourceCitation?: string | null
+  createdById?: string | null
+  updatedById?: string | null
+  createdBy?: string | null
+  updatedBy?: string | null
+  createdAt?: string
+  updatedAt?: string
   renewalTerms: RenewalTerms
 }
 

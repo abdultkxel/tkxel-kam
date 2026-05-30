@@ -65,23 +65,7 @@ function apiDraft(status: 'ready_for_review' | 'approved' = 'ready_for_review') 
         citations: [{ id: 'cit-1', source_document_id: 'doc-1', label: 'Charter p1', page_number: 1, excerpt: 'Acme Corp' }],
       },
     ],
-    engagement_drafts: [
-      {
-        id: 'eng-draft-1',
-        draft_id: 'draft-1',
-        name: 'Customer intelligence',
-        owner_id: 'usr-am',
-        owner_name: 'Account Manager KAM',
-        service_lines: ['Account onboarding'],
-        value: 0,
-        currency: 'USD',
-        delivery_status: 'active',
-        start_date: '2026-05-30T00:00:00Z',
-        auto_renewal: false,
-        risks: [],
-        confidence: 82,
-      },
-    ],
+    engagement_drafts: [],
   }
 }
 
@@ -158,6 +142,12 @@ describe('CreateAccountDialog', () => {
 
     expect(await screen.findByText('Account page loaded')).toBeInTheDocument()
     expect(fetchMock.mock.calls.some(call => String(call[0]).endsWith('/api/onboarding/drafts/draft-1/approve'))).toBe(true)
+    expect(fetchMock.mock.calls.some(call => {
+      const [url, init] = call
+      if (!String(url).endsWith('/api/onboarding/drafts') || init?.method !== 'POST') return false
+      const payload = JSON.parse(String(init.body))
+      return Array.isArray(payload.engagement_drafts) && payload.engagement_drafts.length === 0
+    })).toBe(true)
     expect(toast.success).toHaveBeenCalledWith('Account created. Complete KYC in Account Overview.')
   })
 

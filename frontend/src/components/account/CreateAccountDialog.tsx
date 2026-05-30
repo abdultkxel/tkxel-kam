@@ -519,7 +519,6 @@ function mapApiField(field: string): CreateAccountField | undefined {
     primary_owner_name: 'managerName',
     primary_owner_email: 'managerEmail',
     source_citation: 'accountName',
-    'engagement_drafts.0.name': 'projectName',
   }
   return fieldMap[field]
 }
