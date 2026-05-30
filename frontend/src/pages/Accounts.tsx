@@ -257,7 +257,7 @@ export function Accounts() {
       >
         <label className="space-y-1">
           <span className="text-xs font-semibold uppercase tracking-wider text-ink-secondary">Search</span>
-          <input className="tk-input" value={search} onChange={event => setFilter('q', event.target.value)} placeholder="Account or AM" />
+          <input className="tk-input" value={search} onChange={event => setFilter('q', event.target.value)} placeholder="Account, AM, or email" />
         </label>
         <label className="space-y-1">
           <span className="text-xs font-semibold uppercase tracking-wider text-ink-secondary">Stage</span>

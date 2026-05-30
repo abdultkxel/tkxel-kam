@@ -51,6 +51,7 @@ export interface Account {
   tags: string[]
   ownerId: string
   ownerName: string
+  ownerEmail?: string
   stage: AccountStage
   riskStatus: RiskStatus
   arr: number

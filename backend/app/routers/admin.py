@@ -2,10 +2,18 @@ from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends, Query, status
 
-from app.dependencies import get_rbac_service, get_user_management_service, require_permission
-from app.models import Permission, Role, User
+from app.dependencies import get_custom_field_service, get_rbac_service, get_user_management_service, require_permission
+from app.models import CustomFieldDefinition, Permission, Role, User
 from app.rbac import ADMIN_MODULE
 from app.schemas import (
+    CustomFieldDefinitionCreateRequest,
+    CustomFieldDefinitionPageRead,
+    CustomFieldDefinitionRead,
+    CustomFieldDefinitionUpdateRequest,
+    CustomFieldModuleRead,
+    CustomFieldSort,
+    CustomFieldStatus,
+    CustomFieldType,
     PermissionRead,
     MessageResponse,
     RoleCreateRequest,
@@ -18,12 +26,14 @@ from app.schemas import (
     UserRead,
     UserUpdateRequest,
 )
+from app.services.custom_fields import CustomFieldService
 from app.services.rbac import RbacService
 from app.services.user_management import UserManagementService
 
 AdminAccess = Annotated[User, Depends(require_permission(ADMIN_MODULE, "configure"))]
 UserStatusFilter = Literal["all", "active", "inactive"]
 RoleTypeFilter = Literal["all", "system", "custom"]
+Direction = Literal["asc", "desc"]
 
 router = APIRouter(prefix="/api/admin", tags=["Admin RBAC"])
 
@@ -312,3 +322,157 @@ def update_role_permissions(
     service: Annotated[RbacService, Depends(get_rbac_service)],
 ) -> Role:
     return service.update_role_permissions(role_slug, payload)
+
+
+@router.get(
+    "/custom-fields/modules",
+    response_model=list[CustomFieldModuleRead],
+    summary="List modules available for custom fields",
+    description=(
+        "Step 1 of Field Builder administration. Returns the PRD module catalog that Admins can target "
+        "when adding product-managed custom fields."
+    ),
+    response_description="Available PRD modules for custom field configuration.",
+    responses={
+        401: {"description": "Missing, invalid, or expired bearer token."},
+        403: {"description": "Authenticated user does not have Admin/RBAC configure permission."},
+    },
+)
+def list_custom_field_modules(
+    _: AdminAccess,
+    service: Annotated[CustomFieldService, Depends(get_custom_field_service)],
+) -> list[CustomFieldModuleRead]:
+    return service.list_modules()
+
+
+@router.get(
+    "/custom-fields",
+    response_model=CustomFieldDefinitionPageRead,
+    summary="List custom field definitions",
+    description=(
+        "Step 2 of Field Builder administration. Returns paginated custom field definitions with search, "
+        "module, field type, active/inactive status, sorting, and page/page_size pagination."
+    ),
+    response_description="Paginated product field definitions.",
+    responses={
+        401: {"description": "Missing, invalid, or expired bearer token."},
+        403: {"description": "Authenticated user does not have Admin/RBAC configure permission."},
+        422: {"description": "Invalid search/filter/sort/pagination query parameters."},
+    },
+)
+def list_custom_fields(
+    _: AdminAccess,
+    service: Annotated[CustomFieldService, Depends(get_custom_field_service)],
+    search: Annotated[str | None, Query(description="Search by label, field key, module, or description.")] = None,
+    module: Annotated[str | None, Query(description="PRD module slug filter.")] = None,
+    field_type: Annotated[CustomFieldType | None, Query(description="Field type filter.")] = None,
+    status_filter: Annotated[CustomFieldStatus, Query(alias="status", description="Filter by active or inactive field definitions.")] = "all",
+    sort: Annotated[CustomFieldSort, Query(description="Sort column.")] = "sort_order",
+    direction: Annotated[Direction, Query(description="Sort direction.")] = "asc",
+    page: Annotated[int, Query(ge=1, description="One-based page number.")] = 1,
+    page_size: Annotated[int, Query(ge=1, le=100, description="Number of records per page.")] = 10,
+) -> CustomFieldDefinitionPageRead:
+    return service.list_definitions(
+        search=search,
+        module=module,
+        field_type=field_type,
+        status_filter=status_filter,
+        sort=sort,
+        direction=direction,
+        page=page,
+        page_size=page_size,
+    )
+
+
+@router.post(
+    "/custom-fields",
+    response_model=CustomFieldDefinitionRead,
+    status_code=status.HTTP_201_CREATED,
+    summary="Create a custom field definition",
+    description=(
+        "Step 3 of Field Builder administration. Creates a module-scoped custom field using a snake_case key, "
+        "validated type, optional select options, display flags, and active/sensitive settings."
+    ),
+    response_description="Created custom field definition.",
+    responses={
+        401: {"description": "Missing, invalid, or expired bearer token."},
+        403: {"description": "Authenticated user does not have Admin/RBAC configure permission."},
+        409: {"description": "A custom field with this module and field key already exists."},
+        422: {"description": "Field-level validation errors with meaningful messages."},
+    },
+)
+def create_custom_field(
+    payload: CustomFieldDefinitionCreateRequest,
+    current_user: AdminAccess,
+    service: Annotated[CustomFieldService, Depends(get_custom_field_service)],
+) -> CustomFieldDefinition:
+    return service.create_definition(payload, current_user)
+
+
+@router.get(
+    "/custom-fields/{field_id}",
+    response_model=CustomFieldDefinitionRead,
+    summary="Read a custom field definition",
+    description="Step 4 of Field Builder administration. Returns one custom field definition for edit or review.",
+    response_description="Custom field definition.",
+    responses={
+        401: {"description": "Missing, invalid, or expired bearer token."},
+        403: {"description": "Authenticated user does not have Admin/RBAC configure permission."},
+        404: {"description": "Custom field definition was not found."},
+    },
+)
+def read_custom_field(
+    field_id: str,
+    _: AdminAccess,
+    service: Annotated[CustomFieldService, Depends(get_custom_field_service)],
+) -> CustomFieldDefinition:
+    return service.get_definition(field_id)
+
+
+@router.patch(
+    "/custom-fields/{field_id}",
+    response_model=CustomFieldDefinitionRead,
+    summary="Update a custom field definition",
+    description=(
+        "Step 5 of Field Builder administration. Updates the module, key, label, type, options, active state, "
+        "sensitivity, and display settings while preserving uniqueness within each module."
+    ),
+    response_description="Updated custom field definition.",
+    responses={
+        401: {"description": "Missing, invalid, or expired bearer token."},
+        403: {"description": "Authenticated user does not have Admin/RBAC configure permission."},
+        404: {"description": "Custom field definition was not found."},
+        409: {"description": "A custom field with this module and field key already exists."},
+        422: {"description": "Field-level validation errors with meaningful messages."},
+    },
+)
+def update_custom_field(
+    field_id: str,
+    payload: CustomFieldDefinitionUpdateRequest,
+    current_user: AdminAccess,
+    service: Annotated[CustomFieldService, Depends(get_custom_field_service)],
+) -> CustomFieldDefinition:
+    return service.update_definition(field_id, payload, current_user)
+
+
+@router.delete(
+    "/custom-fields/{field_id}",
+    response_model=MessageResponse,
+    summary="Delete a custom field definition",
+    description=(
+        "Step 6 of Field Builder administration. Deletes a custom field after frontend confirmation and writes "
+        "an audit log entry for the configuration change."
+    ),
+    response_description="Custom field deletion confirmation message.",
+    responses={
+        401: {"description": "Missing, invalid, or expired bearer token."},
+        403: {"description": "Authenticated user does not have Admin/RBAC configure permission."},
+        404: {"description": "Custom field definition was not found."},
+    },
+)
+def delete_custom_field(
+    field_id: str,
+    current_user: AdminAccess,
+    service: Annotated[CustomFieldService, Depends(get_custom_field_service)],
+) -> MessageResponse:
+    return MessageResponse(**service.delete_definition(field_id, current_user))

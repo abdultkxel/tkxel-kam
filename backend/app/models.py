@@ -85,6 +85,52 @@ class RolePermission(Base):
     permission: Mapped[Permission] = relationship(back_populates="roles")
 
 
+class CustomFieldDefinition(Base):
+    __tablename__ = "custom_field_definitions"
+    __table_args__ = (UniqueConstraint("module", "field_key", name="uq_custom_field_definitions_module_field_key"),)
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid4()))
+    module: Mapped[str] = mapped_column(String(120), index=True, nullable=False)
+    field_key: Mapped[str] = mapped_column(String(120), index=True, nullable=False)
+    label: Mapped[str] = mapped_column(String(160), index=True, nullable=False)
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    field_type: Mapped[str] = mapped_column(String(40), index=True, nullable=False)
+    placeholder: Mapped[str | None] = mapped_column(String(160), nullable=True)
+    help_text: Mapped[str | None] = mapped_column(Text, nullable=True)
+    options: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    validation_rules: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    default_value: Mapped[dict | list | str | int | float | bool | None] = mapped_column(JSON, nullable=True)
+    is_required: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    is_sensitive: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    show_in_list: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    show_in_detail: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    sort_order: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    created_by_id: Mapped[str | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    updated_by_id: Mapped[str | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utc_now, onupdate=utc_now)
+
+    values: Mapped[list["CustomFieldValue"]] = relationship(back_populates="field_definition", cascade="all, delete-orphan")
+
+
+class CustomFieldValue(Base):
+    __tablename__ = "custom_field_values"
+    __table_args__ = (UniqueConstraint("field_definition_id", "record_id", name="uq_custom_field_values_field_record"),)
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid4()))
+    field_definition_id: Mapped[str] = mapped_column(ForeignKey("custom_field_definitions.id", ondelete="CASCADE"), index=True, nullable=False)
+    module: Mapped[str] = mapped_column(String(120), index=True, nullable=False)
+    record_id: Mapped[str] = mapped_column(String(36), index=True, nullable=False)
+    value: Mapped[dict | list | str | int | float | bool | None] = mapped_column(JSON, nullable=True)
+    created_by_id: Mapped[str | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    updated_by_id: Mapped[str | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utc_now, onupdate=utc_now)
+
+    field_definition: Mapped[CustomFieldDefinition] = relationship(back_populates="values")
+
+
 class Account(Base):
     __tablename__ = "accounts"
 
