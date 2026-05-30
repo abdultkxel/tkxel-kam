@@ -14,6 +14,7 @@ import { buildUnifiedCalendarItems, UnifiedCalendarItem } from '@/utils/unifiedC
 const dotClass = {
   QBR: 'bg-brand-blue',
   SteerCo: 'bg-brand-blue-dark',
+  'Monthly Review': 'bg-rag-green',
   'Executive Review': 'bg-brand-orange',
 } as const
 

@@ -22,8 +22,8 @@ class TimelineService:
         before_value: dict | None = None,
         after_value: dict | None = None,
         metadata: dict | None = None,
-    ) -> None:
-        self.repository.add(
+    ):
+        return self.repository.add(
             account_id=account_id,
             engagement_id=engagement_id,
             event_type=event_type,

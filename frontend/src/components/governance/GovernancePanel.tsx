@@ -1,11 +1,13 @@
 import * as Dialog from '@radix-ui/react-dialog'
 import { addMonths, eachDayOfInterval, endOfMonth, format, isSameDay, startOfMonth, subMonths } from 'date-fns'
 import { ArrowLeft, ArrowRight, CalendarDays, Check, ClipboardCheck, Download, ExternalLink, Loader2, Sparkles, X } from 'lucide-react'
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { AddGovernanceEventDialog } from '@/components/governance/AddGovernanceEventDialog'
 import { useRole } from '@/hooks/useRole'
 import { generateAISummary } from '@/services/aiSummary'
+import { generateGovernanceBrief, listGovernanceEvents } from '@/services/contentGovernance'
+import { useAuth } from '@/contexts/AuthContext'
 import { useAccountStore } from '@/stores/accountStore'
 import { useGovernanceStore } from '@/stores/governanceStore'
 import { useOpportunityStore } from '@/stores/opportunityStore'
@@ -21,6 +23,7 @@ import { buildUnifiedCalendarItems, UnifiedCalendarItem } from '@/utils/unifiedC
 const tone = {
   QBR: 'bg-brand-blue',
   SteerCo: 'bg-brand-blue-dark',
+  'Monthly Review': 'bg-rag-green',
   'Executive Review': 'bg-brand-orange',
 } as const
 
@@ -55,22 +58,60 @@ export function GovernancePanel() {
   const [showScoreActivities, setShowScoreActivities] = useState(true)
   const [showRenewalItems, setShowRenewalItems] = useState(true)
   const [accountFilter, setAccountFilter] = useState('')
+  const [search, setSearch] = useState('')
+  const [apiEvents, setApiEvents] = useState<GovernanceEventRecord[]>([])
+  const [apiLoading, setApiLoading] = useState(false)
+  const [apiError, setApiError] = useState('')
   const [brief, setBrief] = useState<AISummary | null>(null)
   const [briefLoading, setBriefLoading] = useState(false)
   const user = useRole()
+  const { token } = useAuth()
   const accounts = useAccountStore(state => state.accounts)
-  const events = useGovernanceStore(state => state.events)
+  const storeEvents = useGovernanceStore(state => state.events)
   const scoreTasks = useScoreActivityStore(state => state.tasks)
   const signals = useV3Store(state => state.signals)
   const opportunities = useOpportunityStore(state => state.opportunities)
   const timelineEntries = useTimelineStore(state => state.entries)
+  useEffect(() => {
+    if (!token) return
+    let cancelled = false
+    setApiLoading(true)
+    setApiError('')
+    const params = new URLSearchParams({ page: '1', page_size: '100', sort: 'scheduled_at', direction: 'asc' })
+    if (accountFilter) params.set('account_id', accountFilter)
+    if (search) params.set('search', search)
+    listGovernanceEvents(token, params)
+      .then(page => {
+        if (!cancelled) setApiEvents(page.items)
+      })
+      .catch(err => {
+        if (!cancelled) setApiError(err instanceof Error ? err.message : 'Governance events could not load')
+      })
+      .finally(() => {
+        if (!cancelled) setApiLoading(false)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [accountFilter, search, token])
+
+  const events = useMemo(
+    () =>
+      (token ? apiEvents : storeEvents).map(event => ({
+        ...event,
+        accountName: event.accountName || accounts.find(account => account.id === event.accountId)?.name || 'Unmapped account',
+      })),
+    [accounts, apiEvents, storeEvents, token],
+  )
+
   const visibleItems = useMemo(() => {
     const items = buildUnifiedCalendarItems(events, scoreTasks, signals)
     return items
       .filter(item => item.kind === 'governance' ? showGovernance : item.kind === 'score_activity' ? showScoreActivities : showRenewalItems)
       .filter(item => !mineOnly || item.ownerId === user.id)
       .filter(item => !accountFilter || item.accountId === accountFilter)
-  }, [accountFilter, events, mineOnly, scoreTasks, showGovernance, showRenewalItems, showScoreActivities, signals, user.id])
+      .filter(item => !search || [item.title, item.accountName, item.detail].join(' ').toLowerCase().includes(search.toLowerCase()))
+  }, [accountFilter, events, mineOnly, scoreTasks, search, showGovernance, showRenewalItems, showScoreActivities, signals, user.id])
   const monthItems = visibleItems.filter(item => new Date(item.date).getMonth() === month.getMonth() && new Date(item.date).getFullYear() === month.getFullYear())
   const days = eachDayOfInterval({ start: startOfMonth(month), end: endOfMonth(month) })
 
@@ -78,9 +119,29 @@ export function GovernancePanel() {
     const account = accounts.find(item => item.id === event.accountId)
     if (!account) return
     setBriefLoading(true)
-    await new Promise(resolve => window.setTimeout(resolve, 360))
-    const visibleEntries = timelineEntries.filter(entry => entry.accountId === event.accountId).filter(entry => canViewTimelineEntry(entry, user.role, user.id))
-    setBrief(generateAISummary({ account, entries: visibleEntries, opportunities, governance: events, type: 'pre_meeting_brief' }))
+    if (token) {
+      try {
+        const response = await generateGovernanceBrief(token, event.id)
+        setBrief({
+          id: `brief-${event.id}`,
+          accountId: event.accountId,
+          type: 'pre_meeting_brief',
+          generatedAt: new Date().toISOString(),
+          sourceEntryIds: response.citations.map(item => item.id),
+          sections: [
+            { title: 'Summary', body: response.summary, citations: response.citations.map(item => item.label) },
+            { title: 'Talking Points', body: response.talking_points.join(' '), citations: response.citations.map(item => item.label) },
+          ],
+          disclaimer: response.disclaimer,
+        })
+      } catch (err) {
+        setBrief(generateAISummary({ account, entries: [], opportunities, governance: events, type: 'pre_meeting_brief' }))
+      }
+    } else {
+      await new Promise(resolve => window.setTimeout(resolve, 360))
+      const visibleEntries = timelineEntries.filter(entry => entry.accountId === event.accountId).filter(entry => canViewTimelineEntry(entry, user.role, user.id))
+      setBrief(generateAISummary({ account, entries: visibleEntries, opportunities, governance: events, type: 'pre_meeting_brief' }))
+    }
     setBriefLoading(false)
   }
 
@@ -128,6 +189,7 @@ export function GovernancePanel() {
               <option value="">All accounts</option>
               {accounts.map(account => <option key={account.id} value={account.id}>{account.name}</option>)}
             </select>
+            <input className="tk-input w-auto min-w-[220px]" value={search} onChange={event => setSearch(event.target.value)} placeholder="Search governance" aria-label="Search governance events" />
             <button className="tk-button-secondary" onClick={() => exportIcs(monthItems, format(month, 'yyyy-MM'))}>
               <Download className="h-4 w-4" />
               Export iCal
@@ -149,6 +211,16 @@ export function GovernancePanel() {
           </button>
         </div>
 
+        {apiLoading ? (
+          <div className="flex min-h-[240px] items-center justify-center text-sm font-semibold text-ink-secondary">
+            <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+            Loading governance events
+          </div>
+        ) : apiError ? (
+          <div className="rounded-lg border border-rag-red/20 bg-rag-red/10 p-4 text-sm font-semibold text-rag-red">{apiError}</div>
+        ) : monthItems.length === 0 ? (
+          <div className="rounded-lg border border-surface-border bg-white p-8 text-center text-sm text-ink-secondary">No governance events match the current filters.</div>
+        ) : (
         <div className="overflow-x-auto">
           <div className="grid min-w-[720px] grid-cols-7 rounded-lg border border-surface-border bg-white">
             {['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'].map(day => (
@@ -179,6 +251,7 @@ export function GovernancePanel() {
             })}
           </div>
         </div>
+        )}
       </section>
 
       <Dialog.Root

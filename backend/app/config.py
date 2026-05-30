@@ -29,6 +29,18 @@ class Settings:
             if origin.strip()
         ]
         self.expose_reset_tokens = os.getenv("EXPOSE_RESET_TOKENS", "false").lower() == "true"
+        self.content_storage_backend = os.getenv("CONTENT_STORAGE_BACKEND", "local").lower()
+        self.local_content_storage_dir = os.getenv("LOCAL_CONTENT_STORAGE_DIR", str(BASE_DIR / "storage" / "content"))
+        self.s3_bucket_name = os.getenv("S3_BUCKET_NAME", "")
+        self.s3_region = os.getenv("S3_REGION", "")
+        self.google_calendar_client_id = os.getenv("GOOGLE_CALENDAR_CLIENT_ID", "")
+        self.google_calendar_client_secret = os.getenv("GOOGLE_CALENDAR_CLIENT_SECRET", "")
+        self.google_calendar_redirect_uri = os.getenv("GOOGLE_CALENDAR_REDIRECT_URI", "http://127.0.0.1:8002/api/admin/integrations/google-calendar/oauth-callback")
+        self.google_calendar_default_calendar_id = os.getenv("GOOGLE_CALENDAR_DEFAULT_CALENDAR_ID", "primary")
+        self.fathom_api_key = os.getenv("FATHOM_API_KEY", "")
+        self.fathom_base_url = os.getenv("FATHOM_BASE_URL", "https://api.fathom.video")
+        self.fathom_recordings_path = os.getenv("FATHOM_RECORDINGS_PATH", "/recordings")
+        self.fathom_webhook_secret = os.getenv("FATHOM_WEBHOOK_SECRET", "")
 
 
 @lru_cache

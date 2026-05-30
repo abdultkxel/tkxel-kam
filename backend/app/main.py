@@ -7,7 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.config import get_settings
 from app.database import SessionLocal, init_db
 from app.exceptions import validation_exception_handler
-from app.routers import accounts, admin, auth, engagements, onboarding, users
+from app.routers import accounts, admin, auth, content, custom_fields, engagements, escalations, governance, onboarding, users
 from app.services.seed import seed_default_data
 
 
@@ -50,6 +50,22 @@ openapi_tags = [
         "name": "Engagement 360",
         "description": "Engagement/SOW detail, updates, archival, health snapshots, and recalculation APIs.",
     },
+    {
+        "name": "Client Education Content",
+        "description": "Client education catalog, recommendations, sent-content history, and content upload APIs.",
+    },
+    {
+        "name": "Escalation Management",
+        "description": "Manual escalation lifecycle, updates, closure, RCA, notifications, and SLA metadata APIs.",
+    },
+    {
+        "name": "Governance Reviews",
+        "description": "Governance calendar, recurrence, agenda drafts, decisions, actions, AI brief, and integration sync APIs.",
+    },
+    {
+        "name": "Field Builder Runtime",
+        "description": "Runtime custom field definitions used by feature screens.",
+    },
 ]
 
 app = FastAPI(
@@ -77,6 +93,10 @@ app.include_router(admin.router)
 app.include_router(onboarding.router)
 app.include_router(accounts.router)
 app.include_router(engagements.router)
+app.include_router(content.router)
+app.include_router(custom_fields.router)
+app.include_router(escalations.router)
+app.include_router(governance.router)
 
 
 @app.get(
