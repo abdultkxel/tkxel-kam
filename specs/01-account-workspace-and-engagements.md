@@ -140,6 +140,7 @@ Replace fragmented onboarding and account context with a governed, source-backed
 - Onboarding upload page with drag/drop, link entry, source list, extraction status, and draft preview.
 - Manual/CSV onboarding fallback with row preview, validation errors, and source provenance.
 - Draft review page with editable fields and source citations.
+- Preserve the existing `/accounts`, `/accounts/onboarding`, and `/accounts/:id` operational flow, including card/table portfolio views, saved views, and Account 360 tabs; replace mock state with API-backed data and server-side pagination without changing the core layout.
 - Account Overview with summary cards, section tabs, quick actions, and read-only behavior for leadership.
 - Governance completeness indicators on Account Overview and portfolio lists.
 - Ownership editor with matrix owner roles and history drawer.

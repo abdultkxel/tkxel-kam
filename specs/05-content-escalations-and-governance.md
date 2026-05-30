@@ -139,6 +139,7 @@ Improve account governance and client engagement by linking content, escalation 
 - Content catalog list/detail, upload/link form, content picker, recommendation cards, and sent-content table.
 - Escalation create/edit form and detail page with SLA, mitigation, updates, Watchlist, RCA, closure, and notifications.
 - Governance calendar/list and detail page with agenda, attendees, notes, decisions, action items, and status.
+- Governance should remain reachable as a first-class workspace (`/governance`) from role-appropriate navigation/dashboard actions; escalation and content detail must also deep-link back to Account 360.
 - Agenda generation and AI Brief actions with citation display and disclaimer.
 
 ## Loading States

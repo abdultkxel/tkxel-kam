@@ -136,6 +136,7 @@ Provide a secure, configurable administration layer that enforces least privileg
 
 - Separate Users Management and Roles Management screens.
 - Role permission matrix with select-all/clear-all permission controls.
+- Preserve current URL-backed tabbed Admin section navigation (`section` query parameter) as Admin grows; do not reintroduce a single long scroll-only admin page.
 - Account/engagement access assignment screens.
 - Field permission configuration screen.
 - Reference data screen with taxonomy tabs.

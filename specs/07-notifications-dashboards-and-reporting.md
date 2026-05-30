@@ -138,6 +138,7 @@ Surface what needs attention today for every role while enabling leadership visi
 - KAM Head Portfolio dashboard with charts/tables/drilldowns.
 - Leadership Dashboard with read-only executive cards and decision queue.
 - Report builder wizard with source, fields, filters, grouping, layout, preview, and export.
+- Preserve Dashboard as the default route and make widgets API-backed incrementally; report builder and digest history need dedicated role-aware screens or tabs because they are not present in the current frontend shell.
 
 ## Loading States
 

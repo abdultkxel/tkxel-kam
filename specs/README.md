@@ -4,6 +4,8 @@ Source backlog: `requirements/KAM_USER_STORIES.md`
 
 These files convert the user-story backlog into feature specifications. No implementation code is included.
 
+Implementation sequencing: [KAM Implementation Plan](./IMPLEMENTATION_PLAN.md)
+
 ## Feature Modules
 
 - [01 Account Workspace And Engagements](./01-account-workspace-and-engagements.md)
@@ -78,4 +80,3 @@ These files convert the user-story backlog into feature specifications. No imple
 | 23.1 | Multi-owner and tenant-ready architecture | `12-platform-readiness-reliability-and-scope-guardrails.md` |
 | 24.1 | Platform reliability, observability, and accessibility | `12-platform-readiness-reliability-and-scope-guardrails.md` |
 | 24.2 | Explicitly out-of-scope guardrails | `12-platform-readiness-reliability-and-scope-guardrails.md` |
-

@@ -157,6 +157,7 @@ Protect retention and grow strategic accounts by making relationships, whitespac
 
 - Stakeholder map/list, profile drawer, relationship editor, interaction history, org chart, and coverage gap panel.
 - Account Plan tab with editable sections and next actions.
+- Add missing Account 360 sections or clearly linked pages for stakeholder map, account plan, whitespace/service catalog recommendations, renewal intelligence, and retention plans; current frontend covers opportunities but not the full planning/relationship surface.
 - Admin service catalog and adjacency matrix screens.
 - Whitespace capture section and recommendation cards.
 - Opportunity board and list, create/edit modal, detail drawer, and pipeline totals.

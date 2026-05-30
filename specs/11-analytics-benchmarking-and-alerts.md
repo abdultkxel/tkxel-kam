@@ -88,6 +88,7 @@ Give KAM Heads and leadership measurable portfolio intelligence to identify heal
 ## UI Requirements
 
 - Analytics dashboard with charts, cohort selector, filters, and drilldowns.
+- Analytics must be reachable as a first-class `/analytics` route and role-aware navigation item for Leadership/KAM Head/Admin; current frontend has an Analytics page but the route currently redirects to Dashboard.
 - Benchmark comparison cards/tables.
 - Account-change alerts panel/list with detail drawer, reason codes, source evidence, and status controls.
 - Permission-aware redaction for restricted metrics.
