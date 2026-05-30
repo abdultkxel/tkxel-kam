@@ -1,74 +1,100 @@
 import { AlertTriangle, CheckCircle2, FileSearch, FileText, Loader2, UploadCloud, XCircle } from 'lucide-react'
 import type { ReactNode } from 'react'
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { toast } from 'sonner'
+import { EmptyState } from '@/components/ui/EmptyState'
 import { PageHeader } from '@/components/ui/PageHeader'
+import { Skeleton } from '@/components/ui/Skeleton'
+import { useAuth } from '@/contexts/AuthContext'
 import { useRole } from '@/hooks/useRole'
-import { useAccountStore } from '@/stores/accountStore'
-import { useTimelineStore } from '@/stores/timelineStore'
-import { useV3Store } from '@/stores/v3Store'
-import { AIExtractionDraft, SourceDocument } from '@/types/v3'
+import { approveOnboardingDraft, createOnboardingDraft, listOnboardingDrafts, OnboardingDraftView, rejectOnboardingDraft } from '@/services/accountWorkspace'
+import { SourceDocument } from '@/types/v3'
 import { cn } from '@/utils/cn'
 import { formatCompactCurrency, formatDate, formatRelative } from '@/utils/formatters'
 
 export function Onboarding() {
   const user = useRole()
-  const drafts = useV3Store(state => state.onboardingDrafts)
-  const documents = useV3Store(state => state.sourceDocuments)
-  const addMockUploadDraft = useV3Store(state => state.addMockUploadDraft)
-  const approveDraft = useV3Store(state => state.approveDraft)
-  const rejectDraft = useV3Store(state => state.rejectDraft)
-  const importAccounts = useAccountStore(state => state.importAccounts)
-  const addEntry = useTimelineStore(state => state.addEntry)
-  const [selectedId, setSelectedId] = useState(drafts[0]?.id ?? '')
+  const { token } = useAuth()
+  const [drafts, setDrafts] = useState<OnboardingDraftView[]>([])
+  const [selectedId, setSelectedId] = useState('')
   const [fileNames, setFileNames] = useState<string[]>([])
   const [extracting, setExtracting] = useState(false)
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState('')
 
   const selected = drafts.find(draft => draft.id === selectedId) ?? drafts[0]
-  const selectedDocs = useMemo(
-    () => selected ? documents.filter(document => selected.sourceDocumentIds.includes(document.id)) : [],
-    [documents, selected],
-  )
+  const selectedDocs = useMemo(() => selected?.sourceDocuments ?? [], [selected])
+
+  useEffect(() => {
+    if (!token) return
+    let active = true
+    setLoading(true)
+    setError('')
+    listOnboardingDrafts(token, new URLSearchParams({ page: '1', page_size: '25' }))
+      .then(result => {
+        if (!active) return
+        setDrafts(result.items)
+        setSelectedId(current => current || result.items[0]?.id || '')
+      })
+      .catch(err => {
+        if (!active) return
+        setError(err instanceof Error ? err.message : 'Unable to load onboarding drafts')
+      })
+      .finally(() => {
+        if (active) setLoading(false)
+      })
+    return () => {
+      active = false
+    }
+  }, [token])
 
   async function runMockExtraction() {
     const names = fileNames.length ? fileNames : ['New Client Project Charter.pdf', 'New Client SOW.pdf']
+    if (!token) {
+      toast.error('Please log in again before creating a draft')
+      return
+    }
     setExtracting(true)
-    await new Promise(resolve => window.setTimeout(resolve, 700))
-    const draftId = addMockUploadDraft(names, user.name)
-    setSelectedId(draftId)
-    setExtracting(false)
-    toast.success('AI extraction draft created')
+    try {
+      const draft = await createOnboardingDraft(token, {
+        accountName: cleanDocumentName(names[0]),
+        projectName: cleanProjectName(names.find(name => /sow|statement/i.test(name)) ?? names[0]),
+        companyUrl: `https://${slugify(cleanDocumentName(names[0]))}.com`,
+        managerEmail: user.email,
+        managerName: user.name,
+        fileNames: names,
+      })
+      setDrafts(current => [draft, ...current.filter(item => item.id !== draft.id)])
+      setSelectedId(draft.id)
+      toast.success('AI extraction draft created')
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Draft could not be created')
+    } finally {
+      setExtracting(false)
+    }
   }
 
-  function approve(selectedDraft: AIExtractionDraft) {
-    const approved = approveDraft(selectedDraft.id)
-    if (!approved) return
-    importAccounts([approved.accountDraft])
-    addEntry({
-      id: `tl-onboarding-${approved.id}`,
-      accountId: approved.accountDraft.id,
-      eventType: 'account_setup',
-      module: 'kyc',
-      title: 'Account onboarding approved from charter/SOW',
-      description: `${approved.accountDraft.name} and ${approved.engagementDrafts.length} engagement draft were approved from source documents.`,
-      performedBy: user.id,
-      performedByName: user.name,
-      timestamp: new Date().toISOString(),
-      sourceRecordId: approved.id,
-      sourceRecordType: 'ai_extraction_draft',
-      sourceRecordRoute: `/accounts/${approved.accountDraft.id}`,
-      metadata: { sourceDocumentIds: approved.sourceDocumentIds, confidence: approved.confidence },
-      isSensitive: false,
-      isSystemGenerated: true,
-      isImmutable: true,
-    })
-    toast.success('Draft approved and Account Overview created')
+  async function approve(selectedDraft: OnboardingDraftView) {
+    if (!token) return
+    try {
+      const approved = await approveOnboardingDraft(token, selectedDraft.id)
+      setDrafts(current => current.map(item => (item.id === approved.id ? approved : item)))
+      toast.success('Draft approved and Account Overview created')
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Draft could not be approved')
+    }
   }
 
-  function reject(selectedDraft: AIExtractionDraft) {
-    rejectDraft(selectedDraft.id)
-    toast.success('Draft rejected and retained for audit')
+  async function reject(selectedDraft: OnboardingDraftView) {
+    if (!token) return
+    try {
+      const rejected = await rejectOnboardingDraft(token, selectedDraft.id, 'Rejected from onboarding review.')
+      setDrafts(current => current.map(item => (item.id === rejected.id ? rejected : item)))
+      toast.success('Draft rejected and retained for audit')
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Draft could not be rejected')
+    }
   }
 
   return (
@@ -121,7 +147,16 @@ export function Onboarding() {
           <section className="tk-card p-4">
             <h2 className="text-sm font-semibold text-ink">Draft queue</h2>
             <div className="mt-3 space-y-2">
-              {drafts.map(draft => (
+              {loading ? (
+                <>
+                  <Skeleton className="h-20 w-full" />
+                  <Skeleton className="h-20 w-full" />
+                </>
+              ) : error ? (
+                <div className="rounded-lg border border-rag-red/20 bg-rag-red/10 p-3 text-sm text-rag-red">{error}</div>
+              ) : drafts.length === 0 ? (
+                <div className="rounded-lg border border-surface-border bg-surface-secondary p-3 text-sm text-ink-secondary">No onboarding drafts yet.</div>
+              ) : drafts.map(draft => (
                 <button
                   key={draft.id}
                   className={cn('w-full rounded-lg border p-3 text-left transition-colors', selected?.id === draft.id ? 'border-brand-blue bg-blue-tint-20' : 'border-surface-border bg-white hover:bg-surface-tertiary')}
@@ -138,7 +173,14 @@ export function Onboarding() {
           </section>
         </aside>
 
-        {selected ? (
+        {loading && !selected ? (
+          <main className="space-y-5">
+            <Skeleton className="h-56 w-full" />
+            <Skeleton className="h-96 w-full" />
+          </main>
+        ) : error && !selected ? (
+          <EmptyState icon={AlertTriangle} heading="Onboarding drafts could not be loaded" body={error} />
+        ) : selected ? (
           <main className="space-y-5">
             <section className="tk-card p-5">
               <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
@@ -196,11 +238,12 @@ export function Onboarding() {
                   </ReviewCard>
                 ))}
 
-                <ReviewCard title="AI-enriched KYC">
+                <ReviewCard title="Source-backed account context">
                   <div className="grid gap-3 md:grid-cols-2">
-                    {Object.entries(selected.kycDraft.sections).map(([key, value]) => (
-                      <Field key={key} label={key.replace(/([A-Z])/g, ' $1')} value={value} multiline />
-                    ))}
+                    <Field label="Project" value={selected.accountDraft.projectName ?? 'Not provided'} />
+                    <Field label="Company URL" value={selected.accountDraft.companyUrl ?? 'Not provided'} />
+                    <Field label="Evidence" value={selected.sourceDocuments[0]?.citations[0]?.excerpt ?? 'No citation excerpt recorded'} multiline />
+                    <Field label="Created by" value={selected.createdByName} />
                   </div>
                 </ReviewCard>
               </section>
@@ -211,12 +254,12 @@ export function Onboarding() {
                     {selectedDocs.map(document => <DocumentRow key={document.id} document={document} />)}
                   </div>
                 </ReviewCard>
-                <ReviewCard title="AI research sources">
+                <ReviewCard title="Source citations">
                   <div className="grid gap-2">
-                    {selected.kycDraft.researchSources.map(source => (
-                      <div key={source} className="rounded-lg border border-blue-tint-20 bg-blue-tint-20 p-3">
-                        <p className="text-sm font-semibold text-brand-blue">{source}</p>
-                        <p className="mt-1 text-xs text-ink-secondary">Used through AI/LLM Gateway with citation guardrails.</p>
+                    {selected.sourceDocuments.flatMap(document => document.citations).map(citation => (
+                      <div key={citation.id} className="rounded-lg border border-blue-tint-20 bg-blue-tint-20 p-3">
+                        <p className="text-sm font-semibold text-brand-blue">{citation.label}</p>
+                        <p className="mt-1 text-xs text-ink-secondary">{citation.excerpt}</p>
                       </div>
                     ))}
                   </div>
@@ -232,7 +275,7 @@ export function Onboarding() {
                   </div>
                 </ReviewCard>
                 {selected.status === 'approved' ? (
-                  <Link className="tk-button-primary w-full" to={`/accounts/${selected.accountDraft.id}`}>
+                  <Link className="tk-button-primary w-full" to={`/accounts/${selected.approvedAccountId ?? selected.accountDraft.id}`}>
                     Open Account Overview
                   </Link>
                 ) : null}
@@ -245,7 +288,7 @@ export function Onboarding() {
   )
 }
 
-function DraftBadge({ status }: { status: AIExtractionDraft['status'] }) {
+function DraftBadge({ status }: { status: OnboardingDraftView['status'] }) {
   return (
     <span className={cn('rounded-full border px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wider', status === 'approved' ? 'border-rag-green/20 bg-rag-green/10 text-rag-green' : status === 'rejected' ? 'border-rag-red/20 bg-rag-red/10 text-rag-red' : 'border-brand-orange/20 bg-brand-orange/10 text-brand-orange')}>
       {status.replace(/_/g, ' ')}
@@ -296,4 +339,31 @@ function DocumentRow({ document }: { document: SourceDocument }) {
       ))}
     </div>
   )
+}
+
+function cleanDocumentName(name: string) {
+  const base = stripDocumentExtension(name)
+  const cleaned = base
+    .replace(/\b(project charter|charter|statement of work|sow|msa|contract|renewal|growth|services|service|q[1-4]|20\d{2})\b/gi, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+  return toTitleCase(cleaned || base || 'New Client')
+}
+
+function cleanProjectName(name: string) {
+  const base = stripDocumentExtension(name)
+  const cleaned = base.replace(/\b(project charter|charter|statement of work|sow)\b/gi, ' ').replace(/\s+/g, ' ').trim()
+  return toTitleCase(cleaned || 'New client engagement')
+}
+
+function stripDocumentExtension(name: string) {
+  return name.replace(/\.(pdf|docx?)$/i, '').replace(/[-_]/g, ' ').replace(/\s+/g, ' ').trim()
+}
+
+function toTitleCase(value: string) {
+  return value.toLowerCase().replace(/\b[a-z]/g, char => char.toUpperCase())
+}
+
+function slugify(value: string) {
+  return value.trim().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'new-client'
 }

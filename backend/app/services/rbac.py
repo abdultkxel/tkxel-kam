@@ -121,4 +121,7 @@ class RbacService:
 
     @staticmethod
     def _role_has_permission_row(role: Role, key: str) -> bool:
-        return any(permission_key(item.permission.module, item.permission.action) == key for item in role.permissions)
+        return any(
+            item.permission is not None and permission_key(item.permission.module, item.permission.action) == key
+            for item in role.permissions
+        )

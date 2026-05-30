@@ -53,14 +53,16 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 function getApiErrorMessage(payload: unknown): string {
   if (!isRecord(payload)) return 'Request failed'
   if (typeof payload.detail === 'string') return payload.detail
+  if (isRecord(payload.detail) && typeof payload.detail.message === 'string') return payload.detail.message
   if (typeof payload.message === 'string') return payload.message
   return 'Request failed'
 }
 
 function getApiFieldErrors(payload: unknown): ApiFieldError[] {
-  if (!isRecord(payload) || !Array.isArray(payload.errors)) return []
+  if (!isRecord(payload)) return []
+  const errors = Array.isArray(payload.errors) ? payload.errors : isRecord(payload.detail) && Array.isArray(payload.detail.errors) ? payload.detail.errors : []
 
-  return payload.errors.flatMap(error => {
+  return errors.flatMap(error => {
     if (!isRecord(error) || typeof error.field !== 'string' || typeof error.message !== 'string') return []
     return [{ field: error.field, message: error.message }]
   })
