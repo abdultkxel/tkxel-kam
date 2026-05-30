@@ -1,17 +1,35 @@
 import { CheckCircle2, Download, Loader2, Upload, XCircle } from 'lucide-react'
-import { nanoid } from 'nanoid'
-import { ChangeEvent, useMemo, useState } from 'react'
+import { ChangeEvent, useEffect, useMemo, useState } from 'react'
 import { toast } from 'sonner'
+import { useAuth } from '@/contexts/AuthContext'
+import { AccountCsvImportResponse, AccountCsvImportRow, AccountCustomFieldDefinition, importAccountsCsv, listAccountCustomFields } from '@/services/accountWorkspace'
 import { useAccountStore } from '@/stores/accountStore'
-import { Account } from '@/types/account'
 import { cn } from '@/utils/cn'
-import { emitTimelineEvent } from '@/utils/emitTimelineEvent'
 
 type Step = 1 | 2 | 3 | 4
 
+type ImportFieldOption = {
+  key: string
+  label: string
+  required?: boolean
+  customField?: AccountCustomFieldDefinition
+}
+
 const required = ['account_name']
-const optional = ['industry', 'arr', 'stage', 'owner_email', 'segment', 'region']
-const template = `account_name,industry,arr,stage,owner_email,segment,region\nExample Client,Technology,250000,Onboarding,am@example.com,Enterprise,NA`
+const optional = ['project_name', 'company_url', 'industry', 'arr', 'stage', 'owner_email', 'owner_name', 'segment', 'region']
+const baseFieldOptions: ImportFieldOption[] = [
+  { key: 'account_name', label: 'Account name', required: true },
+  { key: 'project_name', label: 'Project name' },
+  { key: 'company_url', label: 'Company URL' },
+  { key: 'industry', label: 'Industry' },
+  { key: 'arr', label: 'ARR' },
+  { key: 'stage', label: 'Stage' },
+  { key: 'owner_email', label: 'Owner email' },
+  { key: 'owner_name', label: 'Owner name' },
+  { key: 'segment', label: 'Segment' },
+  { key: 'region', label: 'Region' },
+]
+const template = `account_name,project_name,company_url,industry,arr,stage,owner_email,owner_name,segment,region\nExample Client,Customer Success Workspace,https://example.com,Technology,250000,Onboarding,account.manager.user@tkxelkam.com,Account Manager KAM,Enterprise,NA`
 const csvSteps: { id: Step; label: string }[] = [
   { id: 1, label: 'Upload' },
   { id: 2, label: 'Map' },
@@ -21,16 +39,47 @@ const csvSteps: { id: Step; label: string }[] = [
 
 function parseCsv(text: string) {
   const [headerLine = '', ...lines] = text.trim().split(/\r?\n/)
-  const headers = headerLine.split(',').map(item => item.trim())
+  const headers = parseCsvLine(headerLine).map(item => item.trim())
   const rows = lines.filter(Boolean).map(line => {
-    const values = line.split(',').map(item => item.trim())
+    const values = parseCsvLine(line).map(item => item.trim())
     return Object.fromEntries(headers.map((header, index) => [header, values[index] ?? '']))
   })
   return { headers, rows }
 }
 
+function parseCsvLine(line: string) {
+  const values: string[] = []
+  let value = ''
+  let quoted = false
+  for (const char of line) {
+    if (char === '"') {
+      quoted = !quoted
+      continue
+    }
+    if (char === ',' && !quoted) {
+      values.push(value)
+      value = ''
+      continue
+    }
+    value += char
+  }
+  values.push(value)
+  return values
+}
+
+function readFileText(file: File) {
+  if (typeof file.text === 'function') return file.text()
+  return new Promise<string>((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onload = () => resolve(String(reader.result ?? ''))
+    reader.onerror = () => reject(reader.error)
+    reader.readAsText(file)
+  })
+}
+
 export function AccountCsvImport() {
-  const importAccounts = useAccountStore(state => state.importAccounts)
+  const { token } = useAuth()
+  const upsertAccount = useAccountStore(state => state.upsertAccount)
   const existing = useAccountStore(state => state.accounts)
   const [step, setStep] = useState<Step>(1)
   const [headers, setHeaders] = useState<string[]>([])
@@ -39,28 +88,47 @@ export function AccountCsvImport() {
   const [duplicateMode, setDuplicateMode] = useState<'skip' | 'overwrite' | 'create'>('skip')
   const [importing, setImporting] = useState(false)
   const [fileName, setFileName] = useState('')
+  const [customFields, setCustomFields] = useState<AccountCustomFieldDefinition[]>([])
+  const [loadingCustomFields, setLoadingCustomFields] = useState(false)
+  const [importReport, setImportReport] = useState<AccountCsvImportResponse | null>(null)
 
-  const preview = useMemo(() => {
-    return rows.slice(0, 10).map((row, index) => {
-      const accountNameColumn = Object.entries(mapping).find(([, field]) => field === 'account_name')?.[0]
-      const name = accountNameColumn ? row[accountNameColumn] : ''
+  const fieldOptions = useMemo<ImportFieldOption[]>(
+    () => [
+      ...baseFieldOptions,
+      ...customFields.map(field => ({
+        key: customFieldKey(field.field_key),
+        label: `Custom: ${field.label}`,
+        required: field.is_required,
+        customField: field,
+      })),
+    ],
+    [customFields],
+  )
+
+  const validationRows = useMemo(() => {
+    return rows.map((row, index) => {
+      const name = mappedValue(row, mapping, 'account_name')
       const duplicate = existing.some(account => account.name.toLowerCase() === name.toLowerCase())
+      const missingCustom = customFields.find(field => field.is_required && isEmptyCsvValue(mappedValue(row, mapping, customFieldKey(field.field_key))))
       const missingName = !name
       return {
         index,
         row,
-        status: missingName ? 'error' : duplicate ? 'warning' : 'valid',
-        message: missingName ? 'Missing account_name' : duplicate ? 'Duplicate account' : 'Ready',
+        status: missingName || missingCustom ? 'error' : duplicate ? 'warning' : 'valid',
+        message: missingName ? 'Missing account_name' : missingCustom ? `Missing ${missingCustom.label}` : duplicate ? 'Duplicate account' : 'Ready',
       }
     })
-  }, [existing, mapping, rows])
+  }, [customFields, existing, mapping, rows])
+
+  const preview = useMemo(() => validationRows.slice(0, 10), [validationRows])
 
   function loadText(text: string) {
     const parsed = parseCsv(text)
-    const autoMapping = Object.fromEntries(parsed.headers.map(header => [header, [...required, ...optional].includes(header) ? header : '']))
+    const autoMapping = Object.fromEntries(parsed.headers.map(header => [header, autoMapHeader(header, fieldOptions)]))
     setHeaders(parsed.headers)
     setRows(parsed.rows)
     setMapping(autoMapping)
+    setImportReport(null)
     setStep(2)
   }
 
@@ -72,7 +140,7 @@ export function AccountCsvImport() {
       return
     }
     setFileName(file.name)
-    file.text().then(loadText)
+    readFileText(file).then(loadText).catch(() => toast.error('CSV file could not be read'))
   }
 
   function download(filename: string, content: string) {
@@ -84,61 +152,64 @@ export function AccountCsvImport() {
   }
 
   async function confirmImport() {
-    setImporting(true)
-    await new Promise(resolve => window.setTimeout(resolve, 600))
-    const nameColumn = Object.entries(mapping).find(([, field]) => field === 'account_name')?.[0]
-    if (!nameColumn) {
-      setImporting(false)
-      toast.error('Map account_name before importing')
+    if (!token) {
+      toast.error('Please log in again before importing accounts')
       return
     }
-    const created: Account[] = rows
-      .filter(row => duplicateMode !== 'skip' || !existing.some(account => account.name.toLowerCase() === row[nameColumn].toLowerCase()))
-      .map(row => {
-        const get = (field: string) => {
-          const col = Object.entries(mapping).find(([, mapped]) => mapped === field)?.[0]
-          return col ? row[col] : ''
-        }
-        const matched = duplicateMode === 'overwrite' ? existing.find(account => account.name.toLowerCase() === get('account_name').toLowerCase()) : undefined
-        return {
-          id: matched?.id ?? `import-${nanoid(6)}`,
-          name: get('account_name'),
-          segment: (get('segment') as Account['segment']) || 'Growth',
-          tags: [get('segment') || 'Growth'].filter(Boolean),
-          ownerId: 'usr-001',
-          ownerName: get('owner_email') || 'Unassigned AM',
-          stage: (get('stage') as Account['stage']) || 'Onboarding',
-          riskStatus: 'healthy',
-          arr: Number(get('arr')) || 0,
-          nextQbr: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),
-          health: { overall: 70, relationship: 70, usage: 70, delivery: 70, commercial: 70 },
-          stakeholders: [],
-          risks: [],
-        }
+    const validationErrors = validationRows.filter(item => item.status === 'error')
+    if (validationErrors.length) {
+      toast.error('Resolve required CSV fields before importing')
+      return
+    }
+    setImporting(true)
+    try {
+      const report = await importAccountsCsv(token, {
+        duplicateMode,
+        sourceFileName: fileName || 'account-import.csv',
+        rows: rows.map(row => buildImportRow(row, mapping, customFields)),
       })
-    importAccounts(created)
-    created.forEach(account => {
-      emitTimelineEvent({
-        accountId: account.id,
-        eventType: 'account_setup',
-        module: 'manual',
-        title: `Account imported: ${account.name}`,
-        description: 'Account created via account CSV import.',
-        performedBy: 'usr-001',
-        performedByName: 'Sarah Mitchell',
-        metadata: { importId: account.id },
-        isSensitive: false,
-        isSystemGenerated: true,
-        isImmutable: false,
+      report.results.forEach(result => {
+        if (result.account) upsertAccount(result.account)
       })
-    })
-    setImporting(false)
-    toast.success(`${created.length} accounts imported`)
-    download('kam-import-report.csv', `created,skipped\n${created.length},${rows.length - created.length}`)
+      setImportReport(report)
+      const stored = report.created + report.updated
+      if (stored) toast.success(`${stored} accounts stored in backend`)
+      if (report.failed) toast.error(`${report.failed} CSV row${report.failed === 1 ? '' : 's'} failed validation`)
+      download('kam-import-report.csv', importReportCsv(report))
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'CSV import could not be stored')
+    } finally {
+      setImporting(false)
+    }
   }
 
-  const errors = preview.filter(item => item.status === 'error')
-  const duplicates = preview.filter(item => item.status === 'warning')
+  useEffect(() => {
+    if (!token) return
+    let active = true
+    setLoadingCustomFields(true)
+    listAccountCustomFields(token)
+      .then(fields => {
+        if (!active) return
+        setCustomFields(fields.filter(field => field.show_in_detail))
+      })
+      .catch(() => {
+        if (active) setCustomFields([])
+      })
+      .finally(() => {
+        if (active) setLoadingCustomFields(false)
+      })
+    return () => {
+      active = false
+    }
+  }, [token])
+
+  useEffect(() => {
+    if (!headers.length || !fieldOptions.length) return
+    setMapping(current => Object.fromEntries(headers.map(header => [header, current[header] || autoMapHeader(header, fieldOptions)])))
+  }, [fieldOptions, headers])
+
+  const errors = validationRows.filter(item => item.status === 'error')
+  const duplicates = validationRows.filter(item => item.status === 'warning')
 
   return (
     <section className="tk-card p-5">
@@ -167,7 +238,9 @@ export function AccountCsvImport() {
             <Upload className="h-7 w-7" />
           </span>
           <p className="mt-3 text-sm font-semibold text-ink">Upload CSV</p>
-          <p className="mx-auto mt-1 max-w-md break-words text-xs text-ink-secondary">Required: account_name. Optional: {optional.join(', ')}.</p>
+          <p className="mx-auto mt-1 max-w-md break-words text-xs text-ink-secondary">
+            Required: account_name{customFields.some(field => field.is_required) ? ', configured required fields' : ''}. Optional: {optional.join(', ')}.
+          </p>
           <input id="account-csv-file" type="file" accept=".csv" onChange={handleFile} className="hidden" />
           <button type="button" className="tk-button-primary mt-4" onClick={() => document.getElementById('account-csv-file')?.click()}>
             <Upload className="h-4 w-4" />
@@ -183,7 +256,10 @@ export function AccountCsvImport() {
 
       {step === 2 ? (
         <div>
-          <h3 className="text-sm font-semibold text-ink">Field mapping</h3>
+          <div className="flex items-center gap-2">
+            <h3 className="text-sm font-semibold text-ink">Field mapping</h3>
+            {loadingCustomFields ? <Loader2 className="h-4 w-4 animate-spin text-brand-blue" /> : null}
+          </div>
           <div className="mt-3 overflow-x-auto">
             <table className="w-full min-w-[620px] text-left text-sm">
               <thead className="text-xs font-semibold uppercase tracking-wider text-ink-secondary">
@@ -196,7 +272,7 @@ export function AccountCsvImport() {
                     <td className="py-2">
                       <select className="tk-input" value={mapping[header] ?? ''} onChange={event => setMapping(prev => ({ ...prev, [header]: event.target.value }))}>
                         <option value="">Do not import</option>
-                        {[...required, ...optional].map(field => <option key={field}>{field}</option>)}
+                        {fieldOptions.map(field => <option key={field.key} value={field.key}>{field.label}{field.required ? ' *' : ''}</option>)}
                       </select>
                     </td>
                     <td className="py-2 text-ink-secondary">{rows[0]?.[header]}</td>
@@ -241,8 +317,108 @@ export function AccountCsvImport() {
             {importing ? <Loader2 className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />}
             Import accounts
           </button>
+          {importReport ? (
+            <div className="mt-4 rounded-lg border border-surface-border bg-surface-secondary p-3 text-sm text-ink-secondary">
+              <p className="font-semibold text-ink">
+                Stored: {importReport.created + importReport.updated} | Skipped: {importReport.skipped} | Failed: {importReport.failed}
+              </p>
+              <div className="mt-2 max-h-44 space-y-1 overflow-y-auto">
+                {importReport.results.map(result => (
+                  <p key={result.rowNumber} className={cn(result.status === 'failed' ? 'text-rag-red' : result.status === 'skipped' ? 'text-brand-orange' : 'text-ink-secondary')}>
+                    Row {result.rowNumber}: {result.accountName || 'Unnamed'} - {result.message}
+                  </p>
+                ))}
+              </div>
+            </div>
+          ) : null}
         </div>
       ) : null}
     </section>
   )
+}
+
+function autoMapHeader(header: string, fieldOptions: ImportFieldOption[]) {
+  const normalized = normalizeHeader(header)
+  const staticField = [...required, ...optional].find(field => normalizeHeader(field) === normalized)
+  if (staticField) return staticField
+  const custom = fieldOptions.find(option => option.customField && [option.customField.field_key, option.customField.label].map(normalizeHeader).includes(normalized))
+  return custom?.key ?? ''
+}
+
+function customFieldKey(fieldKey: string) {
+  return `custom:${fieldKey}`
+}
+
+function normalizeHeader(value: string) {
+  return value.trim().toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '')
+}
+
+function mappedValue(row: Record<string, string>, mapping: Record<string, string>, field: string) {
+  const column = Object.entries(mapping).find(([, mapped]) => mapped === field)?.[0]
+  return column ? row[column]?.trim() ?? '' : ''
+}
+
+function buildImportRow(row: Record<string, string>, mapping: Record<string, string>, customFields: AccountCustomFieldDefinition[]): AccountCsvImportRow {
+  const payload: AccountCsvImportRow = {
+    account_name: mappedValue(row, mapping, 'account_name'),
+    project_name: optionalValue(mappedValue(row, mapping, 'project_name')),
+    company_url: optionalValue(mappedValue(row, mapping, 'company_url')),
+    industry: optionalValue(mappedValue(row, mapping, 'industry')),
+    arr: optionalNumber(mappedValue(row, mapping, 'arr')),
+    stage: optionalValue(mappedValue(row, mapping, 'stage')),
+    owner_email: optionalValue(mappedValue(row, mapping, 'owner_email')),
+    owner_name: optionalValue(mappedValue(row, mapping, 'owner_name')),
+    segment: optionalValue(mappedValue(row, mapping, 'segment')),
+    region: optionalValue(mappedValue(row, mapping, 'region')),
+  }
+  const customValues = customFields.reduce<Record<string, unknown>>((values, field) => {
+    const value = customValueForImport(field, mappedValue(row, mapping, customFieldKey(field.field_key)))
+    if (!isEmptyCsvValue(value)) values[field.field_key] = value
+    return values
+  }, {})
+  if (Object.keys(customValues).length) payload.custom_field_values = customValues
+  return Object.fromEntries(Object.entries(payload).filter(([, value]) => !isEmptyCsvValue(value))) as AccountCsvImportRow
+}
+
+function customValueForImport(field: AccountCustomFieldDefinition, value: string): unknown {
+  if (!value.trim()) return undefined
+  if (field.field_type === 'boolean') return /^(true|yes|1)$/i.test(value.trim())
+  if (field.field_type === 'number' || field.field_type === 'currency') return optionalNumber(value)
+  if (field.field_type === 'multi_select') return value.split(/[;|]/).map(item => item.trim()).filter(Boolean)
+  return value.trim()
+}
+
+function optionalValue(value: string) {
+  return value.trim() || undefined
+}
+
+function optionalNumber(value: string) {
+  if (!value.trim()) return undefined
+  const number = Number(value.replace(/[$,\s]/g, ''))
+  return Number.isFinite(number) ? number : undefined
+}
+
+function isEmptyCsvValue(value: unknown) {
+  return value === undefined || value === null || value === '' || (Array.isArray(value) && value.length === 0)
+}
+
+function importReportCsv(report: AccountCsvImportResponse) {
+  const lines = ['row,status,account_name,message,account_id,draft_id,errors']
+  report.results.forEach(result => {
+    lines.push([
+      result.rowNumber,
+      result.status,
+      result.accountName ?? '',
+      result.message,
+      result.accountId ?? '',
+      result.draftId ?? '',
+      result.errors.map(error => `${error.field}: ${error.message}`).join('; '),
+    ].map(csvCell).join(','))
+  })
+  return lines.join('\n')
+}
+
+function csvCell(value: unknown) {
+  const text = String(value ?? '')
+  return /[",\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text
 }
