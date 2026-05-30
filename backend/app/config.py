@@ -12,7 +12,7 @@ class Settings:
     def __init__(self) -> None:
         self.database_url = os.getenv(
             "DATABASE_URL",
-            "postgresql+psycopg://kam_app:kam_app_password@127.0.0.1:5432/kam_intelligence",
+            "postgresql+psycopg://kam_app:kam_app_password@127.0.0.1:5433/kam_intelligence",
         )
         self.jwt_secret_key = os.getenv("JWT_SECRET_KEY", "replace-this-local-development-secret")
         self.jwt_algorithm = os.getenv("JWT_ALGORITHM", "HS256")
