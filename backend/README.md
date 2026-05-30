@@ -7,7 +7,7 @@ FastAPI backend scaffold for the KAM Intelligence Platform.
 The local API is configured to use:
 
 ```text
-postgresql+psycopg://kam_app:kam_app_password@127.0.0.1:5432/kam_intelligence
+postgresql+psycopg://kam_app:kam_app_password@127.0.0.1:5433/kam_intelligence
 ```
 
 The app creates the auth tables on startup and seeds a super admin when one does not exist.

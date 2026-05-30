@@ -10,6 +10,7 @@ from sqlalchemy.pool import StaticPool
 from app.database import Base, get_db
 from app.main import app
 from app.models import CustomFieldValue, Engagement
+from app.models import Account, CustomFieldValue, Engagement, SourceDocument
 from app.services.seed import seed_default_data
 
 
@@ -740,3 +741,80 @@ def test_account_creation_accepts_field_builder_values(client: TestClient, db_se
     values = [value for value in db_session.query(CustomFieldValue).filter(CustomFieldValue.record_id == account_id).all()]
     assert values
     assert values[0].value == "Gold"
+
+
+def test_csv_import_persists_accounts_in_onboarding_hierarchy(client: TestClient, db_session: Session) -> None:
+    headers = auth_headers(client)
+
+    response = client.post(
+        "/api/accounts/import-csv",
+        headers=headers,
+        json={
+            "duplicate_mode": "skip",
+            "source_file_name": "accounts.csv",
+            "rows": [
+                {
+                    "account_name": "CSV Cafe Zupas",
+                    "project_name": "CSV Customer Success Workspace",
+                    "company_url": "https://cafezupas.example.com",
+                    "industry": "Restaurants",
+                    "arr": 1260000,
+                    "stage": "Onboarding",
+                    "owner_email": "account.manager.user@tkxelkam.com",
+                    "segment": "Enterprise",
+                    "region": "North America",
+                }
+            ],
+        },
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["created"] == 1
+    assert body["failed"] == 0
+    result = body["results"][0]
+    assert result["status"] == "created"
+    assert result["account"]["name"] == "CSV Cafe Zupas"
+    assert result["draft_id"]
+
+    account = db_session.query(Account).filter(Account.id == result["account_id"]).one()
+    assert account.name == "CSV Cafe Zupas"
+    assert account.created_from_draft_id == result["draft_id"]
+    assert account.owners[0].user_email == "account.manager.user@tkxelkam.com"
+    assert db_session.query(Engagement).filter(Engagement.account_id == account.id).count() == 1
+    document = db_session.query(SourceDocument).filter(SourceDocument.account_id == account.id).one()
+    assert document.draft_id == result["draft_id"]
+    assert document.source_type == "manual_import"
+
+    list_response = client.get("/api/accounts", headers=headers, params={"search": "CSV Cafe", "page": 1, "page_size": 10})
+    assert list_response.status_code == 200
+    assert list_response.json()["items"][0]["id"] == account.id
+
+    openapi = client.get("/openapi.json")
+    assert openapi.status_code == 200
+    assert openapi.json()["paths"]["/api/accounts/import-csv"]["post"]["summary"] == "Import accounts from CSV"
+
+
+def test_csv_import_reports_row_errors_and_skips_duplicates(client: TestClient) -> None:
+    headers = auth_headers(client)
+    create_approved_account(client, headers, "CSV Duplicate Workspace")
+
+    duplicate_response = client.post(
+        "/api/accounts/import-csv",
+        headers=headers,
+        json={"duplicate_mode": "skip", "rows": [{"account_name": "CSV Duplicate Workspace"}]},
+    )
+    assert duplicate_response.status_code == 200
+    assert duplicate_response.json()["skipped"] == 1
+    assert duplicate_response.json()["results"][0]["status"] == "skipped"
+
+    invalid_response = client.post(
+        "/api/accounts/import-csv",
+        headers=headers,
+        json={"duplicate_mode": "skip", "rows": [{"account_name": "", "arr": -5}]},
+    )
+    assert invalid_response.status_code == 200
+    body = invalid_response.json()
+    assert body["failed"] == 1
+    assert body["results"][0]["status"] == "failed"
+    assert any(error["field"] == "account_name" for error in body["results"][0]["errors"])
