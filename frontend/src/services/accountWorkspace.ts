@@ -168,6 +168,63 @@ export interface CreateDraftPayload {
   customFieldValues?: Record<string, unknown>
 }
 
+export interface AccountCsvImportRow {
+  account_name?: string
+  project_name?: string
+  company_url?: string
+  industry?: string
+  arr?: number
+  commercial_value?: number
+  currency?: string
+  stage?: string
+  lifecycle_status?: string
+  owner_email?: string
+  owner_name?: string
+  segment?: string
+  region?: string
+  custom_field_values?: Record<string, unknown>
+}
+
+interface ApiAccountCsvImportResult {
+  row_number: number
+  status: 'created' | 'updated' | 'skipped' | 'failed'
+  account_name?: string | null
+  message: string
+  account_id?: string | null
+  draft_id?: string | null
+  errors: { field: string; message: string }[]
+  account?: ApiAccount | null
+}
+
+interface ApiAccountCsvImportResponse {
+  created: number
+  updated: number
+  skipped: number
+  failed: number
+  total_rows: number
+  results: ApiAccountCsvImportResult[]
+}
+
+export interface AccountCsvImportResult {
+  rowNumber: number
+  status: ApiAccountCsvImportResult['status']
+  accountName?: string | null
+  message: string
+  accountId?: string | null
+  draftId?: string | null
+  errors: { field: string; message: string }[]
+  account?: Account | null
+}
+
+export interface AccountCsvImportResponse {
+  created: number
+  updated: number
+  skipped: number
+  failed: number
+  totalRows: number
+  results: AccountCsvImportResult[]
+}
+
 export interface AccountCustomFieldDefinition {
   id: string
   module: string
@@ -197,6 +254,38 @@ export async function getAccount(token: string, accountId: string) {
 
 export async function listAccountCustomFields(token: string) {
   return apiRequest<AccountCustomFieldDefinition[]>('/api/accounts/custom-fields', { token })
+}
+
+export async function importAccountsCsv(
+  token: string,
+  payload: { duplicateMode: 'skip' | 'overwrite' | 'create'; sourceFileName?: string; rows: AccountCsvImportRow[] },
+) {
+  const response = await apiRequest<ApiAccountCsvImportResponse>('/api/accounts/import-csv', {
+    method: 'POST',
+    token,
+    body: JSON.stringify({
+      duplicate_mode: payload.duplicateMode,
+      source_file_name: payload.sourceFileName,
+      rows: payload.rows,
+    }),
+  })
+  return {
+    created: response.created,
+    updated: response.updated,
+    skipped: response.skipped,
+    failed: response.failed,
+    totalRows: response.total_rows,
+    results: response.results.map(result => ({
+      rowNumber: result.row_number,
+      status: result.status,
+      accountName: result.account_name,
+      message: result.message,
+      accountId: result.account_id,
+      draftId: result.draft_id,
+      errors: result.errors,
+      account: result.account ? mapApiAccount(result.account) : null,
+    })),
+  } satisfies AccountCsvImportResponse
 }
 
 export async function listOnboardingDrafts(token: string, params: URLSearchParams) {

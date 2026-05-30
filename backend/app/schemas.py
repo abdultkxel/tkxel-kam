@@ -921,6 +921,34 @@ class OnboardingDraftCreateRequest(BaseModel):
         return {validate_slug(key, "Custom field key"): item for key, item in value.items()}
 
 
+class AccountCsvImportRow(BaseModel):
+    account_name: str | None = Field(default=None, description="Account name from the CSV row.")
+    project_name: str | None = Field(default=None, description="Optional project or engagement name.")
+    company_url: str | None = Field(default=None, description="Optional company website.")
+    industry: str | None = Field(default=None, description="Optional industry value stored as account context.")
+    arr: Any = Field(default=None, description="Annual recurring revenue from the CSV row.")
+    commercial_value: Any = Field(default=None, description="Commercial value alias for ARR.")
+    currency: str | None = Field(default=None, description="Three-letter currency code.")
+    stage: str | None = Field(default=None, description="Lifecycle stage alias from CSV.")
+    lifecycle_status: str | None = Field(default=None, description="Lifecycle status from CSV.")
+    owner_email: str | None = Field(default=None, description="Primary Account Manager email.")
+    owner_name: str | None = Field(default=None, description="Primary Account Manager name.")
+    segment: str | None = Field(default=None, description="Account segment.")
+    region: str | None = Field(default=None, description="Account region.")
+    custom_field_values: dict[str, Any] = Field(default_factory=dict, description="Field Builder values keyed by field_key.")
+
+
+class AccountCsvImportRequest(BaseModel):
+    duplicate_mode: Literal["skip", "overwrite", "create"] = Field(default="skip", description="How duplicate account names should be handled.")
+    source_file_name: str | None = Field(default=None, description="Original CSV file name used for source document lineage.")
+    rows: list[AccountCsvImportRow] = Field(..., min_length=1, max_length=500, description="Mapped CSV rows to import.")
+
+    @field_validator("source_file_name")
+    @classmethod
+    def source_file_name_is_valid(cls, value: str | None) -> str | None:
+        return optional_text(value, "Source file name", max_length=220)
+
+
 class OnboardingDraftUpdateRequest(BaseModel):
     account_name: str | None = None
     project_name: str | None = None
@@ -1104,6 +1132,26 @@ class AccountPageRead(BaseModel):
     page: int
     page_size: int
     pages: int
+
+
+class AccountCsvImportResult(BaseModel):
+    row_number: int
+    status: Literal["created", "updated", "skipped", "failed"]
+    account_name: str | None = None
+    message: str
+    account_id: str | None = None
+    draft_id: str | None = None
+    errors: list[dict[str, str]] = Field(default_factory=list)
+    account: AccountRead | None = None
+
+
+class AccountCsvImportResponse(BaseModel):
+    created: int
+    updated: int
+    skipped: int
+    failed: int
+    total_rows: int
+    results: list[AccountCsvImportResult]
 
 
 class AccountSummaryCardsRead(BaseModel):

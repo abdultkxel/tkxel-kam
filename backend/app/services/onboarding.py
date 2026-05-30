@@ -1,6 +1,7 @@
 from datetime import datetime, timezone
 
 from fastapi import HTTPException, status
+from pydantic import ValidationError
 from sqlalchemy.orm import Session
 
 from app.models import (
@@ -24,6 +25,11 @@ from app.repositories.rbac import RbacRepository
 from app.repositories.timeline import TimelineRepository
 from app.repositories.custom_fields import CustomFieldRepository
 from app.schemas import (
+    AccountCsvImportRequest,
+    AccountCsvImportResponse,
+    AccountCsvImportResult,
+    AccountCsvImportRow,
+    AccountRead,
     OnboardingDraftCreateRequest,
     OnboardingDraftLinkRequest,
     OnboardingDraftPageRead,
@@ -261,6 +267,301 @@ class OnboardingService:
         self.onboarding.commit()
         return OnboardingDraftRead.model_validate(self._get_draft_or_404(draft.id))
 
+    def import_accounts_from_csv(self, payload: AccountCsvImportRequest, current_user: User) -> AccountCsvImportResponse:
+        self.access.require_module_permission(current_user, "account_onboarding_workspace", "create")
+        self.access.require_module_permission(current_user, "account_onboarding_workspace", "approve")
+
+        results = [self._import_csv_row(index, row, payload, current_user) for index, row in enumerate(payload.rows, start=1)]
+        return AccountCsvImportResponse(
+            created=sum(1 for result in results if result.status == "created"),
+            updated=sum(1 for result in results if result.status == "updated"),
+            skipped=sum(1 for result in results if result.status == "skipped"),
+            failed=sum(1 for result in results if result.status == "failed"),
+            total_rows=len(payload.rows),
+            results=results,
+        )
+
+    def _import_csv_row(self, row_number: int, row: AccountCsvImportRow, payload: AccountCsvImportRequest, current_user: User) -> AccountCsvImportResult:
+        try:
+            duplicate = self.accounts.find_duplicate_by_name(row.account_name or "")
+            if duplicate and payload.duplicate_mode == "skip":
+                return self._csv_row_result(row_number, "skipped", row.account_name, "Duplicate account skipped.", account_id=duplicate.id)
+            if duplicate and payload.duplicate_mode == "overwrite":
+                return self._overwrite_csv_account(row_number, row, payload.source_file_name, duplicate, current_user)
+            return self._create_csv_account(row_number, row, payload.source_file_name, current_user, allow_duplicate=payload.duplicate_mode == "create")
+        except ValidationError as exc:
+            self.onboarding.db.rollback()
+            return self._csv_failure_result(row_number, row.account_name, "CSV row validation failed.", self._errors_from_validation(exc))
+        except HTTPException as exc:
+            self.onboarding.db.rollback()
+            return self._csv_failure_result(row_number, row.account_name, self._message_from_http_exception(exc), self._errors_from_http_exception(exc))
+
+    def _create_csv_account(
+        self,
+        row_number: int,
+        row: AccountCsvImportRow,
+        source_file_name: str | None,
+        current_user: User,
+        *,
+        allow_duplicate: bool,
+    ) -> AccountCsvImportResult:
+        draft_payload = self._csv_row_to_draft_payload(row, row_number, source_file_name)
+        draft = self.create_draft(draft_payload, current_user)
+        if allow_duplicate:
+            self._allow_duplicate_csv_draft(draft.id)
+        approved = self.approve_draft(draft.id, current_user)
+        account = self._account_read_by_id(approved.approved_account_id) if approved.approved_account_id else None
+        return self._csv_row_result(
+            row_number,
+            "created",
+            draft.account_name,
+            "Account imported and stored in the account hierarchy.",
+            account_id=approved.approved_account_id,
+            draft_id=draft.id,
+            account=account,
+        )
+
+    def _overwrite_csv_account(
+        self,
+        row_number: int,
+        row: AccountCsvImportRow,
+        source_file_name: str | None,
+        account: Account,
+        current_user: User,
+    ) -> AccountCsvImportResult:
+        draft_payload = self._csv_row_to_draft_payload(row, row_number, source_file_name)
+        draft = self.create_draft(draft_payload, current_user)
+        self.link_account(
+            draft.id,
+            OnboardingDraftLinkRequest(account_id=account.id, reason="CSV import overwrite matched this existing account."),
+            current_user,
+        )
+        linked_draft = self._get_draft_or_404(draft.id)
+        account = self.accounts.get_by_id(account.id) or account
+        before = self._account_import_audit_value(account)
+        self._apply_csv_account_updates(account, linked_draft, current_user)
+        self.custom_fields.copy_record_values(["account_onboarding_workspace", "account_overview"], linked_draft.id, account.id, current_user)
+        self.audit.log(
+            module="account_onboarding_workspace",
+            action="csv_account_overwrite",
+            entity_type="account",
+            entity_id=account.id,
+            actor=current_user,
+            before_value=before,
+            after_value=self._account_import_audit_value(account),
+            reason="CSV import overwrite matched an existing account name.",
+        )
+        self.timeline.add_account_event(
+            account_id=account.id,
+            event_type="account_setup",
+            module="onboarding",
+            title="Account updated from CSV import",
+            description=f"CSV row {row_number} updated this account and linked import source evidence.",
+            actor=current_user,
+            source_record_id=linked_draft.id,
+            source_record_type="onboarding_draft",
+            source_record_route=f"/accounts/onboarding?draft={linked_draft.id}",
+        )
+        self.onboarding.commit()
+        return self._csv_row_result(
+            row_number,
+            "updated",
+            linked_draft.account_name,
+            "Existing account updated from CSV import.",
+            account_id=account.id,
+            draft_id=linked_draft.id,
+            account=self._account_read_by_id(account.id),
+        )
+
+    def _csv_row_to_draft_payload(self, row: AccountCsvImportRow, row_number: int, source_file_name: str | None) -> OnboardingDraftCreateRequest:
+        account_name = self._clean(row.account_name)
+        project_name = self._clean(row.project_name) or f"{account_name or 'Imported account'} Account Onboarding"
+        source_name = source_file_name or "account-import.csv"
+        industry = self._clean(row.industry)
+        owner_name = self._clean(row.owner_name)
+        owner_email = self._clean(row.owner_email)
+        commercial_value = self._first_present(row.commercial_value, row.arr, 0)
+        lifecycle_status = self._normalize_csv_lifecycle(self._clean(row.lifecycle_status) or self._clean(row.stage))
+        source_citation = f"{source_name} row {row_number}: account details supplied by CSV import."
+
+        return OnboardingDraftCreateRequest.model_validate(
+            {
+                "account_name": account_name or "",
+                "project_name": project_name,
+                "company_url": self._clean(row.company_url),
+                "lifecycle_status": lifecycle_status,
+                "segment": self._clean(row.segment) or "Growth",
+                "region": self._clean(row.region) or "Global",
+                "service_context": f"Industry: {industry}" if industry else "Imported from account CSV.",
+                "initial_notes": f"Imported from {source_name} row {row_number}.",
+                "commercial_value": commercial_value,
+                "currency": self._clean(row.currency) or "USD",
+                "primary_owner_name": owner_name,
+                "primary_owner_email": owner_email,
+                "confidence": 75,
+                "source_citation": source_citation,
+                "source_documents": [
+                    {
+                        "title": f"{source_name} row {row_number}",
+                        "source_type": "manual_import",
+                        "file_name": source_name,
+                        "confidence": 75,
+                        "pages": 1,
+                        "citations": [
+                            {
+                                "label": f"CSV row {row_number}",
+                                "page_number": 1,
+                                "excerpt": f"{account_name or 'Missing account name'} | {project_name}",
+                                "field_key": "account_name",
+                            }
+                        ],
+                    }
+                ],
+                "engagement_drafts": [
+                    {
+                        "name": project_name,
+                        "owner_name": owner_name,
+                        "service_lines": ["Account onboarding"],
+                        "value": commercial_value,
+                        "currency": self._clean(row.currency) or "USD",
+                        "delivery_status": "active",
+                        "start_date": datetime.now(timezone.utc),
+                        "commercial_context": source_citation,
+                        "risks": ["KYC has not been completed yet"],
+                        "source_citation": source_citation,
+                        "confidence": 75,
+                    }
+                ],
+                "custom_field_values": row.custom_field_values,
+            }
+        )
+
+    def _allow_duplicate_csv_draft(self, draft_id: str) -> None:
+        draft = self._get_draft_or_404(draft_id)
+        if not draft.duplicate_account_id:
+            return
+        draft.duplicate_account_id = None
+        draft.conflicts = [*draft.conflicts, "CSV duplicate mode created a separate account with the same name."]
+        self.onboarding.commit()
+
+    def _apply_csv_account_updates(self, account: Account, draft: OnboardingDraft, current_user: User) -> None:
+        account.name = draft.account_name
+        account.project_name = draft.project_name
+        account.company_url = draft.company_url
+        account.segment = draft.segment
+        account.region = draft.region
+        account.lifecycle_status = draft.lifecycle_status
+        account.commercial_value = draft.commercial_value
+        account.currency = draft.currency
+        account.service_context = draft.service_context
+        account.commercial_summary = draft.commercial_summary
+        account.initial_notes = draft.initial_notes
+        account.source_citation = self._source_citation_for_draft(draft)
+        if not draft.primary_owner_id and not draft.primary_owner_email:
+            return
+        owner = self._resolve_primary_owner_for_approval(draft, current_user)
+        previous = self.accounts.get_active_primary_owner(account.id)
+        if previous and previous.user_id == owner.id:
+            return
+        if previous:
+            previous.is_active = False
+            previous.ended_at = datetime.now(timezone.utc)
+        self._create_primary_owner(
+            account,
+            owner,
+            current_user,
+            rationale="Primary Account Manager assigned during CSV import overwrite.",
+            source="csv_import_overwrite",
+        )
+
+    def _account_read_by_id(self, account_id: str | None) -> AccountRead | None:
+        if not account_id:
+            return None
+        account = self.accounts.get_by_id(account_id)
+        return AccountService._account_read(account) if account else None
+
+    @staticmethod
+    def _csv_row_result(
+        row_number: int,
+        result_status: str,
+        account_name: str | None,
+        message: str,
+        *,
+        account_id: str | None = None,
+        draft_id: str | None = None,
+        account: AccountRead | None = None,
+    ) -> AccountCsvImportResult:
+        return AccountCsvImportResult(
+            row_number=row_number,
+            status=result_status,
+            account_name=account_name,
+            message=message,
+            account_id=account_id,
+            draft_id=draft_id,
+            account=account,
+        )
+
+    @staticmethod
+    def _csv_failure_result(row_number: int, account_name: str | None, message: str, errors: list[dict[str, str]]) -> AccountCsvImportResult:
+        return AccountCsvImportResult(row_number=row_number, status="failed", account_name=account_name, message=message, errors=errors)
+
+    @staticmethod
+    def _message_from_http_exception(exc: HTTPException) -> str:
+        if isinstance(exc.detail, dict) and isinstance(exc.detail.get("message"), str):
+            return exc.detail["message"]
+        return str(exc.detail)
+
+    @staticmethod
+    def _errors_from_http_exception(exc: HTTPException) -> list[dict[str, str]]:
+        if isinstance(exc.detail, dict) and isinstance(exc.detail.get("errors"), list):
+            return [error for error in exc.detail["errors"] if isinstance(error, dict)]
+        return [{"field": "row", "message": str(exc.detail)}]
+
+    @staticmethod
+    def _errors_from_validation(exc: ValidationError) -> list[dict[str, str]]:
+        errors = []
+        for error in exc.errors():
+            field_path = ".".join(str(item) for item in error.get("loc", ()) if item != "body") or "row"
+            message = str(error.get("msg", "Invalid value.")).removeprefix("Value error, ")
+            errors.append({"field": field_path, "message": message[:1].upper() + message[1:]})
+        return errors
+
+    @staticmethod
+    def _account_import_audit_value(account: Account) -> dict:
+        return {
+            "name": account.name,
+            "project_name": account.project_name,
+            "lifecycle_status": account.lifecycle_status,
+            "segment": account.segment,
+            "region": account.region,
+            "commercial_value": float(account.commercial_value),
+            "currency": account.currency,
+        }
+
+    @staticmethod
+    def _normalize_csv_lifecycle(value: str | None) -> str:
+        if not value:
+            return "Onboarding"
+        normalized = {
+            "adoption": "Active",
+            "expansion": "Expansion Focus",
+            "renewal": "Renewal Focus",
+            "at_risk": "At Risk",
+            "at risk": "At Risk",
+        }.get(value.strip().lower())
+        return normalized or value.strip()
+
+    @staticmethod
+    def _first_present(*values):
+        return next((value for value in values if value not in {None, ""}), None)
+
+    @staticmethod
+    def _clean(value: object) -> str | None:
+        if value is None:
+            return None
+        text = str(value).strip()
+        return text or None
+
     def _get_draft_or_404(self, draft_id: str) -> OnboardingDraft:
         draft = self.onboarding.get_by_id(draft_id)
         if draft is None:
@@ -405,8 +706,15 @@ class OnboardingService:
                 )
             )
 
-    def _create_primary_owner(self, account: Account, owner_user: User, current_user: User) -> AccountOwner:
-        rationale = "Primary Account Manager assigned during onboarding approval."
+    def _create_primary_owner(
+        self,
+        account: Account,
+        owner_user: User,
+        current_user: User,
+        *,
+        rationale: str = "Primary Account Manager assigned during onboarding approval.",
+        source: str = "onboarding_approval",
+    ) -> AccountOwner:
         owner = AccountOwner(
             account_id=account.id,
             user_id=owner_user.id,
@@ -430,7 +738,7 @@ class OnboardingService:
                 actor_id=current_user.id,
                 actor_name=current_user.full_name,
                 rationale=rationale,
-                source="onboarding_approval",
+                source=source,
             )
         )
         return owner

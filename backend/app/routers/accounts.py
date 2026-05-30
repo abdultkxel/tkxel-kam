@@ -3,9 +3,11 @@ from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends, Query, status
 
-from app.dependencies import get_account_service, get_current_user, get_custom_field_service, get_engagement_service, require_permission
+from app.dependencies import get_account_service, get_current_user, get_custom_field_service, get_engagement_service, get_onboarding_service, require_permission
 from app.models import User
 from app.schemas import (
+    AccountCsvImportRequest,
+    AccountCsvImportResponse,
     AccountOverviewRead,
     AccountHealthRollupRead,
     AccountOwnerCreateRequest,
@@ -29,6 +31,7 @@ from app.schemas import (
 from app.services.accounts import AccountService
 from app.services.custom_fields import CustomFieldService
 from app.services.engagements import EngagementService
+from app.services.onboarding import OnboardingService
 
 Direction = Literal["asc", "desc"]
 AccountSort = Literal["name", "lifecycle_status", "risk_status", "owner_name", "segment", "commercial_value", "health", "next_governance_at", "updated_at"]
@@ -117,6 +120,31 @@ def list_account_custom_fields(
     service: Annotated[CustomFieldService, Depends(get_custom_field_service)],
 ) -> list[CustomFieldDefinitionRead]:
     return service.list_active_definitions(["account_onboarding_workspace", "account_overview"])
+
+
+@router.post(
+    "/import-csv",
+    response_model=AccountCsvImportResponse,
+    summary="Import accounts from CSV",
+    description=(
+        "Bulk account creation from mapped CSV rows. Each valid row is converted into the same onboarding draft, "
+        "source document, approval, account, primary owner, engagement, health rollup, audit, and timeline hierarchy "
+        "used by manual account creation. Duplicate modes support skipping, overwriting an existing account, or "
+        "creating a separate duplicate account."
+    ),
+    responses={
+        200: {"description": "CSV rows were processed with per-row created, updated, skipped, or failed results."},
+        401: {"description": "Missing, invalid, or expired bearer token."},
+        403: {"description": "Authenticated user cannot create and approve onboarding accounts."},
+        422: {"description": "Request-level validation errors such as missing rows or invalid duplicate mode."},
+    },
+)
+def import_accounts_csv(
+    payload: AccountCsvImportRequest,
+    current_user: Annotated[User, Depends(get_current_user)],
+    service: Annotated[OnboardingService, Depends(get_onboarding_service)],
+) -> AccountCsvImportResponse:
+    return service.import_accounts_from_csv(payload, current_user)
 
 
 @router.get(
