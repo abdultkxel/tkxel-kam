@@ -165,6 +165,24 @@ export interface CreateDraftPayload {
   managerEmail: string
   managerName: string
   fileNames: string[]
+  customFieldValues?: Record<string, unknown>
+}
+
+export interface AccountCustomFieldDefinition {
+  id: string
+  module: string
+  field_key: string
+  label: string
+  description?: string | null
+  field_type: 'text' | 'textarea' | 'number' | 'currency' | 'date' | 'datetime' | 'boolean' | 'single_select' | 'multi_select' | 'email' | 'url' | 'phone'
+  placeholder?: string | null
+  help_text?: string | null
+  options: string[]
+  is_required: boolean
+  is_sensitive: boolean
+  show_in_list: boolean
+  show_in_detail: boolean
+  sort_order: number
 }
 
 export async function listAccounts(token: string, params: URLSearchParams) {
@@ -175,6 +193,10 @@ export async function listAccounts(token: string, params: URLSearchParams) {
 
 export async function getAccount(token: string, accountId: string) {
   return mapApiAccount(await apiRequest<ApiAccount>(`/api/accounts/${accountId}`, { token }))
+}
+
+export async function listAccountCustomFields(token: string) {
+  return apiRequest<AccountCustomFieldDefinition[]>('/api/accounts/custom-fields', { token })
 }
 
 export async function listOnboardingDrafts(token: string, params: URLSearchParams) {
@@ -250,6 +272,7 @@ function buildDraftPayload(payload: CreateDraftPayload) {
         },
       ],
     })),
+    custom_field_values: payload.customFieldValues ?? {},
     engagement_drafts: [
       {
         name: payload.projectName,

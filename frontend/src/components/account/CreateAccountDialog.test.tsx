@@ -105,6 +105,25 @@ const apiAccount = {
   governance_completeness: { accountable_am: true, current_kyc: false, engagement_records: true, next_governance: false },
 }
 
+const customFields = [
+  {
+    id: 'field-1',
+    module: 'account_overview',
+    field_key: 'customer_tier',
+    label: 'Customer Tier',
+    description: 'Tier from Admin Field Builder.',
+    field_type: 'single_select',
+    placeholder: null,
+    help_text: null,
+    options: ['Gold', 'Silver'],
+    is_required: true,
+    is_sensitive: false,
+    show_in_list: true,
+    show_in_detail: true,
+    sort_order: 1,
+  },
+]
+
 async function fillForm() {
   await userEvent.click(screen.getByRole('button', { name: /create account/i }))
   await userEvent.type(screen.getByLabelText(/name of account/i), 'Acme Corp')
@@ -117,6 +136,7 @@ describe('CreateAccountDialog', () => {
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input)
       const method = init?.method ?? 'GET'
+      if (url.endsWith('/api/accounts/custom-fields') && method === 'GET') return jsonResponse([])
       if (url.endsWith('/api/onboarding/drafts') && method === 'POST') return jsonResponse(apiDraft())
       if (url.endsWith('/api/onboarding/drafts/draft-1/approve') && method === 'POST') return jsonResponse(apiDraft('approved'))
       if (url.endsWith('/api/accounts/acct-1') && method === 'GET') return jsonResponse(apiAccount)
@@ -144,8 +164,11 @@ describe('CreateAccountDialog', () => {
   it('shows backend validation errors at matching account fields', async () => {
     vi.stubGlobal(
       'fetch',
-      vi.fn(async () =>
-        jsonResponse(
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input)
+        const method = init?.method ?? 'GET'
+        if (url.endsWith('/api/accounts/custom-fields') && method === 'GET') return jsonResponse([])
+        return jsonResponse(
           {
             detail: {
               message: 'Draft approval validation failed',
@@ -156,8 +179,8 @@ describe('CreateAccountDialog', () => {
             },
           },
           422,
-        ),
-      ),
+        )
+      }),
     )
 
     render(
@@ -171,5 +194,40 @@ describe('CreateAccountDialog', () => {
 
     expect(await screen.findByText('Account name is already in review.')).toBeInTheDocument()
     expect(screen.getByText('Project name needs source evidence.')).toBeInTheDocument()
+  })
+
+  it('renders Field Builder fields and submits their values with account creation', async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input)
+      const method = init?.method ?? 'GET'
+      if (url.endsWith('/api/accounts/custom-fields') && method === 'GET') return jsonResponse(customFields)
+      if (url.endsWith('/api/onboarding/drafts') && method === 'POST') return jsonResponse(apiDraft())
+      if (url.endsWith('/api/onboarding/drafts/draft-1/approve') && method === 'POST') return jsonResponse(apiDraft('approved'))
+      if (url.endsWith('/api/accounts/acct-1') && method === 'GET') return jsonResponse(apiAccount)
+      return jsonResponse({})
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    render(
+      <MemoryRouter initialEntries={['/accounts']}>
+        <Routes>
+          <Route path="/accounts" element={<CreateAccountDialog />} />
+          <Route path="/accounts/:id" element={<div>Account page loaded</div>} />
+        </Routes>
+      </MemoryRouter>,
+    )
+
+    await fillForm()
+    expect(await screen.findByLabelText(/customer tier/i)).toBeInTheDocument()
+    await userEvent.selectOptions(screen.getByLabelText(/customer tier/i), 'Gold')
+    await userEvent.click(screen.getAllByRole('button', { name: /create account/i }).at(-1)!)
+
+    await screen.findByText('Account page loaded')
+    expect(fetchMock.mock.calls.some(call => {
+      const [url, init] = call
+      if (!String(url).endsWith('/api/onboarding/drafts') || init?.method !== 'POST') return false
+      const payload = JSON.parse(String(init.body))
+      return payload.custom_field_values?.customer_tier === 'Gold'
+    })).toBe(true)
   })
 })

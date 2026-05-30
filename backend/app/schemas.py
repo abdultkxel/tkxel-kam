@@ -868,6 +868,7 @@ class OnboardingDraftCreateRequest(BaseModel):
     source_citation: str | None = None
     source_documents: list[SourceDocumentCreateRequest] = Field(..., min_length=1)
     engagement_drafts: list[EngagementDraftRequest] = Field(default_factory=list)
+    custom_field_values: dict[str, Any] = Field(default_factory=dict, description="Custom account field values keyed by field_key.")
 
     @field_validator("account_name")
     @classmethod
@@ -913,6 +914,11 @@ class OnboardingDraftCreateRequest(BaseModel):
     @classmethod
     def notes_are_valid(cls, value: list[str]) -> list[str]:
         return [validate_short_text(item, "Draft note", 500) for item in value]
+
+    @field_validator("custom_field_values")
+    @classmethod
+    def custom_field_keys_are_valid(cls, value: dict[str, Any]) -> dict[str, Any]:
+        return {validate_slug(key, "Custom field key"): item for key, item in value.items()}
 
 
 class OnboardingDraftUpdateRequest(BaseModel):

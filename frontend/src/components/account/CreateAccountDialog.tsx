@@ -1,13 +1,13 @@
 import * as Dialog from '@radix-ui/react-dialog'
 import { Building2, FileSearch, FileText, Globe2, Loader2, Mail, Plus, Sparkles, Upload, UserRound, X } from 'lucide-react'
 import { nanoid } from 'nanoid'
-import { FormEvent, forwardRef, useRef, useState } from 'react'
+import { FormEvent, forwardRef, useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { toast } from 'sonner'
 import { useAuth } from '@/contexts/AuthContext'
 import { users } from '@/data/mock'
 import { ApiError } from '@/services/api'
-import { approveOnboardingDraft, createOnboardingDraft, getAccount } from '@/services/accountWorkspace'
+import { AccountCustomFieldDefinition, approveOnboardingDraft, createOnboardingDraft, getAccount, listAccountCustomFields } from '@/services/accountWorkspace'
 import { useAccountStore } from '@/stores/accountStore'
 import { cn } from '@/utils/cn'
 
@@ -25,6 +25,10 @@ export function CreateAccountDialog({ label = 'Create account' }: { label?: stri
   const [managerName, setManagerName] = useState(firstAm.name)
   const [managerEmail, setManagerEmail] = useState(firstAm.email)
   const [errors, setErrors] = useState<Partial<Record<CreateAccountField, string>>>({})
+  const [customFields, setCustomFields] = useState<AccountCustomFieldDefinition[]>([])
+  const [customValues, setCustomValues] = useState<Record<string, unknown>>({})
+  const [customErrors, setCustomErrors] = useState<Record<string, string>>({})
+  const [loadingCustomFields, setLoadingCustomFields] = useState(false)
   const [fileNames, setFileNames] = useState<string[]>([])
   const [extracting, setExtracting] = useState(false)
   const [creating, setCreating] = useState(false)
@@ -43,6 +47,8 @@ export function CreateAccountDialog({ label = 'Create account' }: { label?: stri
     setManagerName(firstAm.name)
     setManagerEmail(firstAm.email)
     setErrors({})
+    setCustomValues({})
+    setCustomErrors({})
     setFileNames([])
     setExtracting(false)
     setCreating(false)
@@ -70,18 +76,34 @@ export function CreateAccountDialog({ label = 'Create account' }: { label?: stri
     setErrors(current => ({ ...current, [field]: undefined }))
   }
 
+  function updateCustomField(fieldKey: string, value: unknown) {
+    setCustomValues(current => ({ ...current, [fieldKey]: value }))
+    setCustomErrors(current => {
+      if (!current[fieldKey]) return current
+      const next = { ...current }
+      delete next[fieldKey]
+      return next
+    })
+  }
+
   function validate() {
     const nextErrors: Partial<Record<CreateAccountField, string>> = {}
+    const nextCustomErrors: Record<string, string> = {}
     if (!accountName.trim()) nextErrors.accountName = 'Account name is required'
     if (!projectName.trim()) nextErrors.projectName = 'Project name is required'
     if (!companyUrl.trim()) nextErrors.companyUrl = 'Company URL is required'
     if (!managerName.trim()) nextErrors.managerName = 'Account manager name is required'
     if (!managerEmail.trim()) nextErrors.managerEmail = 'Email is required'
     else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(managerEmail.trim())) nextErrors.managerEmail = 'Enter a valid email'
+    for (const field of customFields) {
+      const value = customValues[field.field_key]
+      if (field.is_required && isEmptyCustomValue(value)) nextCustomErrors[field.field_key] = `${field.label} is required`
+    }
     setErrors(nextErrors)
+    setCustomErrors(nextCustomErrors)
     const firstInvalid = (Object.keys(nextErrors) as CreateAccountField[])[0]
     if (firstInvalid) refs[firstInvalid].current?.focus()
-    return Object.keys(nextErrors).length === 0
+    return Object.keys(nextErrors).length === 0 && Object.keys(nextCustomErrors).length === 0
   }
 
   function applyExtractedDocumentDetails(documentNames: string[]) {
@@ -120,6 +142,7 @@ export function CreateAccountDialog({ label = 'Create account' }: { label?: stri
         managerEmail: managerEmail.trim(),
         managerName: managerName.trim(),
         fileNames,
+        customFieldValues: customValuesForSubmit(customFields, customValues),
       })
       const approved = await approveOnboardingDraft(token, draft.id)
       if (!approved.approvedAccountId) throw new Error('Draft approved without an account reference')
@@ -139,12 +162,38 @@ export function CreateAccountDialog({ label = 'Create account' }: { label?: stri
   function applyApiErrors(error: unknown) {
     if (!(error instanceof ApiError) || !error.fieldErrors.length) return
     const nextErrors: Partial<Record<CreateAccountField, string>> = {}
+    const nextCustomErrors: Record<string, string> = {}
     for (const fieldError of error.fieldErrors) {
+      if (fieldError.field.startsWith('custom_field_values.')) {
+        nextCustomErrors[fieldError.field.replace('custom_field_values.', '')] = fieldError.message
+        continue
+      }
       const field = mapApiField(fieldError.field)
       if (field) nextErrors[field] = fieldError.message
     }
     setErrors(current => ({ ...current, ...nextErrors }))
+    setCustomErrors(current => ({ ...current, ...nextCustomErrors }))
   }
+
+  useEffect(() => {
+    if (!open || !token) return
+    let active = true
+    setLoadingCustomFields(true)
+    listAccountCustomFields(token)
+      .then(fields => {
+        if (!active) return
+        setCustomFields(fields.filter(field => field.show_in_detail))
+      })
+      .catch(() => {
+        if (active) setCustomFields([])
+      })
+      .finally(() => {
+        if (active) setLoadingCustomFields(false)
+      })
+    return () => {
+      active = false
+    }
+  }, [open, token])
 
   return (
     <Dialog.Root open={open} onOpenChange={handleOpenChange}>
@@ -221,6 +270,31 @@ export function CreateAccountDialog({ label = 'Create account' }: { label?: stri
               </datalist>
             </div>
 
+            {loadingCustomFields || customFields.length ? (
+              <div className="mt-5 rounded-lg border border-surface-border bg-surface-secondary p-4">
+                <div className="flex items-center justify-between gap-3">
+                  <div>
+                    <h3 className="text-sm font-semibold text-ink">Additional account fields</h3>
+                    <p className="mt-1 text-xs text-ink-secondary">Fields configured in Admin Field Builder.</p>
+                  </div>
+                  {loadingCustomFields ? <Loader2 className="h-4 w-4 animate-spin text-brand-blue" /> : null}
+                </div>
+                {customFields.length ? (
+                  <div className="mt-4 grid gap-4 md:grid-cols-2">
+                    {customFields.map(field => (
+                      <CustomFieldInput
+                        key={field.id}
+                        field={field}
+                        value={customValues[field.field_key]}
+                        error={customErrors[field.field_key]}
+                        onChange={value => updateCustomField(field.field_key, value)}
+                      />
+                    ))}
+                  </div>
+                ) : null}
+              </div>
+            ) : null}
+
             <div className="mt-5 rounded-lg border border-blue-tint-20 bg-blue-tint-20 p-4">
               <div className="flex items-start gap-3">
                 <Sparkles className="mt-0.5 h-5 w-5 shrink-0 text-brand-blue" />
@@ -288,6 +362,118 @@ const RequiredInput = forwardRef<HTMLInputElement, RequiredInputProps>(function 
     </label>
   )
 })
+
+function CustomFieldInput({
+  field,
+  value,
+  error,
+  onChange,
+}: {
+  field: AccountCustomFieldDefinition
+  value: unknown
+  error?: string
+  onChange: (value: unknown) => void
+}) {
+  const label = (
+    <span className={cn('tk-label flex items-center gap-1 text-xs', error ? 'text-rag-red' : '')}>
+      {field.label} {field.is_required ? <span className="text-brand-orange">*</span> : null}
+    </span>
+  )
+  const inputClass = cn('tk-input mt-1', error ? 'border-rag-red focus:border-rag-red focus:ring-rag-red/30' : '')
+  const help = field.help_text || field.description
+
+  if (field.field_type === 'textarea') {
+    return (
+      <label className="space-y-1 md:col-span-2">
+        {label}
+        <textarea className={inputClass} rows={3} value={String(value ?? '')} onChange={event => onChange(event.target.value)} placeholder={field.placeholder ?? undefined} />
+        <CustomFieldMeta help={help} error={error} />
+      </label>
+    )
+  }
+
+  if (field.field_type === 'single_select') {
+    return (
+      <label className="space-y-1">
+        {label}
+        <select className={inputClass} value={String(value ?? '')} onChange={event => onChange(event.target.value)}>
+          <option value="">Select {field.label.toLowerCase()}</option>
+          {field.options.map(option => <option key={option} value={option}>{option}</option>)}
+        </select>
+        <CustomFieldMeta help={help} error={error} />
+      </label>
+    )
+  }
+
+  if (field.field_type === 'multi_select') {
+    const selected = Array.isArray(value) ? value.map(String) : []
+    return (
+      <div className="space-y-2 md:col-span-2">
+        {label}
+        <div className={cn('grid gap-2 rounded-md border border-surface-border bg-white p-2 sm:grid-cols-2', error && 'border-rag-red')}>
+          {field.options.map(option => (
+            <label key={option} className="flex min-h-[44px] items-center gap-2 rounded-md bg-surface-secondary px-3 text-sm font-medium text-ink">
+              <input
+                type="checkbox"
+                checked={selected.includes(option)}
+                onChange={event => onChange(event.target.checked ? [...selected, option] : selected.filter(item => item !== option))}
+                className="h-4 w-4 rounded border-surface-border text-brand-blue"
+              />
+              {option}
+            </label>
+          ))}
+        </div>
+        <CustomFieldMeta help={help} error={error} />
+      </div>
+    )
+  }
+
+  if (field.field_type === 'boolean') {
+    return (
+      <label className="space-y-1">
+        {label}
+        <span className={cn('mt-1 flex min-h-[44px] items-center gap-2 rounded-md border border-surface-border bg-white px-3 text-sm font-semibold text-ink', error && 'border-rag-red')}>
+          <input type="checkbox" checked={Boolean(value)} onChange={event => onChange(event.target.checked)} className="h-4 w-4 rounded border-surface-border text-brand-blue" />
+          Yes
+        </span>
+        <CustomFieldMeta help={help} error={error} />
+      </label>
+    )
+  }
+
+  const inputType = field.field_type === 'number' || field.field_type === 'currency' ? 'number' : field.field_type === 'date' ? 'date' : field.field_type === 'datetime' ? 'datetime-local' : field.field_type === 'email' ? 'email' : field.field_type === 'url' ? 'url' : field.field_type === 'phone' ? 'tel' : 'text'
+  return (
+    <label className="space-y-1">
+      {label}
+      <input
+        className={inputClass}
+        type={inputType}
+        value={String(value ?? '')}
+        onChange={event => onChange(inputType === 'number' ? (event.target.value === '' ? '' : Number(event.target.value)) : event.target.value)}
+        placeholder={field.placeholder ?? undefined}
+      />
+      <CustomFieldMeta help={help} error={error} />
+    </label>
+  )
+}
+
+function CustomFieldMeta({ help, error }: { help?: string | null; error?: string }) {
+  if (error) return <p className="text-xs text-rag-red">{error}</p>
+  if (help) return <p className="text-xs text-ink-secondary">{help}</p>
+  return null
+}
+
+function customValuesForSubmit(fields: AccountCustomFieldDefinition[], values: Record<string, unknown>) {
+  return fields.reduce<Record<string, unknown>>((payload, field) => {
+    const value = values[field.field_key]
+    if (!isEmptyCustomValue(value)) payload[field.field_key] = value
+    return payload
+  }, {})
+}
+
+function isEmptyCustomValue(value: unknown) {
+  return value === undefined || value === null || value === '' || (Array.isArray(value) && value.length === 0)
+}
 
 function cleanDocumentName(name: string) {
   const base = stripDocumentExtension(name)

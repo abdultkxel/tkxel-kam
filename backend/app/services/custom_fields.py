@@ -3,7 +3,7 @@ from typing import Any
 from fastapi import HTTPException, status
 from sqlalchemy.orm import Session
 
-from app.models import CustomFieldDefinition, User
+from app.models import CustomFieldDefinition, CustomFieldValue, User
 from app.rbac import MODULES
 from app.repositories.audit import AuditRepository
 from app.repositories.custom_fields import CustomFieldRepository
@@ -25,8 +25,15 @@ def field_not_found(definition_id: str) -> HTTPException:
 
 def field_validation_error(field: str, message: str) -> HTTPException:
     return HTTPException(
-        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+        status_code=422,
         detail={"message": "Validation failed", "errors": [{"field": field, "message": message}]},
+    )
+
+
+def field_validation_errors(errors: list[dict[str, str]]) -> HTTPException:
+    return HTTPException(
+        status_code=422,
+        detail={"message": "Validation failed", "errors": errors},
     )
 
 
@@ -37,6 +44,9 @@ class CustomFieldService:
 
     def list_modules(self) -> list[CustomFieldModuleRead]:
         return [CustomFieldModuleRead(slug=slug, name=name) for slug, name in MODULES]
+
+    def list_active_definitions(self, modules: list[str]) -> list[CustomFieldDefinition]:
+        return self.repository.list_active_definitions(modules)
 
     def list_definitions(
         self,
@@ -138,6 +148,56 @@ class CustomFieldService:
         self.repository.commit()
         return {"message": "Custom field deleted successfully"}
 
+    def save_record_values(self, modules: str | list[str], record_id: str, values: dict[str, Any], actor: User) -> None:
+        module_list = [modules] if isinstance(modules, str) else modules
+        definitions = self.repository.list_active_definitions(module_list)
+        values_to_save = self._validated_values(definitions, values)
+        for field_key, value in values_to_save.items():
+            definition = next(item for item in definitions if item.field_key == field_key)
+            self.repository.add_value(
+                CustomFieldValue(
+                    field_definition_id=definition.id,
+                    module=definition.module,
+                    record_id=record_id,
+                    value=value,
+                    created_by_id=actor.id,
+                    updated_by_id=actor.id,
+                )
+            )
+        if values_to_save:
+            self.audit.log(
+                module="account_onboarding_workspace",
+                action="custom_field_values_saved",
+                entity_type="custom_field_values",
+                entity_id=record_id,
+                actor=actor,
+                after_value=values_to_save,
+            )
+
+    def copy_record_values(self, modules: str | list[str], source_record_id: str, target_record_id: str, actor: User) -> None:
+        module_list = [modules] if isinstance(modules, str) else modules
+        values = [value for module in module_list for value in self.repository.list_values_for_record(module, source_record_id)]
+        for value in values:
+            self.repository.add_value(
+                CustomFieldValue(
+                    field_definition_id=value.field_definition_id,
+                    module=value.module,
+                    record_id=target_record_id,
+                    value=value.value,
+                    created_by_id=actor.id,
+                    updated_by_id=actor.id,
+                )
+            )
+        if values:
+            self.audit.log(
+                module="account_onboarding_workspace",
+                action="custom_field_values_copied",
+                entity_type="custom_field_values",
+                entity_id=target_record_id,
+                actor=actor,
+                after_value={item.field_definition.field_key: item.value for item in values if item.field_definition is not None},
+            )
+
     def _ensure_unique(self, module: str, field_key: str, current_id: str | None = None) -> None:
         existing = self.repository.get_by_module_key(module, field_key)
         if existing is not None and existing.id != current_id:
@@ -152,6 +212,48 @@ class CustomFieldService:
             raise field_validation_error("options", "Options are required for select fields.")
         if field_type not in SELECT_FIELD_TYPES and options:
             raise field_validation_error("options", "Options can only be configured for select fields.")
+
+    def _validated_values(self, definitions: list[CustomFieldDefinition], values: dict[str, Any]) -> dict[str, Any]:
+        definitions_by_key = {definition.field_key: definition for definition in definitions}
+        errors: list[dict[str, str]] = []
+        unknown_keys = sorted(set(values) - set(definitions_by_key))
+        errors.extend({"field": f"custom_field_values.{key}", "message": "Custom field is not active for this module."} for key in unknown_keys)
+
+        for definition in definitions:
+            value = values.get(definition.field_key)
+            if definition.is_required and self._is_empty(value):
+                errors.append({"field": f"custom_field_values.{definition.field_key}", "message": f"{definition.label} is required."})
+                continue
+            if not self._is_empty(value):
+                errors.extend(self._value_errors(definition, value))
+
+        if errors:
+            raise field_validation_errors(errors)
+        return {key: value for key, value in values.items() if key in definitions_by_key and not self._is_empty(value)}
+
+    @staticmethod
+    def _is_empty(value: Any) -> bool:
+        return value is None or value == "" or value == [] or value == {}
+
+    @staticmethod
+    def _value_errors(definition: CustomFieldDefinition, value: Any) -> list[dict[str, str]]:
+        field = f"custom_field_values.{definition.field_key}"
+        field_type = definition.field_type
+        if field_type in {"text", "textarea", "email", "url", "phone", "date", "datetime"} and not isinstance(value, str):
+            return [{"field": field, "message": f"{definition.label} must be text."}]
+        if field_type in {"number", "currency"} and not isinstance(value, int | float):
+            return [{"field": field, "message": f"{definition.label} must be a number."}]
+        if field_type == "boolean" and not isinstance(value, bool):
+            return [{"field": field, "message": f"{definition.label} must be true or false."}]
+        if field_type == "single_select" and value not in definition.options:
+            return [{"field": field, "message": f"{definition.label} must use one of the configured options."}]
+        if field_type == "multi_select":
+            if not isinstance(value, list):
+                return [{"field": field, "message": f"{definition.label} must be a list of options."}]
+            invalid_options = [item for item in value if item not in definition.options]
+            if invalid_options:
+                return [{"field": field, "message": f"{definition.label} includes an option that is not configured."}]
+        return []
 
     @staticmethod
     def _snapshot(definition: CustomFieldDefinition) -> dict[str, Any]:

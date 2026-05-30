@@ -22,6 +22,7 @@ from app.repositories.engagements import EngagementRepository
 from app.repositories.onboarding import OnboardingRepository
 from app.repositories.rbac import RbacRepository
 from app.repositories.timeline import TimelineRepository
+from app.repositories.custom_fields import CustomFieldRepository
 from app.schemas import (
     OnboardingDraftCreateRequest,
     OnboardingDraftLinkRequest,
@@ -33,6 +34,7 @@ from app.schemas import (
 from app.services.account_access import AccountAccessService
 from app.services.accounts import AccountService
 from app.services.audit import AuditService
+from app.services.custom_fields import CustomFieldService
 from app.services.timeline import TimelineService
 from app.services.user_management import page_count
 
@@ -45,6 +47,7 @@ class OnboardingService:
         self.access = AccountAccessService(self.accounts, RbacRepository(db))
         self.audit = AuditService(AuditRepository(db))
         self.timeline = TimelineService(TimelineRepository(db))
+        self.custom_fields = CustomFieldService(db, CustomFieldRepository(db))
 
     def list_drafts(
         self,
@@ -122,6 +125,7 @@ class OnboardingService:
             created_by_name=current_user.full_name,
         )
         self.onboarding.add_draft(draft)
+        self.custom_fields.save_record_values(["account_onboarding_workspace", "account_overview"], draft.id, payload.custom_field_values, current_user)
         self._add_source_documents(draft, payload.source_documents, current_user)
         self._add_engagement_drafts(draft, payload.engagement_drafts)
         self.audit.log(
@@ -185,6 +189,7 @@ class OnboardingService:
             created_by_id=current_user.id,
         )
         self.accounts.save(account)
+        self.custom_fields.copy_record_values(["account_onboarding_workspace", "account_overview"], draft.id, account.id, current_user)
         self._create_primary_owner(account, primary_owner, current_user)
         for document in draft.source_documents:
             document.account_id = account.id
