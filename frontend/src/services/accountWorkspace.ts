@@ -508,6 +508,8 @@ export async function getEngagementTimeline(token: string, engagementId: string,
 function buildDraftPayload(payload: CreateDraftPayload) {
   const sourceNames = payload.fileNames.length ? payload.fileNames : [`${payload.accountName} Project Charter.pdf`]
   const primarySource = sourceNames[0]
+  const engagementName = payload.projectName || `${payload.accountName} Engagement`
+  const engagementCitation = `${primarySource}: engagement context provided during intake.`
   return {
     account_name: payload.accountName,
     project_name: payload.projectName,
@@ -537,7 +539,21 @@ function buildDraftPayload(payload: CreateDraftPayload) {
       ],
     })),
     custom_field_values: payload.customFieldValues ?? {},
-    engagement_drafts: [],
+    engagement_drafts: [
+      {
+        name: engagementName,
+        owner_name: payload.managerName,
+        service_lines: ['Account onboarding'],
+        value: 0,
+        currency: 'USD',
+        delivery_status: 'active',
+        start_date: new Date().toISOString(),
+        commercial_context: engagementCitation,
+        risks: ['KYC has not been completed yet'],
+        source_citation: engagementCitation,
+        confidence: 82,
+      },
+    ],
   }
 }
 

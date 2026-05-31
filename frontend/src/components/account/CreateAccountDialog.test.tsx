@@ -146,9 +146,14 @@ describe('CreateAccountDialog', () => {
       const [url, init] = call
       if (!String(url).endsWith('/api/onboarding/drafts') || init?.method !== 'POST') return false
       const payload = JSON.parse(String(init.body))
-      return Array.isArray(payload.engagement_drafts) && payload.engagement_drafts.length === 0
+      return (
+        Array.isArray(payload.engagement_drafts) &&
+        payload.engagement_drafts.length === 1 &&
+        payload.engagement_drafts[0].name === 'Customer intelligence' &&
+        payload.engagement_drafts[0].service_lines?.[0] === 'Account onboarding'
+      )
     })).toBe(true)
-    expect(toast.success).toHaveBeenCalledWith('Account created. Complete KYC in Account Overview.')
+    expect(toast.success).toHaveBeenCalledWith('Account and initial engagement created. Complete KYC in Account Overview.')
   })
 
   it('shows backend validation errors at matching account fields', async () => {

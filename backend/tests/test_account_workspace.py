@@ -54,7 +54,24 @@ def seeded_user(client: TestClient, headers: dict[str, str], role: str) -> dict:
     return response.json()["items"][0]
 
 
-def draft_payload(account_name: str, owner_id: str) -> dict:
+def draft_payload(account_name: str, owner_id: str, *, include_engagement: bool = True) -> dict:
+    engagement_drafts = []
+    if include_engagement:
+        engagement_drafts.append(
+            {
+                "name": "Customer intelligence modernization",
+                "owner_id": owner_id,
+                "service_lines": ["Account onboarding"],
+                "value": 125000,
+                "currency": "USD",
+                "delivery_status": "active",
+                "start_date": datetime.now(timezone.utc).replace(hour=12, minute=0, second=0, microsecond=0).isoformat().replace("+00:00", "Z"),
+                "commercial_context": "Project Charter p1: account and engagement scope.",
+                "risks": ["KYC has not been completed yet"],
+                "source_citation": "Project Charter p1: account and engagement scope.",
+                "confidence": 82,
+            }
+        )
     return {
         "account_name": account_name,
         "project_name": "Customer intelligence modernization",
@@ -83,7 +100,7 @@ def draft_payload(account_name: str, owner_id: str) -> dict:
                 ],
             }
         ],
-        "engagement_drafts": [],
+        "engagement_drafts": engagement_drafts,
     }
 
 
@@ -165,9 +182,9 @@ def create_engagement_for_account(client: TestClient, headers: dict[str, str], a
     return response.json()
 
 
-def create_approved_account(client: TestClient, headers: dict[str, str], account_name: str) -> tuple[str, str, dict]:
+def create_approved_account(client: TestClient, headers: dict[str, str], account_name: str, *, include_engagement: bool = False) -> tuple[str, str, dict]:
     owner = seeded_user(client, headers, "account_manager")
-    draft_response = client.post("/api/onboarding/drafts", headers=headers, json=draft_payload(account_name, owner["id"]))
+    draft_response = client.post("/api/onboarding/drafts", headers=headers, json=draft_payload(account_name, owner["id"], include_engagement=include_engagement))
     assert draft_response.status_code == 201
 
     approve_response = client.post(f"/api/onboarding/drafts/{draft_response.json()['id']}/approve", headers=headers)
@@ -176,7 +193,7 @@ def create_approved_account(client: TestClient, headers: dict[str, str], account
     return approved["approved_account_id"], owner["id"], approved
 
 
-def test_onboarding_draft_approval_creates_account_sources_without_engagement(client: TestClient) -> None:
+def test_onboarding_draft_approval_creates_account_sources_and_engagement(client: TestClient) -> None:
     headers = auth_headers(client)
     owner = seeded_user(client, headers, "account_manager")
 
@@ -185,6 +202,7 @@ def test_onboarding_draft_approval_creates_account_sources_without_engagement(cl
     draft = create_response.json()
     assert draft["status"] == "ready_for_review"
     assert draft["source_documents"][0]["citations"][0]["field_key"] == "account_name"
+    assert draft["engagement_drafts"][0]["name"] == "Customer intelligence modernization"
 
     list_response = client.get("/api/onboarding/drafts", headers=headers, params={"search": "Northwind", "status": "ready_for_review", "page": 1, "page_size": 5})
     assert list_response.status_code == 200
@@ -199,14 +217,15 @@ def test_onboarding_draft_approval_creates_account_sources_without_engagement(cl
     overview = overview_response.json()
     assert overview["account"]["name"] == "Northwind Workspace"
     assert overview["account"]["primary_owner"]["user_id"] == owner["id"]
-    assert overview["engagements"]["total"] == 0
+    assert overview["engagements"]["total"] == 1
+    assert overview["engagements"]["items"][0]["name"] == "Customer intelligence modernization"
     assert overview["attachments"]["total"] == 1
 
     rollup_response = client.get(f"/api/accounts/{account_id}/health/rollup", headers=headers)
     assert rollup_response.status_code == 200
     rollup = rollup_response.json()
-    assert rollup["metric_version"] == "account-rollup-v1"
-    assert rollup["contributions"] == []
+    assert rollup["metric_version"] == "engagement-health-rollup-adapter-v1"
+    assert rollup["contributions"][0]["name"] == "Customer intelligence modernization"
 
 
 def test_onboarding_validation_and_authorization_errors_are_enforced(client: TestClient) -> None:
@@ -443,7 +462,7 @@ def test_manual_engagement_crud_calculations_timeline_and_access(client: TestCli
     list_response = client.get(
         f"/api/accounts/{account_id}/engagements",
         headers=headers,
-        params={"search": "Strategic", "status": "active", "owner": owner_id, "renewal_window": "next_90", "page": 1, "page_size": 10},
+        params={"search": "Strategic", "status": "active", "owner": owner_id, "page": 1, "page_size": 10},
     )
     assert list_response.status_code == 200
     listed_ids = {item["id"] for item in list_response.json()["items"]}
