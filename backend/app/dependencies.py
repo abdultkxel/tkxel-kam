@@ -11,8 +11,10 @@ from app.repositories.users import UserRepository
 from app.security import decode_access_token
 from app.services.auth import AuthService
 from app.services.accounts import AccountService
+from app.services.content import ContentService
 from app.services.custom_fields import CustomFieldService
 from app.services.engagements import EngagementService
+from app.services.escalations import EscalationService
 from app.services.governance import GovernanceService
 from app.services.onboarding import OnboardingService
 from app.services.profile import ProfileService
@@ -76,6 +78,14 @@ def get_onboarding_service(db: Annotated[Session, Depends(get_db)]) -> Onboardin
 
 def get_engagement_service(db: Annotated[Session, Depends(get_db)]) -> EngagementService:
     return EngagementService(db)
+
+
+def get_content_service(db: Annotated[Session, Depends(get_db)]) -> ContentService:
+    return ContentService(db)
+
+
+def get_escalation_service(db: Annotated[Session, Depends(get_db)]) -> EscalationService:
+    return EscalationService(db)
 
 
 def get_governance_service(db: Annotated[Session, Depends(get_db)]) -> GovernanceService:

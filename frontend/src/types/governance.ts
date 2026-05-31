@@ -1,5 +1,5 @@
 export type GovernanceEventType = 'QBR' | 'SteerCo' | 'Monthly Review' | 'Executive Review'
-export type GovernanceEventStatus = 'upcoming' | 'completed' | 'overdue' | 'cancelled'
+export type GovernanceEventStatus = 'upcoming' | 'scheduled' | 'completed' | 'overdue' | 'cancelled' | 'review_required' | 'draft'
 export type GovernanceGeneratedOutputType = 'agenda_draft' | 'governance_brief'
 
 export interface GovernanceNoteRecord {
@@ -101,7 +101,8 @@ export interface GovernanceEventCreateInput {
   agenda: string
   ownerId: string
   attendeeEmails: string[]
-  source?: 'manual' | 'google_calendar' | 'fathom' | 'system'
+  customFieldValues?: Record<string, unknown>
+  source?: 'manual' | 'google_calendar' | 'fathom' | 'fathom_enriched' | 'review_required' | 'system'
 }
 
 export interface GovernanceEventUpdateInput {

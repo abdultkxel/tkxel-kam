@@ -27,7 +27,8 @@ export interface ApiGovernanceNote {
 
 export interface ApiGovernanceDecision {
   id: string
-  event_id: string
+  event_id?: string
+  governance_event_id?: string
   decision_text: string
   owner_id?: string | null
   owner_name?: string | null
@@ -37,13 +38,15 @@ export interface ApiGovernanceDecision {
 
 export interface ApiGovernanceActionItem {
   id: string
-  event_id: string
+  event_id?: string
+  governance_event_id?: string
   title: string
   owner_id?: string | null
   owner_name?: string | null
   owner_email?: string | null
-  due_date: string
-  status: 'open' | 'completed'
+  due_date?: string
+  due_at?: string
+  status: 'open' | 'in_progress' | 'completed' | 'cancelled'
   source: string
   created_at: string
   updated_at: string
@@ -93,14 +96,17 @@ export interface ApiGovernanceEvent {
   agenda: string
   status: GovernanceEventRecord['status']
   source: string
-  attendee_emails: string[]
-  notes: ApiGovernanceNote[]
+  attendee_emails?: string[]
+  attendees?: string[]
+  notes: ApiGovernanceNote[] | string | null
   decisions: ApiGovernanceDecision[]
   action_items: ApiGovernanceActionItem[]
   generated_outputs: ApiGovernanceGeneratedOutput[]
   completed_at?: string | null
+  created_by_name?: string
   created_at: string
   updated_at: string
+  custom_field_values?: Record<string, unknown>
 }
 
 export interface ApiGovernanceCalendarItem {
@@ -191,7 +197,7 @@ export async function generateGovernanceBrief(token: string, eventId: string, pa
 }
 
 export function mapApiGovernanceEvent(event: ApiGovernanceEvent): GovernanceEventRecord {
-  const attendeeEmails = normalizeEmails(event.attendee_emails)
+  const attendeeEmails = normalizeEmails(event.attendee_emails ?? (event.attendees ?? []).filter(item => item.includes('@')))
   const actionItemRecords = event.action_items.map(mapApiActionItem)
 
   return {
@@ -210,7 +216,7 @@ export function mapApiGovernanceEvent(event: ApiGovernanceEvent): GovernanceEven
     attendees: attendeeEmails,
     actionItemRecords,
     actionItems: actionItemRecords.map(item => item.title),
-    notes: event.notes.map(mapApiNote),
+    notes: normalizeNotes(event),
     decisions: event.decisions.map(mapApiDecision),
     generatedOutputs: event.generated_outputs.map(mapApiGeneratedOutput),
     status: event.status,
@@ -230,7 +236,9 @@ export function buildCreatePayload(payload: GovernanceEventCreateInput) {
     agenda: payload.agenda,
     owner_id: payload.ownerId,
     attendee_emails: normalizeEmails(payload.attendeeEmails),
+    attendees: normalizeEmails(payload.attendeeEmails),
     source: payload.source ?? 'manual',
+    custom_field_values: payload.customFieldValues ?? {},
   }
 }
 
@@ -242,6 +250,7 @@ function buildUpdatePayload(payload: GovernanceEventUpdateInput) {
     agenda: payload.agenda,
     owner_id: payload.ownerId,
     attendee_emails: payload.attendeeEmails ? normalizeEmails(payload.attendeeEmails) : undefined,
+    attendees: payload.attendeeEmails ? normalizeEmails(payload.attendeeEmails) : undefined,
     status: payload.status,
   }
 }
@@ -304,10 +313,26 @@ function mapApiNote(note: ApiGovernanceNote): GovernanceNoteRecord {
   }
 }
 
+function normalizeNotes(event: ApiGovernanceEvent): GovernanceNoteRecord[] {
+  if (Array.isArray(event.notes)) return event.notes.map(mapApiNote)
+  if (!event.notes) return []
+  return [{
+    id: `${event.id}:note`,
+    eventId: event.id,
+    body: event.notes,
+    authorId: null,
+    authorName: event.created_by_name ?? event.owner_name,
+    source: 'manual',
+    createdAt: event.completed_at ?? event.updated_at,
+    updatedAt: event.updated_at,
+  }]
+}
+
 function mapApiDecision(decision: ApiGovernanceDecision): GovernanceDecisionRecord {
+  const eventId = decision.event_id ?? decision.governance_event_id ?? ''
   return {
     id: decision.id,
-    eventId: decision.event_id,
+    eventId,
     decisionText: decision.decision_text,
     ownerId: decision.owner_id ?? null,
     ownerName: decision.owner_name ?? null,
@@ -317,15 +342,17 @@ function mapApiDecision(decision: ApiGovernanceDecision): GovernanceDecisionReco
 }
 
 function mapApiActionItem(item: ApiGovernanceActionItem): GovernanceActionItemRecord {
+  const eventId = item.event_id ?? item.governance_event_id ?? ''
+  const dueDate = item.due_date ?? item.due_at ?? new Date().toISOString()
   return {
     id: item.id,
-    eventId: item.event_id,
+    eventId,
     title: item.title,
     ownerId: item.owner_id ?? null,
     ownerName: item.owner_name ?? null,
     ownerEmail: item.owner_email ?? null,
-    dueDate: item.due_date,
-    status: item.status,
+    dueDate,
+    status: item.status === 'completed' ? 'completed' : 'open',
     source: item.source,
     createdAt: item.created_at,
     updatedAt: item.updated_at,

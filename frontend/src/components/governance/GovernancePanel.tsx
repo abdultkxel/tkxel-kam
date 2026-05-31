@@ -739,14 +739,16 @@ function governanceEventToCalendarItem(event: GovernanceEventRecord): UnifiedCal
 }
 
 function GovernanceStatusBadge({ status }: { status: GovernanceEventStatus }) {
+  const displayStatus = status === 'scheduled' || status === 'draft' ? 'upcoming' : status
   const className = {
     upcoming: 'border-blue-tint-20 bg-blue-tint-20 text-brand-blue',
     overdue: 'border-rag-red/20 bg-rag-red/10 text-rag-red',
     completed: 'border-rag-green/20 bg-rag-green/10 text-rag-green',
     cancelled: 'border-surface-border bg-surface-secondary text-ink-secondary',
-  }[status]
+    review_required: 'border-brand-orange/20 bg-brand-orange/10 text-brand-orange',
+  }[displayStatus]
 
-  return <span className={cn('inline-flex rounded-full border px-2.5 py-1 text-[11px] font-semibold uppercase tracking-wider', className)}>{status}</span>
+  return <span className={cn('inline-flex rounded-full border px-2.5 py-1 text-[11px] font-semibold uppercase tracking-wider', className)}>{displayStatus.replace('_', ' ')}</span>
 }
 
 function SourceCitationList({ citations }: { citations: GovernanceGeneratedOutputCitationRecord[] }) {

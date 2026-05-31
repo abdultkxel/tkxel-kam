@@ -6,7 +6,9 @@ import { FormEvent, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { toast } from 'sonner'
 import { AdminCustomizationPanel } from '@/components/admin/AdminCustomizationPanel'
+import { AdminContentPanel } from '@/components/admin/AdminContentPanel'
 import { AdminFieldBuilderPanel } from '@/components/admin/AdminFieldBuilderPanel'
+import { AdminGovernancePanel } from '@/components/admin/AdminGovernancePanel'
 import { AdminRolesPanel } from '@/components/admin/AdminRolesPanel'
 import { AdminUsersPanel } from '@/components/admin/AdminUsersPanel'
 import { AlertRulesPanel } from '@/components/admin/AlertRulesPanel'
@@ -38,6 +40,8 @@ const swatchClass: Record<string, string> = {
 const adminSections = [
   { id: 'users', label: 'Users' },
   { id: 'roles', label: 'Roles' },
+  { id: 'content', label: 'Content' },
+  { id: 'governance', label: 'Governance' },
   { id: 'fields', label: 'Field builder' },
   { id: 'scoring', label: 'Scoring' },
   { id: 'customization', label: 'Customization' },
@@ -199,6 +203,8 @@ export function Admin() {
         <div className="min-w-0 space-y-4">
           {highlightedSection === 'users' ? <AdminUsersPanel /> : null}
           {highlightedSection === 'roles' ? <AdminRolesPanel /> : null}
+          {highlightedSection === 'content' ? <AdminContentPanel /> : null}
+          {highlightedSection === 'governance' ? <AdminGovernancePanel /> : null}
           {highlightedSection === 'fields' ? <AdminFieldBuilderPanel /> : null}
           <div id="scoring" className={cn('scroll-mt-24', highlightedSection !== 'scoring' && 'hidden')}>
             <ScoringEngineBuilder />

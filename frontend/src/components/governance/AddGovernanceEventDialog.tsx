@@ -2,12 +2,14 @@ import * as Dialog from '@radix-ui/react-dialog'
 import { CalendarPlus, Loader2, Plus, Trash2, X } from 'lucide-react'
 import { FormEvent, useEffect, useMemo, useState } from 'react'
 import { toast } from 'sonner'
+import { RuntimeCustomFields, customValuesForSubmit, requiredCustomFieldErrors } from '@/components/custom-fields/RuntimeCustomFields'
 import { ApiError, ApiFieldError } from '@/services/api'
-import { useAuth } from '@/contexts/AuthContext'
 import { useRole } from '@/hooks/useRole'
+import { useAuth } from '@/contexts/AuthContext'
 import { useAccountStore } from '@/stores/accountStore'
 import { useGovernanceStore } from '@/stores/governanceStore'
 import { GovernanceEventRecord, GovernanceEventType } from '@/types/governance'
+import { RuntimeCustomField, listRuntimeCustomFields } from '@/services/contentGovernance'
 
 type FieldErrors = Record<string, string>
 
@@ -44,10 +46,28 @@ export function AddGovernanceEventDialog({
   const [agenda, setAgenda] = useState('')
   const [attendeeEmails, setAttendeeEmails] = useState<string[]>([''])
   const selectedAccount = useMemo(() => accounts.find(item => item.id === accountId), [accountId, accounts])
+  const [customFields, setCustomFields] = useState<RuntimeCustomField[]>([])
+  const [customValues, setCustomValues] = useState<Record<string, unknown>>({})
+  const [customErrors, setCustomErrors] = useState<Record<string, string>>({})
 
   useEffect(() => {
     if (open) setAccountId(defaultAccountId ?? '')
   }, [defaultAccountId, open])
+
+  useEffect(() => {
+    if (!token || !open) return
+    let cancelled = false
+    listRuntimeCustomFields(token, 'governance_reviews')
+      .then(fields => {
+        if (!cancelled) setCustomFields(Array.isArray(fields) ? fields.filter(field => field.show_in_detail) : [])
+      })
+      .catch(() => {
+        if (!cancelled) setCustomFields([])
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [open, token])
 
   async function submit(event: FormEvent) {
     event.preventDefault()
@@ -64,6 +84,9 @@ export function AddGovernanceEventDialog({
       setFieldErrors(nextErrors)
       return
     }
+    const nextCustomErrors = requiredCustomFieldErrors(customFields, customValues)
+    setCustomErrors(nextCustomErrors)
+    if (Object.keys(nextCustomErrors).length) return
 
     setSaving(true)
     try {
@@ -75,6 +98,7 @@ export function AddGovernanceEventDialog({
         agenda: agenda.trim(),
         ownerId: account?.ownerId || user.id,
         attendeeEmails: cleanAttendeeEmails(attendeeEmails),
+        customFieldValues: customValuesForSubmit(customFields, customValues),
       })
       toast.success('Governance event added')
       setOpen(false)
@@ -99,6 +123,8 @@ export function AddGovernanceEventDialog({
     setTime('10:00')
     setAgenda('')
     setAttendeeEmails([''])
+    setCustomValues({})
+    setCustomErrors({})
     setFieldErrors({})
   }
 
@@ -201,6 +227,15 @@ export function AddGovernanceEventDialog({
             <div className="rounded-lg border border-surface-border bg-surface-secondary p-3 text-xs leading-5 text-ink-secondary">
               Owner: <span className="font-semibold text-ink">{selectedAccount?.ownerName ?? user.name}</span>
             </div>
+            <RuntimeCustomFields
+              fields={customFields}
+              values={customValues}
+              errors={customErrors}
+              onChange={(fieldKey, value) => {
+                setCustomValues(current => ({ ...current, [fieldKey]: value }))
+                setCustomErrors(current => ({ ...current, [fieldKey]: '' }))
+              }}
+            />
             <div className="flex justify-end gap-2">
               <Dialog.Close type="button" className="tk-button-secondary">Cancel</Dialog.Close>
               <button type="submit" className="tk-button-primary" disabled={saving}>

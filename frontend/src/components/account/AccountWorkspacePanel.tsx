@@ -1,7 +1,7 @@
 import * as Dialog from '@radix-ui/react-dialog'
-import { ArrowRight, BookOpen, CalendarClock, CheckCircle2, FileText, GraduationCap, PenLine, Plus, ShieldAlert, Upload, X } from 'lucide-react'
+import { ArrowRight, BookOpen, CalendarClock, CheckCircle2, FileText, GraduationCap, Loader2, PenLine, Plus, Send, ShieldAlert, X } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
-import { FormEvent, useState } from 'react'
+import { FormEvent, useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { toast } from 'sonner'
 import { AddGovernanceEventDialog } from '@/components/governance/AddGovernanceEventDialog'
@@ -9,37 +9,22 @@ import { CompleteGovernanceEventDialog } from '@/components/governance/CompleteG
 import { Account } from '@/types/account'
 import { useGovernanceStore } from '@/stores/governanceStore'
 import { useV3Store } from '@/stores/v3Store'
-import { EducationContent, RetentionPlan } from '@/types/v3'
+import { RetentionPlan } from '@/types/v3'
 import { GovernanceEventRecord } from '@/types/governance'
 import { formatDate } from '@/utils/formatters'
+import { useAuth } from '@/contexts/AuthContext'
+import { ContentRecommendation, createSentContent, Escalation, listContentRecommendations, listEscalations, listSentContent, SentContent } from '@/services/contentGovernance'
 
 export function AccountWorkspacePanel({ account, tab }: { account: Account; tab: string }) {
   const documents = useV3Store(state => state.sourceDocuments).filter(document => document.accountId === account.id)
-  const content = useV3Store(state => state.educationContent).filter(item => item.recommendedFor === account.name)
-  const escalations = useV3Store(state => state.escalationRecords).filter(item => item.accountId === account.id)
   const plans = useV3Store(state => state.retentionPlans).filter(item => item.accountId === account.id)
   const governance = useGovernanceStore(state => state.events).filter(event => event.accountId === account.id)
 
   if (tab === 'Education') {
-    return <EducationPanel account={account} content={content} />
+    return <EducationPanel account={account} />
   }
   if (tab === 'Escalation') {
-    return (
-      <WorkspaceList
-        icon={ShieldAlert}
-        eyebrow="Risk response"
-        title="Escalation management"
-        description="Escalations, recovery context, SLA posture, and mitigation notes for this account."
-        action={{ label: 'Review escalation', to: '/tasks' }}
-        accountName={account.name}
-        items={escalations.map(item => ({
-          title: item.title,
-          detail: item.mitigation,
-          meta: [item.severity, item.status, `SLA ${formatDate(item.slaDue)}`],
-          tone: item.severity === 'red' ? 'red' : 'orange',
-        }))}
-      />
-    )
+    return <EscalationPanel account={account} />
   }
   if (tab === 'Governance') {
     return <GovernanceAccountPanel account={account} governance={governance} />
@@ -149,40 +134,57 @@ function GovernanceDetailList({ title, items, empty }: { title: string; items: s
   )
 }
 
-type SharedContentItem = {
-  id: string
-  title: string
-  stage: string
-  tags: string[]
-  lastShared?: string
-}
-
-function EducationPanel({ account, content }: { account: Account; content: EducationContent[] }) {
-  const [items, setItems] = useState<SharedContentItem[]>(content)
+function EducationPanel({ account }: { account: Account }) {
+  const { token } = useAuth()
+  const [recommendations, setRecommendations] = useState<ContentRecommendation[]>([])
+  const [sentItems, setSentItems] = useState<SentContent[]>([])
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState('')
   const [open, setOpen] = useState(false)
-  const [title, setTitle] = useState('')
-  const [sharedOn, setSharedOn] = useState(new Date().toISOString().slice(0, 10))
-  const [contentType, setContentType] = useState('Playbook excerpt')
+  const [selectedContentId, setSelectedContentId] = useState('')
+  const [recipientName, setRecipientName] = useState('')
+  const [recipientEmail, setRecipientEmail] = useState('')
 
-  function submit(event: FormEvent) {
+  useEffect(() => {
+    if (!token) return
+    let cancelled = false
+    setLoading(true)
+    setError('')
+    Promise.all([listContentRecommendations(token, account.id), listSentContent(token, account.id, new URLSearchParams({ page: '1', page_size: '10' }))])
+      .then(([nextRecommendations, sentPage]) => {
+        if (cancelled) return
+        setRecommendations(nextRecommendations)
+        setSentItems(sentPage.items)
+        setSelectedContentId(nextRecommendations[0]?.content.id ?? '')
+      })
+      .catch(err => {
+        if (!cancelled) setError(err instanceof Error ? err.message : 'Education content could not load')
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [account.id, token])
+
+  async function submit(event: FormEvent) {
     event.preventDefault()
-    const cleanTitle = title.trim()
-    if (!cleanTitle) return
-    setItems(current => [
-      {
-        id: `content-${Date.now()}`,
-        title: cleanTitle,
-        stage: account.stage,
-        tags: [contentType, 'Client shared'],
-        lastShared: new Date(`${sharedOn}T12:00:00`).toISOString(),
-      },
-      ...current,
-    ])
-    setTitle('')
-    setContentType('Playbook excerpt')
-    setSharedOn(new Date().toISOString().slice(0, 10))
-    setOpen(false)
-    toast.success('Content shared with client')
+    if (!token || !selectedContentId || !recipientName.trim()) return
+    try {
+      const created = await createSentContent(token, account.id, {
+        content_item_id: selectedContentId,
+        recipient_name: recipientName,
+        recipient_email: recipientEmail || undefined,
+      })
+      setSentItems(current => [created, ...current])
+      setOpen(false)
+      setRecipientName('')
+      setRecipientEmail('')
+      toast.success('Content shared with client')
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Content could not be shared')
+    }
   }
 
   return (
@@ -196,52 +198,71 @@ function EducationPanel({ account, content }: { account: Account; content: Educa
               </span>
               <div>
                 <p className="text-[10px] font-extrabold uppercase tracking-widest text-brand-blue">Client education</p>
-                <h3 className="text-base font-semibold text-ink">Shared content</h3>
+                <h3 className="text-base font-semibold text-ink">Recommendations and sent content</h3>
               </div>
             </div>
             <p className="mt-3 max-w-3xl text-sm leading-6 text-ink-secondary">
-              Track content uploaded or shared with the client, including the exact shared date for account history.
+              Review recommended education assets and record confirmed sharing actions in account history.
             </p>
           </div>
           <EducationUploadDialog
             open={open}
             onOpenChange={setOpen}
-            title={title}
-            onTitleChange={setTitle}
-            sharedOn={sharedOn}
-            onSharedOnChange={setSharedOn}
-            contentType={contentType}
-            onContentTypeChange={setContentType}
+            recommendations={recommendations}
+            selectedContentId={selectedContentId}
+            onSelectedContentIdChange={setSelectedContentId}
+            recipientName={recipientName}
+            onRecipientNameChange={setRecipientName}
+            recipientEmail={recipientEmail}
+            onRecipientEmailChange={setRecipientEmail}
             onSubmit={submit}
           />
         </div>
       </header>
       <div className="grid gap-5 p-5 xl:grid-cols-[minmax(0,1fr)_280px]">
         <div className="grid gap-3">
-          {items.length ? items.map(item => (
-            <article key={item.id} className="rounded-lg border border-surface-border bg-white p-4 transition-colors hover:border-brand-blue/40">
+          {loading ? (
+            <div className="flex min-h-[160px] items-center justify-center rounded-lg border border-surface-border text-sm font-semibold text-ink-secondary"><Loader2 className="mr-2 h-4 w-4 animate-spin" />Loading education content</div>
+          ) : error ? (
+            <div className="rounded-lg border border-rag-red/20 bg-rag-red/10 p-4 text-sm font-semibold text-rag-red">{error}</div>
+          ) : recommendations.length || sentItems.length ? (
+            <>
+              {recommendations.map(item => (
+                <article key={item.content.id} className="rounded-lg border border-surface-border bg-white p-4 transition-colors hover:border-brand-blue/40">
+                  <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+                    <div className="min-w-0">
+                      <h4 className="text-sm font-semibold text-ink">{item.content.title}</h4>
+                      <p className="mt-1 text-sm leading-6 text-ink-secondary">{item.rationale}</p>
+                    </div>
+                    <StatusBadge tone="blue" label={`${item.relevance_score}% match`} />
+                  </div>
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    <span className="rounded-full bg-surface-secondary px-2.5 py-1 text-[11px] font-semibold uppercase tracking-wider text-ink-secondary">{item.content.category}</span>
+                    {item.content.tags.map(tag => <span key={tag} className="rounded-full bg-surface-secondary px-2.5 py-1 text-[11px] font-semibold uppercase tracking-wider text-ink-secondary">{tag}</span>)}
+                  </div>
+                </article>
+              ))}
+              {sentItems.map(item => (
+                <article key={item.id} className="rounded-lg border border-surface-border bg-white p-4 transition-colors hover:border-brand-blue/40">
               <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
                 <div className="min-w-0">
-                  <h4 className="text-sm font-semibold text-ink">{item.title}</h4>
-                  <p className="mt-1 text-sm leading-6 text-ink-secondary">
-                    {item.lastShared ? `Shared with ${account.name} on ${formatDate(item.lastShared)}.` : 'Recommended for the current stage, not shared yet.'}
-                  </p>
+                  <h4 className="text-sm font-semibold text-ink">{item.content_title_snapshot}</h4>
+                  <p className="mt-1 text-sm leading-6 text-ink-secondary">Shared with {item.recipient_name} on {formatDate(item.shared_at)}.</p>
                 </div>
-                <StatusBadge tone={item.lastShared ? 'green' : 'blue'} label={item.lastShared ? 'Shared' : 'Recommended'} />
+                <StatusBadge tone="green" label="Shared" />
               </div>
               <div className="mt-3 flex flex-wrap gap-2">
-                <span className="rounded-full bg-surface-secondary px-2.5 py-1 text-[11px] font-semibold uppercase tracking-wider text-ink-secondary">{item.stage}</span>
-                {item.lastShared ? <span className="rounded-full bg-blue-tint-20 px-2.5 py-1 text-[11px] font-semibold uppercase tracking-wider text-brand-blue">Shared date: {formatDate(item.lastShared)}</span> : null}
-                {item.tags.map(tag => (
-                  <span key={tag} className="rounded-full bg-surface-secondary px-2.5 py-1 text-[11px] font-semibold uppercase tracking-wider text-ink-secondary">{tag}</span>
-                ))}
+                <span className="rounded-full bg-surface-secondary px-2.5 py-1 text-[11px] font-semibold uppercase tracking-wider text-ink-secondary">{item.content_type_snapshot}</span>
+                <span className="rounded-full bg-blue-tint-20 px-2.5 py-1 text-[11px] font-semibold uppercase tracking-wider text-brand-blue">{item.follow_up_status.replace('_', ' ')}</span>
               </div>
             </article>
-          )) : (
-            <EmptyWorkspaceState icon={GraduationCap} title="No content shared yet" body="Upload a content item once it has been sent to the client." />
+              ))}
+            </>
+          ) : (
+            <EmptyWorkspaceState icon={GraduationCap} title="No education content yet" body="Add content in Admin, then recommendations and sent history will appear here." />
           )}
         </div>
-        <WorkspaceContext title="Shared content" count={items.length} accountName={account.name} body="Education records show what was shared and when the client received it." />
+        <WorkspaceContext title="Shared content" count={sentItems.length} accountName={account.name} body="Education records show what was shared and when the client received it." />
       </div>
     </section>
   )
@@ -250,30 +271,32 @@ function EducationPanel({ account, content }: { account: Account; content: Educa
 function EducationUploadDialog({
   open,
   onOpenChange,
-  title,
-  onTitleChange,
-  sharedOn,
-  onSharedOnChange,
-  contentType,
-  onContentTypeChange,
+  recommendations,
+  selectedContentId,
+  onSelectedContentIdChange,
+  recipientName,
+  onRecipientNameChange,
+  recipientEmail,
+  onRecipientEmailChange,
   onSubmit,
 }: {
   open: boolean
   onOpenChange: (open: boolean) => void
-  title: string
-  onTitleChange: (value: string) => void
-  sharedOn: string
-  onSharedOnChange: (value: string) => void
-  contentType: string
-  onContentTypeChange: (value: string) => void
+  recommendations: ContentRecommendation[]
+  selectedContentId: string
+  onSelectedContentIdChange: (value: string) => void
+  recipientName: string
+  onRecipientNameChange: (value: string) => void
+  recipientEmail: string
+  onRecipientEmailChange: (value: string) => void
   onSubmit: (event: FormEvent) => void
 }) {
   return (
     <Dialog.Root open={open} onOpenChange={onOpenChange}>
       <Dialog.Trigger asChild>
         <button type="button" className="tk-button-primary shrink-0">
-          <Upload className="h-4 w-4" />
-          Upload content
+          <Send className="h-4 w-4" />
+          Share content
         </button>
       </Dialog.Trigger>
       <Dialog.Portal>
@@ -282,8 +305,8 @@ function EducationUploadDialog({
           <div className="flex items-start justify-between gap-4 border-b border-surface-border pb-4">
             <div>
               <p className="text-[10px] font-extrabold uppercase tracking-widest text-brand-blue">Client education</p>
-              <Dialog.Title className="font-display text-2xl font-bold text-ink">Upload shared content</Dialog.Title>
-              <Dialog.Description className="mt-1 text-sm text-ink-secondary">Record the asset and the date it was shared with the client.</Dialog.Description>
+              <Dialog.Title className="font-display text-2xl font-bold text-ink">Record shared content</Dialog.Title>
+              <Dialog.Description className="mt-1 text-sm text-ink-secondary">Choose a recommended asset and record who received it.</Dialog.Description>
             </div>
             <Dialog.Close className="tk-icon-button" aria-label="Close content upload">
               <X className="h-5 w-5" />
@@ -291,42 +314,87 @@ function EducationUploadDialog({
           </div>
           <form onSubmit={onSubmit} className="mt-5 space-y-4">
             <label className="space-y-1">
-              <span className="tk-label text-xs">Content title <span className="text-brand-orange">*</span></span>
-              <input className="tk-input" value={title} onChange={event => onTitleChange(event.target.value)} placeholder="QBR prep deck, security overview, case study" required />
+              <span className="tk-label text-xs">Content <span className="text-brand-orange">*</span></span>
+              <select className="tk-input" value={selectedContentId} onChange={event => onSelectedContentIdChange(event.target.value)} required>
+                {recommendations.map(item => <option key={item.content.id} value={item.content.id}>{item.content.title}</option>)}
+              </select>
             </label>
             <div className="grid gap-3 sm:grid-cols-2">
               <label className="space-y-1">
-                <span className="tk-label text-xs">Shared date</span>
-                <input type="date" className="tk-input" value={sharedOn} onChange={event => onSharedOnChange(event.target.value)} />
+                <span className="tk-label text-xs">Recipient name</span>
+                <input className="tk-input" value={recipientName} onChange={event => onRecipientNameChange(event.target.value)} required />
               </label>
               <label className="space-y-1">
-                <span className="tk-label text-xs">Content type</span>
-                <select className="tk-input" value={contentType} onChange={event => onContentTypeChange(event.target.value)}>
-                  <option>Playbook excerpt</option>
-                  <option>Case study</option>
-                  <option>Deck</option>
-                  <option>Technical brief</option>
-                  <option>Commercial note</option>
-                </select>
+                <span className="tk-label text-xs">Recipient email</span>
+                <input type="email" className="tk-input" value={recipientEmail} onChange={event => onRecipientEmailChange(event.target.value)} />
               </label>
             </div>
-            <label className="flex min-h-[108px] cursor-pointer flex-col items-center justify-center rounded-lg border border-dashed border-brand-blue/40 bg-blue-tint-20 p-4 text-center">
-              <Upload className="h-5 w-5 text-brand-blue" />
-              <span className="mt-2 text-sm font-semibold text-ink">Attach file</span>
-              <span className="mt-1 text-xs text-ink-secondary">Prototype upload, file is not persisted.</span>
-              <input type="file" className="sr-only" />
-            </label>
             <div className="flex justify-end gap-2 border-t border-surface-border pt-4">
               <Dialog.Close type="button" className="tk-button-secondary">Cancel</Dialog.Close>
               <button type="submit" className="tk-button-primary">
-                <Plus className="h-4 w-4" />
-                Add content
+                <Send className="h-4 w-4" />
+                Record share
               </button>
             </div>
           </form>
         </Dialog.Content>
       </Dialog.Portal>
     </Dialog.Root>
+  )
+}
+
+function EscalationPanel({ account }: { account: Account }) {
+  const { token } = useAuth()
+  const [items, setItems] = useState<Escalation[]>([])
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState('')
+
+  useEffect(() => {
+    if (!token) return
+    let cancelled = false
+    setLoading(true)
+    setError('')
+    listEscalations(token, new URLSearchParams({ account_id: account.id, page: '1', page_size: '10', sort: 'sla_due_at' }))
+      .then(page => {
+        if (!cancelled) setItems(page.items)
+      })
+      .catch(err => {
+        if (!cancelled) setError(err instanceof Error ? err.message : 'Escalations could not load')
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [account.id, token])
+
+  if (loading) {
+    return (
+      <section className="tk-card flex min-h-[220px] items-center justify-center text-sm font-semibold text-ink-secondary">
+        <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+        Loading escalations
+      </section>
+    )
+  }
+  if (error) {
+    return <section className="tk-card p-5 text-sm font-semibold text-rag-red">{error}</section>
+  }
+  return (
+    <WorkspaceList
+      icon={ShieldAlert}
+      eyebrow="Risk response"
+      title="Escalation management"
+      description="Escalations, recovery context, SLA posture, and mitigation notes for this account."
+      action={{ label: 'Open escalations', to: '/escalations' }}
+      accountName={account.name}
+      items={items.map(item => ({
+        title: item.summary,
+        detail: item.mitigation || item.impact,
+        meta: [item.severity, item.status, `SLA ${formatDate(item.sla_due_at)}`],
+        tone: item.severity === 'critical' ? 'red' : item.severity === 'high' ? 'orange' : 'blue',
+      }))}
+    />
   )
 }
 
