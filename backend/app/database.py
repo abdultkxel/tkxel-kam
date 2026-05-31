@@ -63,8 +63,17 @@ def sync_legacy_governance_schema() -> None:
         },
     }
     nullable_columns = {
-        "governance_action_items": ("owner_name", "governance_event_id", "due_at", "priority", "completed_by_id"),
-        "governance_decisions": ("owner_name", "governance_event_id"),
+        "governance_action_items": (
+            "event_id",
+            "owner_name",
+            "due_date",
+            "source",
+            "governance_event_id",
+            "due_at",
+            "priority",
+            "completed_by_id",
+        ),
+        "governance_decisions": ("event_id", "owner_name", "source", "governance_event_id"),
         "governance_events": (
             "attendees",
             "created_by_name",
