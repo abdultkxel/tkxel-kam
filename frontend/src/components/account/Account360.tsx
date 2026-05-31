@@ -12,6 +12,7 @@ import { KYCAgentOverview } from '@/components/account/KYCAgentOverview'
 import { KYCAssistedReview } from '@/components/account/KYCAssistedReview'
 import { ScoreHistoryPanel } from '@/components/account/ScoreHistoryPanel'
 import { ScoreCalculators, ScoreCalculatorSummary } from '@/components/account/ScoreCalculators'
+import { StakeholderTab } from '@/components/account/StakeholderTab'
 import { AIBriefCard } from '@/components/ai/AIBriefCard'
 import { OpportunityBoard } from '@/components/opportunities/OpportunityBoard'
 import { EmptyState } from '@/components/ui/EmptyState'
@@ -34,7 +35,7 @@ import { emit } from '@/utils/emitTimelineEvent'
 import { emitTimelineEvent } from '@/utils/emitTimelineEvent'
 import { formatCompactCurrency, formatCurrency, formatDate, formatRelative } from '@/utils/formatters'
 
-const tabs = ['Overview', 'Engagements', 'KYC', 'Health', 'Stage', 'Opportunities', 'Education', 'Escalation', 'Governance', 'Notes', 'Timeline', 'Documents']
+const tabs = ['Overview', 'Engagements', 'Stakeholders', 'KYC', 'Health', 'Stage', 'Opportunities', 'Education', 'Escalation', 'Governance', 'Notes', 'Timeline', 'Documents']
 
 export function Account360({ account }: { account: Account }) {
   const user = useRole()
@@ -300,7 +301,7 @@ export function Account360({ account }: { account: Account }) {
             </select>
           </label>
           <Tabs.List
-            className="hidden min-w-[1210px] gap-1 rounded-lg border border-surface-border bg-white p-1 shadow-card md:grid"
+            className="hidden min-w-[1360px] gap-1 rounded-lg border border-surface-border bg-white p-1 shadow-card md:grid"
             style={{ gridTemplateColumns: `repeat(${tabs.length}, minmax(104px, 1fr))` }}
           >
             {tabs.map(tab => (
@@ -391,6 +392,9 @@ export function Account360({ account }: { account: Account }) {
         </Tabs.Content>
         <Tabs.Content value="Engagements">
           <EngagementsPanel account={account} />
+        </Tabs.Content>
+        <Tabs.Content value="Stakeholders">
+          <StakeholderTab account={account} />
         </Tabs.Content>
         <Tabs.Content value="Health">
           <div className="space-y-4">

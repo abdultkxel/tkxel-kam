@@ -44,6 +44,19 @@ GovernanceCadence = Literal["weekly", "monthly", "quarterly", "yearly"]
 GovernanceEndPolicy = Literal["never", "after_occurrences", "on_date"]
 IntegrationProvider = Literal["google-calendar", "fathom"]
 IntegrationStatus = Literal["configuration_required", "connected", "syncing", "error", "disabled"]
+StakeholderRole = Literal[
+    "executive_sponsor",
+    "economic_buyer",
+    "technical_decision_maker",
+    "operational_poc",
+    "commercial_owner",
+    "influencer",
+]
+StakeholderInfluence = Literal["low", "medium", "high", "critical"]
+StakeholderRelationshipStrength = Literal["unknown", "weak", "developing", "strong", "champion"]
+StakeholderSentiment = Literal["negative", "neutral", "positive", "champion"]
+StakeholderPoliticalRisk = Literal["unknown", "low", "medium", "high"]
+StakeholderStatus = Literal["active", "inactive", "left_company", "do_not_contact"]
 
 SELECT_FIELD_TYPES = {"single_select", "multi_select"}
 
@@ -1464,6 +1477,223 @@ class AccountOverviewRead(BaseModel):
     permissions: AccountPermissionsRead
     engagements: EngagementPageRead
     attachments: SourceDocumentPageRead
+
+
+class StakeholderRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    account_id: str
+    engagement_id: str | None = None
+    reports_to_stakeholder_id: str | None = None
+    name: str
+    title: str | None = None
+    company: str | None = None
+    email: EmailStr | None = None
+    phone: str | None = None
+    role: str
+    influence: str
+    relationship_strength: str
+    sentiment: str
+    political_risk: str
+    status: str
+    notes: str | None = None
+    last_interaction_at: datetime | None = None
+    is_sensitive: bool
+    sensitive_fields_redacted: bool = False
+    created_by_id: str | None = None
+    updated_by_id: str | None = None
+    created_at: datetime
+    updated_at: datetime
+    archived_at: datetime | None = None
+
+
+class StakeholderPageRead(BaseModel):
+    items: list[StakeholderRead]
+    total: int
+    page: int
+    page_size: int
+    pages: int
+
+
+class StakeholderInteractionRead(BaseModel):
+    id: str
+    stakeholder_id: str
+    account_id: str
+    engagement_id: str | None = None
+    interaction_type: str
+    interaction_date: datetime
+    summary: str | None = None
+    outcome: str | None = None
+    sentiment_after: str | None = None
+    relationship_strength_after: str | None = None
+    sensitive_fields_redacted: bool = False
+    created_by_id: str | None = None
+    created_by_name: str
+    created_at: datetime
+    updated_at: datetime
+
+
+class StakeholderInteractionPageRead(BaseModel):
+    items: list[StakeholderInteractionRead]
+    total: int
+    page: int
+    page_size: int
+    pages: int
+
+
+class StakeholderInteractionCreateRequest(BaseModel):
+    interaction_type: str = "note"
+    interaction_date: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    summary: str
+    outcome: str | None = None
+    sentiment_after: StakeholderSentiment | None = None
+    relationship_strength_after: StakeholderRelationshipStrength | None = None
+
+    @field_validator("interaction_type")
+    @classmethod
+    def interaction_type_is_valid(cls, value: str) -> str:
+        return validate_short_text(value, "Interaction type", max_length=80)
+
+    @field_validator("summary")
+    @classmethod
+    def summary_is_valid(cls, value: str) -> str:
+        text = require_text(value, "Interaction summary")
+        if len(text) > 4000:
+            raise ValueError("Interaction summary must be 4000 characters or fewer.")
+        return text
+
+    @field_validator("outcome")
+    @classmethod
+    def outcome_is_valid(cls, value: str | None) -> str | None:
+        return validate_optional_long_text(value, "Interaction outcome")
+
+
+class StakeholderCoverageGapRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    account_id: str
+    rule_key: str
+    severity: str
+    title: str
+    description: str
+    evidence: dict[str, Any]
+    status: str
+    created_at: datetime
+    resolved_at: datetime | None = None
+
+
+class StakeholderOrgChartNodeRead(BaseModel):
+    id: str
+    name: str
+    title: str | None = None
+    role: str | None = None
+    influence_level: str | None = None
+    relationship_strength: str | None = None
+    sentiment: str | None = None
+    political_risk: str | None = None
+    parent_id: str | None = None
+    sensitive_fields_redacted: bool = False
+
+
+class StakeholderOrgChartEdgeRead(BaseModel):
+    source: str
+    target: str
+    relationship_type: str
+
+
+class StakeholderOrgChartRead(BaseModel):
+    nodes: list[StakeholderOrgChartNodeRead]
+    edges: list[StakeholderOrgChartEdgeRead]
+
+
+class StakeholderCreateRequest(BaseModel):
+    engagement_id: str | None = None
+    reports_to_stakeholder_id: str | None = None
+    name: str
+    title: str | None = None
+    company: str | None = None
+    email: EmailStr | None = None
+    phone: str | None = None
+    role: StakeholderRole
+    influence: StakeholderInfluence = "medium"
+    relationship_strength: StakeholderRelationshipStrength = "unknown"
+    sentiment: StakeholderSentiment = "neutral"
+    political_risk: StakeholderPoliticalRisk = "unknown"
+    status: StakeholderStatus = "active"
+    notes: str | None = None
+    last_interaction_at: datetime | None = None
+    is_sensitive: bool = False
+
+    @field_validator("name")
+    @classmethod
+    def name_is_valid(cls, value: str) -> str:
+        return validate_short_text(value, "Stakeholder name")
+
+    @field_validator("title", "company")
+    @classmethod
+    def optional_profile_text_is_valid(cls, value: str | None) -> str | None:
+        return optional_text(value, "Stakeholder profile field", max_length=180)
+
+    @field_validator("phone")
+    @classmethod
+    def phone_is_valid(cls, value: str | None) -> str | None:
+        return validate_phone(value)
+
+    @field_validator("notes")
+    @classmethod
+    def notes_are_valid(cls, value: str | None) -> str | None:
+        return validate_optional_long_text(value, "Stakeholder notes")
+
+    @field_validator("engagement_id", "reports_to_stakeholder_id")
+    @classmethod
+    def optional_id_is_valid(cls, value: str | None) -> str | None:
+        return optional_text(value, "Linked record", max_length=36)
+
+
+class StakeholderUpdateRequest(BaseModel):
+    engagement_id: str | None = None
+    reports_to_stakeholder_id: str | None = None
+    name: str | None = None
+    title: str | None = None
+    company: str | None = None
+    email: EmailStr | None = None
+    phone: str | None = None
+    role: StakeholderRole | None = None
+    influence: StakeholderInfluence | None = None
+    relationship_strength: StakeholderRelationshipStrength | None = None
+    sentiment: StakeholderSentiment | None = None
+    political_risk: StakeholderPoliticalRisk | None = None
+    status: StakeholderStatus | None = None
+    notes: str | None = None
+    last_interaction_at: datetime | None = None
+    is_sensitive: bool | None = None
+
+    @field_validator("name")
+    @classmethod
+    def name_is_valid(cls, value: str | None) -> str | None:
+        return validate_short_text(value, "Stakeholder name") if value is not None else None
+
+    @field_validator("title", "company")
+    @classmethod
+    def optional_profile_text_is_valid(cls, value: str | None) -> str | None:
+        return optional_text(value, "Stakeholder profile field", max_length=180)
+
+    @field_validator("phone")
+    @classmethod
+    def phone_is_valid(cls, value: str | None) -> str | None:
+        return validate_phone(value)
+
+    @field_validator("notes")
+    @classmethod
+    def notes_are_valid(cls, value: str | None) -> str | None:
+        return validate_optional_long_text(value, "Stakeholder notes")
+
+    @field_validator("engagement_id", "reports_to_stakeholder_id")
+    @classmethod
+    def optional_id_is_valid(cls, value: str | None) -> str | None:
+        return optional_text(value, "Linked record", max_length=36)
 
 
 class ContentItemRead(BaseModel):

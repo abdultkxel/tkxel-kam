@@ -57,8 +57,37 @@ _TABLE_BACKFILL_DEFAULTS: dict[str, dict[str, Any]] = {
         "is_immutable": True,
         "created_at": lambda: datetime.now(timezone.utc),
     },
+    "stakeholders": {
+        "role": "operational_poc",
+        "influence": "medium",
+        "relationship_strength": "unknown",
+        "sentiment": "neutral",
+        "political_risk": "unknown",
+        "status": "active",
+        "is_sensitive": False,
+        "created_at": lambda: datetime.now(timezone.utc),
+        "updated_at": lambda: datetime.now(timezone.utc),
+    },
+    "stakeholder_interactions": {
+        "interaction_type": "note",
+        "subject": "Stakeholder interaction",
+        "interaction_at": lambda: datetime.now(timezone.utc),
+        "is_sensitive": False,
+        "created_by_name": "System",
+        "created_at": lambda: datetime.now(timezone.utc),
+        "updated_at": lambda: datetime.now(timezone.utc),
+    },
+    "stakeholder_coverage_gaps": {
+        "severity": "medium",
+        "title": "Stakeholder coverage gap",
+        "description": "Stakeholder coverage gap detected by deterministic rules.",
+        "evidence": {},
+        "status": "open",
+        "created_at": lambda: datetime.now(timezone.utc),
+        "updated_at": lambda: datetime.now(timezone.utc),
+    },
 }
-_JSON_BACKFILL_COLUMNS = {"service_lines", "source_links", "risks", "drivers", "contributions"}
+_JSON_BACKFILL_COLUMNS = {"service_lines", "source_links", "risks", "drivers", "contributions", "evidence"}
 _LEGACY_TABLE_BACKFILL_DEFAULTS: dict[str, dict[str, Any]] = {
     "engagements": {
         "source_document_links": [],
@@ -109,9 +138,27 @@ def init_db() -> None:
 
 
 def apply_additive_migrations() -> None:
-    from app.models import AccountHealthRollup, Engagement, EngagementHealthSnapshot, TimelineEntry
+    from app.models import (
+        AccountHealthRollup,
+        Engagement,
+        EngagementHealthSnapshot,
+        Stakeholder,
+        StakeholderCoverageGap,
+        StakeholderInteraction,
+        TimelineEntry,
+    )
 
-    migrate_missing_columns([Engagement.__table__, EngagementHealthSnapshot.__table__, AccountHealthRollup.__table__, TimelineEntry.__table__])
+    migrate_missing_columns(
+        [
+            Engagement.__table__,
+            EngagementHealthSnapshot.__table__,
+            AccountHealthRollup.__table__,
+            TimelineEntry.__table__,
+            Stakeholder.__table__,
+            StakeholderInteraction.__table__,
+            StakeholderCoverageGap.__table__,
+        ]
+    )
 
 
 def migrate_missing_columns(tables: list) -> None:
