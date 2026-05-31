@@ -3,7 +3,7 @@ from datetime import datetime
 from sqlalchemy import and_, func, or_, select
 from sqlalchemy.orm import Session, selectinload
 
-from app.models import Account, AccountOwner, AccountOwnershipHistory, SourceCitation, SourceDocument, User
+from app.models import Account, AccountOwner, AccountOwnershipHistory, Opportunity, SourceCitation, SourceDocument, User
 
 
 class AccountRepository:
@@ -246,6 +246,15 @@ class AccountRepository:
             .order_by(User.full_name, User.email)
             .limit(1)
         )
+
+    def count_open_opportunities(self, account_id: str) -> int:
+        return self.db.scalar(
+            select(func.count(Opportunity.id)).where(
+                Opportunity.account_id == account_id,
+                Opportunity.archived_at.is_(None),
+                Opportunity.stage.notin_(("Won", "Lost")),
+            )
+        ) or 0
 
     def commit(self) -> None:
         self.db.commit()

@@ -7,7 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.config import get_settings
 from app.database import SessionLocal, init_db
 from app.exceptions import validation_exception_handler
-from app.routers import accounts, admin, auth, content, custom_fields, engagements, escalations, governance, onboarding, users
+from app.routers import accounts, admin, auth, content, custom_fields, engagements, escalations, governance, onboarding, opportunities, users
 from app.services.seed import seed_default_data
 
 
@@ -63,6 +63,10 @@ openapi_tags = [
         "description": "Governance calendar, recurrence, agenda drafts, decisions, actions, AI brief, and integration sync APIs.",
     },
     {
+        "name": "Growth & Opportunity Management",
+        "description": "Opportunity CRUD, pipeline board/list tracking, stage movement, local action items, timeline history, and opportunity type taxonomy APIs.",
+    },
+    {
         "name": "Field Builder Runtime",
         "description": "Runtime custom field definitions used by feature screens.",
     },
@@ -97,6 +101,7 @@ app.include_router(content.router)
 app.include_router(custom_fields.router)
 app.include_router(escalations.router)
 app.include_router(governance.router)
+app.include_router(opportunities.router)
 
 
 @app.get(
