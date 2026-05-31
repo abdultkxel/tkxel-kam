@@ -7,7 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.config import get_settings
 from app.database import SessionLocal, init_db
 from app.exceptions import validation_exception_handler
-from app.routers import accounts, admin, auth, engagements, onboarding, users
+from app.routers import accounts, admin, auth, engagements, governance, onboarding, users
 from app.services.seed import seed_default_data
 
 
@@ -50,6 +50,10 @@ openapi_tags = [
         "name": "Engagement 360",
         "description": "Engagement/SOW detail, updates, archival, health snapshots, and recalculation APIs.",
     },
+    {
+        "name": "Governance Reviews",
+        "description": "Governance event scheduling, notes, decisions, action items, deterministic agenda drafts, and source-backed briefs.",
+    },
 ]
 
 app = FastAPI(
@@ -77,6 +81,7 @@ app.include_router(admin.router)
 app.include_router(onboarding.router)
 app.include_router(accounts.router)
 app.include_router(engagements.router)
+app.include_router(governance.router)
 
 
 @app.get(

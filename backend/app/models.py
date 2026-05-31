@@ -164,6 +164,7 @@ class Account(Base):
     ownership_history: Mapped[list["AccountOwnershipHistory"]] = relationship(back_populates="account", cascade="all, delete-orphan")
     engagements: Mapped[list["Engagement"]] = relationship(back_populates="account", cascade="all, delete-orphan")
     source_documents: Mapped[list["SourceDocument"]] = relationship(back_populates="account")
+    governance_events: Mapped[list["GovernanceEvent"]] = relationship(back_populates="account", cascade="all, delete-orphan")
 
 
 class AccountOwner(Base):
@@ -349,6 +350,7 @@ class Engagement(Base):
     account: Mapped[Account] = relationship(back_populates="engagements")
     source_documents: Mapped[list[SourceDocument]] = relationship(back_populates="engagement")
     health_snapshots: Mapped[list["EngagementHealthSnapshot"]] = relationship(back_populates="engagement", cascade="all, delete-orphan")
+    governance_events: Mapped[list["GovernanceEvent"]] = relationship(back_populates="engagement")
 
 
 class EngagementHealthSnapshot(Base):
@@ -381,6 +383,133 @@ class AccountHealthRollup(Base):
     contributions: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
     metric_version: Mapped[str] = mapped_column(String(40), nullable=False, default="account-rollup-v1")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utc_now)
+
+
+class GovernanceEvent(Base):
+    __tablename__ = "governance_events"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid4()))
+    account_id: Mapped[str] = mapped_column(ForeignKey("accounts.id", ondelete="CASCADE"), index=True, nullable=False)
+    engagement_id: Mapped[str | None] = mapped_column(ForeignKey("engagements.id", ondelete="SET NULL"), index=True, nullable=True)
+    owner_id: Mapped[str | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), index=True, nullable=True)
+    owner_name: Mapped[str] = mapped_column(String(160), nullable=False)
+    owner_email: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    governance_type: Mapped[str] = mapped_column(String(80), index=True, nullable=False)
+    scheduled_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True, nullable=False)
+    agenda: Mapped[str] = mapped_column(Text, nullable=False)
+    status: Mapped[str] = mapped_column(String(40), index=True, nullable=False, default="upcoming")
+    source: Mapped[str] = mapped_column(String(80), index=True, nullable=False, default="manual")
+    accepted_agenda_output_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    created_by_id: Mapped[str | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    updated_by_id: Mapped[str | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utc_now, onupdate=utc_now)
+
+    account: Mapped[Account] = relationship(back_populates="governance_events")
+    engagement: Mapped[Engagement | None] = relationship(back_populates="governance_events")
+    attendees: Mapped[list["GovernanceEventAttendee"]] = relationship(back_populates="event", cascade="all, delete-orphan")
+    notes: Mapped[list["GovernanceNote"]] = relationship(back_populates="event", cascade="all, delete-orphan")
+    decisions: Mapped[list["GovernanceDecision"]] = relationship(back_populates="event", cascade="all, delete-orphan")
+    action_items: Mapped[list["GovernanceActionItem"]] = relationship(back_populates="event", cascade="all, delete-orphan")
+    generated_outputs: Mapped[list["GovernanceGeneratedOutput"]] = relationship(back_populates="event", cascade="all, delete-orphan")
+
+
+class GovernanceEventAttendee(Base):
+    __tablename__ = "governance_event_attendees"
+    __table_args__ = (UniqueConstraint("event_id", "email", name="uq_governance_event_attendees_event_email"),)
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid4()))
+    event_id: Mapped[str] = mapped_column(ForeignKey("governance_events.id", ondelete="CASCADE"), index=True, nullable=False)
+    email: Mapped[str] = mapped_column(String(255), index=True, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utc_now)
+
+    event: Mapped[GovernanceEvent] = relationship(back_populates="attendees")
+
+
+class GovernanceNote(Base):
+    __tablename__ = "governance_notes"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid4()))
+    event_id: Mapped[str] = mapped_column(ForeignKey("governance_events.id", ondelete="CASCADE"), index=True, nullable=False)
+    body: Mapped[str] = mapped_column(Text, nullable=False)
+    author_id: Mapped[str | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    author_name: Mapped[str] = mapped_column(String(160), nullable=False)
+    source: Mapped[str] = mapped_column(String(80), nullable=False, default="manual")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utc_now, onupdate=utc_now)
+
+    event: Mapped[GovernanceEvent] = relationship(back_populates="notes")
+
+
+class GovernanceDecision(Base):
+    __tablename__ = "governance_decisions"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid4()))
+    event_id: Mapped[str] = mapped_column(ForeignKey("governance_events.id", ondelete="CASCADE"), index=True, nullable=False)
+    decision_text: Mapped[str] = mapped_column(Text, nullable=False)
+    owner_id: Mapped[str | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    owner_name: Mapped[str | None] = mapped_column(String(160), nullable=True)
+    source: Mapped[str] = mapped_column(String(80), nullable=False, default="manual")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utc_now)
+
+    event: Mapped[GovernanceEvent] = relationship(back_populates="decisions")
+
+
+class GovernanceActionItem(Base):
+    __tablename__ = "governance_action_items"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid4()))
+    event_id: Mapped[str] = mapped_column(ForeignKey("governance_events.id", ondelete="CASCADE"), index=True, nullable=False)
+    title: Mapped[str] = mapped_column(String(220), nullable=False)
+    owner_id: Mapped[str | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    owner_name: Mapped[str | None] = mapped_column(String(160), nullable=True)
+    owner_email: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    due_date: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True, nullable=False)
+    status: Mapped[str] = mapped_column(String(40), index=True, nullable=False, default="open")
+    source: Mapped[str] = mapped_column(String(80), nullable=False, default="manual")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utc_now, onupdate=utc_now)
+
+    event: Mapped[GovernanceEvent] = relationship(back_populates="action_items")
+
+
+class GovernanceGeneratedOutput(Base):
+    __tablename__ = "governance_generated_outputs"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid4()))
+    event_id: Mapped[str] = mapped_column(ForeignKey("governance_events.id", ondelete="CASCADE"), index=True, nullable=False)
+    output_type: Mapped[str] = mapped_column(String(80), index=True, nullable=False)
+    generation_method: Mapped[str] = mapped_column(String(80), index=True, nullable=False, default="deterministic")
+    status: Mapped[str] = mapped_column(String(40), index=True, nullable=False, default="generated")
+    content: Mapped[str] = mapped_column(Text, nullable=False)
+    disclaimer: Mapped[str] = mapped_column(Text, nullable=False)
+    source_filter_metadata: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    provider_metadata: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    error_code: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_by_id: Mapped[str | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    created_by_name: Mapped[str] = mapped_column(String(160), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utc_now)
+
+    event: Mapped[GovernanceEvent] = relationship(back_populates="generated_outputs")
+    citations: Mapped[list["GovernanceGeneratedOutputCitation"]] = relationship(back_populates="output", cascade="all, delete-orphan")
+
+
+class GovernanceGeneratedOutputCitation(Base):
+    __tablename__ = "governance_generated_output_citations"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid4()))
+    output_id: Mapped[str] = mapped_column(ForeignKey("governance_generated_outputs.id", ondelete="CASCADE"), index=True, nullable=False)
+    source_type: Mapped[str] = mapped_column(String(80), index=True, nullable=False)
+    source_id: Mapped[str] = mapped_column(String(36), index=True, nullable=False)
+    source_title: Mapped[str] = mapped_column(String(220), nullable=False)
+    source_url: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    snippet: Mapped[str] = mapped_column(Text, nullable=False)
+    source_timestamp: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utc_now)
+
+    output: Mapped[GovernanceGeneratedOutput] = relationship(back_populates="citations")
 
 
 class TimelineEntry(Base):

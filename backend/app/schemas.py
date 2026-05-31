@@ -27,6 +27,12 @@ SourceType = Literal["project_charter", "sow", "attachment", "source_link", "com
 CustomFieldType = Literal["text", "textarea", "number", "currency", "date", "datetime", "boolean", "single_select", "multi_select", "email", "url", "phone"]
 CustomFieldStatus = Literal["all", "active", "inactive"]
 CustomFieldSort = Literal["label", "module", "field_type", "sort_order", "updated_at"]
+GovernanceEventType = Literal["QBR", "SteerCo", "Monthly Review", "Executive Review"]
+GovernanceEventStatus = Literal["upcoming", "overdue", "completed", "cancelled"]
+GovernanceEventSource = Literal["manual", "google_calendar", "fathom", "system"]
+GovernanceGeneratedOutputType = Literal["agenda_draft", "governance_brief"]
+GovernanceGenerationMethod = Literal["deterministic", "ai_agent"]
+GovernanceActionItemStatus = Literal["open", "completed"]
 
 SELECT_FIELD_TYPES = {"single_select", "multi_select"}
 
@@ -1261,6 +1267,255 @@ class AccountHealthRollupRead(BaseModel):
     contributions: list[dict]
     metric_version: str
     created_at: datetime
+
+
+class GovernanceNoteRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    event_id: str
+    body: str
+    author_id: str | None = None
+    author_name: str
+    source: str
+    created_at: datetime
+    updated_at: datetime
+
+
+class GovernanceDecisionCreateRequest(BaseModel):
+    decision_text: str
+    owner_id: str | None = None
+    owner_name: str | None = None
+
+    @field_validator("decision_text")
+    @classmethod
+    def decision_text_is_valid(cls, value: str) -> str:
+        return validate_short_text(value, "Decision", 2000)
+
+    @field_validator("owner_name")
+    @classmethod
+    def owner_name_is_valid(cls, value: str | None) -> str | None:
+        return validate_short_text(value, "Decision owner", 160) if value is not None else None
+
+
+class GovernanceDecisionRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    event_id: str
+    decision_text: str
+    owner_id: str | None = None
+    owner_name: str | None = None
+    source: str
+    created_at: datetime
+
+
+class GovernanceActionItemCreateRequest(BaseModel):
+    title: str
+    owner_id: str | None = None
+    owner_name: str | None = None
+    owner_email: EmailStr | None = None
+    due_date: datetime
+
+    @field_validator("title")
+    @classmethod
+    def title_is_valid(cls, value: str) -> str:
+        return validate_short_text(value, "Action item", 220)
+
+    @field_validator("owner_name")
+    @classmethod
+    def action_owner_name_is_valid(cls, value: str | None) -> str | None:
+        return validate_short_text(value, "Action owner", 160) if value is not None else None
+
+    @model_validator(mode="after")
+    def action_owner_is_required(self) -> "GovernanceActionItemCreateRequest":
+        if not (self.owner_id or self.owner_name or self.owner_email):
+            raise ValueError("Action item owner is required.")
+        return self
+
+
+class GovernanceActionItemRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    event_id: str
+    title: str
+    owner_id: str | None = None
+    owner_name: str | None = None
+    owner_email: EmailStr | None = None
+    due_date: datetime
+    status: str
+    source: str
+    created_at: datetime
+    updated_at: datetime
+
+
+class GovernanceEventCreateRequest(BaseModel):
+    account_id: str
+    engagement_id: str | None = None
+    governance_type: GovernanceEventType
+    scheduled_at: datetime
+    agenda: str
+    owner_id: str
+    attendee_emails: list[EmailStr] = Field(default_factory=list)
+    source: GovernanceEventSource = "manual"
+
+    @field_validator("agenda")
+    @classmethod
+    def agenda_is_valid(cls, value: str) -> str:
+        return validate_short_text(value, "Agenda", 4000)
+
+    @field_validator("attendee_emails")
+    @classmethod
+    def attendee_emails_are_unique(cls, value: list[EmailStr]) -> list[EmailStr]:
+        normalized = [str(email).strip().lower() for email in value]
+        if len(normalized) != len(set(normalized)):
+            raise ValueError("Attendee emails must be unique.")
+        return value
+
+
+class GovernanceEventUpdateRequest(BaseModel):
+    engagement_id: str | None = None
+    governance_type: GovernanceEventType | None = None
+    scheduled_at: datetime | None = None
+    agenda: str | None = None
+    owner_id: str | None = None
+    attendee_emails: list[EmailStr] | None = None
+    status: GovernanceEventStatus | None = None
+
+    @field_validator("agenda")
+    @classmethod
+    def agenda_is_valid(cls, value: str | None) -> str | None:
+        return validate_short_text(value, "Agenda", 4000) if value is not None else None
+
+    @field_validator("attendee_emails")
+    @classmethod
+    def attendee_emails_are_unique(cls, value: list[EmailStr] | None) -> list[EmailStr] | None:
+        if value is None:
+            return None
+        normalized = [str(email).strip().lower() for email in value]
+        if len(normalized) != len(set(normalized)):
+            raise ValueError("Attendee emails must be unique.")
+        return value
+
+
+class GovernanceEventAgendaUpdateRequest(BaseModel):
+    agenda: str
+    source_output_id: str | None = None
+
+    @field_validator("agenda")
+    @classmethod
+    def agenda_is_valid(cls, value: str) -> str:
+        return validate_short_text(value, "Agenda", 4000)
+
+
+class GovernanceEventCompleteRequest(BaseModel):
+    notes: str
+    decisions: list[GovernanceDecisionCreateRequest] = Field(default_factory=list)
+    action_items: list[GovernanceActionItemCreateRequest] = Field(default_factory=list)
+
+    @field_validator("notes")
+    @classmethod
+    def notes_are_valid(cls, value: str) -> str:
+        return validate_short_text(value, "Notes", 5000)
+
+
+class GovernanceGeneratedOutputRequest(BaseModel):
+    source_modules: list[str] = Field(default_factory=list)
+
+    @field_validator("source_modules")
+    @classmethod
+    def source_modules_are_valid(cls, value: list[str]) -> list[str]:
+        return [validate_short_text(item, "Source module", 80) for item in value]
+
+
+class GovernanceGeneratedOutputCitationRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    output_id: str
+    source_type: str
+    source_id: str
+    source_title: str
+    source_url: str | None = None
+    snippet: str
+    source_timestamp: datetime | None = None
+    created_at: datetime
+
+
+class GovernanceGeneratedOutputRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    event_id: str
+    output_type: str
+    generation_method: str
+    status: str
+    content: str
+    disclaimer: str
+    source_filter_metadata: dict[str, Any] = Field(default_factory=dict)
+    provider_metadata: dict[str, Any] | None = None
+    error_code: str | None = None
+    error_message: str | None = None
+    created_by_id: str | None = None
+    created_by_name: str
+    created_at: datetime
+    citations: list[GovernanceGeneratedOutputCitationRead] = Field(default_factory=list)
+
+
+class GovernanceEventRead(BaseModel):
+    id: str
+    account_id: str
+    account_name: str
+    engagement_id: str | None = None
+    engagement_name: str | None = None
+    owner_id: str | None = None
+    owner_name: str
+    owner_email: EmailStr | None = None
+    governance_type: str
+    scheduled_at: datetime
+    agenda: str
+    status: str
+    source: str
+    attendee_emails: list[EmailStr] = Field(default_factory=list)
+    notes: list[GovernanceNoteRead] = Field(default_factory=list)
+    decisions: list[GovernanceDecisionRead] = Field(default_factory=list)
+    action_items: list[GovernanceActionItemRead] = Field(default_factory=list)
+    generated_outputs: list[GovernanceGeneratedOutputRead] = Field(default_factory=list)
+    completed_at: datetime | None = None
+    created_at: datetime
+    updated_at: datetime
+
+
+class GovernanceEventPageRead(BaseModel):
+    items: list[GovernanceEventRead]
+    total: int
+    page: int
+    page_size: int
+    pages: int
+
+
+class GovernanceCalendarItemRead(BaseModel):
+    id: str
+    kind: str
+    source_record_id: str
+    source_record_type: str
+    account_id: str
+    account_name: str
+    owner_id: str | None = None
+    date: datetime
+    title: str
+    detail: str
+    status: str
+    route: str
+
+
+class GovernanceCalendarPageRead(BaseModel):
+    items: list[GovernanceCalendarItemRead]
+    total: int
+    page: int
+    page_size: int
+    pages: int
 
 
 class AccountOverviewRead(BaseModel):

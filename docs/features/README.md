@@ -1,0 +1,30 @@
+# Feature Context Index
+
+Use this folder to preserve focused context for each feature. Every feature must have one markdown file here and must be linked in this index.
+
+Start new feature files from:
+
+```text
+docs/features/_feature-template.md
+```
+
+## Features
+
+- [Governance & Reviews](governance-reviews.md)
+
+## Naming Convention
+
+Use short kebab-case names:
+
+```text
+docs/features/account-bulk-import.md
+docs/features/profile-validation.md
+docs/features/governance-calendar-sync.md
+```
+
+## Maintenance Rules
+
+- Add the feature file when feature work starts.
+- Keep decisions, API contracts, validation behavior, and tests updated during development.
+- Link PRs, tickets, or requirement IDs when available.
+- Move completed follow-ups into a backlog or issue tracker instead of leaving stale notes.

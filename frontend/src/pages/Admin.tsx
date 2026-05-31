@@ -61,6 +61,7 @@ const labels: Record<NotificationTrigger, string> = {
   sensitive_access_request: 'Sensitive access request',
   integration_error: 'Integration error',
   retention_job_complete: 'Retention job complete',
+  governance_overdue: 'Governance overdue',
 }
 
 const preferenceOptions: { value: NotificationPreferenceMode; label: string }[] = [
