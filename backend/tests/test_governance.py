@@ -292,6 +292,8 @@ def test_governance_completion_audit_timeline_overdue_and_openapi(client: TestCl
     assert completed["status"] == "completed"
     assert completed["notes"][0]["body"] == "Reviewed delivery risks and agreed on next checkpoints."
     assert completed["action_items"][0]["status"] == "open"
+    assert completed["action_items"][0]["owner_name"] == "owner@example.com"
+    assert completed["action_items"][0]["owner_email"] == "owner@example.com"
 
     timeline_count = db_session.query(TimelineEntry).filter(TimelineEntry.source_record_id == event_id, TimelineEntry.module == "governance").count()
     decision_timeline_count = db_session.query(TimelineEntry).filter(TimelineEntry.source_record_type == "governance_decision", TimelineEntry.module == "governance").count()

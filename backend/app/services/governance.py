@@ -378,12 +378,13 @@ class GovernanceService:
 
     def _action_item_from_payload(self, event_id: str, payload: GovernanceActionItemCreateRequest) -> GovernanceActionItem:
         owner = self.repository.get_user(payload.owner_id) if payload.owner_id else None
+        owner_email = str(payload.owner_email).lower() if payload.owner_email else None
         return GovernanceActionItem(
             event_id=event_id,
             title=payload.title,
             owner_id=owner.id if owner else payload.owner_id,
-            owner_name=owner.full_name if owner else payload.owner_name,
-            owner_email=str(payload.owner_email).lower() if payload.owner_email else None,
+            owner_name=owner.full_name if owner else payload.owner_name or owner_email,
+            owner_email=owner_email,
             due_date=payload.due_date,
             status="open",
         )

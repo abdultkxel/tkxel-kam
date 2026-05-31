@@ -4,6 +4,8 @@ frontend/.env
 frontend/.env.local
 backend/.venv/
 backend/.env
+backend/storage/content/*
+!backend/storage/content/.gitkeep
 __pycache__/
 backend/.pytest_cache/
 *.py[cod]
