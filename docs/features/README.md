@@ -12,6 +12,10 @@ docs/features/_feature-template.md
 
 - [Governance & Reviews](governance-reviews.md)
 
+## Handoff Notes
+
+- [Governance Reviews Merge Context](governance-reviews-merge-context.md)
+
 ## Naming Convention
 
 Use short kebab-case names:
