@@ -40,6 +40,12 @@ GovernanceCadence = Literal["weekly", "monthly", "quarterly", "yearly"]
 GovernanceEndPolicy = Literal["never", "after_occurrences", "on_date"]
 IntegrationProvider = Literal["google-calendar", "fathom"]
 IntegrationStatus = Literal["configuration_required", "connected", "syncing", "error", "disabled"]
+RetentionReadinessStatus = Literal["not_started", "draft", "in_review", "ready", "blocked"]
+RetentionSourceKind = Literal["manual", "sow", "extracted", "imported"]
+RetentionPlanType = Literal["retention", "renewal", "stabilization"]
+RetentionPlanStatus = Literal["draft", "active", "completed", "archived"]
+RetentionActionStatus = Literal["todo", "in_progress", "done", "blocked", "cancelled"]
+RetentionMilestoneStatus = Literal["open", "completed", "blocked", "cancelled"]
 
 SELECT_FIELD_TYPES = {"single_select", "multi_select"}
 
@@ -2154,3 +2160,432 @@ class IntegrationSyncResponse(BaseModel):
     skipped: int = 0
     errors: int = 0
     message: str
+
+
+class EngagementRenewalRead(BaseModel):
+    id: str | None = None
+    account_id: str
+    account_name: str | None = None
+    engagement_id: str
+    engagement_name: str | None = None
+    owner_id: str | None = None
+    owner_name: str | None = None
+    readiness_status: str
+    renewal_risk: str
+    sow_start_date: datetime | None = None
+    sow_end_date: datetime | None = None
+    renewal_date: datetime | None = None
+    notice_deadline: datetime | None = None
+    notice_period_days: int | None = None
+    auto_renewal: bool
+    commercial_exposure: float
+    currency: str
+    confidence: int | None = None
+    source_kind: str
+    source_title: str | None = None
+    source_document_id: str | None = None
+    source_citation: str | None = None
+    manual_override_reason: str | None = None
+    days_to_expiry: int | None = None
+    days_to_notice: int | None = None
+    created_at: datetime | None = None
+    updated_at: datetime | None = None
+
+
+class EngagementRenewalUpdateRequest(BaseModel):
+    owner_id: str | None = None
+    readiness_status: RetentionReadinessStatus | None = None
+    renewal_risk: RiskStatus | None = None
+    sow_start_date: datetime | None = None
+    sow_end_date: datetime | None = None
+    renewal_date: datetime | None = None
+    notice_deadline: datetime | None = None
+    notice_period_days: int | None = None
+    auto_renewal: bool | None = None
+    commercial_exposure: float | None = None
+    currency: str | None = None
+    confidence: int | None = None
+    source_kind: RetentionSourceKind | None = None
+    source_title: str | None = None
+    source_document_id: str | None = None
+    source_citation: str | None = None
+    manual_override_reason: str | None = None
+
+    @field_validator("notice_period_days")
+    @classmethod
+    def notice_period_is_valid(cls, value: int | None) -> int | None:
+        if value is not None and value < 0:
+            raise ValueError("Notice period must be zero or greater.")
+        return value
+
+    @field_validator("commercial_exposure")
+    @classmethod
+    def exposure_is_valid(cls, value: float | None) -> float | None:
+        return validate_non_negative(value, "Commercial exposure") if value is not None else None
+
+    @field_validator("currency")
+    @classmethod
+    def currency_is_valid(cls, value: str | None) -> str | None:
+        return validate_currency(value) if value is not None else None
+
+    @field_validator("confidence")
+    @classmethod
+    def confidence_is_valid(cls, value: int | None) -> int | None:
+        return validate_percent(value, "Confidence") if value is not None else None
+
+    @field_validator("source_title")
+    @classmethod
+    def source_title_is_valid(cls, value: str | None) -> str | None:
+        return validate_short_text(value, "Source title", 220) if value is not None else None
+
+    @field_validator("source_citation", "manual_override_reason")
+    @classmethod
+    def source_text_is_valid(cls, value: str | None) -> str | None:
+        return validate_optional_long_text(value, "Renewal source text", 2000)
+
+
+class AccountRetentionRead(BaseModel):
+    id: str | None = None
+    account_id: str
+    readiness_status: str
+    renewal_risk: str
+    owner_id: str | None = None
+    owner_name: str | None = None
+    commercial_exposure: float
+    currency: str
+    confidence: int | None = None
+    source_kind: str
+    source_title: str | None = None
+    source_citation: str | None = None
+    manual_override_reason: str | None = None
+    notes: str | None = None
+    days_to_nearest_notice: int | None = None
+    days_to_nearest_renewal: int | None = None
+    renewal_count: int
+    high_risk_count: int
+    renewals: list[EngagementRenewalRead] = Field(default_factory=list)
+    updated_at: datetime | None = None
+
+
+class AccountRetentionUpdateRequest(BaseModel):
+    readiness_status: RetentionReadinessStatus | None = None
+    renewal_risk: RiskStatus | None = None
+    owner_id: str | None = None
+    commercial_exposure: float | None = None
+    currency: str | None = None
+    confidence: int | None = None
+    source_kind: RetentionSourceKind | None = None
+    source_title: str | None = None
+    source_citation: str | None = None
+    manual_override_reason: str | None = None
+    notes: str | None = None
+
+    @field_validator("commercial_exposure")
+    @classmethod
+    def exposure_is_valid(cls, value: float | None) -> float | None:
+        return validate_non_negative(value, "Commercial exposure") if value is not None else None
+
+    @field_validator("currency")
+    @classmethod
+    def currency_is_valid(cls, value: str | None) -> str | None:
+        return validate_currency(value) if value is not None else None
+
+    @field_validator("confidence")
+    @classmethod
+    def confidence_is_valid(cls, value: int | None) -> int | None:
+        return validate_percent(value, "Confidence") if value is not None else None
+
+    @field_validator("source_title")
+    @classmethod
+    def source_title_is_valid(cls, value: str | None) -> str | None:
+        return validate_short_text(value, "Source title", 220) if value is not None else None
+
+    @field_validator("source_citation", "manual_override_reason", "notes")
+    @classmethod
+    def text_is_valid(cls, value: str | None) -> str | None:
+        return validate_optional_long_text(value, "Retention text", 4000)
+
+
+class RetentionPlanMilestoneRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    plan_id: str
+    title: str
+    milestone_type: str
+    due_at: datetime
+    status: str
+    created_at: datetime
+    updated_at: datetime
+
+
+class RetentionPlanMilestoneCreateRequest(BaseModel):
+    title: str
+    milestone_type: str = "renewal"
+    due_at: datetime
+
+    @field_validator("title")
+    @classmethod
+    def title_is_valid(cls, value: str) -> str:
+        return validate_short_text(value, "Milestone title", 220)
+
+    @field_validator("milestone_type")
+    @classmethod
+    def type_is_valid(cls, value: str) -> str:
+        return validate_short_text(value, "Milestone type", 60)
+
+
+class RetentionPlanActionRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    plan_id: str
+    title: str
+    owner_id: str | None = None
+    owner_name: str
+    due_at: datetime
+    status: str
+    success_criteria: str | None = None
+    source_recommendation_id: str | None = None
+    completed_at: datetime | None = None
+    completed_by_id: str | None = None
+    created_at: datetime
+    updated_at: datetime
+
+
+class RetentionPlanActionPageRead(BaseModel):
+    items: list[RetentionPlanActionRead]
+    total: int
+    page: int
+    page_size: int
+    pages: int
+
+
+class RetentionPlanActionCreateRequest(BaseModel):
+    title: str
+    owner_id: str
+    due_at: datetime
+    success_criteria: str | None = None
+    source_recommendation_id: str | None = None
+    confirmed: bool = False
+
+    @field_validator("title")
+    @classmethod
+    def title_is_valid(cls, value: str) -> str:
+        return validate_short_text(value, "Action title", 220)
+
+    @field_validator("success_criteria")
+    @classmethod
+    def success_criteria_is_valid(cls, value: str | None) -> str | None:
+        return validate_optional_long_text(value, "Action success criteria", 1000)
+
+
+class RetentionPlanActionUpdateRequest(BaseModel):
+    title: str | None = None
+    owner_id: str | None = None
+    due_at: datetime | None = None
+    status: RetentionActionStatus | None = None
+    success_criteria: str | None = None
+
+    @field_validator("title")
+    @classmethod
+    def title_is_valid(cls, value: str | None) -> str | None:
+        return validate_short_text(value, "Action title", 220) if value is not None else None
+
+    @field_validator("success_criteria")
+    @classmethod
+    def success_criteria_is_valid(cls, value: str | None) -> str | None:
+        return validate_optional_long_text(value, "Action success criteria", 1000)
+
+
+class RetentionPlanRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    account_id: str
+    engagement_id: str | None = None
+    title: str
+    plan_type: str
+    status: str
+    risk_level: str
+    owner_id: str | None = None
+    owner_name: str
+    due_at: datetime
+    renewal_milestone_at: datetime | None = None
+    success_criteria: list[str]
+    recommendation_context: dict | None = None
+    timeline_history: list[dict] = Field(default_factory=list)
+    custom_field_values: dict[str, Any] = Field(default_factory=dict)
+    milestones: list[RetentionPlanMilestoneRead] = Field(default_factory=list)
+    actions: list[RetentionPlanActionRead] = Field(default_factory=list)
+    created_at: datetime
+    updated_at: datetime
+
+
+class RetentionPlanPageRead(BaseModel):
+    items: list[RetentionPlanRead]
+    total: int
+    page: int
+    page_size: int
+    pages: int
+
+
+class RetentionPlanCreateRequest(BaseModel):
+    engagement_id: str | None = None
+    title: str
+    plan_type: RetentionPlanType
+    status: RetentionPlanStatus = "draft"
+    risk_level: RiskStatus = "warning"
+    owner_id: str
+    due_at: datetime
+    renewal_milestone_at: datetime | None = None
+    success_criteria: list[str] = Field(..., min_length=1)
+    recommendation_context: dict | None = None
+    milestones: list[RetentionPlanMilestoneCreateRequest] = Field(default_factory=list)
+    custom_field_values: dict[str, Any] = Field(default_factory=dict)
+
+    @field_validator("title")
+    @classmethod
+    def title_is_valid(cls, value: str) -> str:
+        return validate_short_text(value, "Plan title", 220)
+
+    @field_validator("success_criteria")
+    @classmethod
+    def success_criteria_are_valid(cls, value: list[str]) -> list[str]:
+        return validate_string_list(value, "Success criteria", max_items=20)
+
+    @field_validator("custom_field_values")
+    @classmethod
+    def custom_field_keys_are_valid(cls, value: dict[str, Any]) -> dict[str, Any]:
+        return {validate_slug(key, "Custom field key"): item for key, item in value.items()}
+
+
+class RetentionPlanUpdateRequest(BaseModel):
+    engagement_id: str | None = None
+    title: str | None = None
+    plan_type: RetentionPlanType | None = None
+    status: RetentionPlanStatus | None = None
+    risk_level: RiskStatus | None = None
+    owner_id: str | None = None
+    due_at: datetime | None = None
+    renewal_milestone_at: datetime | None = None
+    success_criteria: list[str] | None = None
+    recommendation_context: dict | None = None
+    custom_field_values: dict[str, Any] | None = None
+
+    @field_validator("title")
+    @classmethod
+    def title_is_valid(cls, value: str | None) -> str | None:
+        return validate_short_text(value, "Plan title", 220) if value is not None else None
+
+    @field_validator("success_criteria")
+    @classmethod
+    def success_criteria_are_valid(cls, value: list[str] | None) -> list[str] | None:
+        return validate_string_list(value, "Success criteria", max_items=20) if value is not None else None
+
+    @field_validator("custom_field_values")
+    @classmethod
+    def optional_custom_field_keys_are_valid(cls, value: dict[str, Any] | None) -> dict[str, Any] | None:
+        return {validate_slug(key, "Custom field key"): item for key, item in value.items()} if value is not None else None
+
+
+class RetentionRecommendationRead(BaseModel):
+    id: str
+    recommendation_type: str
+    title: str
+    rationale: str
+    priority: str
+    source_context: str
+    suggested_action: str
+    owner_id: str | None = None
+    owner_name: str | None = None
+    due_at: datetime | None = None
+    confidence: int
+    source_items: list[str] = Field(default_factory=list)
+    required_inputs_missing: list[str] = Field(default_factory=list)
+
+
+class RetentionRecommendationResponse(BaseModel):
+    account_id: str
+    inputs_available: bool
+    missing_inputs: list[str] = Field(default_factory=list)
+    recommendations: list[RetentionRecommendationRead] = Field(default_factory=list)
+
+
+class PortfolioRenewalPageRead(BaseModel):
+    items: list[EngagementRenewalRead]
+    total: int
+    page: int
+    page_size: int
+    pages: int
+
+
+class RetentionPortfolioTaskRead(BaseModel):
+    id: str
+    account_id: str
+    account_name: str
+    plan_id: str
+    plan_title: str
+    title: str
+    owner_id: str | None = None
+    owner_name: str
+    due_at: datetime
+    status: str
+    source_recommendation_id: str | None = None
+
+
+class RetentionPortfolioTaskPageRead(BaseModel):
+    items: list[RetentionPortfolioTaskRead]
+    total: int
+    page: int
+    page_size: int
+    pages: int
+
+
+class RetentionSignalRead(BaseModel):
+    id: str
+    account_id: str
+    account_name: str
+    engagement_id: str | None = None
+    engagement_name: str | None = None
+    signal_type: str
+    severity: str
+    headline: str
+    detail: str
+    reason_codes: list[str] = Field(default_factory=list)
+    evidence: list[str] = Field(default_factory=list)
+    due_at: datetime | None = None
+    source_record_route: str
+
+
+class RetentionSignalPageRead(BaseModel):
+    items: list[RetentionSignalRead]
+    total: int
+    page: int
+    page_size: int
+    pages: int
+
+
+class RetentionCalendarItemRead(BaseModel):
+    id: str
+    account_id: str
+    account_name: str
+    title: str
+    starts_at: datetime
+    item_type: str
+    source_record_route: str
+    owner_name: str | None = None
+    severity: str | None = None
+
+
+class RetentionPortfolioReportRead(BaseModel):
+    total_renewals: int
+    critical_renewals: int
+    warning_renewals: int
+    healthy_renewals: int
+    upcoming_notice_30: int
+    upcoming_renewal_90: int
+    total_commercial_exposure: float
+    open_retention_actions: int
+    overdue_retention_actions: int
+    signal_count: int

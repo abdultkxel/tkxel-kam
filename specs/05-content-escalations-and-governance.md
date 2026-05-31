@@ -56,6 +56,15 @@ Improve account governance and client engagement by linking content, escalation 
 - Content catalog is an Admin submodule/tab. Account 360 loads account-specific recommendations and sent history only when the Education tab is opened.
 - Governance and Escalations are first-class sidebar modules with role-appropriate navigation and operational list/detail pages.
 
+## Retention And Account Stability Cross-Module Trace
+
+- PRD V3 section 5.8 requires renewal readiness, SOW expiry, notice-window intelligence, stabilization plans, weak-metric actions, and renewal recommendations to be visible beyond the account detail surface.
+- PRD V3 also states that activities, SOW end dates, renewal dates, notice deadlines, and due dates must appear in a unified calendar with governance events.
+- Governance calendar, agenda generation, and AI brief source context must include renewal deadlines, retention plan milestones, and retention plan actions when those records are relevant to the selected account or governance event.
+- Renewal and retention source citations must remain openable and permission-aware when surfaced from governance agendas, AI briefs, calendar entries, or action-context panels.
+- Recommendation-created retention actions require explicit user confirmation and must not silently create governance events, governance action items, or generic task records.
+- Account stability/renewal retention must remain distinct from Admin timeline-retention policy wording. Use `Retention Plans`, `Renewal Readiness`, or `Account Stability` in account workflows, and reserve `Timeline Retention Policy` for compliance retention.
+
 ## Data Entities
 
 - `content_items`: catalog assets with title, description, type, category/tags, service lines, account stages, active state, source kind, file/link metadata, popularity/share count, created/updated actors, and timestamps.

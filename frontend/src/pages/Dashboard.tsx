@@ -522,6 +522,10 @@ function GrowthRetentionPanel({ accounts, growthRows, retentionRows }: { account
           <LegendStat label="Retention" value={`${retentionPct}%`} detail={`${retentionRows.length} accounts | ${formatCompactCurrency(retentionRevenue)} revenue`} tone="blue" />
         </div>
       </div>
+      <Link className="tk-button-secondary mt-5 w-full justify-center" to="/retention">
+        Open retention worklist
+        <ArrowRight className="h-4 w-4" />
+      </Link>
     </section>
   )
 }

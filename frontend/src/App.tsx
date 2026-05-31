@@ -13,6 +13,7 @@ import { Opportunities } from '@/pages/Opportunities'
 import { Playbook } from '@/pages/Playbook'
 import { Profile } from '@/pages/Profile'
 import { ResetPassword } from '@/pages/ResetPassword'
+import { Retention } from '@/pages/Retention'
 import { Tasks } from '@/pages/Tasks'
 
 export default function App() {
@@ -30,6 +31,7 @@ export default function App() {
         <Route path="/accounts/:id" element={<AccountDetail />} />
         <Route path="/attention" element={<Navigate to="/tasks" replace />} />
         <Route path="/opportunities" element={<Opportunities />} />
+        <Route path="/retention" element={<Retention />} />
         <Route path="/escalations" element={<Escalations />} />
         <Route path="/tasks" element={<Tasks />} />
         <Route path="/governance" element={<Governance />} />

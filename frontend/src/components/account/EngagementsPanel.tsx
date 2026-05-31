@@ -1,4 +1,5 @@
-import { AlertTriangle, ArrowRight, CalendarClock, FileText, ShieldCheck, UserRound } from 'lucide-react'
+import { AlertTriangle, ArrowRight, CalendarClock, Edit3, FileText, Loader2, Save, ShieldCheck, UserRound } from 'lucide-react'
+import { FormEvent } from 'react'
 import type { ReactNode } from 'react'
 import { useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
@@ -7,18 +8,24 @@ import { EmptyState } from '@/components/ui/EmptyState'
 import { Skeleton } from '@/components/ui/Skeleton'
 import { useAuth } from '@/contexts/AuthContext'
 import { listEngagements } from '@/services/accountWorkspace'
+import { updateEngagementRenewal } from '@/services/retention'
 import { Account } from '@/types/account'
 import { EngagementRecord } from '@/types/v3'
 import { cn } from '@/utils/cn'
 import { formatCompactCurrency, formatDate } from '@/utils/formatters'
 
 export function EngagementsPanel({ account }: { account: Account }) {
-  const { token } = useAuth()
+  const { token, user } = useAuth()
   const [engagements, setEngagements] = useState<EngagementRecord[]>([])
   const [selectedId, setSelectedId] = useState('')
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
+  const [editingRenewal, setEditingRenewal] = useState(false)
+  const [savingRenewal, setSavingRenewal] = useState(false)
+  const [renewalError, setRenewalError] = useState('')
+  const [renewalForm, setRenewalForm] = useState(() => renewalFormFromEngagement(undefined))
   const selected = engagements.find(engagement => engagement.id === selectedId) ?? engagements[0]
+  const readOnly = user?.role === 'leadership_viewer'
   const selectedDocs = useMemo(() => [] as { id: string; name: string; type: string; confidence: number; citations: { id: string; page: number; excerpt: string }[] }[], [])
   const selectedSignals: { headline: string }[] = []
 
@@ -44,6 +51,63 @@ export function EngagementsPanel({ account }: { account: Account }) {
       active = false
     }
   }, [account.id, token])
+
+  useEffect(() => {
+    setRenewalForm(renewalFormFromEngagement(selected))
+    setEditingRenewal(false)
+    setRenewalError('')
+  }, [selected?.id])
+
+  async function saveRenewal(event: FormEvent) {
+    event.preventDefault()
+    if (!token || !selected || readOnly) return
+    setSavingRenewal(true)
+    setRenewalError('')
+    try {
+      const updated = await updateEngagementRenewal(token, selected.id, {
+        renewal_date: toIsoOrNull(renewalForm.renewal_date),
+        notice_deadline: toIsoOrNull(renewalForm.notice_deadline),
+        notice_period_days: Number(renewalForm.notice_period_days || 0),
+        auto_renewal: renewalForm.auto_renewal,
+        commercial_exposure: Number(renewalForm.commercial_exposure || 0),
+        currency: renewalForm.currency,
+        confidence: Number(renewalForm.confidence || 0),
+        source_kind: renewalForm.source_kind,
+        source_citation: renewalForm.source_citation,
+        manual_override_reason: renewalForm.manual_override_reason || null,
+      })
+      setEngagements(current => current.map(engagement => {
+        if (engagement.id !== selected.id) return engagement
+        const endDate = updated.sow_end_date || engagement.renewalTerms.endDate
+        const renewalDate = updated.renewal_date || engagement.renewalTerms.renewalDate
+        return {
+          ...engagement,
+          ownerId: updated.owner_id || engagement.ownerId,
+          ownerName: updated.owner_name || engagement.ownerName,
+          value: updated.commercial_exposure,
+          renewalTerms: {
+            ...engagement.renewalTerms,
+            endDate,
+            renewalDate,
+            noticeDeadline: updated.notice_deadline || engagement.renewalTerms.noticeDeadline,
+            noticePeriodDays: updated.notice_period_days ?? engagement.renewalTerms.noticePeriodDays,
+            autoRenewal: updated.auto_renewal,
+            commercialExposure: updated.commercial_exposure,
+            riskStatus: updated.renewal_risk,
+            confidence: updated.confidence ?? engagement.renewalTerms.confidence,
+            sourceDocumentId: updated.source_document_id || engagement.renewalTerms.sourceDocumentId,
+            sourceCitation: updated.source_citation || engagement.renewalTerms.sourceCitation,
+            daysToExpiry: updated.days_to_expiry ?? engagement.renewalTerms.daysToExpiry,
+          },
+        }
+      }))
+      setEditingRenewal(false)
+    } catch (err) {
+      setRenewalError(err instanceof Error ? err.message : 'Unable to update renewal terms')
+    } finally {
+      setSavingRenewal(false)
+    }
+  }
 
   if (loading) {
     return (
@@ -149,15 +213,80 @@ export function EngagementsPanel({ account }: { account: Account }) {
           <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_360px]">
             <section className="space-y-4">
               <Panel title="Renewal intelligence" icon={CalendarClock}>
-                <div className="grid gap-3 md:grid-cols-3">
-                  <Field label="Start" value={formatDate(selected.renewalTerms.startDate)} />
-                  <Field label="End" value={formatDate(selected.renewalTerms.endDate)} />
-                  <Field label="Renewal" value={formatDate(selected.renewalTerms.renewalDate)} />
-                  <Field label="Notice deadline" value={formatDate(selected.renewalTerms.noticeDeadline)} />
-                  <Field label="Notice period" value={`${selected.renewalTerms.noticePeriodDays} days`} />
-                  <Field label="Auto-renewal" value={selected.renewalTerms.autoRenewal ? 'Yes' : 'No'} />
+                <div className="mb-3 flex justify-end">
+                  {!readOnly ? (
+                    <button className="tk-button-secondary" onClick={() => setEditingRenewal(value => !value)}>
+                      <Edit3 className="h-4 w-4" />
+                      {editingRenewal ? 'Cancel' : 'Edit renewal'}
+                    </button>
+                  ) : null}
                 </div>
-                <p className="mt-3 rounded-lg border border-brand-orange/20 bg-brand-orange/10 p-3 text-sm text-brand-orange">{selected.renewalTerms.sourceCitation}</p>
+                {editingRenewal ? (
+                  <form className="space-y-3" onSubmit={saveRenewal}>
+                    {renewalError ? <p className="rounded-lg border border-rag-red/20 bg-rag-red/10 p-3 text-sm text-rag-red">{renewalError}</p> : null}
+                    <div className="grid gap-3 md:grid-cols-3">
+                      <label className="space-y-1">
+                        <span className="tk-label">Renewal date</span>
+                        <input type="datetime-local" className="tk-input" value={renewalForm.renewal_date} onChange={event => setRenewalForm({ ...renewalForm, renewal_date: event.target.value })} />
+                      </label>
+                      <label className="space-y-1">
+                        <span className="tk-label">Notice deadline</span>
+                        <input type="datetime-local" className="tk-input" value={renewalForm.notice_deadline} onChange={event => setRenewalForm({ ...renewalForm, notice_deadline: event.target.value })} />
+                      </label>
+                      <label className="space-y-1">
+                        <span className="tk-label">Notice period</span>
+                        <input type="number" min={0} className="tk-input" value={renewalForm.notice_period_days} onChange={event => setRenewalForm({ ...renewalForm, notice_period_days: event.target.value })} />
+                      </label>
+                      <label className="space-y-1">
+                        <span className="tk-label">Exposure</span>
+                        <input type="number" min={0} className="tk-input" value={renewalForm.commercial_exposure} onChange={event => setRenewalForm({ ...renewalForm, commercial_exposure: event.target.value })} />
+                      </label>
+                      <label className="space-y-1">
+                        <span className="tk-label">Confidence</span>
+                        <input type="number" min={0} max={100} className="tk-input" value={renewalForm.confidence} onChange={event => setRenewalForm({ ...renewalForm, confidence: event.target.value })} />
+                      </label>
+                      <label className="space-y-1">
+                        <span className="tk-label">Source</span>
+                        <select className="tk-input" value={renewalForm.source_kind} onChange={event => setRenewalForm({ ...renewalForm, source_kind: event.target.value as typeof renewalForm.source_kind })}>
+                          <option value="sow">SOW</option>
+                          <option value="extracted">Extracted</option>
+                          <option value="manual">Manual</option>
+                          <option value="imported">Imported</option>
+                        </select>
+                      </label>
+                    </div>
+                    <label className="flex min-h-[44px] items-center gap-2 rounded-md border border-surface-border bg-white px-3 text-sm font-semibold text-ink">
+                      <input type="checkbox" checked={renewalForm.auto_renewal} onChange={event => setRenewalForm({ ...renewalForm, auto_renewal: event.target.checked })} />
+                      Auto-renewal
+                    </label>
+                    <label className="space-y-1">
+                      <span className="tk-label">Source citation</span>
+                      <textarea className="tk-input min-h-[88px]" value={renewalForm.source_citation} onChange={event => setRenewalForm({ ...renewalForm, source_citation: event.target.value })} />
+                    </label>
+                    {renewalForm.source_kind === 'manual' ? (
+                      <label className="space-y-1">
+                        <span className="tk-label">Manual override reason</span>
+                        <textarea className="tk-input min-h-[72px]" value={renewalForm.manual_override_reason} onChange={event => setRenewalForm({ ...renewalForm, manual_override_reason: event.target.value })} />
+                      </label>
+                    ) : null}
+                    <button className="tk-button-primary" disabled={savingRenewal}>
+                      {savingRenewal ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
+                      Save renewal
+                    </button>
+                  </form>
+                ) : (
+                  <>
+                    <div className="grid gap-3 md:grid-cols-3">
+                      <Field label="Start" value={formatDate(selected.renewalTerms.startDate)} />
+                      <Field label="End" value={formatDate(selected.renewalTerms.endDate)} />
+                      <Field label="Renewal" value={formatDate(selected.renewalTerms.renewalDate)} />
+                      <Field label="Notice deadline" value={formatDate(selected.renewalTerms.noticeDeadline)} />
+                      <Field label="Notice period" value={`${selected.renewalTerms.noticePeriodDays} days`} />
+                      <Field label="Auto-renewal" value={selected.renewalTerms.autoRenewal ? 'Yes' : 'No'} />
+                    </div>
+                    <p className="mt-3 rounded-lg border border-brand-orange/20 bg-brand-orange/10 p-3 text-sm text-brand-orange">{selected.renewalTerms.sourceCitation}</p>
+                  </>
+                )}
               </Panel>
 
               <Panel title="Delivery and resource context" icon={UserRound}>
@@ -244,4 +373,30 @@ function MiniStat({ label, value }: { label: string; value: string }) {
 function StatusPill({ status }: { status: EngagementRecord['status'] }) {
   const tone = status === 'at_risk' ? 'border-rag-red/20 bg-rag-red/10 text-rag-red' : status === 'renewal_watch' ? 'border-brand-orange/20 bg-brand-orange/10 text-brand-orange' : 'border-rag-green/20 bg-rag-green/10 text-rag-green'
   return <span className={`rounded-full border px-2 py-1 text-[11px] font-semibold uppercase tracking-wider ${tone}`}>{status.replace('_', ' ')}</span>
+}
+
+function renewalFormFromEngagement(engagement?: EngagementRecord) {
+  const terms = engagement?.renewalTerms
+  const citation = terms?.sourceCitation ?? ''
+  return {
+    renewal_date: toInputDate(terms?.renewalDate),
+    notice_deadline: toInputDate(terms?.noticeDeadline),
+    notice_period_days: String(terms?.noticePeriodDays ?? 0),
+    auto_renewal: Boolean(terms?.autoRenewal),
+    commercial_exposure: String(terms?.commercialExposure ?? engagement?.value ?? 0),
+    currency: 'USD',
+    confidence: String(terms?.confidence ?? 75),
+    source_kind: citation && citation !== 'No source citation recorded.' ? 'sow' as const : 'manual' as const,
+    source_citation: citation === 'No source citation recorded.' ? '' : citation,
+    manual_override_reason: '',
+  }
+}
+
+function toInputDate(value?: string) {
+  if (!value) return ''
+  return new Date(value).toISOString().slice(0, 16)
+}
+
+function toIsoOrNull(value: string) {
+  return value ? new Date(value).toISOString() : null
 }

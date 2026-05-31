@@ -3,11 +3,12 @@ from datetime import datetime, timezone
 from fastapi import HTTPException, status
 from sqlalchemy.orm import Session
 
-from app.models import Account, AccountHealthRollup, Engagement, EngagementHealthSnapshot, User
+from app.models import Account, AccountHealthRollup, Engagement, EngagementHealthSnapshot, EngagementRenewal, User
 from app.repositories.accounts import AccountRepository
 from app.repositories.audit import AuditRepository
 from app.repositories.engagements import EngagementRepository
 from app.repositories.rbac import RbacRepository
+from app.repositories.retention import RetentionRepository
 from app.repositories.timeline import TimelineRepository
 from app.schemas import (
     AccountHealthRollupRead,
@@ -30,6 +31,7 @@ class EngagementService:
     def __init__(self, db: Session) -> None:
         self.accounts = AccountRepository(db)
         self.engagements = EngagementRepository(db)
+        self.retention = RetentionRepository(db)
         self.access = AccountAccessService(self.accounts, RbacRepository(db))
         self.audit = AuditService(AuditRepository(db))
         self.timeline = TimelineService(TimelineRepository(db))
@@ -104,6 +106,7 @@ class EngagementService:
             source_citation=payload.source_citation,
         )
         self.engagements.save(engagement)
+        self._sync_retention_renewal(account, engagement, current_user)
         self._add_health_snapshot(engagement, current_user, is_dirty=False)
         self._refresh_account_rollup(account, current_user)
         self.audit.log(
@@ -142,6 +145,7 @@ class EngagementService:
         before = self._engagement_audit_value(engagement)
         self._apply_updates(engagement, payload)
         self._validate_engagement_dates(engagement)
+        self._sync_retention_renewal(account, engagement, current_user)
         if payload.delivery_health is not None:
             self._add_health_snapshot(engagement, current_user, is_dirty=False)
             self._refresh_account_rollup(account, current_user)
@@ -307,6 +311,34 @@ class EngagementService:
         for field, value in updates.items():
             setattr(engagement, field, value)
 
+    def _sync_retention_renewal(self, account: Account, engagement: Engagement, current_user: User) -> EngagementRenewal:
+        renewal = self.retention.get_renewal_by_engagement(engagement.id)
+        if renewal is None:
+            renewal = EngagementRenewal(
+                account_id=account.id,
+                engagement_id=engagement.id,
+                created_by_id=current_user.id,
+            )
+        renewal.owner_id = engagement.owner_id
+        renewal.owner_name = engagement.owner_name
+        renewal.sow_start_date = engagement.start_date
+        renewal.sow_end_date = engagement.end_date
+        renewal.renewal_date = engagement.renewal_date
+        renewal.notice_deadline = engagement.notice_deadline
+        renewal.notice_period_days = engagement.notice_period_days
+        renewal.auto_renewal = engagement.auto_renewal
+        renewal.commercial_exposure = engagement.value
+        renewal.currency = engagement.currency
+        renewal.confidence = renewal.confidence if renewal.confidence is not None else engagement.delivery_health
+        current_source = renewal.source_kind or "manual"
+        renewal.source_kind = current_source if current_source != "manual" else ("sow" if engagement.source_citation else "manual")
+        renewal.source_title = renewal.source_title or engagement.name
+        renewal.source_citation = renewal.source_citation or engagement.source_citation
+        renewal.renewal_risk = self._retention_risk(account, engagement)
+        renewal.readiness_status = self._retention_readiness(renewal)
+        renewal.updated_by_id = current_user.id
+        return self.retention.save_renewal(renewal)
+
     @staticmethod
     def _validate_engagement_dates(engagement: Engagement) -> None:
         if engagement.end_date and engagement.end_date <= engagement.start_date:
@@ -315,6 +347,36 @@ class EngagementService:
             raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Notice deadline must be before renewal date.")
         if engagement.notice_deadline and engagement.end_date and engagement.notice_deadline >= engagement.end_date:
             raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Notice deadline must be before SOW end date.")
+
+    @staticmethod
+    def _retention_risk(account: Account, engagement: Engagement) -> str:
+        if account.risk_status == "critical" or engagement.delivery_health < 60:
+            return "critical"
+        now = datetime.now(timezone.utc)
+        if engagement.notice_deadline:
+            comparable = engagement.notice_deadline if engagement.notice_deadline.tzinfo else engagement.notice_deadline.replace(tzinfo=timezone.utc)
+            if comparable <= now + timedelta(days=14):
+                return "critical"
+            if comparable <= now + timedelta(days=60):
+                return "warning"
+        renewal_date = engagement.renewal_date or engagement.end_date
+        if renewal_date:
+            comparable = renewal_date if renewal_date.tzinfo else renewal_date.replace(tzinfo=timezone.utc)
+            if comparable < now:
+                return "critical"
+            if comparable <= now + timedelta(days=90):
+                return "warning"
+        return EngagementService._rag_status(min(account.health_overall, engagement.delivery_health))
+
+    @staticmethod
+    def _retention_readiness(renewal: EngagementRenewal) -> str:
+        if not renewal.renewal_date and not renewal.notice_deadline:
+            return "not_started"
+        if renewal.renewal_risk == "critical":
+            return "blocked"
+        if renewal.renewal_date and renewal.notice_deadline and (renewal.confidence or 0) >= 75 and (renewal.source_citation or renewal.manual_override_reason):
+            return "ready"
+        return "in_review"
 
     def _add_health_snapshot(self, engagement: Engagement, current_user: User, *, is_dirty: bool) -> EngagementHealthSnapshot:
         snapshot = EngagementHealthSnapshot(

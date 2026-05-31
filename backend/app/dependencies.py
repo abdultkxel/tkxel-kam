@@ -19,6 +19,7 @@ from app.services.governance import GovernanceService
 from app.services.onboarding import OnboardingService
 from app.services.profile import ProfileService
 from app.services.rbac import RbacService
+from app.services.retention import RetentionService
 from app.services.user_management import UserManagementService
 
 bearer_scheme = HTTPBearer(
@@ -90,6 +91,10 @@ def get_escalation_service(db: Annotated[Session, Depends(get_db)]) -> Escalatio
 
 def get_governance_service(db: Annotated[Session, Depends(get_db)]) -> GovernanceService:
     return GovernanceService(db)
+
+
+def get_retention_service(db: Annotated[Session, Depends(get_db)]) -> RetentionService:
+    return RetentionService(db)
 
 
 def require_permission(module: str, action: str):

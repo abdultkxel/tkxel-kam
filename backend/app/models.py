@@ -383,6 +383,129 @@ class AccountHealthRollup(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utc_now)
 
 
+class AccountRetentionProfile(Base):
+    __tablename__ = "account_retention_profiles"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid4()))
+    account_id: Mapped[str] = mapped_column(ForeignKey("accounts.id", ondelete="CASCADE"), unique=True, index=True, nullable=False)
+    readiness_status: Mapped[str] = mapped_column(String(60), index=True, nullable=False, default="not_started")
+    renewal_risk: Mapped[str] = mapped_column(String(40), index=True, nullable=False, default="warning")
+    owner_id: Mapped[str | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), index=True, nullable=True)
+    owner_name: Mapped[str | None] = mapped_column(String(160), nullable=True)
+    commercial_exposure: Mapped[float] = mapped_column(Numeric(14, 2), nullable=False, default=0)
+    currency: Mapped[str] = mapped_column(String(3), nullable=False, default="USD")
+    confidence: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    source_kind: Mapped[str] = mapped_column(String(40), index=True, nullable=False, default="manual")
+    source_title: Mapped[str | None] = mapped_column(String(220), index=True, nullable=True)
+    source_citation: Mapped[str | None] = mapped_column(Text, nullable=True)
+    manual_override_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_by_id: Mapped[str | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    updated_by_id: Mapped[str | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utc_now, onupdate=utc_now)
+
+    account: Mapped[Account] = relationship()
+
+
+class EngagementRenewal(Base):
+    __tablename__ = "engagement_renewals"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid4()))
+    account_id: Mapped[str] = mapped_column(ForeignKey("accounts.id", ondelete="CASCADE"), index=True, nullable=False)
+    engagement_id: Mapped[str] = mapped_column(ForeignKey("engagements.id", ondelete="CASCADE"), unique=True, index=True, nullable=False)
+    owner_id: Mapped[str | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), index=True, nullable=True)
+    owner_name: Mapped[str | None] = mapped_column(String(160), nullable=True)
+    readiness_status: Mapped[str] = mapped_column(String(60), index=True, nullable=False, default="not_started")
+    renewal_risk: Mapped[str] = mapped_column(String(40), index=True, nullable=False, default="warning")
+    sow_start_date: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    sow_end_date: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), index=True, nullable=True)
+    renewal_date: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), index=True, nullable=True)
+    notice_deadline: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), index=True, nullable=True)
+    notice_period_days: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    auto_renewal: Mapped[bool] = mapped_column(Boolean, index=True, nullable=False, default=False)
+    commercial_exposure: Mapped[float] = mapped_column(Numeric(14, 2), nullable=False, default=0)
+    currency: Mapped[str] = mapped_column(String(3), nullable=False, default="USD")
+    confidence: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    source_kind: Mapped[str] = mapped_column(String(40), index=True, nullable=False, default="manual")
+    source_title: Mapped[str | None] = mapped_column(String(220), index=True, nullable=True)
+    source_document_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    source_citation: Mapped[str | None] = mapped_column(Text, nullable=True)
+    manual_override_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_by_id: Mapped[str | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    updated_by_id: Mapped[str | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utc_now, onupdate=utc_now)
+
+    account: Mapped[Account] = relationship()
+    engagement: Mapped[Engagement] = relationship()
+
+
+class RetentionPlan(Base):
+    __tablename__ = "retention_plans"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid4()))
+    account_id: Mapped[str] = mapped_column(ForeignKey("accounts.id", ondelete="CASCADE"), index=True, nullable=False)
+    engagement_id: Mapped[str | None] = mapped_column(ForeignKey("engagements.id", ondelete="SET NULL"), index=True, nullable=True)
+    title: Mapped[str] = mapped_column(String(220), index=True, nullable=False)
+    plan_type: Mapped[str] = mapped_column(String(60), index=True, nullable=False)
+    status: Mapped[str] = mapped_column(String(40), index=True, nullable=False, default="draft")
+    risk_level: Mapped[str] = mapped_column(String(40), index=True, nullable=False, default="warning")
+    owner_id: Mapped[str | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), index=True, nullable=True)
+    owner_name: Mapped[str] = mapped_column(String(160), nullable=False)
+    due_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True, nullable=False)
+    renewal_milestone_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), index=True, nullable=True)
+    success_criteria: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    recommendation_context: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    timeline_history: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    created_by_id: Mapped[str | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    updated_by_id: Mapped[str | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utc_now, onupdate=utc_now)
+
+    account: Mapped[Account] = relationship()
+    engagement: Mapped[Engagement | None] = relationship()
+    milestones: Mapped[list["RetentionPlanMilestone"]] = relationship(back_populates="plan", cascade="all, delete-orphan")
+    actions: Mapped[list["RetentionPlanAction"]] = relationship(back_populates="plan", cascade="all, delete-orphan")
+
+
+class RetentionPlanMilestone(Base):
+    __tablename__ = "retention_plan_milestones"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid4()))
+    plan_id: Mapped[str] = mapped_column(ForeignKey("retention_plans.id", ondelete="CASCADE"), index=True, nullable=False)
+    title: Mapped[str] = mapped_column(String(220), nullable=False)
+    milestone_type: Mapped[str] = mapped_column(String(60), index=True, nullable=False, default="renewal")
+    due_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True, nullable=False)
+    status: Mapped[str] = mapped_column(String(40), index=True, nullable=False, default="open")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utc_now, onupdate=utc_now)
+
+    plan: Mapped[RetentionPlan] = relationship(back_populates="milestones")
+
+
+class RetentionPlanAction(Base):
+    __tablename__ = "retention_plan_actions"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid4()))
+    plan_id: Mapped[str] = mapped_column(ForeignKey("retention_plans.id", ondelete="CASCADE"), index=True, nullable=False)
+    title: Mapped[str] = mapped_column(String(220), index=True, nullable=False)
+    owner_id: Mapped[str | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), index=True, nullable=True)
+    owner_name: Mapped[str] = mapped_column(String(160), nullable=False)
+    due_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True, nullable=False)
+    status: Mapped[str] = mapped_column(String(40), index=True, nullable=False, default="todo")
+    success_criteria: Mapped[str | None] = mapped_column(Text, nullable=True)
+    source_recommendation_id: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    completed_by_id: Mapped[str | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    created_by_id: Mapped[str | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    updated_by_id: Mapped[str | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utc_now, onupdate=utc_now)
+
+    plan: Mapped[RetentionPlan] = relationship(back_populates="actions")
+
+
 class TimelineEntry(Base):
     __tablename__ = "timeline_entries"
 

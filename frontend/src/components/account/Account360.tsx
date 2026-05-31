@@ -10,6 +10,7 @@ import { AccountWorkspacePanel } from '@/components/account/AccountWorkspacePane
 import { EngagementsPanel } from '@/components/account/EngagementsPanel'
 import { KYCAgentOverview } from '@/components/account/KYCAgentOverview'
 import { KYCAssistedReview } from '@/components/account/KYCAssistedReview'
+import { RetentionPanel } from '@/components/account/RetentionPanel'
 import { ScoreHistoryPanel } from '@/components/account/ScoreHistoryPanel'
 import { ScoreCalculators, ScoreCalculatorSummary } from '@/components/account/ScoreCalculators'
 import { AIBriefCard } from '@/components/ai/AIBriefCard'
@@ -34,7 +35,7 @@ import { emit } from '@/utils/emitTimelineEvent'
 import { emitTimelineEvent } from '@/utils/emitTimelineEvent'
 import { formatCompactCurrency, formatCurrency, formatDate, formatRelative } from '@/utils/formatters'
 
-const tabs = ['Overview', 'Engagements', 'KYC', 'Health', 'Stage', 'Opportunities', 'Education', 'Escalation', 'Governance', 'Notes', 'Timeline', 'Documents']
+const tabs = ['Overview', 'Engagements', 'Retention', 'KYC', 'Health', 'Stage', 'Opportunities', 'Education', 'Escalation', 'Governance', 'Notes', 'Timeline', 'Documents']
 
 export function Account360({ account }: { account: Account }) {
   const user = useRole()
@@ -391,6 +392,9 @@ export function Account360({ account }: { account: Account }) {
         </Tabs.Content>
         <Tabs.Content value="Engagements">
           <EngagementsPanel account={account} />
+        </Tabs.Content>
+        <Tabs.Content value="Retention">
+          <RetentionPanel account={account} />
         </Tabs.Content>
         <Tabs.Content value="Health">
           <div className="space-y-4">

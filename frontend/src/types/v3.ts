@@ -126,7 +126,7 @@ export interface RetentionPlan {
   engagementId?: string
   title: string
   ownerName: string
-  status: 'draft' | 'active' | 'complete'
+  status: 'draft' | 'active' | 'completed' | 'archived'
   successCriteria: string[]
   actions: { id: string; title: string; ownerName: string; dueDate: string; status: 'todo' | 'in_progress' | 'done' }[]
 }

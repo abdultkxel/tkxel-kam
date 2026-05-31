@@ -63,6 +63,7 @@ DEFAULT_ROLES: tuple[DefaultRole, ...] = (
             ("account_onboarding_workspace", LEADERSHIP_ACTIONS),
             ("account_overview", LEADERSHIP_ACTIONS),
             ("engagement_sow_management", ("view", "create", "update", "delete", "assign", "export")),
+            ("retention_stability", LEADERSHIP_ACTIONS),
             ("client_education_content", CONFIG_ACTIONS),
             ("escalation_management", LEADERSHIP_ACTIONS),
             ("governance_reviews", LEADERSHIP_ACTIONS + ("configure",)),
@@ -108,7 +109,7 @@ DEFAULT_ROLES: tuple[DefaultRole, ...] = (
         permission_rules=(
             ("engagement_sow_management", WORK_ACTIONS),
             ("account_overview", ("view", "update")),
-            ("retention_stability", ("view", "update")),
+            ("retention_stability", ("view",)),
             ("signals_attention", ("view", "update")),
             ("playbooks_tasks_calendar", WORK_ACTIONS),
             ("escalation_management", WORK_ACTIONS),
