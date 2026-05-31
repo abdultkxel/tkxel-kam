@@ -6,7 +6,8 @@ import { Link } from 'react-router-dom'
 import { AddGovernanceEventDialog } from '@/components/governance/AddGovernanceEventDialog'
 import { useRole } from '@/hooks/useRole'
 import { generateAISummary } from '@/services/aiSummary'
-import { generateGovernanceBrief, listGovernanceEvents } from '@/services/contentGovernance'
+import { generateGovernanceBrief } from '@/services/contentGovernance'
+import { CalendarItem, listCalendarItems } from '@/services/playbooksTasks'
 import { useAuth } from '@/contexts/AuthContext'
 import { useAccountStore } from '@/stores/accountStore'
 import { useGovernanceStore } from '@/stores/governanceStore'
@@ -59,7 +60,7 @@ export function GovernancePanel() {
   const [showRenewalItems, setShowRenewalItems] = useState(true)
   const [accountFilter, setAccountFilter] = useState('')
   const [search, setSearch] = useState('')
-  const [apiEvents, setApiEvents] = useState<GovernanceEventRecord[]>([])
+  const [apiCalendarItems, setApiCalendarItems] = useState<CalendarItem[]>([])
   const [apiLoading, setApiLoading] = useState(false)
   const [apiError, setApiError] = useState('')
   const [brief, setBrief] = useState<AISummary | null>(null)
@@ -77,15 +78,24 @@ export function GovernancePanel() {
     let cancelled = false
     setApiLoading(true)
     setApiError('')
-    const params = new URLSearchParams({ page: '1', page_size: '100', sort: 'scheduled_at', direction: 'asc' })
+    const params = new URLSearchParams({
+      page: '1',
+      page_size: '500',
+      date_from: startOfMonth(month).toISOString(),
+      date_to: endOfMonth(month).toISOString(),
+      include_governance: String(showGovernance),
+      include_tasks: String(showScoreActivities),
+      include_renewals: String(showRenewalItems),
+      my_items: String(mineOnly),
+    })
     if (accountFilter) params.set('account_id', accountFilter)
     if (search) params.set('search', search)
-    listGovernanceEvents(token, params)
+    listCalendarItems(token, params)
       .then(page => {
-        if (!cancelled) setApiEvents(page.items)
+        if (!cancelled) setApiCalendarItems(page.items)
       })
       .catch(err => {
-        if (!cancelled) setApiError(err instanceof Error ? err.message : 'Governance events could not load')
+        if (!cancelled) setApiError(err instanceof Error ? err.message : 'Calendar items could not load')
       })
       .finally(() => {
         if (!cancelled) setApiLoading(false)
@@ -93,25 +103,25 @@ export function GovernancePanel() {
     return () => {
       cancelled = true
     }
-  }, [accountFilter, search, token])
+  }, [accountFilter, mineOnly, month, search, showGovernance, showRenewalItems, showScoreActivities, token])
 
   const events = useMemo(
     () =>
-      (token ? apiEvents : storeEvents).map(event => ({
+      storeEvents.map(event => ({
         ...event,
         accountName: event.accountName || accounts.find(account => account.id === event.accountId)?.name || 'Unmapped account',
       })),
-    [accounts, apiEvents, storeEvents, token],
+    [accounts, storeEvents],
   )
 
   const visibleItems = useMemo(() => {
-    const items = buildUnifiedCalendarItems(events, scoreTasks, signals)
+    const items = token ? apiCalendarItems.map(mapApiCalendarItem) : buildUnifiedCalendarItems(events, scoreTasks, signals)
     return items
       .filter(item => item.kind === 'governance' ? showGovernance : item.kind === 'score_activity' ? showScoreActivities : showRenewalItems)
       .filter(item => !mineOnly || item.ownerId === user.id)
       .filter(item => !accountFilter || item.accountId === accountFilter)
       .filter(item => !search || [item.title, item.accountName, item.detail].join(' ').toLowerCase().includes(search.toLowerCase()))
-  }, [accountFilter, events, mineOnly, scoreTasks, search, showGovernance, showRenewalItems, showScoreActivities, signals, user.id])
+  }, [accountFilter, apiCalendarItems, events, mineOnly, scoreTasks, search, showGovernance, showRenewalItems, showScoreActivities, signals, token, user.id])
   const monthItems = visibleItems.filter(item => new Date(item.date).getMonth() === month.getMonth() && new Date(item.date).getFullYear() === month.getFullYear())
   const days = eachDayOfInterval({ start: startOfMonth(month), end: endOfMonth(month) })
 
@@ -214,12 +224,12 @@ export function GovernancePanel() {
         {apiLoading ? (
           <div className="flex min-h-[240px] items-center justify-center text-sm font-semibold text-ink-secondary">
             <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-            Loading governance events
+            Loading calendar items
           </div>
         ) : apiError ? (
           <div className="rounded-lg border border-rag-red/20 bg-rag-red/10 p-4 text-sm font-semibold text-rag-red">{apiError}</div>
         ) : monthItems.length === 0 ? (
-          <div className="rounded-lg border border-surface-border bg-white p-8 text-center text-sm text-ink-secondary">No governance events match the current filters.</div>
+          <div className="rounded-lg border border-surface-border bg-white p-8 text-center text-sm text-ink-secondary">No calendar items match the current filters.</div>
         ) : (
         <div className="overflow-x-auto">
           <div className="grid min-w-[720px] grid-cols-7 rounded-lg border border-surface-border bg-white">
@@ -421,4 +431,101 @@ function itemDotClass(item: UnifiedCalendarItem) {
   if (item.kind === 'renewal_signal') return item.source.severity === 'critical' ? 'bg-rag-red' : 'bg-brand-orange'
   if (item.kind === 'score_activity') return 'bg-brand-orange'
   return tone[item.source.type]
+}
+
+function mapApiCalendarItem(item: CalendarItem): UnifiedCalendarItem {
+  if (item.kind === 'governance') {
+    return {
+      id: item.id,
+      kind: 'governance',
+      accountId: item.account_id ?? '',
+      accountName: item.account_name,
+      ownerId: item.owner_id ?? '',
+      date: item.date,
+      title: item.title,
+      detail: item.detail,
+      status: item.status === 'completed' ? 'completed' : new Date(item.date) < new Date() ? 'overdue' : 'upcoming',
+      source: {
+        id: item.source_record_id ?? item.id,
+        accountId: item.account_id ?? '',
+        accountName: item.account_name,
+        ownerId: item.owner_id ?? '',
+        type: governanceType(item.title),
+        date: item.date,
+        agenda: item.detail,
+        attendees: [],
+        actionItems: [],
+        status: item.status === 'completed' ? 'completed' : new Date(item.date) < new Date() ? 'overdue' : 'upcoming',
+      },
+    }
+  }
+
+  if (item.kind === 'task' || item.kind === 'governance_action') {
+    const status = item.status === 'done' || item.status === 'completed' ? 'done' : item.status === 'skipped' ? 'skipped' : item.status === 'in_progress' ? 'in_progress' : 'todo'
+    const priority = item.priority === 'urgent' || item.priority === 'high' ? 'high' : item.priority === 'low' ? 'low' : 'medium'
+    return {
+      id: item.id,
+      kind: 'score_activity',
+      accountId: item.account_id ?? '',
+      accountName: item.account_name,
+      ownerId: item.owner_id ?? '',
+      date: item.date,
+      title: item.title,
+      detail: item.detail,
+      status,
+      source: {
+        id: item.source_record_id ?? item.id,
+        templateId: item.kind,
+        accountId: item.account_id ?? '',
+        accountName: item.account_name,
+        ownerId: item.owner_id ?? '',
+        ownerName: item.owner_name ?? 'Unassigned',
+        calculatorId: 'risk',
+        criterionId: item.source_record_type ?? item.kind,
+        title: item.title,
+        description: item.detail,
+        dueDate: item.date,
+        status,
+        priority,
+        createdAt: item.date,
+      },
+    }
+  }
+
+  return {
+    id: item.id,
+    kind: 'renewal_signal',
+    accountId: item.account_id ?? '',
+    accountName: item.account_name,
+    ownerId: item.owner_id ?? '',
+    date: item.date,
+    title: item.title,
+    detail: item.detail,
+    status: item.status === 'completed' ? 'resolved' : 'new',
+    source: {
+      id: item.source_record_id ?? item.id,
+      accountId: item.account_id ?? '',
+      accountName: item.account_name,
+      engagementId: item.engagement_id ?? undefined,
+      type: item.kind === 'notice_deadline' ? 'notice_window' : 'sow_expiry',
+      severity: item.kind === 'notice_deadline' ? 'critical' : 'warning',
+      status: item.status === 'completed' ? 'resolved' : 'new',
+      ownerId: item.owner_id ?? '',
+      ownerName: item.owner_name ?? 'Unassigned',
+      headline: item.title,
+      detail: item.detail,
+      reasonCodes: [item.kind],
+      evidence: [item.detail],
+      sourceRecordRoute: item.source_route ?? '/governance',
+      createdAt: item.date,
+      dueAt: item.date,
+      slaAgeDays: 0,
+      recommendedPlaybook: 'Review renewal readiness',
+    },
+  }
+}
+
+function governanceType(value: string): GovernanceEventRecord['type'] {
+  if (value === 'QBR' || value === 'SteerCo' || value === 'Monthly Review' || value === 'Executive Review') return value
+  return 'Monthly Review'
 }
