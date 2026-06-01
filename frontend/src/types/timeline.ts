@@ -27,6 +27,13 @@ export type TimelineEventType =
   | 'executive_event'
   | 'ai_event'
   | 'manual_note'
+  | 'engagement_created'
+  | 'engagement_updated'
+  | 'sow_terms_updated'
+  | 'renewal_dates_updated'
+  | 'engagement_health_changed'
+  | 'engagement_delivery_status_changed'
+  | 'engagement_archived'
 
 export type TimelineModule =
   | 'kyc'
@@ -41,6 +48,7 @@ export type TimelineModule =
   | 'executive'
   | 'ai'
   | 'manual'
+  | 'engagements'
 
 export type SensitivityLevel = 'commercial' | 'executive' | 'legal' | 'escalation'
 
@@ -125,4 +133,5 @@ export const MODULE_COLOURS: Record<TimelineModule, string> = {
   executive: 'bg-blue-tint-20 border-brand-blue-dark',
   ai: 'bg-surface-tertiary border-surface-border',
   manual: 'bg-surface-tertiary border-surface-border',
+  engagements: 'bg-blue-tint-20 border-brand-blue',
 }

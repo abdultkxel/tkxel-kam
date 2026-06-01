@@ -2,7 +2,7 @@ from datetime import datetime, timezone
 from typing import Any, Literal
 from urllib.parse import urlparse
 
-from pydantic import BaseModel, ConfigDict, EmailStr, Field, ValidationInfo, field_validator, model_validator
+from pydantic import AliasChoices, BaseModel, ConfigDict, EmailStr, Field, ValidationInfo, field_validator, model_validator
 
 from app.rbac import ALL_MODULE_SLUGS, MODULES
 from app.validation import (
@@ -22,8 +22,12 @@ RiskStatus = Literal["healthy", "warning", "critical"]
 DraftStatus = Literal["ready_for_review", "approved", "rejected", "linked"]
 ExtractionStatus = Literal["queued", "running", "completed", "failed", "needs_review", "parsed"]
 OwnershipRole = Literal["primary_am", "supporting_am", "ops_lead", "leadership_sponsor"]
-EngagementStatus = Literal["draft", "active", "renewal_watch", "at_risk", "completed", "archived"]
-DeliveryStatus = Literal["planned", "active", "watch", "blocked", "completed"]
+EngagementStatus = Literal["draft", "active", "on_hold", "renewal_watch", "at_risk", "completed", "archived"]
+DeliveryStatus = Literal["not_started", "planned", "active", "watch", "blocked", "at_risk", "completed"]
+CommercialStatus = Literal["healthy", "watch", "risk"]
+EngagementHealthStatus = Literal["green", "amber", "red", "unknown"]
+RenewalRisk = Literal["low", "medium", "high", "unknown"]
+RenewalStatus = Literal["expired", "renewal_due", "notice_due", "upcoming_notice_window", "not_due", "unknown"]
 SourceType = Literal["project_charter", "sow", "attachment", "source_link", "commercial_note", "research", "manual_import"]
 CustomFieldType = Literal["text", "textarea", "number", "currency", "date", "datetime", "boolean", "single_select", "multi_select", "email", "url", "phone"]
 CustomFieldStatus = Literal["all", "active", "inactive"]
@@ -672,6 +676,26 @@ class SourceCitationCreateRequest(BaseModel):
         return optional_text(value, "Citation field", max_length=120)
 
 
+class SourceLinkRead(BaseModel):
+    title: str | None = None
+    url: str
+
+
+class SourceLinkRequest(BaseModel):
+    title: str | None = None
+    url: str
+
+    @field_validator("title")
+    @classmethod
+    def title_is_valid(cls, value: str | None) -> str | None:
+        return optional_text(value, "Source link title", max_length=220)
+
+    @field_validator("url")
+    @classmethod
+    def url_is_valid(cls, value: str) -> str:
+        return validate_short_text(value, "Source link URL", 1000)
+
+
 class SourceDocumentRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -744,15 +768,23 @@ class SourceDocumentPageRead(BaseModel):
 
 
 class EngagementDraftRequest(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
     name: str
+    description: str | None = None
     owner_id: str | None = None
     owner_name: str | None = None
     ops_lead_id: str | None = None
     ops_lead_name: str | None = None
     service_lines: list[str] = Field(default_factory=list)
-    value: float = 0
+    source_links: list[SourceLinkRequest] = Field(default_factory=list)
+    value: float = Field(default=0, validation_alias=AliasChoices("value", "contract_value"))
     currency: str = "USD"
     delivery_status: DeliveryStatus = "active"
+    commercial_status: CommercialStatus = "watch"
+    delivery_health: int = Field(default=70, validation_alias=AliasChoices("delivery_health", "health_score"))
+    health_status: EngagementHealthStatus = "unknown"
+    renewal_risk: RenewalRisk = "unknown"
     start_date: datetime | None = None
     end_date: datetime | None = None
     renewal_date: datetime | None = None
@@ -760,7 +792,7 @@ class EngagementDraftRequest(BaseModel):
     notice_period_days: int | None = None
     auto_renewal: bool = False
     commercial_context: str | None = None
-    resource_dependency: str | None = None
+    resource_dependency: str | None = Field(default=None, validation_alias=AliasChoices("resource_dependency", "resource_dependency_notes"))
     risks: list[str] = Field(default_factory=list)
     source_citation: str | None = None
     confidence: int = 75
@@ -790,7 +822,7 @@ class EngagementDraftRequest(BaseModel):
     def currency_is_valid(cls, value: str) -> str:
         return validate_currency(value)
 
-    @field_validator("commercial_context", "resource_dependency", "source_citation")
+    @field_validator("description", "commercial_context", "resource_dependency", "source_citation")
     @classmethod
     def optional_long_text_is_valid(cls, value: str | None) -> str | None:
         return validate_optional_long_text(value, "Engagement text")
@@ -805,6 +837,11 @@ class EngagementDraftRequest(BaseModel):
     def draft_confidence_is_valid(cls, value: int) -> int:
         return validate_percent(value, "Confidence")
 
+    @field_validator("delivery_health")
+    @classmethod
+    def delivery_health_is_valid(cls, value: int) -> int:
+        return validate_percent(value, "Health score")
+
     @field_validator("notice_period_days")
     @classmethod
     def notice_period_is_valid(cls, value: int | None) -> int | None:
@@ -816,10 +853,8 @@ class EngagementDraftRequest(BaseModel):
     def dates_are_consistent(self) -> "EngagementDraftRequest":
         if self.start_date and self.end_date and self.end_date <= self.start_date:
             raise ValueError("Engagement end date must be after start date.")
-        if self.notice_deadline and self.renewal_date and self.notice_deadline >= self.renewal_date:
-            raise ValueError("Notice deadline must be before renewal date.")
-        if self.notice_deadline and self.end_date and self.notice_deadline >= self.end_date:
-            raise ValueError("Notice deadline must be before SOW end date.")
+        if "notice_deadline" in self.model_fields_set:
+            self.notice_deadline = None
         return self
 
 
@@ -842,6 +877,8 @@ class EngagementDraftRead(BaseModel):
     renewal_date: datetime | None = None
     notice_deadline: datetime | None = None
     notice_period_days: int | None = None
+    days_to_expiry: int | None = None
+    renewal_status: RenewalStatus = "unknown"
     auto_renewal: bool
     commercial_context: str | None = None
     resource_dependency: str | None = None
@@ -1229,26 +1266,41 @@ class EngagementRead(BaseModel):
     id: str
     account_id: str
     name: str
+    description: str | None = None
     status: str
     owner_id: str | None = None
     owner_name: str
     ops_lead_id: str | None = None
     ops_lead_name: str | None = None
     service_lines: list[str]
+    source_document_ids: list[str] = Field(default_factory=list)
+    source_links: list[SourceLinkRead] = Field(default_factory=list)
     value: float
+    contract_value: float
     currency: str
     delivery_status: str
+    commercial_status: str
     delivery_health: int
+    health_score: int
+    health_status: str
+    renewal_risk: str
     start_date: datetime
     end_date: datetime | None = None
     renewal_date: datetime | None = None
     notice_deadline: datetime | None = None
     notice_period_days: int | None = None
+    days_to_expiry: int | None = None
+    renewal_status: RenewalStatus = "unknown"
     auto_renewal: bool
     commercial_context: str | None = None
     resource_dependency: str | None = None
+    resource_dependency_notes: str | None = None
     risks: list[str]
     source_citation: str | None = None
+    created_by_id: str | None = None
+    updated_by_id: str | None = None
+    created_by: str | None = None
+    updated_by: str | None = None
     created_at: datetime
     updated_at: datetime
     source_documents: list[SourceDocumentRead] = Field(default_factory=list)
@@ -1269,15 +1321,22 @@ class EngagementCreateRequest(EngagementDraftRequest):
 
 
 class EngagementUpdateRequest(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
     name: str | None = None
+    description: str | None = None
     status: EngagementStatus | None = None
     owner_id: str | None = None
     ops_lead_id: str | None = None
     service_lines: list[str] | None = None
-    value: float | None = None
+    source_links: list[SourceLinkRequest] | None = None
+    value: float | None = Field(default=None, validation_alias=AliasChoices("value", "contract_value"))
     currency: str | None = None
     delivery_status: DeliveryStatus | None = None
-    delivery_health: int | None = None
+    commercial_status: CommercialStatus | None = None
+    delivery_health: int | None = Field(default=None, validation_alias=AliasChoices("delivery_health", "health_score"))
+    health_status: EngagementHealthStatus | None = None
+    renewal_risk: RenewalRisk | None = None
     start_date: datetime | None = None
     end_date: datetime | None = None
     renewal_date: datetime | None = None
@@ -1285,7 +1344,7 @@ class EngagementUpdateRequest(BaseModel):
     notice_period_days: int | None = None
     auto_renewal: bool | None = None
     commercial_context: str | None = None
-    resource_dependency: str | None = None
+    resource_dependency: str | None = Field(default=None, validation_alias=AliasChoices("resource_dependency", "resource_dependency_notes"))
     risks: list[str] | None = None
     source_citation: str | None = None
 
@@ -1314,10 +1373,52 @@ class EngagementUpdateRequest(BaseModel):
     def delivery_health_is_valid(cls, value: int | None) -> int | None:
         return validate_percent(value, "Delivery health") if value is not None else None
 
-    @field_validator("commercial_context", "resource_dependency", "source_citation")
+    @field_validator("description", "commercial_context", "resource_dependency", "source_citation")
     @classmethod
     def optional_long_text_is_valid(cls, value: str | None) -> str | None:
         return validate_optional_long_text(value, "Engagement text")
+
+    @field_validator("notice_period_days")
+    @classmethod
+    def notice_period_is_valid(cls, value: int | None) -> int | None:
+        if value is not None and value < 0:
+            raise ValueError("Notice period must be zero or greater.")
+        return value
+
+    @model_validator(mode="after")
+    def dates_are_consistent(self) -> "EngagementUpdateRequest":
+        if self.start_date and self.end_date and self.end_date <= self.start_date:
+            raise ValueError("Engagement end date must be after start date.")
+        if "notice_deadline" in self.model_fields_set:
+            self.notice_deadline = None
+        return self
+
+
+class TimelineEventRead(BaseModel):
+    id: str
+    account_id: str
+    engagement_id: str | None = None
+    event_type: str
+    title: str
+    description: str
+    previous_value: dict[str, Any] | None = None
+    new_value: dict[str, Any] | None = None
+    actor_id: str
+    actor_name: str
+    source_module: str
+    source_record_id: str | None = None
+    source_record_type: str | None = None
+    source_record_route: str | None = None
+    metadata: dict[str, Any] | None = None
+    created_at: datetime
+
+
+class TimelineEventPageRead(BaseModel):
+    items: list[TimelineEventRead]
+    total: int
+    page: int
+    page_size: int
+    pages: int
 
 
 class EngagementHealthRead(BaseModel):

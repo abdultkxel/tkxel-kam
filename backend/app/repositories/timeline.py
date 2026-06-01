@@ -1,3 +1,4 @@
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.models import TimelineEntry
@@ -50,3 +51,17 @@ class TimelineRepository:
         self.db.add(entry)
         self.db.flush()
         return entry
+
+    def list_for_engagement(self, engagement_id: str, page: int = 1, page_size: int = 100) -> tuple[list[TimelineEntry], int]:
+        conditions = [TimelineEntry.engagement_id == engagement_id]
+        total = self.db.scalar(select(func.count(TimelineEntry.id)).where(*conditions)) or 0
+        items = list(
+            self.db.scalars(
+                select(TimelineEntry)
+                .where(*conditions)
+                .order_by(TimelineEntry.created_at.desc())
+                .offset((page - 1) * page_size)
+                .limit(page_size)
+            )
+        )
+        return items, total

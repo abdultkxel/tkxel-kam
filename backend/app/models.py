@@ -1,7 +1,19 @@
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from uuid import uuid4
 
-from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Integer, JSON, Numeric, String, Text, UniqueConstraint
+from sqlalchemy import (
+    Boolean,
+    DateTime,
+    Float,
+    ForeignKey,
+    Integer,
+    JSON,
+    Numeric,
+    String,
+    Text,
+    UniqueConstraint,
+    false,
+)
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database import Base
@@ -9,6 +21,17 @@ from app.database import Base
 
 def utc_now() -> datetime:
     return datetime.now(timezone.utc)
+
+
+def calendar_days_until(value: date | datetime | None) -> int | None:
+    if value is None:
+        return None
+    value_tzinfo = value.tzinfo if isinstance(value, datetime) else timezone.utc
+    now = datetime.now(value_tzinfo or timezone.utc)
+    if isinstance(value, datetime) and value.tzinfo is None:
+        now = now.replace(tzinfo=None)
+    target_date = value.date() if isinstance(value, datetime) else value
+    return (target_date - now.date()).days
 
 
 class User(Base):
@@ -322,26 +345,33 @@ class Engagement(Base):
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid4()))
     account_id: Mapped[str] = mapped_column(ForeignKey("accounts.id", ondelete="CASCADE"), index=True, nullable=False)
     name: Mapped[str] = mapped_column(String(180), index=True, nullable=False)
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
     status: Mapped[str] = mapped_column(String(80), index=True, nullable=False, default="active")
     owner_id: Mapped[str | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), index=True, nullable=True)
     owner_name: Mapped[str] = mapped_column(String(160), nullable=False)
     ops_lead_id: Mapped[str | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), index=True, nullable=True)
     ops_lead_name: Mapped[str | None] = mapped_column(String(160), nullable=True)
     service_lines: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    source_links: Mapped[list] = mapped_column(JSON, nullable=False, default=list, server_default="[]")
     value: Mapped[float] = mapped_column(Numeric(14, 2), nullable=False, default=0)
     currency: Mapped[str] = mapped_column(String(3), nullable=False, default="USD")
     delivery_status: Mapped[str] = mapped_column(String(80), index=True, nullable=False, default="active")
+    commercial_status: Mapped[str] = mapped_column(String(40), index=True, nullable=False, default="watch", server_default="watch")
     delivery_health: Mapped[int] = mapped_column(Integer, nullable=False, default=70)
+    health_status: Mapped[str] = mapped_column(String(40), index=True, nullable=False, default="unknown", server_default="unknown")
+    renewal_risk: Mapped[str] = mapped_column(String(40), index=True, nullable=False, default="unknown", server_default="unknown")
     start_date: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     end_date: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     renewal_date: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     notice_deadline: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     notice_period_days: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    auto_renewal: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    auto_renewal: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default=false())
     commercial_context: Mapped[str | None] = mapped_column(Text, nullable=True)
     resource_dependency: Mapped[str | None] = mapped_column(Text, nullable=True)
     risks: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
     source_citation: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_by_id: Mapped[str | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    updated_by_id: Mapped[str | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utc_now)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utc_now, onupdate=utc_now)
     archived_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
@@ -349,6 +379,66 @@ class Engagement(Base):
     account: Mapped[Account] = relationship(back_populates="engagements")
     source_documents: Mapped[list[SourceDocument]] = relationship(back_populates="engagement")
     health_snapshots: Mapped[list["EngagementHealthSnapshot"]] = relationship(back_populates="engagement", cascade="all, delete-orphan")
+
+    @property
+    def source_document_ids(self) -> list[str]:
+        return [document.id for document in self.source_documents]
+
+    @property
+    def contract_value(self) -> float:
+        return float(self.value)
+
+    @contract_value.setter
+    def contract_value(self, value: float) -> None:
+        self.value = value
+
+    @property
+    def health_score(self) -> int:
+        return self.delivery_health
+
+    @health_score.setter
+    def health_score(self, value: int) -> None:
+        self.delivery_health = value
+
+    @property
+    def resource_dependency_notes(self) -> str | None:
+        return self.resource_dependency
+
+    @resource_dependency_notes.setter
+    def resource_dependency_notes(self, value: str | None) -> None:
+        self.resource_dependency = value
+
+    @property
+    def days_to_expiry(self) -> int | None:
+        return calendar_days_until(self.end_date)
+
+    @property
+    def renewal_status(self) -> str:
+        days_to_expiry = self.days_to_expiry
+        if days_to_expiry is None:
+            return "unknown"
+        if days_to_expiry < 0:
+            return "expired"
+
+        days_to_renewal = calendar_days_until(self.renewal_date)
+        if days_to_renewal is not None and days_to_renewal <= 30:
+            return "renewal_due"
+
+        days_to_notice = calendar_days_until(self.notice_deadline)
+        if days_to_notice is not None and days_to_notice <= 30:
+            return "notice_due"
+        if days_to_notice is not None and days_to_notice <= 90:
+            return "upcoming_notice_window"
+
+        return "not_due"
+
+    @property
+    def created_by(self) -> str | None:
+        return self.created_by_id
+
+    @property
+    def updated_by(self) -> str | None:
+        return self.updated_by_id
 
 
 class EngagementHealthSnapshot(Base):

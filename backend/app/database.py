@@ -1,7 +1,11 @@
+import json
 from collections.abc import Generator
+from datetime import datetime, timezone
+from typing import Any
 
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, inspect, text
 from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
+from sqlalchemy.schema import CreateColumn, CreateIndex
 
 from app.config import get_settings
 
@@ -9,6 +13,80 @@ settings = get_settings()
 
 engine = create_engine(settings.database_url, pool_pre_ping=True)
 SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False)
+
+
+_MISSING = object()
+_TABLE_BACKFILL_DEFAULTS: dict[str, dict[str, Any]] = {
+    "engagements": {
+        "status": "active",
+        "service_lines": [],
+        "source_links": [],
+        "value": 0,
+        "currency": "USD",
+        "delivery_status": "active",
+        "commercial_status": "watch",
+        "delivery_health": 70,
+        "health_status": "unknown",
+        "renewal_risk": "unknown",
+        "auto_renewal": False,
+        "risks": [],
+        "created_at": lambda: datetime.now(timezone.utc),
+        "updated_at": lambda: datetime.now(timezone.utc),
+    },
+    "engagement_health_snapshots": {
+        "overall": 0,
+        "rag_status": "warning",
+        "drivers": [],
+        "freshness_status": "fresh",
+        "is_dirty": False,
+        "contribution": 0,
+        "metric_version": "engagement-v1",
+        "created_by_name": "System",
+        "created_at": lambda: datetime.now(timezone.utc),
+    },
+    "account_health_rollups": {
+        "overall": 0,
+        "rag_status": "warning",
+        "contributions": [],
+        "metric_version": "account-rollup-v1",
+        "created_at": lambda: datetime.now(timezone.utc),
+    },
+    "timeline_entries": {
+        "is_sensitive": False,
+        "is_system_generated": True,
+        "is_immutable": True,
+        "created_at": lambda: datetime.now(timezone.utc),
+    },
+}
+_JSON_BACKFILL_COLUMNS = {"service_lines", "source_links", "risks", "drivers", "contributions"}
+_LEGACY_TABLE_BACKFILL_DEFAULTS: dict[str, dict[str, Any]] = {
+    "engagements": {
+        "source_document_links": [],
+        "attachments": [],
+        "activity_notes": [],
+        "escalation_notes": [],
+        "health_drivers": [],
+        "health_freshness": "fresh",
+        "health_dirty": False,
+        "health_contribution": 0,
+    },
+    "engagement_health_snapshots": {
+        "score": 0,
+        "freshness": "fresh",
+        "contribution_to_account_health": 0,
+        "formula_version": "engagement-v1",
+        "dirty": False,
+        "metric_inputs": [],
+    },
+}
+_LEGACY_JSON_COLUMNS = {
+    "source_document_links",
+    "attachments",
+    "activity_notes",
+    "escalation_notes",
+    "health_drivers",
+    "metric_inputs",
+}
 
 
 class Base(DeclarativeBase):
@@ -27,3 +105,213 @@ def init_db() -> None:
     from app import models  # noqa: F401
 
     Base.metadata.create_all(bind=engine)
+    apply_additive_migrations()
+
+
+def apply_additive_migrations() -> None:
+    from app.models import AccountHealthRollup, Engagement, EngagementHealthSnapshot, TimelineEntry
+
+    migrate_missing_columns([Engagement.__table__, EngagementHealthSnapshot.__table__, AccountHealthRollup.__table__, TimelineEntry.__table__])
+
+
+def migrate_missing_columns(tables: list) -> None:
+    with engine.begin() as connection:
+        inspector = inspect(connection)
+        existing_tables = set(inspector.get_table_names())
+        for table in tables:
+            if table.name not in existing_tables:
+                continue
+            existing_column_info = {column["name"]: column for column in inspector.get_columns(table.name)}
+            existing_columns = set(existing_column_info)
+            for column in table.columns:
+                if column.name in existing_columns:
+                    continue
+                column_definition = nullable_column_definition(column)
+                table_name = quote_identifier(connection, table.name)
+                connection.execute(text(f"ALTER TABLE {table_name} ADD COLUMN {column_definition}"))
+                backfill_missing_column(connection, table.name, column)
+                enforce_not_null_if_safe(connection, table.name, column)
+                existing_columns.add(column.name)
+            relax_nullable_columns(connection, table, existing_columns, existing_column_info)
+            normalize_legacy_columns(connection, table.name, existing_columns, existing_column_info)
+            existing_indexes = {index["name"] for index in inspector.get_indexes(table.name)}
+            for index in table.indexes:
+                if index.name in existing_indexes:
+                    continue
+                index_columns = {column.name for column in index.columns}
+                if not index_columns.issubset(existing_columns):
+                    continue
+                connection.execute(CreateIndex(index))
+
+
+def relax_nullable_columns(connection: Any, table: Any, existing_columns: set[str], existing_column_info: dict[str, Any]) -> None:
+    if connection.dialect.name != "postgresql":
+        return
+
+    quoted_table_name = quote_identifier(connection, table.name)
+    for column in table.columns:
+        if column.name not in existing_columns or not column.nullable:
+            continue
+        if existing_column_info.get(column.name, {}).get("nullable") is not False:
+            continue
+        quoted_column_name = quote_identifier(connection, column.name)
+        connection.execute(text(f"ALTER TABLE {quoted_table_name} ALTER COLUMN {quoted_column_name} DROP NOT NULL"))
+
+
+def normalize_legacy_columns(
+    connection: Any,
+    table_name: str,
+    existing_columns: set[str],
+    existing_column_info: dict[str, Any],
+) -> None:
+    for column_name, default in _LEGACY_TABLE_BACKFILL_DEFAULTS.get(table_name, {}).items():
+        if column_name not in existing_columns:
+            continue
+        backfill_legacy_column(connection, table_name, column_name, existing_column_info.get(column_name), default)
+
+    if table_name == "engagements" and "source_document_links" in existing_columns and "source_links" in existing_columns:
+        copy_legacy_source_links(connection, table_name)
+    if table_name == "engagement_health_snapshots":
+        copy_legacy_health_snapshot_values(connection, table_name, existing_columns)
+
+
+def backfill_legacy_column(connection: Any, table_name: str, column_name: str, column_info: Any, default: Any) -> None:
+    quoted_table_name = quote_identifier(connection, table_name)
+    quoted_column_name = quote_identifier(connection, column_name)
+
+    if connection.dialect.name == "postgresql":
+        default_literal = default_literal_for_column(column_info, default, as_json=column_name in _LEGACY_JSON_COLUMNS)
+        connection.execute(text(f"UPDATE {quoted_table_name} SET {quoted_column_name} = {default_literal} WHERE {quoted_column_name} IS NULL"))
+        connection.execute(text(f"ALTER TABLE {quoted_table_name} ALTER COLUMN {quoted_column_name} SET DEFAULT {default_literal}"))
+        connection.execute(text(f"ALTER TABLE {quoted_table_name} ALTER COLUMN {quoted_column_name} DROP NOT NULL"))
+        return
+
+    connection.execute(
+        text(
+            f"UPDATE {quoted_table_name} "
+            f"SET {quoted_column_name} = :value "
+            f"WHERE {quoted_column_name} IS NULL"
+        ),
+        {"value": json.dumps(default)},
+    )
+
+
+def copy_legacy_health_snapshot_values(connection: Any, table_name: str, existing_columns: set[str]) -> None:
+    copy_legacy_column_value(connection, table_name, existing_columns, target="overall", source="score", fallback=0)
+    copy_legacy_column_value(connection, table_name, existing_columns, target="freshness_status", source="freshness", fallback="fresh")
+    copy_legacy_column_value(connection, table_name, existing_columns, target="is_dirty", source="dirty", fallback=False)
+    copy_legacy_column_value(connection, table_name, existing_columns, target="contribution", source="contribution_to_account_health", fallback=0)
+    copy_legacy_column_value(connection, table_name, existing_columns, target="metric_version", source="formula_version", fallback="engagement-v1")
+
+
+def copy_legacy_column_value(connection: Any, table_name: str, existing_columns: set[str], *, target: str, source: str, fallback: Any) -> None:
+    if connection.dialect.name != "postgresql" or target not in existing_columns or source not in existing_columns:
+        return
+    quoted_table_name = quote_identifier(connection, table_name)
+    target_column = quote_identifier(connection, target)
+    source_column = quote_identifier(connection, source)
+    condition = fallback_condition_for_column(target_column, source_column, fallback)
+    connection.execute(text(f"UPDATE {quoted_table_name} SET {target_column} = {source_column} WHERE {source_column} IS NOT NULL AND {condition}"))
+
+
+def fallback_condition_for_column(target_column: str, source_column: str, fallback: Any) -> str:
+    if isinstance(fallback, bool):
+        return f"{target_column} IS NULL OR ({target_column} IS false AND {source_column} IS true)"
+    if isinstance(fallback, (int, float)):
+        return f"{target_column} IS NULL OR ({target_column} = {fallback} AND {source_column} <> {fallback})"
+    value = str(fallback).replace("'", "''")
+    return f"{target_column} IS NULL OR ({target_column} = '{value}' AND {source_column} <> '{value}')"
+
+
+def copy_legacy_source_links(connection: Any, table_name: str) -> None:
+    quoted_table_name = quote_identifier(connection, table_name)
+    source_links = quote_identifier(connection, "source_links")
+    legacy_links = quote_identifier(connection, "source_document_links")
+    empty_source_links = (
+        f"({source_links} IS NULL OR {source_links}::text IN ('[]', 'null'))"
+        if connection.dialect.name == "postgresql"
+        else f"({source_links} IS NULL OR {source_links} IN ('[]', 'null'))"
+    )
+    connection.execute(
+        text(
+            f"UPDATE {quoted_table_name} "
+            f"SET {source_links} = {legacy_links} "
+            f"WHERE {legacy_links} IS NOT NULL AND {empty_source_links}"
+        )
+    )
+
+
+def default_literal_for_column(column_info: Any, default: Any, *, as_json: bool = False) -> str:
+    type_name = str((column_info or {}).get("type", "")).lower()
+    value = json.dumps(default).replace("'", "''") if as_json else str(default).replace("'", "''")
+    if "jsonb" in type_name:
+        return f"'{value}'::jsonb"
+    if "json" in type_name:
+        return f"'{value}'::json"
+    if "bool" in type_name or type_name == "boolean":
+        return "true" if bool(default) else "false"
+    if any(numeric_type in type_name for numeric_type in ("integer", "numeric", "double", "real")):
+        return str(default)
+    return f"'{value}'"
+
+
+def nullable_column_definition(column: Any) -> str:
+    column_copy = column._copy()
+    column_copy.nullable = True
+    column_copy.primary_key = False
+    return str(CreateColumn(column_copy).compile(dialect=engine.dialect))
+
+
+def backfill_missing_column(connection: Any, table_name: str, column: Any) -> None:
+    default = _TABLE_BACKFILL_DEFAULTS.get(table_name, {}).get(column.name, _MISSING)
+    if default is _MISSING:
+        return
+
+    value = default() if callable(default) else default
+    quoted_table_name = quote_identifier(connection, table_name)
+    quoted_column_name = quote_identifier(connection, column.name)
+
+    if column.name in _JSON_BACKFILL_COLUMNS:
+        value = json.dumps(value)
+        if connection.dialect.name == "postgresql":
+            connection.execute(
+                text(
+                    f"UPDATE {quoted_table_name} "
+                    f"SET {quoted_column_name} = CAST(:value AS JSON) "
+                    f"WHERE {quoted_column_name} IS NULL"
+                ),
+                {"value": value},
+            )
+            return
+
+    connection.execute(
+        text(
+            f"UPDATE {quoted_table_name} "
+            f"SET {quoted_column_name} = :value "
+            f"WHERE {quoted_column_name} IS NULL"
+        ),
+        {"value": value},
+    )
+
+
+def enforce_not_null_if_safe(connection: Any, table_name: str, column: Any) -> None:
+    if column.nullable or connection.dialect.name != "postgresql":
+        return
+    if column.name not in _TABLE_BACKFILL_DEFAULTS.get(table_name, {}) and not table_is_empty(connection, table_name):
+        return
+
+    quoted_table_name = quote_identifier(connection, table_name)
+    quoted_column_name = quote_identifier(connection, column.name)
+    connection.execute(
+        text(f"ALTER TABLE {quoted_table_name} ALTER COLUMN {quoted_column_name} SET NOT NULL")
+    )
+
+
+def table_is_empty(connection: Any, table_name: str) -> bool:
+    quoted_table_name = quote_identifier(connection, table_name)
+    result = connection.execute(text(f"SELECT 1 FROM {quoted_table_name} LIMIT 1"))
+    return result.first() is None
+
+
+def quote_identifier(connection: Any, identifier: str) -> str:
+    return connection.dialect.identifier_preparer.quote(identifier)
