@@ -192,21 +192,44 @@ Make account health explainable and actionable by connecting metrics, weak signa
 - Completing tasks does not automatically improve health.
 - Existing executed playbooks retain original template version.
 
+## PRD and Frontend Review Additions
+
+- Account and Engagement scores must both be first-class scoring outputs; Engagement scores roll up into Account Health according to the active published metric configuration.
+- Seeded deterministic signal rule types must include SOW expiry, renewal date, notice-period deadline, stale KYC, weak metric, stakeholder gap, and escalation SLA signals.
+- Attention Center must answer "what needs attention today" and include SLA reminders, ownership, SOW expiry, renewal windows, notice-window tasks, signal lifecycle state, and recommended playbooks.
+- Playbook templates must capture objective, applicable signal types, weak metrics, activities, default owner rule, due-date rule, success criteria, skip rules, version, and active/inactive state.
+- Playbook recommendations must not create tasks until an AM selects and executes a template; execution must retain the template version used.
+- Ops Lead updates on assigned operational tasks must be captured in task history and account timeline where configured.
+- Unified calendar must merge governance events, score activities, renewal dates, SOW end dates, notice deadlines, and task due dates with filters for governance, score activities, renewal items, account, engagement, owner, and my items.
+- Optional AI explanations must use the approved AI/LLM Gateway only; AI output is advisory, source-backed, clearly labeled, and must not create authoritative scores, signals, playbooks, tasks, or lifecycle changes.
+- External integrations in this feature are limited to approved PRD integrations: Google Calendar for calendar context, CSAT for score input, and AI/LLM Gateway for advisory explanation. Any other source must be manual entry, uploaded/linked evidence, CSV/manual input, or future scope.
+- Frontend implementation must preserve and API-back the existing Account 360 Health tab, score calculator/history panels, Admin Scoring Engine Builder, Tasks lane board/Attention surface, Governance calendar toggles, and Playbook page. The existing Playbook content page should remain available while operational playbook template management is added.
+
+## Resolved Implementation Defaults
+
+- Default RAG thresholds are Green `75-100`, Amber `60-74`, and Red `0-59`. Existing legacy labels `healthy`, `warning`, and `critical` may be mapped to Green, Amber, and Red for compatibility.
+- Metric formulas must use a safe JSON/DSL expression format with allowlisted score inputs and operators only. Supported MVP operators are arithmetic `+`, `-`, `*`, `/`, comparison operators, `min`, `max`, `avg`, `sum`, `clamp`, and `coalesce`; arbitrary code execution/eval is forbidden.
+- Manual AM calculator submissions are score inputs, not direct authoritative overrides. A submission must include scope, account or engagement, calculator/metric mapping, selected values, submitter, timestamp, source/evidence when configured, and validation status.
+- Official score changes occur only when the scoring engine creates a snapshot from the active published metric version.
+- Signal statuses are `new`, `reviewed`, `accepted`, `dismissed`, `converted`, and `resolved`; dismissal requires a reason when configured and conversion requires a target type such as `task` or `playbook`.
+- Task statuses are `todo`, `in_progress`, `blocked`, `done`, and `skipped`; task priorities are `low`, `medium`, `high`, and `critical`.
+- Task completion requires outcome/evidence when the task source or template marks evidence as required.
+- Calendar dates are stored in UTC and rendered in the user's local timezone. The calendar API must require a date range and support lazy loading by range; recurring governance behavior remains owned by the governance module.
+- Bulk signal lifecycle updates are out of scope for the first implementation unless added in a later requirement.
+- Recalculation during metric publish must avoid rewriting existing snapshots: publish creates a new version, impacted records are recalculated or marked dirty, and historical snapshots keep their original version payload.
+- Duplicate active signals are unique by account, optional engagement, rule, source record, and condition key; duplicates should be merged or suppressed with audit metadata.
+- If a task or signal owner is deactivated, the item remains visible to authorized users and must be reassigned before owner-only lifecycle updates can proceed.
+
 ## Missing Requirements
 
-- Metric formula syntax and supported operators are not specified.
-- Manual score submission/calculator schema is not specified.
-- RAG threshold defaults are not specified.
-- Signal rule configuration model is not specified.
-- Task statuses and priority values are not fully enumerated.
-- Calendar recurrence behavior is not specified.
+- Exact persisted signal rule condition schema fields still need implementation-level definition.
+- Exact seeded default metric catalog and playbook template catalog must be chosen during implementation.
+- Exact CSAT source payload shape depends on the approved integration spec and may start with manual/CSV-backed score inputs.
 
 ## Ambiguous Requirements
 
-- "AM submits account scores" appears in workflow, but metric engine also calculates scores from data; manual score input boundaries need clarification.
-- Whether score-triggered improvement actions are tasks, playbook recommendations, or both is not fully specified.
-- Whether bulk signal lifecycle updates are allowed is not specified.
-- Which evidence is mandatory for task completion is configuration-dependent and undefined.
+- Whether score-triggered improvement actions should be displayed as direct task suggestions, playbook recommendations, or both is partially resolved as both: weak metrics recommend playbooks and may also expose approved activity suggestions, but tasks are created only after user selection.
+- Which task sources require evidence remains template/configuration-driven.
 
 ## Conflicting Requirements
 
