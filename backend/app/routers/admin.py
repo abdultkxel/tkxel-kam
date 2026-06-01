@@ -2,7 +2,7 @@ from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends, Query, status
 
-from app.dependencies import get_custom_field_service, get_rbac_service, get_user_management_service, require_permission
+from app.dependencies import get_admin_settings_service, get_custom_field_service, get_rbac_service, get_user_management_service, require_permission
 from app.models import CustomFieldDefinition, Permission, Role, User
 from app.rbac import ADMIN_MODULE
 from app.schemas import (
@@ -14,6 +14,8 @@ from app.schemas import (
     CustomFieldSort,
     CustomFieldStatus,
     CustomFieldType,
+    EmailDomainSettingsRead,
+    EmailDomainSettingsUpdateRequest,
     PermissionRead,
     MessageResponse,
     RoleCreateRequest,
@@ -27,6 +29,7 @@ from app.schemas import (
     UserUpdateRequest,
 )
 from app.services.custom_fields import CustomFieldService
+from app.services.admin_settings import AdminSettingsService
 from app.services.rbac import RbacService
 from app.services.user_management import UserManagementService
 
@@ -296,6 +299,44 @@ def delete_role(
 )
 def list_permissions(_: AdminAccess, service: Annotated[RbacService, Depends(get_rbac_service)]) -> list[Permission]:
     return service.list_permissions()
+
+
+@router.get(
+    "/settings/email-domains",
+    response_model=EmailDomainSettingsRead,
+    summary="Read allowed email-domain settings",
+    description="Returns the Admin Settings email-domain policy used for Admin user creation and Google Sign-In.",
+    response_description="Allowed parent domains, raw input, active state, and last update metadata.",
+    responses={
+        401: {"description": "Missing, invalid, or expired bearer token."},
+        403: {"description": "Authenticated user does not have Admin/RBAC configure permission."},
+    },
+)
+def read_email_domain_settings(
+    _: AdminAccess,
+    service: Annotated[AdminSettingsService, Depends(get_admin_settings_service)],
+) -> EmailDomainSettingsRead:
+    return service.get_email_domain_settings()
+
+
+@router.patch(
+    "/settings/email-domains",
+    response_model=EmailDomainSettingsRead,
+    summary="Update allowed email-domain settings",
+    description="Validates and saves allowed parent email domains, then writes an audit log for the settings change.",
+    response_description="Updated email-domain policy.",
+    responses={
+        401: {"description": "Missing, invalid, or expired bearer token."},
+        403: {"description": "Authenticated user does not have Admin/RBAC configure permission."},
+        422: {"description": "Field-level validation errors with meaningful messages."},
+    },
+)
+def update_email_domain_settings(
+    payload: EmailDomainSettingsUpdateRequest,
+    current_user: AdminAccess,
+    service: Annotated[AdminSettingsService, Depends(get_admin_settings_service)],
+) -> EmailDomainSettingsRead:
+    return service.update_email_domain_settings(payload, current_user)
 
 
 @router.put(

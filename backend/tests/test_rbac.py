@@ -91,7 +91,7 @@ def test_super_admin_can_create_update_and_delete_managed_users(client: TestClie
         "/api/admin/users",
         headers=headers,
         json={
-            "email": "kam.user@example.com",
+            "email": "kam.user@tkxel.com",
             "password": "User@12345",
             "full_name": "KAM User",
             "role": "account_manager",
@@ -103,7 +103,7 @@ def test_super_admin_can_create_update_and_delete_managed_users(client: TestClie
     )
     assert create_response.status_code == 201
     created_user = create_response.json()
-    assert created_user["email"] == "kam.user@example.com"
+    assert created_user["email"] == "kam.user@tkxel.com"
     assert created_user["role"] == "account_manager"
 
     update_response = client.patch(
@@ -117,7 +117,7 @@ def test_super_admin_can_create_update_and_delete_managed_users(client: TestClie
 
     list_response = client.get("/api/admin/users", headers=headers)
     assert list_response.status_code == 200
-    assert any(user["email"] == "kam.user@example.com" for user in list_response.json()["items"])
+    assert any(user["email"] == "kam.user@tkxel.com" for user in list_response.json()["items"])
 
     delete_response = client.delete(f"/api/admin/users/{created_user['id']}", headers=headers)
     assert delete_response.status_code == 200
@@ -133,7 +133,7 @@ def test_account_manager_cannot_use_admin_rbac_without_permission(client: TestCl
         "/api/admin/users",
         headers=admin_headers,
         json={
-            "email": "am@example.com",
+            "email": "am@tkxel.com",
             "password": "User@12345",
             "full_name": "Account Manager",
             "role": "account_manager",
@@ -141,7 +141,7 @@ def test_account_manager_cannot_use_admin_rbac_without_permission(client: TestCl
     )
     assert create_response.status_code == 201
 
-    account_manager_headers = auth_headers(client, "am@example.com", "User@12345")
+    account_manager_headers = auth_headers(client, "am@tkxel.com", "User@12345")
     response = client.get("/api/admin/roles", headers=account_manager_headers)
 
     assert response.status_code == 403
@@ -247,7 +247,7 @@ def test_system_and_assigned_roles_are_protected_from_delete(client: TestClient)
         "/api/admin/users",
         headers=headers,
         json={
-            "email": "temporary.manager@example.com",
+            "email": "temporary.manager@tkxel.com",
             "password": "User@12345",
             "full_name": "Temporary Manager",
             "role": "temporary_manager",

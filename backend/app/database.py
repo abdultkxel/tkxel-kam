@@ -17,6 +17,12 @@ SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False)
 
 _MISSING = object()
 _TABLE_BACKFILL_DEFAULTS: dict[str, dict[str, Any]] = {
+    "audit_logs": {
+        "source": "platform",
+    },
+    "users": {
+        "auth_provider": "password",
+    },
     "engagements": {
         "status": "active",
         "service_lines": [],
@@ -109,9 +115,9 @@ def init_db() -> None:
 
 
 def apply_additive_migrations() -> None:
-    from app.models import AccountHealthRollup, Engagement, EngagementHealthSnapshot, TimelineEntry
+    from app.models import AccountHealthRollup, AdminSetting, AuditLog, Engagement, EngagementHealthSnapshot, TimelineEntry, User
 
-    migrate_missing_columns([Engagement.__table__, EngagementHealthSnapshot.__table__, AccountHealthRollup.__table__, TimelineEntry.__table__])
+    migrate_missing_columns([User.__table__, AdminSetting.__table__, AuditLog.__table__, Engagement.__table__, EngagementHealthSnapshot.__table__, AccountHealthRollup.__table__, TimelineEntry.__table__])
 
 
 def migrate_missing_columns(tables: list) -> None:

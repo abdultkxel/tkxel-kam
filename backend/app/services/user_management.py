@@ -6,6 +6,7 @@ from app.repositories.rbac import RbacRepository
 from app.repositories.users import UserRepository
 from app.schemas import MessageResponse, UserCreateRequest, UserPageRead, UserUpdateRequest
 from app.security import hash_password
+from app.services.admin_settings import AdminSettingsService
 from app.services.users import initials_for_name, normalize_email
 
 
@@ -18,6 +19,7 @@ class UserManagementService:
     ) -> None:
         self.users = user_repository or UserRepository(db)
         self.rbac = rbac_repository or RbacRepository(db)
+        self.settings = AdminSettingsService(db)
 
     def list_users(
         self,
@@ -39,6 +41,7 @@ class UserManagementService:
     def create_user(self, payload: UserCreateRequest) -> User:
         self._ensure_role_exists(payload.role)
         email = normalize_email(payload.email)
+        self.settings.validate_email_domain(email)
         if self.users.get_by_email(email) is not None:
             raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="A user with this email already exists")
 

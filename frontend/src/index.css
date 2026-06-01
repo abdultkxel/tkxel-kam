@@ -52,6 +52,14 @@
     @apply text-sm font-medium text-ink;
   }
 
+  .google-signin-slot,
+  .google-signin-slot > div,
+  .google-signin-slot [role='button'],
+  .google-signin-slot iframe {
+    width: 100% !important;
+    max-width: none !important;
+  }
+
   .v4-glass {
     border: 1px solid oklch(0.84 0.012 245 / 72%);
     background: oklch(0.99 0.006 245 / 74%);

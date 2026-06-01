@@ -1,4 +1,4 @@
-import { FormEvent, useState } from 'react'
+import { FormEvent, useEffect, useRef, useState } from 'react'
 import { Eye, EyeOff, LogIn } from 'lucide-react'
 import { Link, useLocation, useNavigate } from 'react-router-dom'
 import { FieldError } from '@/components/form/FieldError'
@@ -11,14 +11,63 @@ import { cn } from '@/utils/cn'
 export function Login() {
   const navigate = useNavigate()
   const location = useLocation()
-  const { login } = useAuth()
+  const { login, loginWithGoogle } = useAuth()
+  const googleButtonRef = useRef<HTMLDivElement | null>(null)
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [showPassword, setShowPassword] = useState(false)
   const [error, setError] = useState('')
   const [fieldErrors, setFieldErrors] = useState<FieldErrors>({})
   const [loading, setLoading] = useState(false)
+  const [googleLoading, setGoogleLoading] = useState(false)
+  const [googleReady, setGoogleReady] = useState(false)
   const from = (location.state as { from?: { pathname?: string } } | null)?.from?.pathname ?? '/dashboard'
+  const googleClientId = import.meta.env.VITE_GOOGLE_CLIENT_ID as string | undefined
+
+  useEffect(() => {
+    if (!googleClientId || !googleButtonRef.current) return
+    let cancelled = false
+
+    function renderGoogleButton() {
+      if (cancelled || !window.google || !googleButtonRef.current) return
+      window.google.accounts.id.initialize({
+        client_id: googleClientId,
+        callback: response => {
+          if (!response.credential) {
+            setError('Google Sign-In failed')
+            return
+          }
+          void handleGoogleCredential(response.credential)
+        },
+      })
+      googleButtonRef.current.innerHTML = ''
+      window.google.accounts.id.renderButton(googleButtonRef.current, {
+        theme: 'outline',
+        size: 'large',
+        width: Math.min(googleButtonRef.current.offsetWidth || 400, 400),
+        text: 'signin_with',
+      })
+      setGoogleReady(true)
+    }
+
+    if (window.google) {
+      renderGoogleButton()
+      return () => {
+        cancelled = true
+      }
+    }
+
+    const script = document.createElement('script')
+    script.src = 'https://accounts.google.com/gsi/client'
+    script.async = true
+    script.defer = true
+    script.onload = renderGoogleButton
+    script.onerror = () => !cancelled && setGoogleReady(false)
+    document.head.appendChild(script)
+    return () => {
+      cancelled = true
+    }
+  }, [googleClientId])
 
   function clearField(field: string) {
     setFieldErrors(errors => clearFieldError(errors, field))
@@ -41,6 +90,20 @@ export function Login() {
     }
   }
 
+  async function handleGoogleCredential(credential: string) {
+    setError('')
+    setFieldErrors({})
+    setGoogleLoading(true)
+    try {
+      await loginWithGoogle(credential)
+      navigate(from, { replace: true })
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : 'Google Sign-In failed')
+    } finally {
+      setGoogleLoading(false)
+    }
+  }
+
   return (
     <main className="grid min-h-screen bg-surface-secondary lg:grid-cols-[minmax(420px,0.42fr)_1fr]">
       <section className="flex min-h-screen flex-col justify-between bg-brand-blue-dark p-6 text-white sm:p-8">
@@ -58,7 +121,7 @@ export function Login() {
       </section>
 
       <section className="flex items-center justify-center px-4 py-10 sm:px-8">
-        <div className="w-full max-w-md">
+        <div className="w-full max-w-[400px]">
           <div>
             <p className="text-xs font-bold uppercase tracking-[0.22em] text-brand-blue">Secure access</p>
             <h2 className="mt-3 font-display text-4xl font-bold text-ink">Login</h2>
@@ -125,6 +188,14 @@ export function Login() {
               {loading ? 'Signing in' : 'Sign in'}
             </button>
           </form>
+
+          {googleClientId ? (
+            <div className="mt-5 border-t border-surface-border pt-5">
+              <div ref={googleButtonRef} className={cn('google-signin-slot min-h-[44px] w-full', googleLoading && 'pointer-events-none opacity-60')} aria-label="Google Sign-In" />
+              {!googleReady ? <p className="mt-2 text-center text-xs text-ink-secondary">Loading Google Sign-In</p> : null}
+              {googleLoading ? <p className="mt-2 text-center text-xs font-semibold text-brand-blue">Signing in with Google</p> : null}
+            </div>
+          ) : null}
         </div>
       </section>
     </main>

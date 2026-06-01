@@ -42,10 +42,13 @@ class User(Base):
     hashed_password: Mapped[str] = mapped_column(Text, nullable=False)
     full_name: Mapped[str] = mapped_column(String(160), nullable=False)
     role: Mapped[str] = mapped_column(String(80), nullable=False, default="account_manager")
+    auth_provider: Mapped[str] = mapped_column(String(40), nullable=False, default="password")
+    google_sub: Mapped[str | None] = mapped_column(String(255), unique=True, index=True, nullable=True)
     title: Mapped[str | None] = mapped_column(String(120), nullable=True)
     phone: Mapped[str | None] = mapped_column(String(40), nullable=True)
     avatar_initials: Mapped[str] = mapped_column(String(8), nullable=False, default="KA")
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    last_login_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utc_now)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utc_now, onupdate=utc_now)
 
@@ -152,6 +155,18 @@ class CustomFieldValue(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utc_now, onupdate=utc_now)
 
     field_definition: Mapped[CustomFieldDefinition] = relationship(back_populates="values")
+
+
+class AdminSetting(Base):
+    __tablename__ = "admin_settings"
+    __table_args__ = (UniqueConstraint("key", name="uq_admin_settings_key"),)
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid4()))
+    key: Mapped[str] = mapped_column(String(120), index=True, nullable=False)
+    value_json: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    updated_by_id: Mapped[str | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utc_now, onupdate=utc_now)
 
 
 class Account(Base):
@@ -507,6 +522,7 @@ class AuditLog(Base):
     entity_id: Mapped[str] = mapped_column(String(36), index=True, nullable=False)
     actor_id: Mapped[str] = mapped_column(String(36), nullable=False)
     actor_name: Mapped[str] = mapped_column(String(160), nullable=False)
+    source: Mapped[str] = mapped_column(String(80), index=True, nullable=False, default="platform")
     before_value: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     after_value: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     reason: Mapped[str | None] = mapped_column(Text, nullable=True)

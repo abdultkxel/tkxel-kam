@@ -9,6 +9,7 @@ from app.schemas import (
     ChangePasswordRequest,
     ForgotPasswordRequest,
     ForgotPasswordResponse,
+    GoogleLoginRequest,
     LoginRequest,
     MessageResponse,
     ResetPasswordRequest,
@@ -35,6 +36,25 @@ router = APIRouter(prefix="/api/auth", tags=["Authentication"])
 )
 def login(payload: LoginRequest, service: Annotated[AuthService, Depends(get_auth_service)]) -> AuthResponse:
     return service.login(payload)
+
+
+@router.post(
+    "/google",
+    response_model=AuthResponse,
+    summary="Log in with Google",
+    description=(
+        "Verifies a Google Identity Services credential server-side, applies the allowed-domain policy, "
+        "and issues a platform JWT only for existing active users. This endpoint never provisions users."
+    ),
+    response_description="Bearer token and authenticated user profile.",
+    responses={
+        401: {"description": "Google credential is invalid, disallowed, unverified, or not linked to an active user."},
+        503: {"description": "Google Sign-In is not configured."},
+        422: {"description": "Field-level validation errors with meaningful messages."},
+    },
+)
+def google_login(payload: GoogleLoginRequest, service: Annotated[AuthService, Depends(get_auth_service)]) -> AuthResponse:
+    return service.google_login(payload)
 
 
 @router.post(

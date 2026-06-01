@@ -10,6 +10,7 @@ from app.models import User
 from app.repositories.users import UserRepository
 from app.security import decode_access_token
 from app.services.auth import AuthService
+from app.services.admin_settings import AdminSettingsService
 from app.services.accounts import AccountService
 from app.services.content import ContentService
 from app.services.custom_fields import CustomFieldService
@@ -50,6 +51,10 @@ def get_current_user(
 
 def get_auth_service(db: Annotated[Session, Depends(get_db)]) -> AuthService:
     return AuthService(db)
+
+
+def get_admin_settings_service(db: Annotated[Session, Depends(get_db)]) -> AdminSettingsService:
+    return AdminSettingsService(db)
 
 
 def get_profile_service(db: Annotated[Session, Depends(get_db)]) -> ProfileService:

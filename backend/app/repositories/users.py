@@ -40,6 +40,9 @@ class UserRepository:
     def get_by_email(self, email: str) -> User | None:
         return self.db.scalar(select(User).where(User.email == normalize_email(email)))
 
+    def get_by_google_sub(self, google_sub: str) -> User | None:
+        return self.db.scalar(select(User).where(User.google_sub == google_sub))
+
     def add_reset_token(self, reset_token: PasswordResetToken) -> PasswordResetToken:
         self.db.add(reset_token)
         self.db.commit()

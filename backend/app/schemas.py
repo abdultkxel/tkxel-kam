@@ -537,6 +537,24 @@ class AuthResponse(BaseModel):
     user: UserRead
 
 
+class GoogleLoginRequest(BaseModel):
+    credential: str = Field(..., min_length=20, description="Google Identity Services ID token credential.")
+
+
+class EmailDomainSettingsRead(BaseModel):
+    allowed_domains: list[str] = Field(default_factory=list)
+    raw_input: str = ""
+    active: bool = True
+    updated_by: str | None = None
+    updated_at: datetime | None = None
+
+
+class EmailDomainSettingsUpdateRequest(BaseModel):
+    raw_input: str = Field(default="", max_length=2000)
+    active: bool = True
+    reason: str | None = Field(default=None, max_length=500)
+
+
 class MessageResponse(BaseModel):
     message: str
 

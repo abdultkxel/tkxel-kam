@@ -89,4 +89,51 @@ describe('Login', () => {
     expect(screen.getByLabelText(/email/i)).toHaveAttribute('aria-invalid', 'true')
     expect(screen.getByDisplayValue('password')).toHaveAttribute('aria-invalid', 'true')
   })
+
+  it('uses Google Sign-In when configured and exchanges the credential', async () => {
+    vi.stubEnv('VITE_GOOGLE_CLIENT_ID', 'google-client')
+    let googleCallback: ((response: { credential?: string }) => void) | undefined
+    window.google = {
+      accounts: {
+        id: {
+          initialize: vi.fn((options: { client_id: string; callback: (response: { credential?: string }) => void }) => {
+            googleCallback = options.callback
+          }),
+          renderButton: vi.fn((parent: HTMLElement) => {
+            const button = document.createElement('button')
+            button.type = 'button'
+            button.textContent = 'Sign in with Google'
+            button.addEventListener('click', () => googleCallback?.({ credential: 'google-credential' }))
+            parent.appendChild(button)
+          }),
+        },
+      },
+    }
+    const fetchMock = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      const body = init?.body ? JSON.parse(String(init.body)) : {}
+      expect(body.credential).toBe('google-credential')
+      return jsonResponse({
+        access_token: 'google-token',
+        token_type: 'bearer',
+        user: apiUser,
+      })
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    render(
+      <AuthProvider>
+        <MemoryRouter initialEntries={['/login']}>
+          <Routes>
+            <Route path="/login" element={<Login />} />
+            <Route path="/dashboard" element={<div>Dashboard loaded</div>} />
+          </Routes>
+        </MemoryRouter>
+      </AuthProvider>,
+    )
+
+    await userEvent.click(await screen.findByRole('button', { name: /sign in with google/i }))
+
+    expect(await screen.findByText('Dashboard loaded')).toBeInTheDocument()
+    expect(localStorage.getItem('kam.auth.token')).toBe('google-token')
+  })
 })

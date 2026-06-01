@@ -12,6 +12,7 @@ import { AdminGovernancePanel } from '@/components/admin/AdminGovernancePanel'
 import { AdminRolesPanel } from '@/components/admin/AdminRolesPanel'
 import { AdminUsersPanel } from '@/components/admin/AdminUsersPanel'
 import { AlertRulesPanel } from '@/components/admin/AlertRulesPanel'
+import { EmailDomainSettingsPanel } from '@/components/admin/EmailDomainSettingsPanel'
 import { IntegrationsPanel } from '@/components/admin/IntegrationsPanel'
 import { RetentionJobHistory } from '@/components/admin/RetentionJobHistory'
 import { SensitivePolicyTable } from '@/components/admin/SensitivePolicyTable'
@@ -299,6 +300,9 @@ export function Admin() {
             <IntegrationsPanel />
           </div>
           <div id="settings" className={cn('scroll-mt-24', highlightedSection !== 'settings' && 'hidden')}>
+            <div className="mb-4">
+              <EmailDomainSettingsPanel />
+            </div>
             <NotificationSettingsPanel />
           </div>
           <div id="segments" className={cn('scroll-mt-24', highlightedSection !== 'segments' && 'hidden')}>

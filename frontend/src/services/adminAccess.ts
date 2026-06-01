@@ -77,6 +77,14 @@ export interface CustomFieldDefinition {
   updated_at: string
 }
 
+export interface EmailDomainSettings {
+  allowed_domains: string[]
+  raw_input: string
+  active: boolean
+  updated_by?: string | null
+  updated_at?: string | null
+}
+
 export interface UserListParams {
   search?: string
   status?: 'all' | 'active' | 'inactive'
@@ -152,6 +160,12 @@ export interface CustomFieldPayload {
   show_in_list: boolean
   show_in_detail: boolean
   sort_order: number
+}
+
+export interface EmailDomainSettingsPayload {
+  raw_input: string
+  active: boolean
+  reason?: string
 }
 
 export function listAdminUsers(token: string, params: UserListParams = {}) {
@@ -248,6 +262,18 @@ export function deleteCustomField(token: string, fieldId: string) {
   return apiRequest<{ message: string }>(`/api/admin/custom-fields/${fieldId}`, {
     method: 'DELETE',
     token,
+  })
+}
+
+export function getEmailDomainSettings(token: string) {
+  return apiRequest<EmailDomainSettings>('/api/admin/settings/email-domains', { token })
+}
+
+export function updateEmailDomainSettings(token: string, payload: EmailDomainSettingsPayload) {
+  return apiRequest<EmailDomainSettings>('/api/admin/settings/email-domains', {
+    method: 'PATCH',
+    token,
+    body: JSON.stringify(payload),
   })
 }
 
