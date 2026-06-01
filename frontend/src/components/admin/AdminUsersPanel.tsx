@@ -159,6 +159,7 @@ export function AdminUsersPanel() {
     try {
       if (editingUser) {
         await updateAdminUser(token, editingUser.id, {
+          email: form.email,
           full_name: form.fullName,
           role: form.role,
           title: form.title || null,
@@ -434,7 +435,7 @@ function UserFormDialog({ open, title, form, roles, fieldErrors, formError, isEd
               <p className="text-[10px] font-extrabold uppercase tracking-widest text-brand-blue">Users</p>
               <Dialog.Title className="font-display text-2xl font-bold text-ink">{title}</Dialog.Title>
               <Dialog.Description className="mt-1 text-sm text-ink-secondary">
-                Manage the user's profile, assigned role, and activation status.
+                Manage the user's email, profile, assigned role, and activation status.
               </Dialog.Description>
             </div>
             <Dialog.Close className="tk-icon-button" aria-label="Close user form">
@@ -444,7 +445,7 @@ function UserFormDialog({ open, title, form, roles, fieldErrors, formError, isEd
           <form className="grid gap-4 p-5 md:grid-cols-2" onSubmit={onSubmit} noValidate>
             <label className="block">
               <span className="tk-label">Email</span>
-              <input className={fieldClass(fieldErrors.email)} value={form.email} onChange={event => onFieldChange('email', event.target.value)} disabled={isEditing} aria-invalid={Boolean(fieldErrors.email)} />
+              <input className={fieldClass(fieldErrors.email)} type="email" value={form.email} onChange={event => onFieldChange('email', event.target.value)} aria-invalid={Boolean(fieldErrors.email)} />
               <FieldError id="admin-user-email-error" message={fieldErrors.email} />
             </label>
             <label className={cn('block', isEditing && 'hidden')}>

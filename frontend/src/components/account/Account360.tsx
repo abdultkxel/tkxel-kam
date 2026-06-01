@@ -12,11 +12,13 @@ import { KYCAgentOverview } from '@/components/account/KYCAgentOverview'
 import { KYCAssistedReview } from '@/components/account/KYCAssistedReview'
 import { ScoreHistoryPanel } from '@/components/account/ScoreHistoryPanel'
 import { ScoreCalculators, ScoreCalculatorSummary } from '@/components/account/ScoreCalculators'
+import { StakeholderTab } from '@/components/account/StakeholderTab'
 import { AIBriefCard } from '@/components/ai/AIBriefCard'
 import { OpportunityBoard } from '@/components/opportunities/OpportunityBoard'
 import { EmptyState } from '@/components/ui/EmptyState'
 import { TimelineFeed } from '@/components/timeline/TimelineFeed'
 import { HandoverSummary } from '@/components/timeline/HandoverSummary'
+import { AddOpportunityDialog, OpportunityDetailDialog, type OwnerOption } from '@/pages/Opportunities'
 import { useRole } from '@/hooks/useRole'
 import { useAccountStore } from '@/stores/accountStore'
 import { useAlertStore } from '@/stores/alertStore'
@@ -34,7 +36,7 @@ import { emit } from '@/utils/emitTimelineEvent'
 import { emitTimelineEvent } from '@/utils/emitTimelineEvent'
 import { formatCompactCurrency, formatCurrency, formatDate, formatRelative } from '@/utils/formatters'
 
-const tabs = ['Overview', 'Engagements', 'KYC', 'Health', 'Stage', 'Opportunities', 'Education', 'Escalation', 'Governance', 'Notes', 'Timeline', 'Documents']
+const tabs = ['Overview', 'Engagements', 'Stakeholders', 'KYC', 'Health', 'Stage', 'Opportunities', 'Education', 'Escalation', 'Governance', 'Notes', 'Timeline', 'Documents']
 
 export function Account360({ account }: { account: Account }) {
   const user = useRole()
@@ -51,6 +53,7 @@ export function Account360({ account }: { account: Account }) {
   const evaluateAccount = useAlertStore(state => state.evaluateAccount)
   const alerts = useAlertStore(state => state.alerts)
   const allOpportunities = useOpportunityStore(state => state.opportunities)
+  const opportunityTypes = useOpportunityStore(state => state.types)
   const opportunities = useMemo(() => allOpportunities.filter(item => item.accountId === account.id), [account.id, allOpportunities])
   const governanceEvents = useGovernanceStore(state => state.events)
   const entries = useTimelineStore(state => state.entries)
@@ -111,7 +114,15 @@ export function Account360({ account }: { account: Account }) {
       ? 'border-rag-red/20 bg-rag-red/10 text-rag-red'
       : account.riskStatus === 'warning'
         ? 'border-brand-orange/20 bg-brand-orange/10 text-brand-orange'
-        : 'border-rag-green/20 bg-rag-green/10 text-rag-green'
+      : 'border-rag-green/20 bg-rag-green/10 text-rag-green'
+  const [selectedOpportunityId, setSelectedOpportunityId] = useState('')
+  const selectedOpportunity = opportunities.find(opportunity => opportunity.id === selectedOpportunityId) ?? null
+  const ownerOptions = useMemo(() => {
+    const options = new Map<string, OwnerOption>()
+    if (user.id) options.set(user.id, { id: user.id, name: user.name, email: user.email })
+    if (account.ownerId) options.set(account.ownerId, { id: account.ownerId, name: account.ownerName, email: account.ownerEmail })
+    return Array.from(options.values()).sort((a, b) => a.name.localeCompare(b.name))
+  }, [account.ownerEmail, account.ownerId, account.ownerName, user.email, user.id, user.name])
 
   useEffect(() => {
     setActiveAccountId(account.id)
@@ -300,7 +311,7 @@ export function Account360({ account }: { account: Account }) {
             </select>
           </label>
           <Tabs.List
-            className="hidden min-w-[1210px] gap-1 rounded-lg border border-surface-border bg-white p-1 shadow-card md:grid"
+            className="hidden min-w-[1360px] gap-1 rounded-lg border border-surface-border bg-white p-1 shadow-card md:grid"
             style={{ gridTemplateColumns: `repeat(${tabs.length}, minmax(104px, 1fr))` }}
           >
             {tabs.map(tab => (
@@ -381,7 +392,7 @@ export function Account360({ account }: { account: Account }) {
             userId={user.id}
             userName={user.name}
           />
-          <KYCAgentOverview onReview={reviewKYCData} />
+          <KYCAgentOverview accountId={account.id} onReview={reviewKYCData} />
         </Tabs.Content>
 
         <Tabs.Content value="KYC">
@@ -391,6 +402,9 @@ export function Account360({ account }: { account: Account }) {
         </Tabs.Content>
         <Tabs.Content value="Engagements">
           <EngagementsPanel account={account} />
+        </Tabs.Content>
+        <Tabs.Content value="Stakeholders">
+          <StakeholderTab account={account} />
         </Tabs.Content>
         <Tabs.Content value="Health">
           <div className="space-y-4">
@@ -472,7 +486,24 @@ export function Account360({ account }: { account: Account }) {
           </section>
         </Tabs.Content>
         <Tabs.Content value="Opportunities">
-          <OpportunityBoard accountId={account.id} />
+          <section className="mb-4 flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <h2 className="text-base font-bold text-ink">Account opportunities</h2>
+              <p className="mt-1 text-sm text-ink-secondary">{opportunities.length} opportunities tied to this account.</p>
+            </div>
+            <AddOpportunityDialog accounts={[account]} types={opportunityTypes} ownerOptions={ownerOptions} initialAccountId={account.id} onCreated={opportunity => setSelectedOpportunityId(opportunity.id)} />
+          </section>
+          <OpportunityBoard items={opportunities} onOpen={opportunity => setSelectedOpportunityId(opportunity.id)} />
+          <OpportunityDetailDialog
+            opportunity={selectedOpportunity}
+            open={Boolean(selectedOpportunity)}
+            onOpenChange={open => {
+              if (!open) setSelectedOpportunityId('')
+            }}
+            types={opportunityTypes}
+            ownerOptions={ownerOptions}
+            onArchived={() => setSelectedOpportunityId('')}
+          />
         </Tabs.Content>
         {['Education', 'Governance', 'Notes', 'Documents'].map(tab => (
           <Tabs.Content key={tab} value={tab}>

@@ -2,7 +2,7 @@ from datetime import datetime, timezone
 from typing import Any, Literal
 from urllib.parse import urlparse
 
-from pydantic import BaseModel, ConfigDict, EmailStr, Field, ValidationInfo, field_validator, model_validator
+from pydantic import AliasChoices, BaseModel, ConfigDict, EmailStr, Field, ValidationInfo, field_validator, model_validator
 
 from app.rbac import ALL_MODULE_SLUGS, MODULES
 from app.validation import (
@@ -22,9 +22,18 @@ RiskStatus = Literal["healthy", "warning", "critical"]
 DraftStatus = Literal["ready_for_review", "approved", "rejected", "linked"]
 ExtractionStatus = Literal["queued", "running", "completed", "failed", "needs_review", "parsed"]
 OwnershipRole = Literal["primary_am", "supporting_am", "ops_lead", "leadership_sponsor"]
-EngagementStatus = Literal["draft", "active", "renewal_watch", "at_risk", "completed", "archived"]
-DeliveryStatus = Literal["planned", "active", "watch", "blocked", "completed"]
+EngagementStatus = Literal["draft", "active", "on_hold", "renewal_watch", "at_risk", "completed", "archived"]
+DeliveryStatus = Literal["not_started", "planned", "active", "watch", "blocked", "at_risk", "completed"]
+CommercialStatus = Literal["healthy", "watch", "risk"]
+EngagementHealthStatus = Literal["green", "amber", "red", "unknown"]
+RenewalRisk = Literal["low", "medium", "high", "unknown"]
+RenewalStatus = Literal["expired", "renewal_due", "notice_due", "upcoming_notice_window", "not_due", "unknown"]
 SourceType = Literal["project_charter", "sow", "attachment", "source_link", "commercial_note", "research", "manual_import"]
+KycDraftStatus = Literal["ready_for_review", "approved", "rejected"]
+KycRunStatus = Literal["pending", "running", "complete", "failed", "partial"]
+KycWorkstreamStatus = Literal["pending", "running", "complete", "failed"]
+KycConfidenceLevel = Literal["low", "medium", "high"]
+KycTriggerSource = Literal["account_overview", "onboarding_draft", "source_documents", "kyc_page", "manual"]
 CustomFieldType = Literal["text", "textarea", "number", "currency", "date", "datetime", "boolean", "single_select", "multi_select", "email", "url", "phone"]
 CustomFieldStatus = Literal["all", "active", "inactive"]
 CustomFieldSort = Literal["label", "module", "field_type", "sort_order", "updated_at"]
@@ -35,7 +44,10 @@ EscalationPriority = Literal["low", "medium", "high", "urgent"]
 EscalationStatus = Literal["open", "watchlist", "mitigated", "resolved", "closed", "reopened", "cancelled"]
 EscalationUpdateType = Literal["operations_update", "client_communication", "mitigation", "recovery", "status_change", "owner_change", "evidence", "closure", "reopen"]
 GovernanceEventType = Literal["QBR", "SteerCo", "Monthly Review", "Executive Review"]
-GovernanceEventStatus = Literal["draft", "scheduled", "completed", "overdue", "cancelled", "review_required"]
+GovernanceEventStatus = Literal["draft", "scheduled", "upcoming", "completed", "overdue", "cancelled", "review_required"]
+GovernanceEventSource = Literal["manual", "google_calendar", "fathom", "fathom_enriched", "review_required", "system"]
+GovernanceGeneratedOutputType = Literal["agenda_draft", "governance_brief"]
+GovernanceGenerationMethod = Literal["deterministic", "ai_agent"]
 GovernanceCadence = Literal["weekly", "monthly", "quarterly", "yearly"]
 GovernanceEndPolicy = Literal["never", "after_occurrences", "on_date"]
 IntegrationProvider = Literal["google-calendar", "fathom"]
@@ -44,6 +56,21 @@ PlaybookOwnerRule = Literal["account_primary_am", "task_creator", "ops_lead", "t
 TaskStatus = Literal["todo", "in_progress", "done", "skipped", "blocked", "cancelled"]
 TaskPriority = Literal["low", "medium", "high", "urgent"]
 TaskEvidenceType = Literal["note", "link", "file"]
+StakeholderRole = Literal[
+    "executive_sponsor",
+    "economic_buyer",
+    "technical_decision_maker",
+    "operational_poc",
+    "commercial_owner",
+    "influencer",
+]
+StakeholderInfluence = Literal["low", "medium", "high", "critical"]
+StakeholderRelationshipStrength = Literal["unknown", "weak", "developing", "strong", "champion"]
+StakeholderSentiment = Literal["negative", "neutral", "positive", "champion"]
+StakeholderPoliticalRisk = Literal["unknown", "low", "medium", "high"]
+StakeholderStatus = Literal["active", "inactive", "left_company", "do_not_contact"]
+OpportunityStage = Literal["Identified", "Qualified", "Proposal Sent", "Negotiation", "Won", "Lost"]
+OpportunityActionItemStatus = Literal["open", "in_progress", "completed", "cancelled"]
 
 SELECT_FIELD_TYPES = {"single_select", "multi_select"}
 
@@ -92,6 +119,12 @@ def validate_string_list(value: list[str], field_label: str, max_items: int = 30
         seen.add(key)
         items.append(text)
     return items
+
+
+def validate_research_source_list(value: list[str], field_label: str = "Research sources", max_items: int = 10) -> list[str]:
+    if len(value) > max_items:
+        raise ValueError(f"{field_label} can include at most {max_items} items.")
+    return [validate_short_text(item, field_label, 120) for item in value]
 
 
 def validate_http_url(value: str | None, field_label: str = "URL") -> str | None:
@@ -486,6 +519,7 @@ class UserCreateRequest(BaseModel):
 
 
 class UserUpdateRequest(BaseModel):
+    email: EmailStr | None = Field(default=None, description="Updated user email address.")
     full_name: str | None = None
     role: str | None = Field(default=None, description="Role slug assigned to the user.")
     title: str | None = None
@@ -520,9 +554,9 @@ class UserUpdateRequest(BaseModel):
 
 
 class LoginRequest(BaseModel):
-    model_config = ConfigDict(json_schema_extra={"examples": [{"email": "admin@tkxelkam.com", "password": "Admin@12345"}]})
+    model_config = ConfigDict(json_schema_extra={"examples": [{"email": "admin@tkxel.com", "password": "Admin@12345"}]})
 
-    email: EmailStr = Field(..., description="Registered user email address.", examples=["admin@tkxelkam.com"])
+    email: EmailStr = Field(..., description="Registered user email address.", examples=["admin@tkxel.com"])
     password: str = Field(..., description="Password with at least 8 characters, mixed case, number, and symbol.")
 
     @field_validator("password")
@@ -537,14 +571,20 @@ class AuthResponse(BaseModel):
     user: UserRead
 
 
+class GoogleSignInRequest(BaseModel):
+    model_config = ConfigDict(json_schema_extra={"examples": [{"credential": "google-id-token"}]})
+
+    credential: str = Field(..., min_length=1, description="Google Identity Services ID token credential.")
+
+
 class MessageResponse(BaseModel):
     message: str
 
 
 class ForgotPasswordRequest(BaseModel):
-    model_config = ConfigDict(json_schema_extra={"examples": [{"email": "admin@tkxelkam.com"}]})
+    model_config = ConfigDict(json_schema_extra={"examples": [{"email": "admin@tkxel.com"}]})
 
-    email: EmailStr = Field(..., description="Email address for the account requesting password reset.", examples=["admin@tkxelkam.com"])
+    email: EmailStr = Field(..., description="Email address for the account requesting password reset.", examples=["admin@tkxel.com"])
 
 
 class ForgotPasswordResponse(BaseModel):
@@ -593,6 +633,35 @@ class ChangePasswordRequest(BaseModel):
         if self.current_password == self.new_password:
             raise ValueError("New password must be different from the current password.")
         return self
+
+
+class AllowedEmailDomainsUpdateRequest(BaseModel):
+    model_config = ConfigDict(
+        json_schema_extra={
+            "examples": [
+                {"domains_input": "tkxel.com, tkxel.io, camp1.tkxel.com"},
+                {"domains": ["tkxel.com", "tkxel.io", "camp1.tkxel.com"]},
+            ]
+        }
+    )
+
+    domains_input: str | None = Field(default=None, description="Comma-separated allowed email domains.")
+    domains: list[str] | None = Field(default=None, description="Allowed email domains as a list.")
+
+    @model_validator(mode="after")
+    def has_domains_payload(self) -> "AllowedEmailDomainsUpdateRequest":
+        if self.domains_input is None and self.domains is None:
+            raise ValueError("Allowed email domains are required.")
+        return self
+
+
+class AllowedEmailDomainsRead(BaseModel):
+    domains: list[str]
+    domains_input: str
+    updated_by_id: str | None = None
+    updated_by_name: str | None = None
+    updated_at: datetime | None = None
+    duplicates_removed: bool = False
 
 
 class ProfileUpdateRequest(BaseModel):
@@ -676,6 +745,26 @@ class SourceCitationCreateRequest(BaseModel):
         return optional_text(value, "Citation field", max_length=120)
 
 
+class SourceLinkRead(BaseModel):
+    title: str | None = None
+    url: str
+
+
+class SourceLinkRequest(BaseModel):
+    title: str | None = None
+    url: str
+
+    @field_validator("title")
+    @classmethod
+    def title_is_valid(cls, value: str | None) -> str | None:
+        return optional_text(value, "Source link title", max_length=220)
+
+    @field_validator("url")
+    @classmethod
+    def url_is_valid(cls, value: str) -> str:
+        return validate_short_text(value, "Source link URL", 1000)
+
+
 class SourceDocumentRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -747,16 +836,325 @@ class SourceDocumentPageRead(BaseModel):
     pages: int
 
 
-class EngagementDraftRequest(BaseModel):
+class KycCitationRead(BaseModel):
+    source_document_id: str | None = None
+    label: str
+    page_number: int | None = None
+    excerpt: str
+    field_key: str | None = None
+    restricted: bool = False
+
+
+class KycFieldRead(BaseModel):
+    key: str
+    label: str
+    workstream_key: str
+    workstream_title: str
+    value: str | None = None
+    confidence: int
+    is_required: bool = True
+    is_sensitive: bool = False
+    reviewed: bool = False
+    missing: bool = False
+    conflict: bool = False
+    previous_value: str | None = None
+    citations: list[KycCitationRead] = Field(default_factory=list)
+
+
+class KycWorkstreamRead(BaseModel):
+    id: str | None = None
+    workstream_key: str
+    title: str
+    status: str
+    sort_order: int
+    confidence: int
+    output: dict[str, Any] = Field(default_factory=dict)
+    citations: list[KycCitationRead] = Field(default_factory=list)
+    missing_fields: list[str] = Field(default_factory=list)
+    error_message: str | None = None
+    started_at: datetime | None = None
+    completed_at: datetime | None = None
+
+
+class KycDraftRead(BaseModel):
+    id: str
+    account_id: str
+    status: str
+    trigger_source: str
+    agent_run_id: str | None = None
+    previous_snapshot_id: str | None = None
+    approved_snapshot_id: str | None = None
+    source_document_ids: list[str] = Field(default_factory=list)
+    research_sources: list[str] = Field(default_factory=list)
+    fields: list[KycFieldRead] = Field(default_factory=list)
+    citations: list[KycCitationRead] = Field(default_factory=list)
+    missing_fields: list[str] = Field(default_factory=list)
+    conflicts: list[str] = Field(default_factory=list)
+    difference_summary: list[str] = Field(default_factory=list)
+    source_context: dict[str, Any] = Field(default_factory=dict)
+    confidence: int
+    completeness: int
+    source_coverage: int
+    freshness_status: str
+    low_confidence_acknowledged: bool
+    conflicts_acknowledged: bool
+    override_reason: str | None = None
+    review_notes: str | None = None
+    created_by_name: str
+    reviewed_by_name: str | None = None
+    approved_by_name: str | None = None
+    rejected_by_name: str | None = None
+    rejection_reason: str | None = None
+    created_at: datetime
+    updated_at: datetime
+    decided_at: datetime | None = None
+    ai_disclaimer: str
+
+
+class KycDraftPageRead(BaseModel):
+    items: list[KycDraftRead]
+    total: int
+    page: int
+    page_size: int
+    pages: int
+
+
+class KycDraftCreateRequest(BaseModel):
+    trigger_source: KycTriggerSource = "account_overview"
+    source_document_ids: list[str] = Field(default_factory=list)
+    research_sources: list[str] = Field(default_factory=list)
+    notes: str | None = None
+
+    @field_validator("source_document_ids")
+    @classmethod
+    def source_document_ids_are_valid(cls, value: list[str]) -> list[str]:
+        if len(value) > 50:
+            raise ValueError("At most 50 source documents can be selected for one KYC draft.")
+        return [validate_short_text(item, "Source document", 36) for item in value]
+
+    @field_validator("research_sources")
+    @classmethod
+    def research_sources_are_valid(cls, value: list[str]) -> list[str]:
+        return validate_research_source_list(value)
+
+    @field_validator("notes")
+    @classmethod
+    def notes_are_valid(cls, value: str | None) -> str | None:
+        return validate_optional_long_text(value, "KYC notes")
+
+
+class KycFieldUpdateRequest(BaseModel):
+    key: str
+    value: str | None = None
+    reviewed: bool | None = None
+
+    @field_validator("key")
+    @classmethod
+    def key_is_valid(cls, value: str) -> str:
+        return validate_slug(value, "KYC field key")
+
+    @field_validator("value")
+    @classmethod
+    def value_is_valid(cls, value: str | None) -> str | None:
+        return optional_text(value, "KYC field value", max_length=8000)
+
+
+class KycDraftUpdateRequest(BaseModel):
+    fields: list[KycFieldUpdateRequest] | None = None
+    low_confidence_acknowledged: bool | None = None
+    conflicts_acknowledged: bool | None = None
+    override_reason: str | None = None
+    review_notes: str | None = None
+
+    @field_validator("fields")
+    @classmethod
+    def fields_are_valid(cls, value: list[KycFieldUpdateRequest] | None) -> list[KycFieldUpdateRequest] | None:
+        if value is not None and len(value) > 100:
+            raise ValueError("At most 100 KYC fields can be updated at once.")
+        return value
+
+    @field_validator("override_reason", "review_notes")
+    @classmethod
+    def review_text_is_valid(cls, value: str | None) -> str | None:
+        return validate_optional_long_text(value, "KYC review text")
+
+
+class KycDraftApproveRequest(BaseModel):
+    low_confidence_acknowledged: bool = False
+    conflicts_acknowledged: bool = False
+    override_reason: str | None = None
+    change_summary: list[str] = Field(default_factory=list)
+
+    @field_validator("override_reason")
+    @classmethod
+    def override_reason_is_valid(cls, value: str | None) -> str | None:
+        return validate_optional_long_text(value, "Override reason", 1000)
+
+    @field_validator("change_summary")
+    @classmethod
+    def change_summary_is_valid(cls, value: list[str]) -> list[str]:
+        return validate_string_list(value, "Change summary", max_items=20)
+
+
+class KycDraftRejectRequest(BaseModel):
+    reason: str
+
+    @field_validator("reason")
+    @classmethod
+    def reason_is_valid(cls, value: str) -> str:
+        return validate_short_text(value, "Rejection reason", 1000)
+
+
+class KycSnapshotRead(BaseModel):
+    id: str
+    account_id: str
+    version: int
+    source_draft_id: str | None = None
+    extraction_run_id: str | None = None
+    approved_by_name: str
+    approved_at: datetime
+    fields: list[KycFieldRead] = Field(default_factory=list)
+    citations: list[KycCitationRead] = Field(default_factory=list)
+    source_context: dict[str, Any] = Field(default_factory=dict)
+    source_document_ids: list[str] = Field(default_factory=list)
+    research_sources: list[str] = Field(default_factory=list)
+    confidence: int
+    completeness: int
+    source_coverage: int
+    freshness_status: str
+    missing_fields: list[str] = Field(default_factory=list)
+    conflicts: list[str] = Field(default_factory=list)
+    change_summary: list[str] = Field(default_factory=list)
+    created_at: datetime
+    ai_disclaimer: str
+
+
+class KycSnapshotPageRead(BaseModel):
+    items: list[KycSnapshotRead]
+    total: int
+    page: int
+    page_size: int
+    pages: int
+
+
+class KycFreshnessRead(BaseModel):
+    account_id: str
+    has_approved_snapshot: bool
+    snapshot_id: str | None = None
+    snapshot_version: int | None = None
+    completeness: int
+    confidence: int
+    source_coverage: int
+    freshness_status: str
+    stale: bool
+    freshness_threshold_days: int
+    last_approved_at: datetime | None = None
+    stale_after: datetime | None = None
+    missing_fields: list[str] = Field(default_factory=list)
+    required_fields_total: int
+    required_fields_completed: int
+
+
+class KycConfigurationFieldRead(BaseModel):
+    key: str
+    label: str
+    workstream_key: str
+    required: bool = True
+    sensitive: bool = False
+
+
+class KycConfigurationRead(BaseModel):
+    id: str
     name: str
+    required_field_keys: list[str] = Field(default_factory=list)
+    freshness_threshold_days: int
+    low_confidence_threshold: int
+    research_sources: list[str] = Field(default_factory=list)
+    field_catalog: list[KycConfigurationFieldRead] = Field(default_factory=list)
+    updated_by_id: str | None = None
+    created_at: datetime
+    updated_at: datetime
+
+
+class KycConfigurationUpdateRequest(BaseModel):
+    required_field_keys: list[str] | None = None
+    freshness_threshold_days: int | None = Field(default=None, ge=1, le=730)
+    low_confidence_threshold: int | None = Field(default=None, ge=1, le=100)
+    research_sources: list[str] | None = None
+
+    @field_validator("required_field_keys")
+    @classmethod
+    def required_field_keys_are_valid(cls, value: list[str] | None) -> list[str] | None:
+        return [validate_slug(item, "Required KYC field key") for item in value] if value is not None else None
+
+    @field_validator("research_sources")
+    @classmethod
+    def research_sources_are_valid(cls, value: list[str] | None) -> list[str] | None:
+        return validate_research_source_list(value) if value is not None else None
+
+
+class KycAgentRunRead(BaseModel):
+    id: str
+    account_id: str
+    status: str
+    trigger_source: str
+    previous_run_id: str | None = None
+    source_document_ids: list[str] = Field(default_factory=list)
+    research_sources: list[str] = Field(default_factory=list)
+    triggered_by_name: str
+    error_message: str | None = None
+    started_at: datetime | None = None
+    completed_at: datetime | None = None
+    created_at: datetime
+    updated_at: datetime
+    workstreams: list[KycWorkstreamRead] = Field(default_factory=list)
+    ai_disclaimer: str
+
+
+class KycAgentRunPageRead(BaseModel):
+    items: list[KycAgentRunRead]
+    total: int
+    page: int
+    page_size: int
+    pages: int
+
+
+class KycAgentRunCreateRequest(BaseModel):
+    trigger_source: KycTriggerSource = "kyc_page"
+    source_document_ids: list[str] = Field(default_factory=list)
+    research_sources: list[str] = Field(default_factory=list)
+
+    @field_validator("source_document_ids")
+    @classmethod
+    def source_document_ids_are_valid(cls, value: list[str]) -> list[str]:
+        if len(value) > 50:
+            raise ValueError("At most 50 source documents can be selected for one KYC agent run.")
+        return [validate_short_text(item, "Source document", 36) for item in value]
+
+    @field_validator("research_sources")
+    @classmethod
+    def research_sources_are_valid(cls, value: list[str]) -> list[str]:
+        return validate_research_source_list(value)
+
+
+class EngagementDraftRequest(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    name: str
+    description: str | None = None
     owner_id: str | None = None
     owner_name: str | None = None
     ops_lead_id: str | None = None
     ops_lead_name: str | None = None
     service_lines: list[str] = Field(default_factory=list)
-    value: float = 0
+    source_links: list[SourceLinkRequest] = Field(default_factory=list)
+    value: float = Field(default=0, validation_alias=AliasChoices("value", "contract_value"))
     currency: str = "USD"
     delivery_status: DeliveryStatus = "active"
+    commercial_status: CommercialStatus = "watch"
+    delivery_health: int = Field(default=70, validation_alias=AliasChoices("delivery_health", "health_score"))
+    health_status: EngagementHealthStatus = "unknown"
+    renewal_risk: RenewalRisk = "unknown"
     start_date: datetime | None = None
     end_date: datetime | None = None
     renewal_date: datetime | None = None
@@ -764,7 +1162,7 @@ class EngagementDraftRequest(BaseModel):
     notice_period_days: int | None = None
     auto_renewal: bool = False
     commercial_context: str | None = None
-    resource_dependency: str | None = None
+    resource_dependency: str | None = Field(default=None, validation_alias=AliasChoices("resource_dependency", "resource_dependency_notes"))
     risks: list[str] = Field(default_factory=list)
     source_citation: str | None = None
     confidence: int = 75
@@ -794,7 +1192,7 @@ class EngagementDraftRequest(BaseModel):
     def currency_is_valid(cls, value: str) -> str:
         return validate_currency(value)
 
-    @field_validator("commercial_context", "resource_dependency", "source_citation")
+    @field_validator("description", "commercial_context", "resource_dependency", "source_citation")
     @classmethod
     def optional_long_text_is_valid(cls, value: str | None) -> str | None:
         return validate_optional_long_text(value, "Engagement text")
@@ -809,6 +1207,11 @@ class EngagementDraftRequest(BaseModel):
     def draft_confidence_is_valid(cls, value: int) -> int:
         return validate_percent(value, "Confidence")
 
+    @field_validator("delivery_health")
+    @classmethod
+    def delivery_health_is_valid(cls, value: int) -> int:
+        return validate_percent(value, "Health score")
+
     @field_validator("notice_period_days")
     @classmethod
     def notice_period_is_valid(cls, value: int | None) -> int | None:
@@ -820,10 +1223,8 @@ class EngagementDraftRequest(BaseModel):
     def dates_are_consistent(self) -> "EngagementDraftRequest":
         if self.start_date and self.end_date and self.end_date <= self.start_date:
             raise ValueError("Engagement end date must be after start date.")
-        if self.notice_deadline and self.renewal_date and self.notice_deadline >= self.renewal_date:
-            raise ValueError("Notice deadline must be before renewal date.")
-        if self.notice_deadline and self.end_date and self.notice_deadline >= self.end_date:
-            raise ValueError("Notice deadline must be before SOW end date.")
+        if "notice_deadline" in self.model_fields_set:
+            self.notice_deadline = None
         return self
 
 
@@ -846,6 +1247,8 @@ class EngagementDraftRead(BaseModel):
     renewal_date: datetime | None = None
     notice_deadline: datetime | None = None
     notice_period_days: int | None = None
+    days_to_expiry: int | None = None
+    renewal_status: RenewalStatus = "unknown"
     auto_renewal: bool
     commercial_context: str | None = None
     resource_dependency: str | None = None
@@ -1233,26 +1636,41 @@ class EngagementRead(BaseModel):
     id: str
     account_id: str
     name: str
+    description: str | None = None
     status: str
     owner_id: str | None = None
     owner_name: str
     ops_lead_id: str | None = None
     ops_lead_name: str | None = None
     service_lines: list[str]
+    source_document_ids: list[str] = Field(default_factory=list)
+    source_links: list[SourceLinkRead] = Field(default_factory=list)
     value: float
+    contract_value: float
     currency: str
     delivery_status: str
+    commercial_status: str
     delivery_health: int
+    health_score: int
+    health_status: str
+    renewal_risk: str
     start_date: datetime
     end_date: datetime | None = None
     renewal_date: datetime | None = None
     notice_deadline: datetime | None = None
     notice_period_days: int | None = None
+    days_to_expiry: int | None = None
+    renewal_status: RenewalStatus = "unknown"
     auto_renewal: bool
     commercial_context: str | None = None
     resource_dependency: str | None = None
+    resource_dependency_notes: str | None = None
     risks: list[str]
     source_citation: str | None = None
+    created_by_id: str | None = None
+    updated_by_id: str | None = None
+    created_by: str | None = None
+    updated_by: str | None = None
     created_at: datetime
     updated_at: datetime
     source_documents: list[SourceDocumentRead] = Field(default_factory=list)
@@ -1273,15 +1691,22 @@ class EngagementCreateRequest(EngagementDraftRequest):
 
 
 class EngagementUpdateRequest(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
     name: str | None = None
+    description: str | None = None
     status: EngagementStatus | None = None
     owner_id: str | None = None
     ops_lead_id: str | None = None
     service_lines: list[str] | None = None
-    value: float | None = None
+    source_links: list[SourceLinkRequest] | None = None
+    value: float | None = Field(default=None, validation_alias=AliasChoices("value", "contract_value"))
     currency: str | None = None
     delivery_status: DeliveryStatus | None = None
-    delivery_health: int | None = None
+    commercial_status: CommercialStatus | None = None
+    delivery_health: int | None = Field(default=None, validation_alias=AliasChoices("delivery_health", "health_score"))
+    health_status: EngagementHealthStatus | None = None
+    renewal_risk: RenewalRisk | None = None
     start_date: datetime | None = None
     end_date: datetime | None = None
     renewal_date: datetime | None = None
@@ -1289,7 +1714,7 @@ class EngagementUpdateRequest(BaseModel):
     notice_period_days: int | None = None
     auto_renewal: bool | None = None
     commercial_context: str | None = None
-    resource_dependency: str | None = None
+    resource_dependency: str | None = Field(default=None, validation_alias=AliasChoices("resource_dependency", "resource_dependency_notes"))
     risks: list[str] | None = None
     source_citation: str | None = None
 
@@ -1318,10 +1743,52 @@ class EngagementUpdateRequest(BaseModel):
     def delivery_health_is_valid(cls, value: int | None) -> int | None:
         return validate_percent(value, "Delivery health") if value is not None else None
 
-    @field_validator("commercial_context", "resource_dependency", "source_citation")
+    @field_validator("description", "commercial_context", "resource_dependency", "source_citation")
     @classmethod
     def optional_long_text_is_valid(cls, value: str | None) -> str | None:
         return validate_optional_long_text(value, "Engagement text")
+
+    @field_validator("notice_period_days")
+    @classmethod
+    def notice_period_is_valid(cls, value: int | None) -> int | None:
+        if value is not None and value < 0:
+            raise ValueError("Notice period must be zero or greater.")
+        return value
+
+    @model_validator(mode="after")
+    def dates_are_consistent(self) -> "EngagementUpdateRequest":
+        if self.start_date and self.end_date and self.end_date <= self.start_date:
+            raise ValueError("Engagement end date must be after start date.")
+        if "notice_deadline" in self.model_fields_set:
+            self.notice_deadline = None
+        return self
+
+
+class TimelineEventRead(BaseModel):
+    id: str
+    account_id: str
+    engagement_id: str | None = None
+    event_type: str
+    title: str
+    description: str
+    previous_value: dict[str, Any] | None = None
+    new_value: dict[str, Any] | None = None
+    actor_id: str
+    actor_name: str
+    source_module: str
+    source_record_id: str | None = None
+    source_record_type: str | None = None
+    source_record_route: str | None = None
+    metadata: dict[str, Any] | None = None
+    created_at: datetime
+
+
+class TimelineEventPageRead(BaseModel):
+    items: list[TimelineEventRead]
+    total: int
+    page: int
+    page_size: int
+    pages: int
 
 
 class EngagementHealthRead(BaseModel):
@@ -1367,6 +1834,223 @@ class AccountOverviewRead(BaseModel):
     permissions: AccountPermissionsRead
     engagements: EngagementPageRead
     attachments: SourceDocumentPageRead
+
+
+class StakeholderRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    account_id: str
+    engagement_id: str | None = None
+    reports_to_stakeholder_id: str | None = None
+    name: str
+    title: str | None = None
+    company: str | None = None
+    email: EmailStr | None = None
+    phone: str | None = None
+    role: str
+    influence: str
+    relationship_strength: str
+    sentiment: str
+    political_risk: str
+    status: str
+    notes: str | None = None
+    last_interaction_at: datetime | None = None
+    is_sensitive: bool
+    sensitive_fields_redacted: bool = False
+    created_by_id: str | None = None
+    updated_by_id: str | None = None
+    created_at: datetime
+    updated_at: datetime
+    archived_at: datetime | None = None
+
+
+class StakeholderPageRead(BaseModel):
+    items: list[StakeholderRead]
+    total: int
+    page: int
+    page_size: int
+    pages: int
+
+
+class StakeholderInteractionRead(BaseModel):
+    id: str
+    stakeholder_id: str
+    account_id: str
+    engagement_id: str | None = None
+    interaction_type: str
+    interaction_date: datetime
+    summary: str | None = None
+    outcome: str | None = None
+    sentiment_after: str | None = None
+    relationship_strength_after: str | None = None
+    sensitive_fields_redacted: bool = False
+    created_by_id: str | None = None
+    created_by_name: str
+    created_at: datetime
+    updated_at: datetime
+
+
+class StakeholderInteractionPageRead(BaseModel):
+    items: list[StakeholderInteractionRead]
+    total: int
+    page: int
+    page_size: int
+    pages: int
+
+
+class StakeholderInteractionCreateRequest(BaseModel):
+    interaction_type: str = "note"
+    interaction_date: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    summary: str
+    outcome: str | None = None
+    sentiment_after: StakeholderSentiment | None = None
+    relationship_strength_after: StakeholderRelationshipStrength | None = None
+
+    @field_validator("interaction_type")
+    @classmethod
+    def interaction_type_is_valid(cls, value: str) -> str:
+        return validate_short_text(value, "Interaction type", max_length=80)
+
+    @field_validator("summary")
+    @classmethod
+    def summary_is_valid(cls, value: str) -> str:
+        text = require_text(value, "Interaction summary")
+        if len(text) > 4000:
+            raise ValueError("Interaction summary must be 4000 characters or fewer.")
+        return text
+
+    @field_validator("outcome")
+    @classmethod
+    def outcome_is_valid(cls, value: str | None) -> str | None:
+        return validate_optional_long_text(value, "Interaction outcome")
+
+
+class StakeholderCoverageGapRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    account_id: str
+    rule_key: str
+    severity: str
+    title: str
+    description: str
+    evidence: dict[str, Any]
+    status: str
+    created_at: datetime
+    resolved_at: datetime | None = None
+
+
+class StakeholderOrgChartNodeRead(BaseModel):
+    id: str
+    name: str
+    title: str | None = None
+    role: str | None = None
+    influence_level: str | None = None
+    relationship_strength: str | None = None
+    sentiment: str | None = None
+    political_risk: str | None = None
+    parent_id: str | None = None
+    sensitive_fields_redacted: bool = False
+
+
+class StakeholderOrgChartEdgeRead(BaseModel):
+    source: str
+    target: str
+    relationship_type: str
+
+
+class StakeholderOrgChartRead(BaseModel):
+    nodes: list[StakeholderOrgChartNodeRead]
+    edges: list[StakeholderOrgChartEdgeRead]
+
+
+class StakeholderCreateRequest(BaseModel):
+    engagement_id: str | None = None
+    reports_to_stakeholder_id: str | None = None
+    name: str
+    title: str | None = None
+    company: str | None = None
+    email: EmailStr | None = None
+    phone: str | None = None
+    role: StakeholderRole
+    influence: StakeholderInfluence = "medium"
+    relationship_strength: StakeholderRelationshipStrength = "unknown"
+    sentiment: StakeholderSentiment = "neutral"
+    political_risk: StakeholderPoliticalRisk = "unknown"
+    status: StakeholderStatus = "active"
+    notes: str | None = None
+    last_interaction_at: datetime | None = None
+    is_sensitive: bool = False
+
+    @field_validator("name")
+    @classmethod
+    def name_is_valid(cls, value: str) -> str:
+        return validate_short_text(value, "Stakeholder name")
+
+    @field_validator("title", "company")
+    @classmethod
+    def optional_profile_text_is_valid(cls, value: str | None) -> str | None:
+        return optional_text(value, "Stakeholder profile field", max_length=180)
+
+    @field_validator("phone")
+    @classmethod
+    def phone_is_valid(cls, value: str | None) -> str | None:
+        return validate_phone(value)
+
+    @field_validator("notes")
+    @classmethod
+    def notes_are_valid(cls, value: str | None) -> str | None:
+        return validate_optional_long_text(value, "Stakeholder notes")
+
+    @field_validator("engagement_id", "reports_to_stakeholder_id")
+    @classmethod
+    def optional_id_is_valid(cls, value: str | None) -> str | None:
+        return optional_text(value, "Linked record", max_length=36)
+
+
+class StakeholderUpdateRequest(BaseModel):
+    engagement_id: str | None = None
+    reports_to_stakeholder_id: str | None = None
+    name: str | None = None
+    title: str | None = None
+    company: str | None = None
+    email: EmailStr | None = None
+    phone: str | None = None
+    role: StakeholderRole | None = None
+    influence: StakeholderInfluence | None = None
+    relationship_strength: StakeholderRelationshipStrength | None = None
+    sentiment: StakeholderSentiment | None = None
+    political_risk: StakeholderPoliticalRisk | None = None
+    status: StakeholderStatus | None = None
+    notes: str | None = None
+    last_interaction_at: datetime | None = None
+    is_sensitive: bool | None = None
+
+    @field_validator("name")
+    @classmethod
+    def name_is_valid(cls, value: str | None) -> str | None:
+        return validate_short_text(value, "Stakeholder name") if value is not None else None
+
+    @field_validator("title", "company")
+    @classmethod
+    def optional_profile_text_is_valid(cls, value: str | None) -> str | None:
+        return optional_text(value, "Stakeholder profile field", max_length=180)
+
+    @field_validator("phone")
+    @classmethod
+    def phone_is_valid(cls, value: str | None) -> str | None:
+        return validate_phone(value)
+
+    @field_validator("notes")
+    @classmethod
+    def notes_are_valid(cls, value: str | None) -> str | None:
+        return validate_optional_long_text(value, "Stakeholder notes")
+
+    @field_validator("engagement_id", "reports_to_stakeholder_id")
+    @classmethod
+    def optional_id_is_valid(cls, value: str | None) -> str | None:
+        return optional_text(value, "Linked record", max_length=36)
 
 
 class ContentItemRead(BaseModel):
@@ -1897,27 +2581,79 @@ class GovernanceRecurrenceRuleUpdateRequest(BaseModel):
         return validate_positive_int(value, "Occurrences", 120) if value is not None else None
 
 
-class GovernanceEventRead(BaseModel):
-    model_config = ConfigDict(from_attributes=True)
+class GovernanceNoteRead(BaseModel):
+    id: str
+    event_id: str
+    body: str
+    author_id: str | None = None
+    author_name: str
+    source: str = "manual"
+    created_at: datetime
+    updated_at: datetime
 
+
+class GovernanceGeneratedOutputCitationRead(BaseModel):
+    id: str
+    output_id: str
+    source_type: str
+    source_id: str
+    source_title: str
+    source_url: str | None = None
+    snippet: str
+    label: str | None = None
+    excerpt: str | None = None
+    source_route: str | None = None
+    source_timestamp: datetime | None = None
+    created_at: datetime
+
+
+class GovernanceGeneratedOutputRead(BaseModel):
+    id: str
+    event_id: str
+    output_type: GovernanceGeneratedOutputType
+    generation_method: GovernanceGenerationMethod = "deterministic"
+    status: str = "generated"
+    content: str
+    disclaimer: str
+    source_filter_metadata: dict[str, Any] = Field(default_factory=dict)
+    provider_metadata: dict[str, Any] | None = None
+    error_code: str | None = None
+    error_message: str | None = None
+    created_by_id: str | None = None
+    created_by_name: str
+    created_at: datetime
+    citations: list[GovernanceGeneratedOutputCitationRead] = Field(default_factory=list)
+    summary: str | None = None
+    talking_points: list[str] = Field(default_factory=list)
+    open_risks: list[str] = Field(default_factory=list)
+    pending_decisions: list[str] = Field(default_factory=list)
+    action_items: list[str] = Field(default_factory=list)
+
+
+class GovernanceEventRead(BaseModel):
     id: str
     account_id: str | None = None
+    account_name: str = ""
     engagement_id: str | None = None
+    engagement_name: str | None = None
     owner_id: str | None = None
     owner_name: str
+    owner_email: EmailStr | None = None
     governance_type: str
     source: str
     external_provider: str | None = None
     external_event_id: str | None = None
-    deduplication_key: str
-    mapping_confidence: int
-    review_required: bool
+    deduplication_key: str | None = None
+    mapping_confidence: int = 100
+    review_required: bool = False
     scheduled_at: datetime
     end_at: datetime | None = None
     status: str
     agenda: str | None = None
-    notes: str | None = None
+    note_text: str | None = None
+    notes: list[GovernanceNoteRead] = Field(default_factory=list)
     attendees: list[str] = Field(default_factory=list)
+    attendee_emails: list[str] = Field(default_factory=list)
     recurrence_rule_id: str | None = None
     created_by_id: str | None = None
     created_by_name: str
@@ -1925,6 +2661,9 @@ class GovernanceEventRead(BaseModel):
     created_at: datetime
     updated_at: datetime
     custom_field_values: dict[str, Any] = Field(default_factory=dict)
+    decisions: list["GovernanceDecisionRead"] = Field(default_factory=list)
+    action_items: list["GovernanceActionItemRead"] = Field(default_factory=list)
+    generated_outputs: list[GovernanceGeneratedOutputRead] = Field(default_factory=list)
 
 
 class GovernanceEventPageRead(BaseModel):
@@ -1942,10 +2681,12 @@ class GovernanceEventCreateRequest(BaseModel):
     governance_type: GovernanceEventType
     scheduled_at: datetime
     end_at: datetime | None = None
-    status: GovernanceEventStatus = "scheduled"
+    status: GovernanceEventStatus = "upcoming"
     agenda: str | None = None
     notes: str | None = None
     attendees: list[str] = Field(default_factory=list)
+    attendee_emails: list[EmailStr] = Field(default_factory=list)
+    source: GovernanceEventSource = "manual"
     recurrence_rule_id: str | None = None
     custom_field_values: dict[str, Any] = Field(default_factory=dict, description="Field Builder values keyed by field_key.")
 
@@ -1958,6 +2699,14 @@ class GovernanceEventCreateRequest(BaseModel):
     @classmethod
     def attendees_are_valid(cls, value: list[str]) -> list[str]:
         return validate_string_list(value, "Attendees", max_items=100)
+
+    @field_validator("attendee_emails")
+    @classmethod
+    def attendee_emails_are_unique(cls, value: list[EmailStr]) -> list[EmailStr]:
+        normalized = [str(email).strip().lower() for email in value]
+        if len(normalized) != len(set(normalized)):
+            raise ValueError("Attendee emails must be unique.")
+        return value
 
     @field_validator("custom_field_values")
     @classmethod
@@ -1976,6 +2725,7 @@ class GovernanceEventUpdateRequest(BaseModel):
     agenda: str | None = None
     notes: str | None = None
     attendees: list[str] | None = None
+    attendee_emails: list[EmailStr] | None = None
     custom_field_values: dict[str, Any] | None = Field(default=None, description="Full replacement Field Builder values keyed by field_key.")
 
     @field_validator("agenda", "notes")
@@ -1988,6 +2738,16 @@ class GovernanceEventUpdateRequest(BaseModel):
     def attendees_are_valid(cls, value: list[str] | None) -> list[str] | None:
         return validate_string_list(value, "Attendees", max_items=100) if value is not None else None
 
+    @field_validator("attendee_emails")
+    @classmethod
+    def attendee_emails_are_unique(cls, value: list[EmailStr] | None) -> list[EmailStr] | None:
+        if value is None:
+            return None
+        normalized = [str(email).strip().lower() for email in value]
+        if len(normalized) != len(set(normalized)):
+            raise ValueError("Attendee emails must be unique.")
+        return value
+
     @field_validator("custom_field_values")
     @classmethod
     def optional_custom_field_keys_are_valid(cls, value: dict[str, Any] | None) -> dict[str, Any] | None:
@@ -1995,13 +2755,13 @@ class GovernanceEventUpdateRequest(BaseModel):
 
 
 class GovernanceDecisionRead(BaseModel):
-    model_config = ConfigDict(from_attributes=True)
-
     id: str
     governance_event_id: str
+    event_id: str
     decision_text: str
     owner_id: str | None = None
-    owner_name: str
+    owner_name: str | None = None
+    source: str = "manual"
     timeline_entry_id: str | None = None
     created_at: datetime
 
@@ -2017,24 +2777,32 @@ class GovernanceDecisionPageRead(BaseModel):
 class GovernanceDecisionCreateRequest(BaseModel):
     decision_text: str
     owner_id: str | None = None
+    owner_name: str | None = None
 
     @field_validator("decision_text")
     @classmethod
     def decision_is_valid(cls, value: str) -> str:
         return validate_short_text(value, "Decision", 4000)
 
+    @field_validator("owner_name")
+    @classmethod
+    def owner_name_is_valid(cls, value: str | None) -> str | None:
+        return validate_short_text(value, "Decision owner", 160) if value is not None else None
+
 
 class GovernanceActionItemRead(BaseModel):
-    model_config = ConfigDict(from_attributes=True)
-
     id: str
     governance_event_id: str
+    event_id: str
     title: str
     owner_id: str | None = None
-    owner_name: str
+    owner_name: str | None = None
+    owner_email: EmailStr | None = None
     due_at: datetime
+    due_date: datetime
     status: str
     priority: str
+    source: str = "manual"
     completed_at: datetime | None = None
     completed_by_id: str | None = None
     created_at: datetime
@@ -2051,14 +2819,30 @@ class GovernanceActionItemPageRead(BaseModel):
 
 class GovernanceActionItemCreateRequest(BaseModel):
     title: str
-    owner_id: str
-    due_at: datetime
+    owner_id: str | None = None
+    owner_name: str | None = None
+    owner_email: EmailStr | None = None
+    due_at: datetime | None = None
+    due_date: datetime | None = None
     priority: EscalationPriority = "medium"
 
     @field_validator("title")
     @classmethod
     def title_is_valid(cls, value: str) -> str:
         return validate_short_text(value, "Action item", 220)
+
+    @field_validator("owner_name")
+    @classmethod
+    def action_owner_name_is_valid(cls, value: str | None) -> str | None:
+        return validate_short_text(value, "Action owner", 160) if value is not None else None
+
+    @model_validator(mode="after")
+    def action_item_is_complete(self) -> "GovernanceActionItemCreateRequest":
+        if not (self.owner_id or self.owner_name or self.owner_email):
+            raise ValueError("Action item owner is required.")
+        if not (self.due_at or self.due_date):
+            raise ValueError("Action item due date is required.")
+        return self
 
 
 class GovernanceActionItemUpdateRequest(BaseModel):
@@ -2072,6 +2856,445 @@ class GovernanceActionItemUpdateRequest(BaseModel):
     @classmethod
     def title_is_valid(cls, value: str | None) -> str | None:
         return validate_short_text(value, "Action item", 220) if value is not None else None
+
+
+class GovernanceEventAgendaUpdateRequest(BaseModel):
+    agenda: str
+    source_output_id: str | None = None
+
+    @field_validator("agenda")
+    @classmethod
+    def agenda_is_valid(cls, value: str) -> str:
+        return validate_short_text(value, "Agenda", 4000)
+
+
+class GovernanceEventCompleteRequest(BaseModel):
+    notes: str
+    decisions: list[GovernanceDecisionCreateRequest] = Field(default_factory=list)
+    action_items: list[GovernanceActionItemCreateRequest] = Field(default_factory=list)
+
+    @field_validator("notes")
+    @classmethod
+    def notes_are_valid(cls, value: str) -> str:
+        return validate_short_text(value, "Notes", 5000)
+
+
+class OpportunityTypeRead(BaseModel):
+    id: str
+    slug: str
+    name: str
+    description: str | None = None
+    is_active: bool
+    display_order: int
+    created_at: datetime
+    updated_at: datetime
+    in_use_count: int = 0
+
+
+class OpportunityTypePageRead(BaseModel):
+    items: list[OpportunityTypeRead]
+    total: int
+    page: int
+    page_size: int
+    pages: int
+
+
+class OpportunityTypeCreateRequest(BaseModel):
+    slug: str
+    name: str
+    description: str | None = None
+    display_order: int = 0
+    is_active: bool = True
+
+    @field_validator("slug")
+    @classmethod
+    def slug_is_valid(cls, value: str) -> str:
+        return validate_slug(value, "Opportunity type slug")
+
+    @field_validator("name")
+    @classmethod
+    def name_is_valid(cls, value: str) -> str:
+        return validate_short_text(value, "Opportunity type", 160)
+
+    @field_validator("description")
+    @classmethod
+    def description_is_valid(cls, value: str | None) -> str | None:
+        return validate_optional_long_text(value, "Opportunity type description", 1000)
+
+
+class OpportunityTypeUpdateRequest(BaseModel):
+    slug: str | None = None
+    name: str | None = None
+    description: str | None = None
+    display_order: int | None = None
+    is_active: bool | None = None
+
+    @field_validator("slug")
+    @classmethod
+    def slug_is_valid(cls, value: str | None) -> str | None:
+        return validate_slug(value, "Opportunity type slug") if value is not None else None
+
+    @field_validator("name")
+    @classmethod
+    def name_is_valid(cls, value: str | None) -> str | None:
+        return validate_short_text(value, "Opportunity type", 160) if value is not None else None
+
+    @field_validator("description")
+    @classmethod
+    def description_is_valid(cls, value: str | None) -> str | None:
+        return validate_optional_long_text(value, "Opportunity type description", 1000)
+
+
+class OpportunityStageDefinitionRead(BaseModel):
+    id: str
+    slug: str
+    name: OpportunityStage
+    is_terminal: bool
+    is_active: bool
+    display_order: int
+
+
+class OpportunityActionItemRead(BaseModel):
+    id: str
+    opportunity_id: str
+    title: str
+    owner_id: str | None = None
+    owner_name: str | None = None
+    owner_email: EmailStr | None = None
+    due_at: datetime
+    due_date: datetime
+    status: OpportunityActionItemStatus
+    priority: EscalationPriority
+    notes: str | None = None
+    future_task_id: str | None = None
+    completed_at: datetime | None = None
+    completed_by_id: str | None = None
+    created_by_id: str | None = None
+    created_by_name: str
+    created_at: datetime
+    updated_at: datetime
+
+
+class OpportunityActionItemPageRead(BaseModel):
+    items: list[OpportunityActionItemRead]
+    total: int
+    page: int
+    page_size: int
+    pages: int
+
+
+class OpportunityActionItemCreateRequest(BaseModel):
+    title: str
+    owner_id: str | None = None
+    owner_name: str | None = None
+    owner_email: EmailStr | None = None
+    due_at: datetime | None = None
+    due_date: datetime | None = None
+    status: OpportunityActionItemStatus = "open"
+    priority: EscalationPriority = "medium"
+    notes: str | None = None
+
+    @field_validator("title")
+    @classmethod
+    def title_is_valid(cls, value: str) -> str:
+        return validate_short_text(value, "Action item", 220)
+
+    @field_validator("owner_name")
+    @classmethod
+    def owner_name_is_valid(cls, value: str | None) -> str | None:
+        return validate_short_text(value, "Action owner", 160) if value is not None else None
+
+    @field_validator("notes")
+    @classmethod
+    def notes_are_valid(cls, value: str | None) -> str | None:
+        return validate_optional_long_text(value, "Action item notes", 2000)
+
+    @model_validator(mode="after")
+    def due_date_is_present(self) -> "OpportunityActionItemCreateRequest":
+        if not (self.due_at or self.due_date):
+            raise ValueError("Action item due date is required.")
+        return self
+
+
+class OpportunityActionItemUpdateRequest(BaseModel):
+    title: str | None = None
+    owner_id: str | None = None
+    owner_name: str | None = None
+    owner_email: EmailStr | None = None
+    due_at: datetime | None = None
+    due_date: datetime | None = None
+    status: OpportunityActionItemStatus | None = None
+    priority: EscalationPriority | None = None
+    notes: str | None = None
+
+    @field_validator("title")
+    @classmethod
+    def title_is_valid(cls, value: str | None) -> str | None:
+        return validate_short_text(value, "Action item", 220) if value is not None else None
+
+    @field_validator("owner_name")
+    @classmethod
+    def owner_name_is_valid(cls, value: str | None) -> str | None:
+        return validate_short_text(value, "Action owner", 160) if value is not None else None
+
+    @field_validator("notes")
+    @classmethod
+    def notes_are_valid(cls, value: str | None) -> str | None:
+        return validate_optional_long_text(value, "Action item notes", 2000)
+
+
+class OpportunityDecisionRead(BaseModel):
+    id: str
+    opportunity_id: str
+    decision_text: str
+    owner_id: str | None = None
+    owner_name: str | None = None
+    timeline_entry_id: str | None = None
+    created_by_id: str | None = None
+    created_by_name: str
+    created_at: datetime
+
+
+class OpportunityDecisionPageRead(BaseModel):
+    items: list[OpportunityDecisionRead]
+    total: int
+    page: int
+    page_size: int
+    pages: int
+
+
+class OpportunityDecisionCreateRequest(BaseModel):
+    decision_text: str
+    owner_id: str | None = None
+    owner_name: str | None = None
+
+    @field_validator("decision_text")
+    @classmethod
+    def decision_is_valid(cls, value: str) -> str:
+        return validate_short_text(value, "Decision", 4000)
+
+    @field_validator("owner_name")
+    @classmethod
+    def owner_name_is_valid(cls, value: str | None) -> str | None:
+        return validate_short_text(value, "Decision owner", 160) if value is not None else None
+
+
+class OpportunityStageHistoryRead(BaseModel):
+    id: str
+    opportunity_id: str
+    account_id: str
+    engagement_id: str | None = None
+    before_stage: OpportunityStage | None = None
+    after_stage: OpportunityStage
+    actor_id: str | None = None
+    actor_name: str
+    reason: str | None = None
+    timeline_entry_id: str | None = None
+    created_at: datetime
+
+
+class OpportunityRead(BaseModel):
+    id: str
+    account_id: str
+    account_name: str
+    engagement_id: str | None = None
+    engagement_name: str | None = None
+    type_id: str
+    type_name: str
+    type_slug: str
+    service_line: str
+    owner_id: str | None = None
+    owner_name: str
+    owner_email: EmailStr | None = None
+    name: str
+    value: float
+    estimated_value: float
+    currency: str
+    stage: OpportunityStage
+    next_step: str
+    target_date: datetime
+    close_date: datetime
+    source_context: str | None = None
+    source_record_id: str | None = None
+    source_record_type: str | None = None
+    source_record_route: str | None = None
+    outcome_reason: str | None = None
+    archived_at: datetime | None = None
+    archived_by_id: str | None = None
+    archived_by_name: str | None = None
+    archive_reason: str | None = None
+    created_by_id: str | None = None
+    created_by_name: str
+    updated_by_id: str | None = None
+    updated_by_name: str | None = None
+    created_at: datetime
+    updated_at: datetime
+    stage_history: list[OpportunityStageHistoryRead] = Field(default_factory=list)
+    decisions: list[OpportunityDecisionRead] = Field(default_factory=list)
+    action_items: list[OpportunityActionItemRead] = Field(default_factory=list)
+
+
+class OpportunityPipelineTotalsRead(BaseModel):
+    open_count: int
+    open_value: float
+    won_value: float
+    total_count: int
+    total_value: float
+    average_value: float
+    stage_counts: dict[str, int] = Field(default_factory=dict)
+    stage_values: dict[str, float] = Field(default_factory=dict)
+
+
+class OpportunityPageRead(BaseModel):
+    items: list[OpportunityRead]
+    total: int
+    page: int
+    page_size: int
+    pages: int
+    totals: OpportunityPipelineTotalsRead
+
+
+class OpportunityCreateRequest(BaseModel):
+    account_id: str
+    engagement_id: str | None = None
+    type_id: str
+    owner_id: str
+    name: str
+    service_line: str
+    value: float
+    currency: str = "USD"
+    stage: OpportunityStage = "Identified"
+    next_step: str
+    target_date: datetime
+    source_context: str | None = "manual"
+    source_record_id: str | None = None
+    source_record_type: str | None = None
+    source_record_route: str | None = None
+    outcome_reason: str | None = None
+    action_items: list[OpportunityActionItemCreateRequest] = Field(default_factory=list)
+
+    @field_validator("name")
+    @classmethod
+    def name_is_valid(cls, value: str) -> str:
+        return validate_short_text(value, "Opportunity name", 220)
+
+    @field_validator("service_line")
+    @classmethod
+    def service_line_is_valid(cls, value: str) -> str:
+        return validate_short_text(value, "Service line", 160)
+
+    @field_validator("next_step")
+    @classmethod
+    def next_step_is_valid(cls, value: str) -> str:
+        return validate_short_text(value, "Next step", 1000)
+
+    @field_validator("currency")
+    @classmethod
+    def currency_is_valid(cls, value: str) -> str:
+        return validate_currency(value)
+
+    @field_validator("value")
+    @classmethod
+    def value_is_valid(cls, value: float) -> float:
+        return validate_non_negative(value, "Opportunity value")
+
+    @field_validator("source_context", "source_record_type")
+    @classmethod
+    def source_text_is_valid(cls, value: str | None) -> str | None:
+        return validate_optional_long_text(value, "Source context", 160)
+
+    @field_validator("source_record_route")
+    @classmethod
+    def route_is_valid(cls, value: str | None) -> str | None:
+        return validate_optional_long_text(value, "Source route", 500)
+
+    @field_validator("outcome_reason")
+    @classmethod
+    def outcome_reason_is_valid(cls, value: str | None) -> str | None:
+        return validate_optional_long_text(value, "Outcome reason", 2000)
+
+
+class OpportunityUpdateRequest(BaseModel):
+    engagement_id: str | None = None
+    type_id: str | None = None
+    owner_id: str | None = None
+    name: str | None = None
+    service_line: str | None = None
+    value: float | None = None
+    currency: str | None = None
+    stage: OpportunityStage | None = None
+    next_step: str | None = None
+    target_date: datetime | None = None
+    source_context: str | None = None
+    source_record_id: str | None = None
+    source_record_type: str | None = None
+    source_record_route: str | None = None
+    outcome_reason: str | None = None
+
+    @field_validator("name")
+    @classmethod
+    def name_is_valid(cls, value: str | None) -> str | None:
+        return validate_short_text(value, "Opportunity name", 220) if value is not None else None
+
+    @field_validator("service_line")
+    @classmethod
+    def service_line_is_valid(cls, value: str | None) -> str | None:
+        return validate_short_text(value, "Service line", 160) if value is not None else None
+
+    @field_validator("next_step")
+    @classmethod
+    def next_step_is_valid(cls, value: str | None) -> str | None:
+        return validate_short_text(value, "Next step", 1000) if value is not None else None
+
+    @field_validator("currency")
+    @classmethod
+    def currency_is_valid(cls, value: str | None) -> str | None:
+        return validate_currency(value) if value is not None else None
+
+    @field_validator("value")
+    @classmethod
+    def value_is_valid(cls, value: float | None) -> float | None:
+        return validate_non_negative(value, "Opportunity value") if value is not None else None
+
+    @field_validator("source_context", "source_record_type")
+    @classmethod
+    def source_text_is_valid(cls, value: str | None) -> str | None:
+        return validate_optional_long_text(value, "Source context", 160)
+
+    @field_validator("source_record_route")
+    @classmethod
+    def route_is_valid(cls, value: str | None) -> str | None:
+        return validate_optional_long_text(value, "Source route", 500)
+
+    @field_validator("outcome_reason")
+    @classmethod
+    def outcome_reason_is_valid(cls, value: str | None) -> str | None:
+        return validate_optional_long_text(value, "Outcome reason", 2000)
+
+
+class OpportunityStageTransitionRequest(BaseModel):
+    stage: OpportunityStage
+    reason: str | None = None
+    outcome_reason: str | None = None
+
+    @field_validator("reason", "outcome_reason")
+    @classmethod
+    def reason_is_valid(cls, value: str | None) -> str | None:
+        return validate_optional_long_text(value, "Stage reason", 2000)
+
+
+class OpportunityStageTransitionRead(BaseModel):
+    opportunity: OpportunityRead
+    history: OpportunityStageHistoryRead
+
+
+class GovernanceGeneratedOutputRequest(BaseModel):
+    source_modules: list[str] = Field(default_factory=list)
+
+    @field_validator("source_modules")
+    @classmethod
+    def source_modules_are_valid(cls, value: list[str]) -> list[str]:
+        return [validate_short_text(item, "Source module", 80) for item in value]
 
 
 class GovernanceSourceCitationRead(BaseModel):
@@ -2088,14 +3311,36 @@ class GovernanceSourceCitationRead(BaseModel):
     created_at: datetime
 
 
-class GovernanceAIBriefRead(BaseModel):
+class GovernanceCalendarItemRead(BaseModel):
+    id: str
+    kind: str
+    source_record_id: str
+    source_record_type: str
+    account_id: str
+    account_name: str
+    owner_id: str | None = None
+    date: datetime
+    title: str
+    detail: str
+    status: str
+    route: str
+
+
+class GovernanceCalendarPageRead(BaseModel):
+    items: list[GovernanceCalendarItemRead]
+    total: int
+    page: int
+    page_size: int
+    pages: int
+
+
+class GovernanceAIBriefRead(GovernanceGeneratedOutputRead):
     summary: str
     talking_points: list[str]
     open_risks: list[str]
     pending_decisions: list[str]
     action_items: list[str]
-    citations: list[GovernanceSourceCitationRead]
-    disclaimer: str
+    citations: list[GovernanceGeneratedOutputCitationRead]
 
 
 class PlaybookTemplateActivityInput(BaseModel):

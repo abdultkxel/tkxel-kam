@@ -34,6 +34,7 @@ interface AuthContextValue {
   isAuthenticated: boolean
   isLoading: boolean
   login: (email: string, password: string) => Promise<void>
+  googleSignIn: (credential: string) => Promise<void>
   logout: () => Promise<void>
   requestPasswordReset: (email: string) => Promise<ForgotPasswordResponse>
   resetPassword: (token: string, newPassword: string) => Promise<void>
@@ -96,6 +97,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       const response = await apiRequest<AuthResponse>('/api/auth/login', {
         method: 'POST',
         body: JSON.stringify({ email, password }),
+      })
+      persistToken(response.access_token)
+      setUser(mapApiUser(response.user))
+    },
+    [persistToken],
+  )
+
+  const googleSignIn = useCallback(
+    async (credential: string) => {
+      const response = await apiRequest<AuthResponse>('/api/auth/google', {
+        method: 'POST',
+        body: JSON.stringify({ credential }),
       })
       persistToken(response.access_token)
       setUser(mapApiUser(response.user))
@@ -168,6 +181,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       isAuthenticated: Boolean(user && token),
       isLoading,
       login,
+      googleSignIn,
       logout,
       requestPasswordReset,
       resetPassword,
@@ -175,7 +189,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       changePassword,
       refreshProfile,
     }),
-    [changePassword, isLoading, login, logout, refreshProfile, requestPasswordReset, resetPassword, token, updateProfile, user],
+    [changePassword, googleSignIn, isLoading, login, logout, refreshProfile, requestPasswordReset, resetPassword, token, updateProfile, user],
   )
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>

@@ -11,7 +11,7 @@ vi.mock('@/contexts/AuthContext', () => ({
     user: {
       id: 'usr-admin',
       name: 'KAM Super Admin',
-      email: 'admin@tkxelkam.com',
+      email: 'admin@tkxel.com',
       role: 'super_admin',
       avatarInitials: 'KA',
     },
@@ -37,7 +37,7 @@ const account = {
     id: 'owner-1',
     user_id: 'usr-am',
     user_name: 'Account Manager KAM',
-    user_email: 'account.manager.user@tkxelkam.com',
+    user_email: 'account.manager.user@tkxel.com',
     ownership_role: 'primary_am',
     is_primary: true,
     is_active: true,
@@ -100,7 +100,7 @@ describe('Accounts', () => {
     expect(await screen.findByText('Cafe Zupas')).toBeInTheDocument()
     expect(screen.queryByText('Matched accounts')).not.toBeInTheDocument()
     expect(screen.queryByText('Page ARR')).not.toBeInTheDocument()
-    expect(screen.getByText('account.manager.user@tkxelkam.com')).toBeInTheDocument()
+    expect(screen.getByText('account.manager.user@tkxel.com')).toBeInTheDocument()
     expect(screen.getAllByText('$1.3M').length).toBeGreaterThan(0)
 
     await userEvent.type(screen.getByPlaceholderText(/account, am, or email/i), 'Cafe')

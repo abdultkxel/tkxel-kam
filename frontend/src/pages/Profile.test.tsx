@@ -7,7 +7,7 @@ import { Profile } from '@/pages/Profile'
 
 const apiUser = {
   id: 'usr-1',
-  email: 'admin@tkxelkam.com',
+  email: 'admin@tkxel.com',
   full_name: 'KAM Super Admin',
   role: 'super_admin',
   title: 'Platform Owner',

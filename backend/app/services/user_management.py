@@ -6,6 +6,7 @@ from app.repositories.rbac import RbacRepository
 from app.repositories.users import UserRepository
 from app.schemas import MessageResponse, UserCreateRequest, UserPageRead, UserUpdateRequest
 from app.security import hash_password
+from app.services.email_domains import EmailDomainPolicyService
 from app.services.users import initials_for_name, normalize_email
 
 
@@ -18,6 +19,7 @@ class UserManagementService:
     ) -> None:
         self.users = user_repository or UserRepository(db)
         self.rbac = rbac_repository or RbacRepository(db)
+        self.domain_policy = EmailDomainPolicyService(db)
 
     def list_users(
         self,
@@ -36,9 +38,10 @@ class UserManagementService:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User was not found")
         return user
 
-    def create_user(self, payload: UserCreateRequest) -> User:
+    def create_user(self, payload: UserCreateRequest, actor: User | None = None) -> User:
         self._ensure_role_exists(payload.role)
         email = normalize_email(payload.email)
+        self.domain_policy.require_allowed_email_for_user_form(email)
         if self.users.get_by_email(email) is not None:
             raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="A user with this email already exists")
 
@@ -54,11 +57,12 @@ class UserManagementService:
         )
         return self.users.create_user(user)
 
-    def update_user(self, user_id: str, payload: UserUpdateRequest) -> User:
+    def update_user(self, user_id: str, payload: UserUpdateRequest, actor: User | None = None) -> User:
         user = self.get_user(user_id)
         updates = payload.model_dump(exclude_unset=True)
         if "role" in updates and updates["role"] is not None:
             self._ensure_role_exists(updates["role"])
+        self._validate_email_update(user, updates)
 
         self._apply_updates(user, updates)
         return self.users.save_user(user, refresh=True)
@@ -75,8 +79,27 @@ class UserManagementService:
         if self.rbac.get_role_by_slug(slug) is None:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Role '{slug}' does not exist")
 
+    def _validate_email_update(self, user: User, updates: dict) -> None:
+        target_email = user.email
+        email_changed = False
+        if "email" in updates and updates["email"] is not None:
+            target_email = normalize_email(updates["email"])
+            updates["email"] = target_email
+            email_changed = target_email != user.email
+
+        reactivating = updates.get("is_active") is True and not user.is_active
+        if email_changed or reactivating:
+            self.domain_policy.require_allowed_email_for_user_form(target_email)
+
+        if email_changed:
+            existing_user = self.users.get_by_email(target_email)
+            if existing_user is not None and existing_user.id != user.id:
+                raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="A user with this email already exists")
+
     @staticmethod
     def _apply_updates(user: User, updates: dict) -> None:
+        if "email" in updates and updates["email"] is not None:
+            user.email = updates["email"]
         required_text_fields = ("full_name", "role", "avatar_initials")
         for field in required_text_fields:
             if field in updates and updates[field] is not None:

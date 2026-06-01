@@ -10,7 +10,7 @@ from sqlalchemy.pool import StaticPool
 
 from app.database import Base, get_db
 from app.main import app
-from app.models import User
+from app.models import PlatformSetting, User
 from app.security import hash_password
 
 SNAKE_CASE = re.compile(r"^[a-z][a-z0-9_]*$")
@@ -29,7 +29,7 @@ def db_session() -> Generator[Session, None, None]:
     with TestingSessionLocal() as session:
         session.add(
             User(
-                email="admin@example.com",
+                email="admin@tkxel.com",
                 hashed_password=hash_password("Admin@12345"),
                 full_name="Test Admin",
                 role="super_admin",
@@ -38,6 +38,7 @@ def db_session() -> Generator[Session, None, None]:
                 is_active=True,
             )
         )
+        session.add(PlatformSetting(key="allowed_email_domains", value_json=["tkxel.com"], updated_by_id=None))
         session.commit()
         yield session
 
@@ -50,13 +51,16 @@ def client(db_session: Session) -> Generator[TestClient, None, None]:
         yield db_session
 
     app.dependency_overrides[get_db] = override_get_db
-    with TestClient(app) as test_client:
+    test_client = TestClient(app)
+    try:
         yield test_client
-    app.dependency_overrides.clear()
+    finally:
+        test_client.close()
+        app.dependency_overrides.clear()
 
 
 def login(client: TestClient, password: str = "Admin@12345") -> str:
-    response = client.post("/api/auth/login", json={"email": "admin@example.com", "password": password})
+    response = client.post("/api/auth/login", json={"email": "admin@tkxel.com", "password": password})
     assert response.status_code == 200
     return response.json()["access_token"]
 
@@ -67,7 +71,7 @@ def test_login_me_and_logout_flow(client: TestClient) -> None:
 
     me_response = client.get("/api/auth/me", headers=headers)
     assert me_response.status_code == 200
-    assert me_response.json()["email"] == "admin@example.com"
+    assert me_response.json()["email"] == "admin@tkxel.com"
 
     logout_response = client.post("/api/auth/logout", headers=headers)
     assert logout_response.status_code == 200
@@ -91,7 +95,7 @@ def test_profile_update_flow(client: TestClient) -> None:
 
 
 def test_forgot_and_reset_password_flow(client: TestClient) -> None:
-    forgot_response = client.post("/api/auth/forgot-password", json={"email": "admin@example.com"})
+    forgot_response = client.post("/api/auth/forgot-password", json={"email": "admin@tkxel.com"})
     assert forgot_response.status_code == 200
     reset_token = forgot_response.json()["reset_token"]
     assert reset_token
@@ -99,7 +103,7 @@ def test_forgot_and_reset_password_flow(client: TestClient) -> None:
     reset_response = client.post("/api/auth/reset-password", json={"token": reset_token, "new_password": "NewAdmin@12345"})
     assert reset_response.status_code == 200
 
-    old_login = client.post("/api/auth/login", json={"email": "admin@example.com", "password": "Admin@12345"})
+    old_login = client.post("/api/auth/login", json={"email": "admin@tkxel.com", "password": "Admin@12345"})
     assert old_login.status_code == 401
 
     assert login(client, "NewAdmin@12345")

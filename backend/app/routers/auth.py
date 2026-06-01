@@ -9,6 +9,7 @@ from app.schemas import (
     ChangePasswordRequest,
     ForgotPasswordRequest,
     ForgotPasswordResponse,
+    GoogleSignInRequest,
     LoginRequest,
     MessageResponse,
     ResetPasswordRequest,
@@ -30,11 +31,31 @@ router = APIRouter(prefix="/api/auth", tags=["Authentication"])
     response_description="Bearer token and authenticated user profile.",
     responses={
         401: {"description": "Invalid credentials or inactive account."},
+        403: {"description": "Email domain is not allowed."},
         422: {"description": "Field-level validation errors with meaningful messages."},
     },
 )
 def login(payload: LoginRequest, service: Annotated[AuthService, Depends(get_auth_service)]) -> AuthResponse:
     return service.login(payload)
+
+
+@router.post(
+    "/google",
+    response_model=AuthResponse,
+    summary="Log in with Google Sign-In",
+    description=(
+        "Verifies a Google Identity Services ID token, requires a verified Google email, enforces the allowed-domain "
+        "policy, and only signs in existing active local users."
+    ),
+    response_description="Bearer token and authenticated user profile.",
+    responses={
+        401: {"description": "Invalid Google credential or no active local user."},
+        403: {"description": "Google email is unverified or domain is not allowed."},
+        503: {"description": "Google Sign-In is not configured."},
+    },
+)
+def google_sign_in(payload: GoogleSignInRequest, service: Annotated[AuthService, Depends(get_auth_service)]) -> AuthResponse:
+    return service.google_sign_in(payload)
 
 
 @router.post(

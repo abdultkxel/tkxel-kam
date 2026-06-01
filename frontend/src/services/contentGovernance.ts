@@ -102,7 +102,7 @@ export interface GovernanceEventApi {
   governance_type: 'QBR' | 'SteerCo' | 'Monthly Review' | 'Executive Review'
   source: string
   scheduled_at: string
-  status: 'draft' | 'scheduled' | 'completed' | 'overdue' | 'cancelled' | 'review_required'
+  status: 'draft' | 'scheduled' | 'upcoming' | 'completed' | 'overdue' | 'cancelled' | 'review_required'
   agenda?: string | null
   notes?: string | null
   attendees: string[]
@@ -247,12 +247,22 @@ function mapGovernanceEvent(event: GovernanceEventApi): GovernanceEventRecord {
     id: event.id,
     accountId: event.account_id ?? '',
     accountName: '',
+    engagementId: null,
+    engagementName: null,
     ownerId: event.owner_id ?? '',
+    ownerName: event.owner_name,
+    ownerEmail: null,
     type: event.governance_type,
     date: event.scheduled_at,
     agenda: event.agenda ?? '',
+    attendeeEmails: event.attendees.filter(item => item.includes('@')),
     attendees: event.attendees,
+    actionItemRecords: [],
     actionItems: [],
+    notes: [],
+    decisions: [],
+    generatedOutputs: [],
     status: event.status === 'completed' ? 'completed' : event.status === 'overdue' ? 'overdue' : 'upcoming',
+    source: event.source,
   }
 }

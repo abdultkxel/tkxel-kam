@@ -173,7 +173,11 @@ export function GovernanceDashboard() {
                     <div className="min-w-0">
                       <p className="font-semibold text-ink">{item.title}<span className="text-ink-secondary">, {item.accountName}</span></p>
                       <p className="text-xs text-ink-secondary">{item.kind === 'governance' ? '10:00' : 'Due'} | {item.detail}</p>
-                      {item.kind === 'score_activity' || item.kind === 'renewal_signal' ? (
+                      {item.kind === 'governance' ? (
+                        <Link to={`/accounts/${item.accountId}?tab=governance`} className="mt-2 inline-flex min-h-[44px] items-center text-xs font-semibold text-brand-blue hover:text-brand-blue-dark">
+                          Open Governance tab
+                        </Link>
+                      ) : item.kind === 'score_activity' || item.kind === 'renewal_signal' ? (
                         <Link to={`/accounts/${item.accountId}?tab=${item.kind === 'renewal_signal' ? 'engagements' : 'health'}`} className="mt-2 inline-flex min-h-[44px] items-center text-xs font-semibold text-brand-blue hover:text-brand-blue-dark">
                           {item.kind === 'renewal_signal' ? 'Open Engagements tab' : 'Open Health tab'}
                         </Link>

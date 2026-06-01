@@ -41,7 +41,7 @@ const roles = [
 const users = [
   {
     id: 'usr-1',
-    email: 'admin@tkxelkam.com',
+    email: 'admin@tkxel.com',
     full_name: 'Root Admin',
     role: 'super_admin',
     title: 'Platform Owner',
@@ -53,7 +53,7 @@ const users = [
   },
   {
     id: 'usr-2',
-    email: 'user@tkxelkam.com',
+    email: 'user@tkxel.com',
     full_name: 'Managed User',
     role: 'account_manager',
     title: 'KAM',
@@ -157,5 +157,40 @@ describe('AdminUsersPanel', () => {
         url.includes('page_size=5')
       )
     })).toBe(true))
+  })
+
+  it('submits edited email and displays domain errors from the backend', async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input)
+      const method = init?.method ?? 'GET'
+      if (url.includes('/api/admin/users') && method === 'GET') return jsonResponse(paginated(users))
+      if (url.includes('/api/admin/roles') && method === 'GET') return jsonResponse(paginated(roles, 1, 100))
+      if (url.endsWith('/api/admin/users/usr-2') && method === 'PATCH') {
+        const body = JSON.parse(String(init?.body))
+        expect(body.email).toBe('user@outside.com')
+        return jsonResponse(
+          {
+            detail: {
+              message: 'Validation failed',
+              errors: [{ field: 'email', message: 'Email domain is not allowed. Use an approved company email domain.' }],
+            },
+          },
+          422,
+        )
+      }
+      return jsonResponse({})
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    render(<AdminUsersPanel />)
+
+    expect(await screen.findByText('Managed User')).toBeInTheDocument()
+    await userEvent.click(screen.getByRole('button', { name: /edit/i }))
+    const emailInput = screen.getByLabelText(/email/i)
+    expect(emailInput).toBeEnabled()
+    await userEvent.clear(emailInput)
+    await userEvent.type(emailInput, 'user@outside.com')
+    await userEvent.click(screen.getByRole('button', { name: /save user/i }))
+
+    expect(await screen.findByText('Email domain is not allowed. Use an approved company email domain.')).toBeInTheDocument()
   })
 })
