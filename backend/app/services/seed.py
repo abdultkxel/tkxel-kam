@@ -7,20 +7,27 @@ from app.config import get_settings
 from app.models import Account, AccountOwner, KycConfiguration, Opportunity, OpportunityStageDefinition, OpportunityType, User, utc_now
 from app.rbac import DEFAULT_ROLES
 from app.security import hash_password
+from app.services.email_domains import EmailDomainPolicyService
 from app.services.rbac import RbacService
 from app.services.users import initials_for_name, normalize_email
 
-DEFAULT_ROLE_USER_EMAIL_DOMAIN = "tkxelkam.com"
+DEFAULT_ROLE_USER_EMAIL_DOMAIN = "tkxel.com"
 
 
 def seed_default_data(db: Session) -> User:
     RbacService(db).seed_defaults()
     super_admin = seed_super_admin(db)
+    seed_allowed_email_domains(db, super_admin)
     seed_default_role_users(db)
     seed_kyc_configuration(db)
     seed_opportunity_reference_data(db)
     seed_demo_opportunities(db)
     return super_admin
+
+
+def seed_allowed_email_domains(db: Session, super_admin: User) -> None:
+    settings = get_settings()
+    EmailDomainPolicyService(db).seed_allowed_domains(settings.allowed_email_domains, actor=super_admin)
 
 
 def seed_kyc_configuration(db: Session) -> KycConfiguration:

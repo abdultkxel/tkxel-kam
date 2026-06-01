@@ -42,6 +42,7 @@ describe('Admin', () => {
   it('uses tabs so only the selected admin section is shown', async () => {
     vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input)
+      if (url.includes('/api/admin/settings/allowed-email-domains')) return jsonResponse({ domains: ['tkxel.com'], domains_input: 'tkxel.com', duplicates_removed: false })
       if (url.includes('/api/admin/users')) return jsonResponse(paginated([]))
       if (url.includes('/api/admin/roles')) return jsonResponse(paginated(roles))
       if (url.endsWith('/api/admin/permissions')) return jsonResponse([])

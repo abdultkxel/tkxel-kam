@@ -37,12 +37,15 @@ def client(db_session: Session) -> Generator[TestClient, None, None]:
         yield db_session
 
     app.dependency_overrides[get_db] = override_get_db
-    with TestClient(app) as test_client:
+    test_client = TestClient(app)
+    try:
         yield test_client
-    app.dependency_overrides.clear()
+    finally:
+        test_client.close()
+        app.dependency_overrides.clear()
 
 
-def auth_headers(client: TestClient, email: str = "admin@tkxelkam.com", password: str = "Admin@12345") -> dict[str, str]:
+def auth_headers(client: TestClient, email: str = "admin@tkxel.com", password: str = "Admin@12345") -> dict[str, str]:
     response = client.post("/api/auth/login", json={"email": email, "password": password})
     assert response.status_code == 200
     return {"Authorization": f"Bearer {response.json()['access_token']}"}
@@ -243,7 +246,7 @@ def test_onboarding_validation_and_authorization_errors_are_enforced(client: Tes
     draft_response = client.post("/api/onboarding/drafts", headers=headers, json=draft_payload("Authorization Workspace", owner["id"]))
     assert draft_response.status_code == 201
 
-    account_manager_headers = auth_headers(client, "account.manager.user@tkxelkam.com", "User@12345")
+    account_manager_headers = auth_headers(client, "account.manager.user@tkxel.com", "User@12345")
     approve_response = client.post(f"/api/onboarding/drafts/{draft_response.json()['id']}/approve", headers=account_manager_headers)
     assert approve_response.status_code == 403
 
@@ -265,7 +268,7 @@ def test_engagement_list_endpoint_returns_items_empty_state_and_rejects_unauthor
     assert page["items"][0]["id"] == created["id"]
     assert page["items"][0]["account_id"] == account_id
 
-    unauthorized_headers = auth_headers(client, "content.specialist.user@tkxelkam.com", "User@12345")
+    unauthorized_headers = auth_headers(client, "content.specialist.user@tkxel.com", "User@12345")
     unauthorized_response = client.get(f"/api/accounts/{account_id}/engagements", headers=unauthorized_headers)
     assert unauthorized_response.status_code == 403
 
@@ -323,7 +326,7 @@ def test_engagement_detail_endpoint_returns_detail_404_and_rejects_unauthorized_
     missing_response = client.get("/api/engagements/missing-engagement", headers=headers)
     assert missing_response.status_code == 404
 
-    unauthorized_headers = auth_headers(client, "content.specialist.user@tkxelkam.com", "User@12345")
+    unauthorized_headers = auth_headers(client, "content.specialist.user@tkxel.com", "User@12345")
     unauthorized_response = client.get(f"/api/engagements/{created['id']}", headers=unauthorized_headers)
     assert unauthorized_response.status_code == 403
 
@@ -482,7 +485,7 @@ def test_manual_engagement_crud_calculations_timeline_and_access(client: TestCli
     assert created_event["actor_id"]
     assert created_event["new_value"]["notice_deadline"].startswith(date_days_from_now(45))
 
-    viewer_headers = auth_headers(client, "leadership.viewer.user@tkxelkam.com", "User@12345")
+    viewer_headers = auth_headers(client, "leadership.viewer.user@tkxel.com", "User@12345")
     viewer_list = client.get(f"/api/accounts/{account_id}/engagements", headers=viewer_headers)
     assert viewer_list.status_code == 200
     viewer_update = client.patch(f"/api/engagements/{engagement_id}", headers=viewer_headers, json={"health_status": "red"})
@@ -608,7 +611,7 @@ def test_account_filters_owner_history_engagement_health_and_openapi_docs(client
     email_search = client.get(
         "/api/accounts",
         headers=headers,
-        params={"search": "account.manager.user@tkxelkam.com", "page": 1, "page_size": 5},
+        params={"search": "account.manager.user@tkxel.com", "page": 1, "page_size": 5},
     )
     assert email_search.status_code == 200
     assert any(item["id"] == account_id for item in email_search.json()["items"])
@@ -779,7 +782,7 @@ def test_csv_import_persists_accounts_in_onboarding_hierarchy(client: TestClient
                     "industry": "Restaurants",
                     "arr": 1260000,
                     "stage": "Onboarding",
-                    "owner_email": "account.manager.user@tkxelkam.com",
+                    "owner_email": "account.manager.user@tkxel.com",
                     "segment": "Enterprise",
                     "region": "North America",
                 }
@@ -799,7 +802,7 @@ def test_csv_import_persists_accounts_in_onboarding_hierarchy(client: TestClient
     account = db_session.query(Account).filter(Account.id == result["account_id"]).one()
     assert account.name == "CSV Cafe Zupas"
     assert account.created_from_draft_id == result["draft_id"]
-    assert account.owners[0].user_email == "account.manager.user@tkxelkam.com"
+    assert account.owners[0].user_email == "account.manager.user@tkxel.com"
     assert db_session.query(Engagement).filter(Engagement.account_id == account.id).count() == 1
     document = db_session.query(SourceDocument).filter(SourceDocument.account_id == account.id).one()
     assert document.draft_id == result["draft_id"]

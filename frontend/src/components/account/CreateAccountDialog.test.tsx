@@ -38,7 +38,7 @@ function apiDraft(status: 'ready_for_review' | 'approved' = 'ready_for_review') 
     currency: 'USD',
     primary_owner_id: 'usr-am',
     primary_owner_name: 'Account Manager KAM',
-    primary_owner_email: 'account.manager.user@tkxelkam.com',
+    primary_owner_email: 'account.manager.user@tkxel.com',
     confidence: 82,
     missing_fields: [],
     conflicts: [],

@@ -15,9 +15,12 @@ The app creates the auth tables on startup and seeds a super admin when one does
 Super admin:
 
 ```text
-Email: admin@tkxelkam.com
+Email: admin@tkxel.com
 Password: Admin@12345
 ```
+
+Default allowed email domains are `tkxel.com`, `tkxel.io`, and `camp1.tkxel.com`.
+Google Sign-In ID token verification uses `GOOGLE_SIGN_IN_CLIENT_ID`.
 
 ## Docker Development
 

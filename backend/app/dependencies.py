@@ -13,6 +13,7 @@ from app.services.auth import AuthService
 from app.services.accounts import AccountService
 from app.services.content import ContentService
 from app.services.custom_fields import CustomFieldService
+from app.services.email_domains import EmailDomainPolicyService
 from app.services.engagements import EngagementService
 from app.services.escalations import EscalationService
 from app.services.governance import GovernanceService
@@ -47,6 +48,7 @@ def get_current_user(
     if user is None or not user.is_active:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User is inactive or no longer exists")
 
+    EmailDomainPolicyService(db).require_current_user_allowed(user)
     return user
 
 
@@ -68,6 +70,10 @@ def get_user_management_service(db: Annotated[Session, Depends(get_db)]) -> User
 
 def get_custom_field_service(db: Annotated[Session, Depends(get_db)]) -> CustomFieldService:
     return CustomFieldService(db)
+
+
+def get_email_domain_policy_service(db: Annotated[Session, Depends(get_db)]) -> EmailDomainPolicyService:
+    return EmailDomainPolicyService(db)
 
 
 def get_account_service(db: Annotated[Session, Depends(get_db)]) -> AccountService:

@@ -108,6 +108,17 @@ class RolePermission(Base):
     permission: Mapped[Permission] = relationship(back_populates="roles")
 
 
+class PlatformSetting(Base):
+    __tablename__ = "platform_settings"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid4()))
+    key: Mapped[str] = mapped_column(String(120), unique=True, index=True, nullable=False)
+    value_json: Mapped[dict | list | str | int | float | bool | None] = mapped_column(JSON, nullable=True)
+    updated_by_id: Mapped[str | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utc_now, onupdate=utc_now)
+
+
 class CustomFieldDefinition(Base):
     __tablename__ = "custom_field_definitions"
     __table_args__ = (UniqueConstraint("module", "field_key", name="uq_custom_field_definitions_module_field_key"),)
