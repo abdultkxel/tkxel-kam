@@ -144,6 +144,7 @@ DEFAULT_ROLES: tuple[DefaultRole, ...] = (
         permission_rules=(
             ("account_overview", VIEW_ONLY_ACTIONS),
             ("engagement_sow_management", VIEW_ONLY_ACTIONS),
+            ("stakeholder_relationship", VIEW_ONLY_ACTIONS),
             ("opportunity_management", VIEW_ONLY_ACTIONS),
             ("retention_stability", VIEW_ONLY_ACTIONS),
             ("escalation_management", VIEW_ONLY_ACTIONS),
