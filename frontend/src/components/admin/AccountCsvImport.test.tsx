@@ -41,7 +41,7 @@ const apiAccount = {
     id: 'owner-1',
     user_id: 'usr-am',
     user_name: 'Account Manager KAM',
-    user_email: 'account.manager.user@tkxelkam.com',
+    user_email: 'account.manager.user@tkxel.com',
     ownership_role: 'primary_am',
   },
   owners: [],
@@ -88,7 +88,7 @@ describe('AccountCsvImport', () => {
 
     const csv = [
       'account_name,project_name,company_url,arr,stage,owner_email,segment,region',
-      'CSV Cafe Zupas,Customer Success Workspace,https://cafezupas.example.com,1260000,Onboarding,account.manager.user@tkxelkam.com,Enterprise,North America',
+      'CSV Cafe Zupas,Customer Success Workspace,https://cafezupas.example.com,1260000,Onboarding,account.manager.user@tkxel.com,Enterprise,North America',
     ].join('\n')
     const input = document.querySelector<HTMLInputElement>('#account-csv-file')
     expect(input).not.toBeNull()
@@ -107,7 +107,7 @@ describe('AccountCsvImport', () => {
     expect(payload.rows[0]).toMatchObject({
       account_name: 'CSV Cafe Zupas',
       project_name: 'Customer Success Workspace',
-      owner_email: 'account.manager.user@tkxelkam.com',
+      owner_email: 'account.manager.user@tkxel.com',
       segment: 'Enterprise',
     })
     expect(payload.rows[0].arr).toBe(1260000)

@@ -1,13 +1,13 @@
 import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
-import { describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { AuthProvider } from '@/contexts/AuthContext'
 import { Login } from '@/pages/Login'
 
 const apiUser = {
   id: 'usr-1',
-  email: 'admin@tkxelkam.com',
+  email: 'admin@tkxel.com',
   full_name: 'KAM Super Admin',
   role: 'super_admin',
   title: 'Platform Owner',
@@ -26,6 +26,11 @@ function jsonResponse(body: unknown, status = 200) {
 }
 
 describe('Login', () => {
+  beforeEach(() => {
+    localStorage.clear()
+    vi.unstubAllGlobals()
+  })
+
   it('authenticates and navigates to the protected workspace', async () => {
     const fetchMock = vi.fn(async () =>
       jsonResponse({
@@ -47,7 +52,7 @@ describe('Login', () => {
       </AuthProvider>,
     )
 
-    await userEvent.type(screen.getByLabelText(/email/i), 'admin@tkxelkam.com')
+    await userEvent.type(screen.getByLabelText(/email/i), 'admin@tkxel.com')
     await userEvent.type(screen.getByLabelText(/^password$/i), 'Admin@12345')
     await userEvent.click(screen.getByRole('button', { name: /sign in/i }))
 
@@ -88,5 +93,25 @@ describe('Login', () => {
     expect(screen.getByText('Password must include at least one special character.')).toBeInTheDocument()
     expect(screen.getByLabelText(/email/i)).toHaveAttribute('aria-invalid', 'true')
     expect(screen.getByDisplayValue('password')).toHaveAttribute('aria-invalid', 'true')
+  })
+
+  it('shows the domain-policy login error from the backend', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => jsonResponse({ detail: 'This email domain is not allowed. Contact your administrator.' }, 403)))
+
+    render(
+      <AuthProvider>
+        <MemoryRouter initialEntries={['/login']}>
+          <Routes>
+            <Route path="/login" element={<Login />} />
+          </Routes>
+        </MemoryRouter>
+      </AuthProvider>,
+    )
+
+    await userEvent.type(screen.getByLabelText(/email/i), 'admin@outside.com')
+    await userEvent.type(screen.getByLabelText(/^password$/i), 'Admin@12345')
+    await userEvent.click(screen.getByRole('button', { name: /^sign in$/i }))
+
+    expect(await screen.findByText('This email domain is not allowed. Contact your administrator.')).toBeInTheDocument()
   })
 })

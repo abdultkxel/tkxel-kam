@@ -44,6 +44,15 @@ export interface PaginatedResponse<T> {
   pages: number
 }
 
+export interface AllowedEmailDomainsSettings {
+  domains: string[]
+  domains_input: string
+  updated_by_id?: string | null
+  updated_by_name?: string | null
+  updated_at?: string | null
+  duplicates_removed: boolean
+}
+
 export type CustomFieldType = 'text' | 'textarea' | 'number' | 'currency' | 'date' | 'datetime' | 'boolean' | 'single_select' | 'multi_select' | 'email' | 'url' | 'phone'
 export type CustomFieldStatus = 'all' | 'active' | 'inactive'
 export type CustomFieldSort = 'label' | 'module' | 'field_type' | 'sort_order' | 'updated_at'
@@ -115,6 +124,7 @@ export interface CreateUserPayload {
 }
 
 export interface UpdateUserPayload {
+  email?: string
   full_name?: string
   role?: string
   title?: string | null
@@ -178,6 +188,18 @@ export function deleteAdminUser(token: string, userId: string) {
   return apiRequest<{ message: string }>(`/api/admin/users/${userId}`, {
     method: 'DELETE',
     token,
+  })
+}
+
+export function getAllowedEmailDomains(token: string) {
+  return apiRequest<AllowedEmailDomainsSettings>('/api/admin/settings/allowed-email-domains', { token })
+}
+
+export function updateAllowedEmailDomains(token: string, domainsInput: string) {
+  return apiRequest<AllowedEmailDomainsSettings>('/api/admin/settings/allowed-email-domains', {
+    method: 'PATCH',
+    token,
+    body: JSON.stringify({ domains_input: domainsInput }),
   })
 }
 

@@ -497,6 +497,7 @@ class UserCreateRequest(BaseModel):
 
 
 class UserUpdateRequest(BaseModel):
+    email: EmailStr | None = Field(default=None, description="Updated user email address.")
     full_name: str | None = None
     role: str | None = Field(default=None, description="Role slug assigned to the user.")
     title: str | None = None
@@ -531,9 +532,9 @@ class UserUpdateRequest(BaseModel):
 
 
 class LoginRequest(BaseModel):
-    model_config = ConfigDict(json_schema_extra={"examples": [{"email": "admin@tkxelkam.com", "password": "Admin@12345"}]})
+    model_config = ConfigDict(json_schema_extra={"examples": [{"email": "admin@tkxel.com", "password": "Admin@12345"}]})
 
-    email: EmailStr = Field(..., description="Registered user email address.", examples=["admin@tkxelkam.com"])
+    email: EmailStr = Field(..., description="Registered user email address.", examples=["admin@tkxel.com"])
     password: str = Field(..., description="Password with at least 8 characters, mixed case, number, and symbol.")
 
     @field_validator("password")
@@ -548,14 +549,20 @@ class AuthResponse(BaseModel):
     user: UserRead
 
 
+class GoogleSignInRequest(BaseModel):
+    model_config = ConfigDict(json_schema_extra={"examples": [{"credential": "google-id-token"}]})
+
+    credential: str = Field(..., min_length=1, description="Google Identity Services ID token credential.")
+
+
 class MessageResponse(BaseModel):
     message: str
 
 
 class ForgotPasswordRequest(BaseModel):
-    model_config = ConfigDict(json_schema_extra={"examples": [{"email": "admin@tkxelkam.com"}]})
+    model_config = ConfigDict(json_schema_extra={"examples": [{"email": "admin@tkxel.com"}]})
 
-    email: EmailStr = Field(..., description="Email address for the account requesting password reset.", examples=["admin@tkxelkam.com"])
+    email: EmailStr = Field(..., description="Email address for the account requesting password reset.", examples=["admin@tkxel.com"])
 
 
 class ForgotPasswordResponse(BaseModel):
@@ -604,6 +611,35 @@ class ChangePasswordRequest(BaseModel):
         if self.current_password == self.new_password:
             raise ValueError("New password must be different from the current password.")
         return self
+
+
+class AllowedEmailDomainsUpdateRequest(BaseModel):
+    model_config = ConfigDict(
+        json_schema_extra={
+            "examples": [
+                {"domains_input": "tkxel.com, tkxel.io, camp1.tkxel.com"},
+                {"domains": ["tkxel.com", "tkxel.io", "camp1.tkxel.com"]},
+            ]
+        }
+    )
+
+    domains_input: str | None = Field(default=None, description="Comma-separated allowed email domains.")
+    domains: list[str] | None = Field(default=None, description="Allowed email domains as a list.")
+
+    @model_validator(mode="after")
+    def has_domains_payload(self) -> "AllowedEmailDomainsUpdateRequest":
+        if self.domains_input is None and self.domains is None:
+            raise ValueError("Allowed email domains are required.")
+        return self
+
+
+class AllowedEmailDomainsRead(BaseModel):
+    domains: list[str]
+    domains_input: str
+    updated_by_id: str | None = None
+    updated_by_name: str | None = None
+    updated_at: datetime | None = None
+    duplicates_removed: bool = False
 
 
 class ProfileUpdateRequest(BaseModel):

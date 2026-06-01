@@ -29,7 +29,7 @@ const baseFieldOptions: ImportFieldOption[] = [
   { key: 'segment', label: 'Segment' },
   { key: 'region', label: 'Region' },
 ]
-const template = `account_name,project_name,company_url,industry,arr,stage,owner_email,owner_name,segment,region\nExample Client,Customer Success Workspace,https://example.com,Technology,250000,Onboarding,account.manager.user@tkxelkam.com,Account Manager KAM,Enterprise,NA`
+const template = `account_name,project_name,company_url,industry,arr,stage,owner_email,owner_name,segment,region\nExample Client,Customer Success Workspace,https://example.com,Technology,250000,Onboarding,account.manager.user@tkxel.com,Account Manager KAM,Enterprise,NA`
 const csvSteps: { id: Step; label: string }[] = [
   { id: 1, label: 'Upload' },
   { id: 2, label: 'Map' },

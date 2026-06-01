@@ -5,6 +5,7 @@ import { nanoid } from 'nanoid'
 import { FormEvent, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { toast } from 'sonner'
+import { AllowedEmailDomainsPanel } from '@/components/admin/AllowedEmailDomainsPanel'
 import { AdminCustomizationPanel } from '@/components/admin/AdminCustomizationPanel'
 import { AdminContentPanel } from '@/components/admin/AdminContentPanel'
 import { AdminFieldBuilderPanel } from '@/components/admin/AdminFieldBuilderPanel'
@@ -299,7 +300,12 @@ export function Admin() {
             <IntegrationsPanel />
           </div>
           <div id="settings" className={cn('scroll-mt-24', highlightedSection !== 'settings' && 'hidden')}>
-            <NotificationSettingsPanel />
+            {highlightedSection === 'settings' ? (
+              <div className="space-y-4">
+                <AllowedEmailDomainsPanel />
+                <NotificationSettingsPanel />
+              </div>
+            ) : null}
           </div>
           <div id="segments" className={cn('scroll-mt-24', highlightedSection !== 'segments' && 'hidden')}>
             <SegmentSettings />
