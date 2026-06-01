@@ -11,6 +11,7 @@ docs/features/_feature-template.md
 ## Features
 
 - [Governance & Reviews](governance-reviews.md)
+- [Growth & Opportunity Management](growth-opportunity-management.md)
 
 ## Handoff Notes
 

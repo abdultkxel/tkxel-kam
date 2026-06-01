@@ -485,8 +485,7 @@ class AccountService:
         approved_at = latest.approved_at.replace(tzinfo=timezone.utc) if latest.approved_at.tzinfo is None else latest.approved_at.astimezone(timezone.utc)
         return datetime.now(timezone.utc) < approved_at + timedelta(days=threshold_days)
 
-    @staticmethod
-    def _summary_cards(account: Account) -> AccountSummaryCardsRead:
+    def _summary_cards(self, account: Account) -> AccountSummaryCardsRead:
         return AccountSummaryCardsRead(
             commercial_value=float(account.commercial_value),
             currency=account.currency,
@@ -494,4 +493,5 @@ class AccountService:
             risk_status=account.risk_status,
             health_overall=account.health_overall,
             next_governance_at=account.next_governance_at,
+            open_opportunities=self.accounts.count_open_opportunities(account.id),
         )

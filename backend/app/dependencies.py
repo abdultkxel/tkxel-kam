@@ -18,6 +18,7 @@ from app.services.escalations import EscalationService
 from app.services.governance import GovernanceService
 from app.services.kyc import KycService
 from app.services.onboarding import OnboardingService
+from app.services.opportunities import OpportunityService
 from app.services.profile import ProfileService
 from app.services.rbac import RbacService
 from app.services.user_management import UserManagementService
@@ -91,6 +92,10 @@ def get_escalation_service(db: Annotated[Session, Depends(get_db)]) -> Escalatio
 
 def get_governance_service(db: Annotated[Session, Depends(get_db)]) -> GovernanceService:
     return GovernanceService(db)
+
+
+def get_opportunity_service(db: Annotated[Session, Depends(get_db)]) -> OpportunityService:
+    return OpportunityService(db)
 
 
 def get_kyc_service(db: Annotated[Session, Depends(get_db)]) -> KycService:

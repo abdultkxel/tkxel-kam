@@ -1,21 +1,21 @@
+import * as Dialog from '@radix-ui/react-dialog'
 import { DndContext, DragEndEvent, DragOverlay, DragStartEvent, KeyboardSensor, PointerSensor, useDroppable, useSensor, useSensors } from '@dnd-kit/core'
 import { SortableContext, verticalListSortingStrategy } from '@dnd-kit/sortable'
-import { BriefcaseBusiness, MoveHorizontal } from 'lucide-react'
-import { useMemo, useState } from 'react'
+import { BriefcaseBusiness, Loader2, MoveHorizontal, X } from 'lucide-react'
+import { FormEvent, useMemo, useState } from 'react'
 import { toast } from 'sonner'
 import { EmptyState } from '@/components/ui/EmptyState'
 import { Skeleton } from '@/components/ui/Skeleton'
-import { currentUser } from '@/data/mock'
+import { useAuth } from '@/contexts/AuthContext'
 import { useOpportunityStore } from '@/stores/opportunityStore'
 import { Opportunity, Stage } from '@/types/opportunity'
 import { cn } from '@/utils/cn'
-import { emit } from '@/utils/emitTimelineEvent'
 import { formatCompactCurrency } from '@/utils/formatters'
 import { OpportunityCard } from '@/components/opportunities/OpportunityCard'
 
-const STAGES: Stage[] = ['Identified', 'Qualified', 'Proposal Sent', 'Negotiation', 'Won', 'Lost']
+const FALLBACK_STAGES: Stage[] = ['Identified', 'Qualified', 'Proposal Sent', 'Negotiation', 'Won', 'Lost']
 
-function KanbanColumn({ stage, items }: { stage: Stage; items: Opportunity[] }) {
+function KanbanColumn({ stage, items, onOpen }: { stage: Stage; items: Opportunity[]; onOpen?: (opportunity: Opportunity) => void }) {
   const { setNodeRef, isOver } = useDroppable({ id: stage })
   const total = items.reduce((sum, item) => sum + item.estimatedValue, 0)
 
@@ -31,7 +31,7 @@ function KanbanColumn({ stage, items }: { stage: Stage; items: Opportunity[] }) 
       <SortableContext items={items.map(item => item.id)} strategy={verticalListSortingStrategy}>
         <div className="flex flex-1 flex-col gap-3">
           {items.length ? (
-            items.map(item => <OpportunityCard key={item.id} opportunity={item} />)
+            items.map(item => <OpportunityCard key={item.id} opportunity={item} onOpen={onOpen} />)
           ) : (
             <EmptyState icon={BriefcaseBusiness} heading="No opportunities" body="Drop a card here to update the stage." className="flex-1 rounded-lg border border-dashed border-surface-border bg-white px-4 py-8" />
           )}
@@ -41,48 +41,73 @@ function KanbanColumn({ stage, items }: { stage: Stage; items: Opportunity[] }) 
   )
 }
 
-export function OpportunityBoard({ accountId, items }: { accountId?: string; items?: Opportunity[] }) {
-  const [loading, setLoading] = useState(false)
+export function OpportunityBoard({ accountId, items, onOpen }: { accountId?: string; items?: Opportunity[]; onOpen?: (opportunity: Opportunity) => void }) {
   const [activeId, setActiveId] = useState<string | null>(null)
+  const [pendingMove, setPendingMove] = useState<{ opportunity: Opportunity; stage: Stage } | null>(null)
+  const [moveReason, setMoveReason] = useState('')
+  const { token } = useAuth()
   const opportunities = useOpportunityStore(state => state.opportunities)
-  const moveOpportunity = useOpportunityStore(state => state.moveOpportunity)
+  const stages = useOpportunityStore(state => state.stages)
+  const movingIds = useOpportunityStore(state => state.movingIds)
+  const loading = useOpportunityStore(state => state.loading)
+  const moveOpportunityStage = useOpportunityStore(state => state.moveOpportunityStage)
   const visible = items ?? (accountId ? opportunities.filter(item => item.accountId === accountId) : opportunities)
-  const active = opportunities.find(item => item.id === activeId)
+  const active = visible.find(item => item.id === activeId)
+  const stageNames = stages.length ? stages.map(stage => stage.name) : FALLBACK_STAGES
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 8 } }), useSensor(KeyboardSensor))
   const pipelineValue = visible.filter(item => item.stage !== 'Won' && item.stage !== 'Lost').reduce((sum, item) => sum + item.estimatedValue, 0)
 
   const byStage = useMemo(
     () =>
-      STAGES.reduce<Record<Stage, Opportunity[]>>((acc, stage) => {
+      stageNames.reduce<Record<Stage, Opportunity[]>>((acc, stage) => {
         acc[stage] = visible.filter(item => item.stage === stage)
         return acc
       }, {} as Record<Stage, Opportunity[]>),
-    [visible],
+    [stageNames, visible],
   )
 
   function handleDragStart(event: DragStartEvent) {
     setActiveId(String(event.active.id))
   }
 
-  function handleDragEnd(event: DragEndEvent) {
+  async function handleDragEnd(event: DragEndEvent) {
     const { active, over } = event
     setActiveId(null)
     if (!over) return
-    const opportunity = opportunities.find(item => item.id === active.id)
+    const opportunity = visible.find(item => item.id === active.id)
     if (!opportunity) return
     const overId = String(over.id)
-    const newStage = STAGES.includes(overId as Stage) ? (overId as Stage) : opportunities.find(item => item.id === overId)?.stage
+    const newStage = stageNames.includes(overId as Stage) ? (overId as Stage) : visible.find(item => item.id === overId)?.stage
     if (!newStage || newStage === opportunity.stage) return
 
-    setLoading(true)
-    moveOpportunity(opportunity.id, newStage)
-    emit.opportunityStageChanged(opportunity.accountId, currentUser.id, currentUser.name, opportunity.id, opportunity.stage, newStage)
-    if (newStage === 'Won') emit.opportunityWon(opportunity.accountId, currentUser.id, currentUser.name, opportunity.name, opportunity.id)
-    if (newStage === 'Lost') emit.opportunityLost(opportunity.accountId, currentUser.id, currentUser.name, opportunity.name, opportunity.id)
-    window.setTimeout(() => {
-      setLoading(false)
-      toast.success('Opportunity stage updated')
-    }, 250)
+    if (!token) {
+      toast.error('Sign in again to update opportunity stage')
+      return
+    }
+    if (newStage === 'Won' || newStage === 'Lost') {
+      setPendingMove({ opportunity, stage: newStage })
+      setMoveReason(opportunity.outcomeReason ?? '')
+      return
+    }
+    await commitStageMove(opportunity, newStage)
+  }
+
+  async function commitStageMove(opportunity: Opportunity, stage: Stage, outcomeReason?: string | null) {
+    if (!token) return
+    try {
+      await moveOpportunityStage(token, opportunity.id, stage, outcomeReason ? `${stage} reason captured` : null, outcomeReason)
+      toast.success(stage === 'Won' || stage === 'Lost' ? `Opportunity marked ${stage}` : 'Opportunity stage updated')
+      setPendingMove(null)
+      setMoveReason('')
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Unable to update opportunity stage')
+    }
+  }
+
+  async function submitTerminalMove(event: FormEvent) {
+    event.preventDefault()
+    if (!pendingMove) return
+    await commitStageMove(pendingMove.opportunity, pendingMove.stage, moveReason.trim() || null)
   }
 
   if (loading && visible.length === 0) {
@@ -117,18 +142,54 @@ export function OpportunityBoard({ accountId, items }: { accountId?: string; ite
               <MoveHorizontal className="h-3.5 w-3.5" />
               Drag cards between stages
             </span>
-            {loading ? <span className="rounded-full bg-brand-orange/10 px-3 py-1 text-xs font-semibold text-brand-orange">Updating</span> : null}
+            {movingIds.length ? <span className="rounded-full bg-brand-orange/10 px-3 py-1 text-xs font-semibold text-brand-orange">Updating</span> : null}
           </div>
         </div>
         <div className="overflow-x-auto pb-2">
           <div className="grid grid-flow-col auto-cols-[minmax(300px,1fr)] gap-3">
-            {STAGES.map(stage => (
-              <KanbanColumn key={stage} stage={stage} items={byStage[stage]} />
+            {stageNames.map(stage => (
+              <KanbanColumn key={stage} stage={stage} items={byStage[stage] ?? []} onOpen={onOpen} />
             ))}
           </div>
         </div>
       </section>
       <DragOverlay>{active ? <OpportunityCard opportunity={active} ghost /> : null}</DragOverlay>
+      <Dialog.Root open={Boolean(pendingMove)} onOpenChange={open => {
+        if (!open) {
+          setPendingMove(null)
+          setMoveReason('')
+        }
+      }}>
+        <Dialog.Portal>
+          <Dialog.Overlay className="fixed inset-0 z-40 bg-ink/40" />
+          <Dialog.Content className="fixed left-1/2 top-1/2 z-50 w-[min(520px,calc(100vw-2rem))] -translate-x-1/2 -translate-y-1/2 rounded-xl border border-surface-border bg-white shadow-panel">
+            <form onSubmit={submitTerminalMove}>
+              <div className="flex items-start justify-between gap-4 border-b border-surface-border p-5">
+                <div>
+                  <Dialog.Title className="text-lg font-bold text-ink">Mark opportunity {pendingMove?.stage}</Dialog.Title>
+                  <Dialog.Description className="mt-1 text-sm text-ink-secondary">Capture the commercial reason so win/loss history stays useful.</Dialog.Description>
+                </div>
+                <button type="button" className="tk-icon-button" aria-label="Cancel stage move" onClick={() => setPendingMove(null)}>
+                  <X className="h-5 w-5" />
+                </button>
+              </div>
+              <div className="p-5">
+                <label className="space-y-1">
+                  <span className="tk-label text-xs">Outcome reason</span>
+                  <textarea className="tk-input min-h-[110px]" value={moveReason} onChange={event => setMoveReason(event.target.value)} placeholder="Budget approved, lost to incumbent, deferred to next quarter..." />
+                </label>
+              </div>
+              <div className="flex flex-wrap justify-end gap-2 border-t border-surface-border p-5">
+                <button type="button" className="tk-button-secondary" onClick={() => setPendingMove(null)}>Cancel</button>
+                <button type="submit" className="tk-button-primary" disabled={pendingMove ? movingIds.includes(pendingMove.opportunity.id) : false}>
+                  {pendingMove && movingIds.includes(pendingMove.opportunity.id) ? <Loader2 className="h-4 w-4 animate-spin" /> : <MoveHorizontal className="h-4 w-4" />}
+                  Move to {pendingMove?.stage}
+                </button>
+              </div>
+            </form>
+          </Dialog.Content>
+        </Dialog.Portal>
+      </Dialog.Root>
     </DndContext>
   )
 }

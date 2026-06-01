@@ -14,6 +14,7 @@ import { listAccounts } from '@/services/accountWorkspace'
 import { useAccountStore } from '@/stores/accountStore'
 import { useGovernanceStore } from '@/stores/governanceStore'
 import { useNotificationStore } from '@/stores/notificationStore'
+import { useOpportunityStore } from '@/stores/opportunityStore'
 import { useUIStore } from '@/stores/uiStore'
 
 export function AppShell() {
@@ -29,11 +30,19 @@ export function AppShell() {
   const setAccountsError = useAccountStore(state => state.setAccountsError)
   const governanceEvents = useGovernanceStore(state => state.events)
   const loadGovernanceEvents = useGovernanceStore(state => state.loadEvents)
+  const loadOpportunities = useOpportunityStore(state => state.loadOpportunities)
+  const loadOpportunityReferenceData = useOpportunityStore(state => state.loadReferenceData)
   const addNotification = useNotificationStore(state => state.addNotification)
 
   useEffect(() => {
     if (token) void loadGovernanceEvents(token, { pageSize: 100, sort: 'event_date', direction: 'asc' })
   }, [loadGovernanceEvents, token])
+
+  useEffect(() => {
+    if (!token) return
+    void loadOpportunityReferenceData(token)
+    void loadOpportunities(token, { pageSize: 500, sort: 'target_date', direction: 'asc' })
+  }, [loadOpportunities, loadOpportunityReferenceData, token])
 
   useEffect(() => {
     if (!token) return
