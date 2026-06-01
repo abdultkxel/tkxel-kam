@@ -18,6 +18,7 @@ from app.services.escalations import EscalationService
 from app.services.governance import GovernanceService
 from app.services.kyc import KycService
 from app.services.onboarding import OnboardingService
+from app.services.opportunities import OpportunityService
 from app.services.profile import ProfileService
 from app.services.rbac import RbacService
 from app.services.stakeholder_gap_service import StakeholderGapService
@@ -101,6 +102,10 @@ def get_stakeholder_service(db: Annotated[Session, Depends(get_db)]) -> Stakehol
 
 def get_stakeholder_gap_service(db: Annotated[Session, Depends(get_db)]) -> StakeholderGapService:
     return StakeholderGapService(db)
+
+
+def get_opportunity_service(db: Annotated[Session, Depends(get_db)]) -> OpportunityService:
+    return OpportunityService(db)
 
 
 def get_kyc_service(db: Annotated[Session, Depends(get_db)]) -> KycService:

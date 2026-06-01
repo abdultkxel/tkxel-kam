@@ -1,4 +1,5 @@
 import {
+  addMonths,
   addDays,
   differenceInCalendarDays,
   eachDayOfInterval,
@@ -7,6 +8,7 @@ import {
   getDay,
   isSameDay,
   startOfMonth,
+  subMonths,
 } from 'date-fns'
 import {
   AlertCircle,
@@ -64,9 +66,6 @@ type CriticalOverdueRow = {
 }
 
 const pipelineStages: Stage[] = ['Identified', 'Qualified', 'Proposal Sent', 'Negotiation']
-const monthAnchor = new Date(2026, 4, 1)
-const selectedCalendarDate = new Date(2026, 4, 22)
-
 export function Dashboard() {
   const [loading, setLoading] = useState(true)
   const [calendarAccount, setCalendarAccount] = useState('')
@@ -543,12 +542,19 @@ function GlobalMeetingsCalendar({
   accountFilter: string
   onAccountFilterChange: (value: string) => void
 }) {
+  const [monthAnchor, setMonthAnchor] = useState(startOfMonth(new Date()))
+  const [selectedDay, setSelectedDay] = useState<Date | null>(new Date())
+  const [selectedItem, setSelectedItem] = useState<CalendarItem | null>(null)
+  const selectedCalendarDate = new Date()
   const days = eachDayOfInterval({ start: startOfMonth(monthAnchor), end: endOfMonth(monthAnchor) })
   const leadingDays = Array.from({ length: getDay(startOfMonth(monthAnchor)) })
   const upcoming = items
     .filter(item => differenceInCalendarDays(item.date, selectedCalendarDate) >= 0 && differenceInCalendarDays(item.date, selectedCalendarDate) <= 30)
     .sort((a, b) => a.date.getTime() - b.date.getTime())
     .slice(0, 7)
+  const selectedDayItems = selectedDay
+    ? items.filter(item => isSameDay(item.date, selectedDay)).sort((a, b) => a.date.getTime() - b.date.getTime())
+    : []
 
   return (
     <section className="tk-card mt-6 overflow-hidden p-5">
@@ -566,9 +572,9 @@ function GlobalMeetingsCalendar({
                 {accounts.map(account => <option key={account.id} value={account.id}>{account.name}</option>)}
               </select>
               <AddGovernanceEventDialog triggerClassName="tk-button-secondary" />
-              <button className="tk-icon-button" aria-label="Previous month">‹</button>
+              <button className="tk-icon-button" onClick={() => setMonthAnchor(value => subMonths(value, 1))} aria-label="Previous month">‹</button>
               <p className="min-w-[120px] text-center text-lg font-semibold text-ink">{format(monthAnchor, 'MMM yyyy')}</p>
-              <button className="tk-icon-button" aria-label="Next month">›</button>
+              <button className="tk-icon-button" onClick={() => setMonthAnchor(value => addMonths(value, 1))} aria-label="Next month">›</button>
             </div>
           </div>
 
@@ -579,12 +585,33 @@ function GlobalMeetingsCalendar({
             {leadingDays.map((_, index) => <div key={`empty-${index}`} className="min-h-[112px]" />)}
             {days.map(day => {
               const dayItems = items.filter(item => isSameDay(item.date, day)).slice(0, 4)
-              const selected = isSameDay(day, selectedCalendarDate)
+              const selected = isSameDay(day, selectedDay ?? selectedCalendarDate)
               return (
                 <div key={day.toISOString()} className={cn('min-h-[112px] rounded-lg p-2 text-center', selected ? 'border border-surface-border-strong bg-surface-tertiary' : '')}>
-                  <p className={cn('text-sm font-semibold', selected ? 'text-brand-blue-dark' : 'text-ink')}>{format(day, 'd')}</p>
-                  <div className="mt-2 flex justify-center gap-1">
-                    {dayItems.map(item => <span key={item.id} className={cn('h-2.5 w-2.5 rounded-full', calendarDotClass(item.kind))} title={item.title} />)}
+                  <button
+                    type="button"
+                    className={cn('mx-auto flex h-8 w-8 items-center justify-center rounded-full text-sm font-semibold hover:bg-blue-tint-20', selected ? 'bg-blue-tint-20 text-brand-blue-dark' : 'text-ink')}
+                    onClick={() => setSelectedDay(day)}
+                    aria-label={`Show calendar items for ${format(day, 'MMMM d, yyyy')}`}
+                  >
+                    {format(day, 'd')}
+                  </button>
+                  <div className="mt-2 space-y-1">
+                    {dayItems.map(item => (
+                      <button
+                        key={item.id}
+                        type="button"
+                        className="flex w-full items-center gap-1 rounded-md px-1.5 py-1 text-left text-[11px] font-semibold text-ink-secondary hover:bg-white"
+                        onClick={() => {
+                          setSelectedDay(day)
+                          setSelectedItem(item)
+                        }}
+                        title={item.title}
+                      >
+                        <span className={cn('h-2 w-2 shrink-0 rounded-full', calendarDotClass(item.kind))} />
+                        <span className="truncate">{item.title}</span>
+                      </button>
+                    ))}
                   </div>
                 </div>
               )
@@ -608,10 +635,52 @@ function GlobalMeetingsCalendar({
         </div>
 
         <aside className="border-t border-surface-border pt-5 2xl:border-l 2xl:border-t-0 2xl:pl-5 2xl:pt-0">
-          <h3 className="text-sm font-semibold uppercase tracking-wider text-ink-secondary">Upcoming (30 days)</h3>
-          <div className="mt-5 space-y-5">
+          <div className="rounded-lg border border-surface-border bg-surface-secondary p-4">
+            <h3 className="text-sm font-semibold uppercase tracking-wider text-ink-secondary">
+              {selectedDay ? format(selectedDay, 'MMM d, yyyy') : 'Selected date'}
+            </h3>
+            <div className="mt-3 space-y-2">
+              {selectedDayItems.length ? selectedDayItems.map(item => (
+                <button
+                  key={item.id}
+                  type="button"
+                  className="grid w-full grid-cols-[12px_minmax(0,1fr)_auto] items-center gap-2 rounded-md bg-white p-3 text-left hover:bg-blue-tint-20"
+                  onClick={() => setSelectedItem(item)}
+                >
+                  <span className={cn('h-2.5 w-2.5 rounded-full', calendarDotClass(item.kind))} />
+                  <span className="min-w-0">
+                    <span className="block truncate text-sm font-semibold text-ink">{item.title}</span>
+                    <span className="mt-1 block truncate text-xs text-ink-secondary">{item.accountName}</span>
+                  </span>
+                  <span className="text-[11px] font-semibold uppercase tracking-wider text-brand-blue">{calendarKindLabel(item.kind)}</span>
+                </button>
+              )) : <p className="rounded-md bg-white p-3 text-sm text-ink-secondary">No calendar items on this date.</p>}
+            </div>
+          </div>
+
+          {selectedItem ? (
+            <div className="mt-4 rounded-lg border border-surface-border bg-white p-4">
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <p className="text-[10px] font-extrabold uppercase tracking-widest text-brand-blue">{calendarKindLabel(selectedItem.kind)}</p>
+                  <h3 className="mt-1 text-base font-semibold text-ink">{selectedItem.title}</h3>
+                  <p className="mt-1 text-xs font-medium text-ink-secondary">{selectedItem.accountName} | {format(selectedItem.date, 'MMM d, yyyy h:mm a')}</p>
+                </div>
+                <span className={cn('mt-1 h-3 w-3 shrink-0 rounded-full', calendarDotClass(selectedItem.kind))} />
+              </div>
+              <p className="mt-3 text-sm leading-6 text-ink-secondary">{selectedItem.detail}</p>
+              {selectedItem.status ? <p className="mt-3 text-xs font-semibold uppercase tracking-wider text-ink-tertiary">Status: {selectedItem.status}</p> : null}
+              <Link to={selectedItem.route} className="tk-button-primary mt-4 w-full">
+                {calendarActionLabel(selectedItem.kind)}
+                <ArrowRight className="h-4 w-4" />
+              </Link>
+            </div>
+          ) : null}
+
+          <h3 className="mt-5 text-sm font-semibold uppercase tracking-wider text-ink-secondary">Upcoming (30 days)</h3>
+          <div className="mt-5 space-y-3">
             {upcoming.map(item => (
-              <article key={item.id} className="grid grid-cols-[44px_minmax(0,1fr)_auto] items-center gap-3">
+              <button key={item.id} type="button" className="grid w-full grid-cols-[44px_minmax(0,1fr)_auto] items-center gap-3 rounded-lg p-2 text-left hover:bg-surface-tertiary" onClick={() => setSelectedItem(item)}>
                 <span className={cn('flex h-11 w-11 items-center justify-center rounded-full', calendarIconShell(item.kind))}>
                   {item.kind === 'task' || item.kind === 'signal' ? <Users className="h-5 w-5" /> : <CalendarCheck2 className="h-5 w-5" />}
                 </span>
@@ -620,8 +689,9 @@ function GlobalMeetingsCalendar({
                   <p className="mt-1 truncate text-xs text-ink-secondary">{item.accountName}</p>
                 </div>
                 <span className="rounded-full border border-surface-border bg-white px-2 py-1 text-[11px] font-semibold text-brand-blue-dark">{format(item.date, 'MMM d')}</span>
-              </article>
+              </button>
             ))}
+            {!upcoming.length ? <p className="rounded-md bg-surface-tertiary p-3 text-sm text-ink-secondary">No upcoming calendar items in the next 30 days.</p> : null}
           </div>
         </aside>
       </div>
@@ -771,8 +841,11 @@ type CalendarItem = {
   accountId: string
   accountName: string
   title: string
+  detail: string
   date: Date
   kind: 'qbr' | 'steerco' | 'meeting' | 'task' | 'opp_close' | 'signal'
+  status?: string
+  route: string
 }
 
 function buildCalendarItems(
@@ -787,32 +860,44 @@ function buildCalendarItems(
     accountId: event.accountId,
     accountName: event.accountName,
     title: event.type === 'Executive Review' ? 'Executive Review' : `${event.type} - ${event.agenda}`,
+    detail: event.agenda,
     date: new Date(event.date),
     kind: event.type === 'QBR' ? 'qbr' : event.type === 'SteerCo' ? 'steerco' : 'meeting',
+    status: event.status,
+    route: `/accounts/${event.accountId}?tab=governance`,
   }))
   const taskItems: CalendarItem[] = tasks.slice(0, 12).map(task => ({
     id: task.id,
     accountId: task.accountId,
     accountName: task.accountName,
     title: task.title,
+    detail: task.description,
     date: new Date(task.dueDate),
     kind: 'task',
+    status: task.status,
+    route: `/accounts/${task.accountId}?tab=health`,
   }))
   const opportunityItems: CalendarItem[] = opportunities.filter(opportunity => opportunity.stage !== 'Won' && opportunity.stage !== 'Lost').map(opportunity => ({
     id: opportunity.id,
     accountId: opportunity.accountId,
     accountName: opportunity.accountName,
     title: opportunity.name,
+    detail: `${opportunity.stage} opportunity with an estimated value of ${formatCompactCurrency(opportunity.estimatedValue)}.`,
     date: new Date(opportunity.closeDate),
     kind: 'opp_close',
+    status: opportunity.stage,
+    route: '/opportunities',
   }))
   const signalItems: CalendarItem[] = signals.filter(signal => signal.dueAt).map(signal => ({
     id: signal.id,
     accountId: signal.accountId,
     accountName: signal.accountName,
     title: signal.headline,
+    detail: signal.detail,
     date: new Date(signal.dueAt ?? addDays(new Date(), 1)),
     kind: 'signal',
+    status: signal.status,
+    route: `/accounts/${signal.accountId}?tab=${signal.type === 'sow_expiry' || signal.type === 'notice_window' ? 'engagements' : 'health'}`,
   }))
 
   return [...governanceItems, ...taskItems, ...opportunityItems, ...signalItems].filter(item => !accountFilter || item.accountId === accountFilter)
@@ -869,4 +954,20 @@ function calendarIconShell(kind: CalendarItem['kind']) {
   if (kind === 'signal') return 'bg-rag-red/10 text-rag-red'
   if (kind === 'task') return 'bg-brand-orange/10 text-brand-orange'
   return 'bg-rag-green/10 text-rag-green'
+}
+
+function calendarKindLabel(kind: CalendarItem['kind']) {
+  if (kind === 'qbr') return 'QBR'
+  if (kind === 'steerco') return 'SteerCo'
+  if (kind === 'meeting') return 'Governance'
+  if (kind === 'task') return 'Task'
+  if (kind === 'opp_close') return 'Opportunity'
+  return 'Signal'
+}
+
+function calendarActionLabel(kind: CalendarItem['kind']) {
+  if (kind === 'qbr' || kind === 'steerco' || kind === 'meeting') return 'Open Governance tab'
+  if (kind === 'task') return 'Open Health tab'
+  if (kind === 'opp_close') return 'Open Opportunities'
+  return 'Open source context'
 }

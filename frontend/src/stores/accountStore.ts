@@ -6,9 +6,14 @@ import { Account, AccountStage, HealthScore, SavedAccountFilter } from '@/types/
 
 interface AccountStore {
   accounts: Account[]
+  accountsLoaded: boolean
+  accountsLoading: boolean
+  accountsError: string
   segmentTags: string[]
   savedFilters: SavedAccountFilter[]
   setAccounts: (accounts: Account[]) => void
+  setAccountsLoading: (loading: boolean) => void
+  setAccountsError: (error: string) => void
   upsertAccount: (account: Account) => void
   setStage: (accountId: string, stage: AccountStage) => void
   setHealth: (accountId: string, health: HealthScore) => void
@@ -24,6 +29,9 @@ export const useAccountStore = create<AccountStore>()(
   persist(
     set => ({
       accounts,
+      accountsLoaded: false,
+      accountsLoading: false,
+      accountsError: '',
       segmentTags: ['Strategic', 'Enterprise', 'Growth', 'APAC', 'Tier-1'],
       savedFilters: [
         { id: 'view-risk', name: 'At-risk book', query: '', stage: '', risk: 'warning', segments: [], sort: 'name', direction: 'asc', layout: 'cards', creatorId: 'usr-001', shared: true },
@@ -31,10 +39,24 @@ export const useAccountStore = create<AccountStore>()(
       setAccounts: nextAccounts =>
         set(() => ({
           accounts: nextAccounts,
+          accountsLoaded: true,
+          accountsLoading: false,
+          accountsError: '',
+        })),
+      setAccountsLoading: loading =>
+        set(() => ({
+          accountsLoading: loading,
+        })),
+      setAccountsError: error =>
+        set(() => ({
+          accountsError: error,
+          accountsLoaded: true,
+          accountsLoading: false,
         })),
       upsertAccount: account =>
         set(state => ({
           accounts: [account, ...state.accounts.filter(item => item.id !== account.id)],
+          accountsLoaded: true,
         })),
       setStage: (accountId, stage) =>
         set(state => ({

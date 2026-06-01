@@ -1,7 +1,7 @@
 from datetime import datetime
 from typing import Annotated, Literal
 
-from fastapi import APIRouter, Depends, Query, status
+from fastapi import APIRouter, Body, Depends, Query, status
 
 from app.dependencies import get_current_user, get_governance_service
 from app.models import User
@@ -14,10 +14,15 @@ from app.schemas import (
     GovernanceDecisionCreateRequest,
     GovernanceDecisionPageRead,
     GovernanceDecisionRead,
+    GovernanceCalendarPageRead,
+    GovernanceEventAgendaUpdateRequest,
+    GovernanceEventCompleteRequest,
     GovernanceEventCreateRequest,
     GovernanceEventPageRead,
     GovernanceEventRead,
     GovernanceEventUpdateRequest,
+    GovernanceGeneratedOutputRead,
+    GovernanceGeneratedOutputRequest,
     GovernanceRecurrenceRuleCreateRequest,
     GovernanceRecurrenceRulePageRead,
     GovernanceRecurrenceRuleRead,
@@ -32,7 +37,7 @@ from app.schemas import (
 from app.services.governance import GovernanceService
 
 Direction = Literal["asc", "desc"]
-GovernanceSort = Literal["scheduled_at", "status", "updated_at", "created_at"]
+GovernanceSort = Literal["event_date", "scheduled_at", "status", "updated_at", "created_at"]
 ActiveState = Literal["all", "active", "inactive"]
 
 router = APIRouter(prefix="/api", tags=["Governance Reviews"])
@@ -60,6 +65,20 @@ def list_events(
     return service.list_events(current_user, account_id=account_id, engagement_id=engagement_id, search=search, governance_type=governance_type, status_filter=status_filter, owner_id=owner_id, attendee=attendee, source=source, date_from=date_from, date_to=date_to, sort=sort, direction=direction, page=page, page_size=page_size)
 
 
+@router.get("/governance-events/calendar", response_model=GovernanceCalendarPageRead, summary="List governance calendar items", description="Returns governance events as calendar-item projections for unified calendar surfaces.")
+def list_governance_calendar_items(
+    current_user: Annotated[User, Depends(get_current_user)],
+    service: Annotated[GovernanceService, Depends(get_governance_service)],
+    account_id: str | None = None,
+    owner_id: str | None = None,
+    date_from: datetime | None = None,
+    date_to: datetime | None = None,
+    page: int = 1,
+    page_size: int = 100,
+) -> GovernanceCalendarPageRead:
+    return service.calendar_items(current_user, account_id=account_id, owner_id=owner_id, date_from=date_from, date_to=date_to, page=page, page_size=page_size)
+
+
 @router.post("/governance-events", response_model=GovernanceEventRead, status_code=status.HTTP_201_CREATED, summary="Create governance event", description="Creates a manual QBR, SteerCo, monthly review, or executive review with audit and timeline entries.")
 def create_event(payload: GovernanceEventCreateRequest, current_user: Annotated[User, Depends(get_current_user)], service: Annotated[GovernanceService, Depends(get_governance_service)]) -> GovernanceEventRead:
     return service.create_event(payload, current_user)
@@ -76,23 +95,23 @@ def update_event(event_id: str, payload: GovernanceEventUpdateRequest, current_u
 
 
 @router.post("/governance-events/{event_id}/complete", response_model=GovernanceEventRead, summary="Complete governance event", description="Marks governance event complete after notes or decisions exist and writes timeline/audit entries.")
-def complete_event(event_id: str, current_user: Annotated[User, Depends(get_current_user)], service: Annotated[GovernanceService, Depends(get_governance_service)]) -> GovernanceEventRead:
-    return service.complete_event(event_id, current_user)
+def complete_event(event_id: str, current_user: Annotated[User, Depends(get_current_user)], service: Annotated[GovernanceService, Depends(get_governance_service)], payload: Annotated[GovernanceEventCompleteRequest | None, Body()] = None) -> GovernanceEventRead:
+    return service.complete_event(event_id, current_user, payload)
 
 
-@router.post("/governance-events/{event_id}/agenda-draft", response_model=GovernanceEventRead, summary="Generate governance agenda draft", description="Generates a source-backed editable agenda draft and records citations.")
-def agenda_draft(event_id: str, current_user: Annotated[User, Depends(get_current_user)], service: Annotated[GovernanceService, Depends(get_governance_service)]) -> GovernanceEventRead:
-    return service.agenda_draft(event_id, current_user)
+@router.post("/governance-events/{event_id}/agenda-draft", response_model=GovernanceGeneratedOutputRead, summary="Generate governance agenda draft", description="Generates a source-backed editable agenda draft and records citations.")
+def agenda_draft(event_id: str, current_user: Annotated[User, Depends(get_current_user)], service: Annotated[GovernanceService, Depends(get_governance_service)], payload: Annotated[GovernanceGeneratedOutputRequest | None, Body()] = None) -> GovernanceGeneratedOutputRead:
+    return service.agenda_draft(event_id, current_user, payload)
 
 
 @router.patch("/governance-events/{event_id}/agenda", response_model=GovernanceEventRead, summary="Update governance agenda", description="Updates an editable governance agenda.")
-def update_agenda(event_id: str, payload: GovernanceEventUpdateRequest, current_user: Annotated[User, Depends(get_current_user)], service: Annotated[GovernanceService, Depends(get_governance_service)]) -> GovernanceEventRead:
+def update_agenda(event_id: str, payload: GovernanceEventAgendaUpdateRequest, current_user: Annotated[User, Depends(get_current_user)], service: Annotated[GovernanceService, Depends(get_governance_service)]) -> GovernanceEventRead:
     return service.update_agenda(event_id, payload, current_user)
 
 
-@router.post("/governance-events/{event_id}/ai-brief", response_model=GovernanceAIBriefRead, summary="Generate governance AI brief", description="Generates a pre-meeting brief with inline openable citations and a non-dismissible disclaimer.")
-def ai_brief(event_id: str, current_user: Annotated[User, Depends(get_current_user)], service: Annotated[GovernanceService, Depends(get_governance_service)]) -> GovernanceAIBriefRead:
-    return service.ai_brief(event_id, current_user)
+@router.post("/governance-events/{event_id}/ai-brief", response_model=GovernanceAIBriefRead, summary="Generate governance brief", description="Generates a pre-meeting brief with inline openable citations and a non-dismissible disclaimer.")
+def ai_brief(event_id: str, current_user: Annotated[User, Depends(get_current_user)], service: Annotated[GovernanceService, Depends(get_governance_service)], payload: Annotated[GovernanceGeneratedOutputRequest | None, Body()] = None) -> GovernanceAIBriefRead:
+    return service.ai_brief(event_id, current_user, payload)
 
 
 @router.get("/governance-events/{event_id}/decisions", response_model=GovernanceDecisionPageRead, summary="List governance decisions", description="Paginated decisions captured during a governance event.")

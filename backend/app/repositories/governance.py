@@ -56,6 +56,7 @@ class GovernanceRepository:
         )
         total = self.db.scalar(select(func.count(GovernanceEvent.id)).where(*conditions)) or 0
         order_column = {
+            "event_date": GovernanceEvent.scheduled_at,
             "scheduled_at": GovernanceEvent.scheduled_at,
             "status": GovernanceEvent.status,
             "updated_at": GovernanceEvent.updated_at,
@@ -259,6 +260,18 @@ class GovernanceRepository:
 
     def get_account(self, account_id: str) -> Account | None:
         return self.db.get(Account, account_id)
+
+    def next_governance_date(self, account_id: str, now: datetime) -> datetime | None:
+        return self.db.scalar(
+            select(GovernanceEvent.scheduled_at)
+            .where(
+                GovernanceEvent.account_id == account_id,
+                GovernanceEvent.scheduled_at >= now,
+                GovernanceEvent.status.notin_(("completed", "cancelled")),
+            )
+            .order_by(GovernanceEvent.scheduled_at.asc())
+            .limit(1)
+        )
 
     def commit(self) -> None:
         self.db.commit()

@@ -7,7 +7,21 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.config import get_settings
 from app.database import SessionLocal, init_db
 from app.exceptions import validation_exception_handler
-from app.routers import accounts, admin, auth, content, custom_fields, engagements, escalations, governance, kyc, onboarding, stakeholders, users
+from app.routers import (
+    accounts,
+    admin,
+    auth,
+    content,
+    custom_fields,
+    engagements,
+    escalations,
+    governance,
+    kyc,
+    onboarding,
+    opportunities,
+    stakeholders,
+    users,
+)
 from app.services.seed import seed_default_data
 
 
@@ -67,6 +81,10 @@ openapi_tags = [
         "description": "Account and engagement stakeholder maps, relationship attributes, hierarchy, and stakeholder timeline events.",
     },
     {
+        "name": "Growth & Opportunity Management",
+        "description": "Opportunity CRUD, pipeline board/list tracking, stage movement, local action items, timeline history, and opportunity type taxonomy APIs.",
+    },
+    {
         "name": "KYC and AI Extraction",
         "description": "AI-assisted KYC drafts, review/approval, immutable snapshots, freshness, and agent workstream APIs.",
     },
@@ -106,6 +124,7 @@ app.include_router(custom_fields.router)
 app.include_router(escalations.router)
 app.include_router(governance.router)
 app.include_router(stakeholders.router)
+app.include_router(opportunities.router)
 app.include_router(kyc.config_router)
 app.include_router(kyc.router)
 
