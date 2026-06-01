@@ -25,6 +25,11 @@ OwnershipRole = Literal["primary_am", "supporting_am", "ops_lead", "leadership_s
 EngagementStatus = Literal["draft", "active", "renewal_watch", "at_risk", "completed", "archived"]
 DeliveryStatus = Literal["planned", "active", "watch", "blocked", "completed"]
 SourceType = Literal["project_charter", "sow", "attachment", "source_link", "commercial_note", "research", "manual_import"]
+KycDraftStatus = Literal["ready_for_review", "approved", "rejected"]
+KycRunStatus = Literal["pending", "running", "complete", "failed", "partial"]
+KycWorkstreamStatus = Literal["pending", "running", "complete", "failed"]
+KycConfidenceLevel = Literal["low", "medium", "high"]
+KycTriggerSource = Literal["account_overview", "onboarding_draft", "source_documents", "kyc_page", "manual"]
 CustomFieldType = Literal["text", "textarea", "number", "currency", "date", "datetime", "boolean", "single_select", "multi_select", "email", "url", "phone"]
 CustomFieldStatus = Literal["all", "active", "inactive"]
 CustomFieldSort = Literal["label", "module", "field_type", "sort_order", "updated_at"]
@@ -88,6 +93,12 @@ def validate_string_list(value: list[str], field_label: str, max_items: int = 30
         seen.add(key)
         items.append(text)
     return items
+
+
+def validate_research_source_list(value: list[str], field_label: str = "Research sources", max_items: int = 10) -> list[str]:
+    if len(value) > max_items:
+        raise ValueError(f"{field_label} can include at most {max_items} items.")
+    return [validate_short_text(item, field_label, 120) for item in value]
 
 
 def validate_http_url(value: str | None, field_label: str = "URL") -> str | None:
@@ -741,6 +752,307 @@ class SourceDocumentPageRead(BaseModel):
     page: int
     page_size: int
     pages: int
+
+
+class KycCitationRead(BaseModel):
+    source_document_id: str | None = None
+    label: str
+    page_number: int | None = None
+    excerpt: str
+    field_key: str | None = None
+    restricted: bool = False
+
+
+class KycFieldRead(BaseModel):
+    key: str
+    label: str
+    workstream_key: str
+    workstream_title: str
+    value: str | None = None
+    confidence: int
+    is_required: bool = True
+    is_sensitive: bool = False
+    reviewed: bool = False
+    missing: bool = False
+    conflict: bool = False
+    previous_value: str | None = None
+    citations: list[KycCitationRead] = Field(default_factory=list)
+
+
+class KycWorkstreamRead(BaseModel):
+    id: str | None = None
+    workstream_key: str
+    title: str
+    status: str
+    sort_order: int
+    confidence: int
+    output: dict[str, Any] = Field(default_factory=dict)
+    citations: list[KycCitationRead] = Field(default_factory=list)
+    missing_fields: list[str] = Field(default_factory=list)
+    error_message: str | None = None
+    started_at: datetime | None = None
+    completed_at: datetime | None = None
+
+
+class KycDraftRead(BaseModel):
+    id: str
+    account_id: str
+    status: str
+    trigger_source: str
+    agent_run_id: str | None = None
+    previous_snapshot_id: str | None = None
+    approved_snapshot_id: str | None = None
+    source_document_ids: list[str] = Field(default_factory=list)
+    research_sources: list[str] = Field(default_factory=list)
+    fields: list[KycFieldRead] = Field(default_factory=list)
+    citations: list[KycCitationRead] = Field(default_factory=list)
+    missing_fields: list[str] = Field(default_factory=list)
+    conflicts: list[str] = Field(default_factory=list)
+    difference_summary: list[str] = Field(default_factory=list)
+    source_context: dict[str, Any] = Field(default_factory=dict)
+    confidence: int
+    completeness: int
+    source_coverage: int
+    freshness_status: str
+    low_confidence_acknowledged: bool
+    conflicts_acknowledged: bool
+    override_reason: str | None = None
+    review_notes: str | None = None
+    created_by_name: str
+    reviewed_by_name: str | None = None
+    approved_by_name: str | None = None
+    rejected_by_name: str | None = None
+    rejection_reason: str | None = None
+    created_at: datetime
+    updated_at: datetime
+    decided_at: datetime | None = None
+    ai_disclaimer: str
+
+
+class KycDraftPageRead(BaseModel):
+    items: list[KycDraftRead]
+    total: int
+    page: int
+    page_size: int
+    pages: int
+
+
+class KycDraftCreateRequest(BaseModel):
+    trigger_source: KycTriggerSource = "account_overview"
+    source_document_ids: list[str] = Field(default_factory=list)
+    research_sources: list[str] = Field(default_factory=list)
+    notes: str | None = None
+
+    @field_validator("source_document_ids")
+    @classmethod
+    def source_document_ids_are_valid(cls, value: list[str]) -> list[str]:
+        if len(value) > 50:
+            raise ValueError("At most 50 source documents can be selected for one KYC draft.")
+        return [validate_short_text(item, "Source document", 36) for item in value]
+
+    @field_validator("research_sources")
+    @classmethod
+    def research_sources_are_valid(cls, value: list[str]) -> list[str]:
+        return validate_research_source_list(value)
+
+    @field_validator("notes")
+    @classmethod
+    def notes_are_valid(cls, value: str | None) -> str | None:
+        return validate_optional_long_text(value, "KYC notes")
+
+
+class KycFieldUpdateRequest(BaseModel):
+    key: str
+    value: str | None = None
+    reviewed: bool | None = None
+
+    @field_validator("key")
+    @classmethod
+    def key_is_valid(cls, value: str) -> str:
+        return validate_slug(value, "KYC field key")
+
+    @field_validator("value")
+    @classmethod
+    def value_is_valid(cls, value: str | None) -> str | None:
+        return optional_text(value, "KYC field value", max_length=8000)
+
+
+class KycDraftUpdateRequest(BaseModel):
+    fields: list[KycFieldUpdateRequest] | None = None
+    low_confidence_acknowledged: bool | None = None
+    conflicts_acknowledged: bool | None = None
+    override_reason: str | None = None
+    review_notes: str | None = None
+
+    @field_validator("fields")
+    @classmethod
+    def fields_are_valid(cls, value: list[KycFieldUpdateRequest] | None) -> list[KycFieldUpdateRequest] | None:
+        if value is not None and len(value) > 100:
+            raise ValueError("At most 100 KYC fields can be updated at once.")
+        return value
+
+    @field_validator("override_reason", "review_notes")
+    @classmethod
+    def review_text_is_valid(cls, value: str | None) -> str | None:
+        return validate_optional_long_text(value, "KYC review text")
+
+
+class KycDraftApproveRequest(BaseModel):
+    low_confidence_acknowledged: bool = False
+    conflicts_acknowledged: bool = False
+    override_reason: str | None = None
+    change_summary: list[str] = Field(default_factory=list)
+
+    @field_validator("override_reason")
+    @classmethod
+    def override_reason_is_valid(cls, value: str | None) -> str | None:
+        return validate_optional_long_text(value, "Override reason", 1000)
+
+    @field_validator("change_summary")
+    @classmethod
+    def change_summary_is_valid(cls, value: list[str]) -> list[str]:
+        return validate_string_list(value, "Change summary", max_items=20)
+
+
+class KycDraftRejectRequest(BaseModel):
+    reason: str
+
+    @field_validator("reason")
+    @classmethod
+    def reason_is_valid(cls, value: str) -> str:
+        return validate_short_text(value, "Rejection reason", 1000)
+
+
+class KycSnapshotRead(BaseModel):
+    id: str
+    account_id: str
+    version: int
+    source_draft_id: str | None = None
+    extraction_run_id: str | None = None
+    approved_by_name: str
+    approved_at: datetime
+    fields: list[KycFieldRead] = Field(default_factory=list)
+    citations: list[KycCitationRead] = Field(default_factory=list)
+    source_context: dict[str, Any] = Field(default_factory=dict)
+    source_document_ids: list[str] = Field(default_factory=list)
+    research_sources: list[str] = Field(default_factory=list)
+    confidence: int
+    completeness: int
+    source_coverage: int
+    freshness_status: str
+    missing_fields: list[str] = Field(default_factory=list)
+    conflicts: list[str] = Field(default_factory=list)
+    change_summary: list[str] = Field(default_factory=list)
+    created_at: datetime
+    ai_disclaimer: str
+
+
+class KycSnapshotPageRead(BaseModel):
+    items: list[KycSnapshotRead]
+    total: int
+    page: int
+    page_size: int
+    pages: int
+
+
+class KycFreshnessRead(BaseModel):
+    account_id: str
+    has_approved_snapshot: bool
+    snapshot_id: str | None = None
+    snapshot_version: int | None = None
+    completeness: int
+    confidence: int
+    source_coverage: int
+    freshness_status: str
+    stale: bool
+    freshness_threshold_days: int
+    last_approved_at: datetime | None = None
+    stale_after: datetime | None = None
+    missing_fields: list[str] = Field(default_factory=list)
+    required_fields_total: int
+    required_fields_completed: int
+
+
+class KycConfigurationFieldRead(BaseModel):
+    key: str
+    label: str
+    workstream_key: str
+    required: bool = True
+    sensitive: bool = False
+
+
+class KycConfigurationRead(BaseModel):
+    id: str
+    name: str
+    required_field_keys: list[str] = Field(default_factory=list)
+    freshness_threshold_days: int
+    low_confidence_threshold: int
+    research_sources: list[str] = Field(default_factory=list)
+    field_catalog: list[KycConfigurationFieldRead] = Field(default_factory=list)
+    updated_by_id: str | None = None
+    created_at: datetime
+    updated_at: datetime
+
+
+class KycConfigurationUpdateRequest(BaseModel):
+    required_field_keys: list[str] | None = None
+    freshness_threshold_days: int | None = Field(default=None, ge=1, le=730)
+    low_confidence_threshold: int | None = Field(default=None, ge=1, le=100)
+    research_sources: list[str] | None = None
+
+    @field_validator("required_field_keys")
+    @classmethod
+    def required_field_keys_are_valid(cls, value: list[str] | None) -> list[str] | None:
+        return [validate_slug(item, "Required KYC field key") for item in value] if value is not None else None
+
+    @field_validator("research_sources")
+    @classmethod
+    def research_sources_are_valid(cls, value: list[str] | None) -> list[str] | None:
+        return validate_research_source_list(value) if value is not None else None
+
+
+class KycAgentRunRead(BaseModel):
+    id: str
+    account_id: str
+    status: str
+    trigger_source: str
+    previous_run_id: str | None = None
+    source_document_ids: list[str] = Field(default_factory=list)
+    research_sources: list[str] = Field(default_factory=list)
+    triggered_by_name: str
+    error_message: str | None = None
+    started_at: datetime | None = None
+    completed_at: datetime | None = None
+    created_at: datetime
+    updated_at: datetime
+    workstreams: list[KycWorkstreamRead] = Field(default_factory=list)
+    ai_disclaimer: str
+
+
+class KycAgentRunPageRead(BaseModel):
+    items: list[KycAgentRunRead]
+    total: int
+    page: int
+    page_size: int
+    pages: int
+
+
+class KycAgentRunCreateRequest(BaseModel):
+    trigger_source: KycTriggerSource = "kyc_page"
+    source_document_ids: list[str] = Field(default_factory=list)
+    research_sources: list[str] = Field(default_factory=list)
+
+    @field_validator("source_document_ids")
+    @classmethod
+    def source_document_ids_are_valid(cls, value: list[str]) -> list[str]:
+        if len(value) > 50:
+            raise ValueError("At most 50 source documents can be selected for one KYC agent run.")
+        return [validate_short_text(item, "Source document", 36) for item in value]
+
+    @field_validator("research_sources")
+    @classmethod
+    def research_sources_are_valid(cls, value: list[str]) -> list[str]:
+        return validate_research_source_list(value)
 
 
 class EngagementDraftRequest(BaseModel):

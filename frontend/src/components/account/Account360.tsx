@@ -381,7 +381,7 @@ export function Account360({ account }: { account: Account }) {
             userId={user.id}
             userName={user.name}
           />
-          <KYCAgentOverview onReview={reviewKYCData} />
+          <KYCAgentOverview accountId={account.id} onReview={reviewKYCData} />
         </Tabs.Content>
 
         <Tabs.Content value="KYC">

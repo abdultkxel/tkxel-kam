@@ -16,6 +16,7 @@ from app.services.custom_fields import CustomFieldService
 from app.services.engagements import EngagementService
 from app.services.escalations import EscalationService
 from app.services.governance import GovernanceService
+from app.services.kyc import KycService
 from app.services.onboarding import OnboardingService
 from app.services.profile import ProfileService
 from app.services.rbac import RbacService
@@ -90,6 +91,10 @@ def get_escalation_service(db: Annotated[Session, Depends(get_db)]) -> Escalatio
 
 def get_governance_service(db: Annotated[Session, Depends(get_db)]) -> GovernanceService:
     return GovernanceService(db)
+
+
+def get_kyc_service(db: Annotated[Session, Depends(get_db)]) -> KycService:
+    return KycService(db)
 
 
 def require_permission(module: str, action: str):

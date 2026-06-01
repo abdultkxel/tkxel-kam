@@ -2,21 +2,27 @@ import { addDays } from 'date-fns'
 import { CheckCircle2, FileSearch, FileText, Loader2, UploadCloud } from 'lucide-react'
 import { useMemo, useState } from 'react'
 import { toast } from 'sonner'
+import { useAuth } from '@/contexts/AuthContext'
 import { useRole } from '@/hooks/useRole'
+import { createKycDraft } from '@/services/kyc'
 import { useScoreActivityStore } from '@/stores/scoreActivityStore'
 import { useV3Store } from '@/stores/v3Store'
 import { Account } from '@/types/account'
 import { ScoreActivityTask } from '@/types/scoreActivity'
+import { KycDraft } from '@/types/kyc'
 import { emitTimelineEvent } from '@/utils/emitTimelineEvent'
 import { formatRelative } from '@/utils/formatters'
 
 export function KYCIntakeFlow({ account }: { account: Account }) {
   const user = useRole()
+  const { token } = useAuth()
   const drafts = useV3Store(state => state.onboardingDrafts)
   const addAccountKycIntakeDraft = useV3Store(state => state.addAccountKycIntakeDraft)
   const addTask = useScoreActivityStore(state => state.addTask)
   const [fileNames, setFileNames] = useState<string[]>([])
   const [extracting, setExtracting] = useState(false)
+  const [latestBackendDraft, setLatestBackendDraft] = useState<KycDraft | null>(null)
+  const [error, setError] = useState<string | null>(null)
   const accountDrafts = useMemo(
     () =>
       drafts
@@ -29,8 +35,25 @@ export function KYCIntakeFlow({ account }: { account: Account }) {
   async function runIntake() {
     const names = fileNames.length ? fileNames : [`${account.name} Project Charter.pdf`, `${account.name} Renewal SOW.pdf`]
     setExtracting(true)
-    await new Promise(resolve => window.setTimeout(resolve, 800))
-    const draftId = addAccountKycIntakeDraft(account, names, user.name)
+    setError(null)
+    let draftId = ''
+    try {
+      if (token) {
+        const draft = await createKycDraft(token, account.id, {
+          trigger_source: 'source_documents',
+          notes: `Charter/SOW intake file names: ${names.join(', ')}`,
+        })
+        setLatestBackendDraft(draft)
+        draftId = draft.id
+      } else {
+        await new Promise(resolve => window.setTimeout(resolve, 800))
+        draftId = addAccountKycIntakeDraft(account, names, user.name)
+      }
+    } catch (requestError) {
+      setError(requestError instanceof Error ? requestError.message : 'KYC intake failed')
+      setExtracting(false)
+      return
+    }
     const task: ScoreActivityTask = {
       id: `sat-kyc-${account.id}-${Date.now()}`,
       templateId: 'ai-kyc-intake',
@@ -70,6 +93,10 @@ export function KYCIntakeFlow({ account }: { account: Account }) {
     setFileNames([])
     toast.success('AI intake added and KYC update task created')
   }
+
+  const latestStatus = latestBackendDraft?.status ?? latestDraft?.status
+  const latestConfidence = latestBackendDraft?.confidence ?? latestDraft?.confidence
+  const latestCreatedAt = latestBackendDraft?.created_at ?? latestDraft?.createdAt
 
   return (
     <section className="tk-card overflow-hidden">
@@ -114,6 +141,11 @@ export function KYCIntakeFlow({ account }: { account: Account }) {
               </div>
             </div>
           </div>
+          {error ? (
+            <div className="mt-4 rounded-lg border border-rag-red/20 bg-rag-red/10 p-3 text-sm text-rag-red">
+              {error}
+            </div>
+          ) : null}
         </div>
 
         <aside className="p-5">
@@ -130,9 +162,9 @@ export function KYCIntakeFlow({ account }: { account: Account }) {
           </div>
           <div className="mt-5 rounded-lg border border-surface-border bg-surface-secondary p-3">
             <p className="text-xs font-semibold uppercase tracking-wider text-ink-secondary">Latest intake</p>
-            <p className="mt-1 text-sm font-semibold text-ink">{latestDraft ? latestDraft.status.replace(/_/g, ' ') : 'No intake yet'}</p>
+            <p className="mt-1 text-sm font-semibold text-ink">{latestStatus ? latestStatus.replace(/_/g, ' ') : 'No intake yet'}</p>
             <p className="mt-1 text-xs text-ink-secondary">
-              {latestDraft ? `${latestDraft.confidence}% confidence, ${formatRelative(latestDraft.createdAt)}` : 'Run intake to create a reviewable KYC draft.'}
+              {latestStatus && latestConfidence && latestCreatedAt ? `${latestConfidence}% confidence, ${formatRelative(latestCreatedAt)}` : 'Run intake to create a reviewable KYC draft.'}
             </p>
           </div>
         </aside>
