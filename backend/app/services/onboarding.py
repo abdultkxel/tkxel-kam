@@ -55,6 +55,7 @@ class OnboardingService:
         self.audit = AuditService(AuditRepository(db))
         self.timeline = TimelineService(TimelineRepository(db))
         self.custom_fields = CustomFieldService(db, CustomFieldRepository(db))
+        self.account_service = AccountService(db)
 
     def list_drafts(
         self,
@@ -479,7 +480,7 @@ class OnboardingService:
         if not account_id:
             return None
         account = self.accounts.get_by_id(account_id)
-        return AccountService._account_read(account) if account else None
+        return self.account_service._account_read(account) if account else None
 
     @staticmethod
     def _csv_row_result(

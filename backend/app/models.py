@@ -187,6 +187,9 @@ class Account(Base):
     ownership_history: Mapped[list["AccountOwnershipHistory"]] = relationship(back_populates="account", cascade="all, delete-orphan")
     engagements: Mapped[list["Engagement"]] = relationship(back_populates="account", cascade="all, delete-orphan")
     source_documents: Mapped[list["SourceDocument"]] = relationship(back_populates="account")
+    kyc_drafts: Mapped[list["KycDraft"]] = relationship(back_populates="account", cascade="all, delete-orphan")
+    kyc_snapshots: Mapped[list["KycSnapshot"]] = relationship(back_populates="account", cascade="all, delete-orphan")
+    kyc_agent_runs: Mapped[list["KycAgentRun"]] = relationship(back_populates="account", cascade="all, delete-orphan")
 
 
 class AccountOwner(Base):
@@ -337,6 +340,146 @@ class SourceCitation(Base):
     field_key: Mapped[str | None] = mapped_column(String(120), nullable=True)
 
     source_document: Mapped[SourceDocument] = relationship(back_populates="citations")
+
+
+class KycDraft(Base):
+    __tablename__ = "kyc_drafts"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid4()))
+    account_id: Mapped[str] = mapped_column(ForeignKey("accounts.id", ondelete="CASCADE"), index=True, nullable=False)
+    status: Mapped[str] = mapped_column(String(40), index=True, nullable=False, default="ready_for_review")
+    trigger_source: Mapped[str] = mapped_column(String(80), index=True, nullable=False, default="account_overview")
+    agent_run_id: Mapped[str | None] = mapped_column(ForeignKey("kyc_agent_runs.id", ondelete="SET NULL"), index=True, nullable=True)
+    previous_snapshot_id: Mapped[str | None] = mapped_column(ForeignKey("kyc_snapshots.id", ondelete="SET NULL"), index=True, nullable=True)
+    source_document_ids: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    research_sources: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    fields_json: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    citations_json: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    missing_fields: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    conflicts: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    difference_summary: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    source_context: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    confidence: Mapped[int] = mapped_column(Integer, nullable=False, default=75)
+    completeness: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    source_coverage: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    freshness_status: Mapped[str] = mapped_column(String(40), index=True, nullable=False, default="fresh")
+    low_confidence_acknowledged: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    conflicts_acknowledged: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    override_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    review_notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_by_id: Mapped[str | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    created_by_name: Mapped[str] = mapped_column(String(160), nullable=False)
+    reviewed_by_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    reviewed_by_name: Mapped[str | None] = mapped_column(String(160), nullable=True)
+    approved_by_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    approved_by_name: Mapped[str | None] = mapped_column(String(160), nullable=True)
+    rejected_by_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    rejected_by_name: Mapped[str | None] = mapped_column(String(160), nullable=True)
+    rejection_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    approved_snapshot_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utc_now, onupdate=utc_now)
+    decided_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    account: Mapped[Account] = relationship(back_populates="kyc_drafts")
+    agent_run: Mapped["KycAgentRun | None"] = relationship(back_populates="drafts")
+    previous_snapshot: Mapped["KycSnapshot | None"] = relationship(foreign_keys=[previous_snapshot_id])
+
+
+class KycSnapshot(Base):
+    __tablename__ = "kyc_snapshots"
+    __table_args__ = (UniqueConstraint("account_id", "version", name="uq_kyc_snapshots_account_version"),)
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid4()))
+    account_id: Mapped[str] = mapped_column(ForeignKey("accounts.id", ondelete="CASCADE"), index=True, nullable=False)
+    version: Mapped[int] = mapped_column(Integer, nullable=False)
+    source_draft_id: Mapped[str | None] = mapped_column(
+        ForeignKey("kyc_drafts.id", ondelete="SET NULL", use_alter=True, name="fk_kyc_snapshots_source_draft_id"),
+        index=True,
+        nullable=True,
+    )
+    extraction_run_id: Mapped[str | None] = mapped_column(ForeignKey("kyc_agent_runs.id", ondelete="SET NULL"), index=True, nullable=True)
+    approved_by_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    approved_by_name: Mapped[str] = mapped_column(String(160), nullable=False)
+    approved_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True, nullable=False, default=utc_now)
+    fields_json: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    citations_json: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    source_context: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    source_document_ids: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    research_sources: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    confidence: Mapped[int] = mapped_column(Integer, nullable=False, default=75)
+    completeness: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    source_coverage: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    freshness_status: Mapped[str] = mapped_column(String(40), index=True, nullable=False, default="fresh")
+    missing_fields: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    conflicts: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    change_summary: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utc_now)
+
+    account: Mapped[Account] = relationship(back_populates="kyc_snapshots")
+    source_draft: Mapped[KycDraft | None] = relationship(foreign_keys=[source_draft_id])
+    extraction_run: Mapped["KycAgentRun | None"] = relationship(foreign_keys=[extraction_run_id])
+
+
+class KycAgentRun(Base):
+    __tablename__ = "kyc_agent_runs"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid4()))
+    account_id: Mapped[str] = mapped_column(ForeignKey("accounts.id", ondelete="CASCADE"), index=True, nullable=False)
+    status: Mapped[str] = mapped_column(String(40), index=True, nullable=False, default="pending")
+    trigger_source: Mapped[str] = mapped_column(String(80), index=True, nullable=False, default="kyc_page")
+    previous_run_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    source_document_ids: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    research_sources: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    triggered_by_id: Mapped[str | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), index=True, nullable=True)
+    triggered_by_name: Mapped[str] = mapped_column(String(160), nullable=False)
+    error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utc_now, onupdate=utc_now)
+
+    account: Mapped[Account] = relationship(back_populates="kyc_agent_runs")
+    drafts: Mapped[list[KycDraft]] = relationship(back_populates="agent_run")
+    workstreams: Mapped[list["KycWorkstreamOutput"]] = relationship(back_populates="run", cascade="all, delete-orphan")
+
+
+class KycWorkstreamOutput(Base):
+    __tablename__ = "kyc_workstream_outputs"
+    __table_args__ = (UniqueConstraint("run_id", "workstream_key", name="uq_kyc_workstream_outputs_run_key"),)
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid4()))
+    run_id: Mapped[str] = mapped_column(ForeignKey("kyc_agent_runs.id", ondelete="CASCADE"), index=True, nullable=False)
+    account_id: Mapped[str] = mapped_column(ForeignKey("accounts.id", ondelete="CASCADE"), index=True, nullable=False)
+    workstream_key: Mapped[str] = mapped_column(String(80), index=True, nullable=False)
+    title: Mapped[str] = mapped_column(String(160), nullable=False)
+    status: Mapped[str] = mapped_column(String(40), index=True, nullable=False, default="pending")
+    sort_order: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    output_json: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    citations_json: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    missing_fields: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    confidence: Mapped[int] = mapped_column(Integer, nullable=False, default=75)
+    error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utc_now)
+
+    run: Mapped[KycAgentRun] = relationship(back_populates="workstreams")
+    account: Mapped[Account] = relationship()
+
+
+class KycConfiguration(Base):
+    __tablename__ = "kyc_configurations"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid4()))
+    name: Mapped[str] = mapped_column(String(120), unique=True, index=True, nullable=False, default="default")
+    required_field_keys: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    freshness_threshold_days: Mapped[int] = mapped_column(Integer, nullable=False, default=180)
+    low_confidence_threshold: Mapped[int] = mapped_column(Integer, nullable=False, default=70)
+    research_sources: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    updated_by_id: Mapped[str | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utc_now, onupdate=utc_now)
 
 
 class Engagement(Base):

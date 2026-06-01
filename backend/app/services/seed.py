@@ -2,7 +2,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.config import get_settings
-from app.models import User
+from app.models import KycConfiguration, User
 from app.rbac import DEFAULT_ROLES
 from app.security import hash_password
 from app.services.rbac import RbacService
@@ -15,7 +15,35 @@ def seed_default_data(db: Session) -> User:
     RbacService(db).seed_defaults()
     super_admin = seed_super_admin(db)
     seed_default_role_users(db)
+    seed_kyc_configuration(db)
     return super_admin
+
+
+def seed_kyc_configuration(db: Session) -> KycConfiguration:
+    from app.services.kyc import DEFAULT_RESEARCH_SOURCES, FIELD_CATALOG, FRESHNESS_THRESHOLD_DAYS, LOW_CONFIDENCE_THRESHOLD
+
+    existing = db.scalar(select(KycConfiguration).where(KycConfiguration.name == "default"))
+    required_field_keys = [field["key"] for field in FIELD_CATALOG if field.get("required", True)]
+    if existing:
+        existing.required_field_keys = required_field_keys
+        existing.freshness_threshold_days = existing.freshness_threshold_days or FRESHNESS_THRESHOLD_DAYS
+        existing.low_confidence_threshold = existing.low_confidence_threshold or LOW_CONFIDENCE_THRESHOLD
+        existing.research_sources = existing.research_sources or list(DEFAULT_RESEARCH_SOURCES)
+        db.commit()
+        db.refresh(existing)
+        return existing
+
+    configuration = KycConfiguration(
+        name="default",
+        required_field_keys=required_field_keys,
+        freshness_threshold_days=FRESHNESS_THRESHOLD_DAYS,
+        low_confidence_threshold=LOW_CONFIDENCE_THRESHOLD,
+        research_sources=list(DEFAULT_RESEARCH_SOURCES),
+    )
+    db.add(configuration)
+    db.commit()
+    db.refresh(configuration)
+    return configuration
 
 
 def seed_super_admin(db: Session) -> User:
