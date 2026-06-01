@@ -1,10 +1,17 @@
-from typing import Annotated
+from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, Query
 
 from app.dependencies import get_current_user, get_engagement_service
 from app.models import User
-from app.schemas import EngagementHealthPageRead, EngagementHealthRead, EngagementRead, EngagementUpdateRequest, MessageResponse
+from app.schemas import (
+    EngagementHealthPageRead,
+    EngagementHealthRead,
+    EngagementRead,
+    EngagementUpdateRequest,
+    MessageResponse,
+    TimelineEventPageRead,
+)
 from app.services.engagements import EngagementService
 
 router = APIRouter(prefix="/api/engagements", tags=["Engagement 360"])
@@ -27,6 +34,25 @@ def read_engagement(
     service: Annotated[EngagementService, Depends(get_engagement_service)],
 ) -> EngagementRead:
     return service.get_engagement(engagement_id, current_user)
+
+
+@router.get(
+    "/{engagement_id}/summary",
+    response_model=dict[str, Any],
+    summary="Read engagement summary",
+    description="Returns Engagement/SOW summary fields used by Account Overview and Engagement 360.",
+    responses={
+        401: {"description": "Missing, invalid, or expired bearer token."},
+        403: {"description": "Authenticated user cannot view this engagement summary."},
+        404: {"description": "Engagement was not found."},
+    },
+)
+def read_engagement_summary(
+    engagement_id: str,
+    current_user: Annotated[User, Depends(get_current_user)],
+    service: Annotated[EngagementService, Depends(get_engagement_service)],
+) -> dict[str, Any]:
+    return service.get_engagement_summary(engagement_id, current_user)
 
 
 @router.patch(
@@ -71,6 +97,27 @@ def archive_engagement(
 
 
 @router.get(
+    "/{engagement_id}/timeline",
+    response_model=TimelineEventPageRead,
+    summary="List engagement timeline",
+    description="Returns source-linked Engagement/SOW timeline events newest-first.",
+    responses={
+        401: {"description": "Missing, invalid, or expired bearer token."},
+        403: {"description": "Authenticated user cannot view this engagement timeline."},
+        404: {"description": "Engagement was not found."},
+    },
+)
+def list_timeline(
+    engagement_id: str,
+    current_user: Annotated[User, Depends(get_current_user)],
+    service: Annotated[EngagementService, Depends(get_engagement_service)],
+    page: Annotated[int, Query(ge=1, description="One-based page number.")] = 1,
+    page_size: Annotated[int, Query(ge=1, le=100, description="Number of timeline events per page.")] = 100,
+) -> TimelineEventPageRead:
+    return service.get_engagement_timeline(engagement_id, current_user, page=page, page_size=page_size)
+
+
+@router.get(
     "/{engagement_id}/health",
     response_model=EngagementHealthPageRead,
     summary="List engagement health history",
@@ -101,7 +148,7 @@ def list_health(
     "/{engagement_id}/health/recalculate",
     response_model=EngagementHealthRead,
     summary="Recalculate engagement health",
-    description="Creates a new engagement health snapshot and refreshes the account health rollup without mutating older snapshots.",
+    description="Creates a new engagement health snapshot and notifies the account health rollup adapter without mutating older snapshots.",
 )
 def recalculate_health(
     engagement_id: str,

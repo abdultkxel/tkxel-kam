@@ -6,6 +6,7 @@ interface ConfirmDialogProps {
   title: string
   description: string
   confirmLabel?: string
+  busyLabel?: string
   isBusy?: boolean
   onOpenChange: (open: boolean) => void
   onConfirm: () => void
@@ -16,6 +17,7 @@ export function ConfirmDialog({
   title,
   description,
   confirmLabel = 'Delete',
+  busyLabel = 'Deleting',
   isBusy = false,
   onOpenChange,
   onConfirm,
@@ -44,7 +46,7 @@ export function ConfirmDialog({
               Cancel
             </Dialog.Close>
             <button type="button" className="tk-button-primary bg-rag-red hover:bg-rag-red/90" onClick={onConfirm} disabled={isBusy}>
-              {isBusy ? 'Deleting' : confirmLabel}
+              {isBusy ? busyLabel : confirmLabel}
             </button>
           </div>
         </Dialog.Content>

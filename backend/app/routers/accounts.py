@@ -464,7 +464,7 @@ def create_engagement(
     "/{account_id}/health/rollup",
     response_model=AccountHealthRollupRead,
     summary="Read account health rollup",
-    description="Returns the latest account health rollup produced from engagement contribution scores.",
+    description="Returns the latest engagement health contribution rollup. Final account scoring is delegated to the scoring engine when available.",
     responses={
         401: {"description": "Missing, invalid, or expired bearer token."},
         403: {"description": "Authenticated user cannot view this account health rollup."},

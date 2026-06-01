@@ -133,6 +133,9 @@ class EngagementRepository:
         self.db.flush()
         return snapshot
 
+    def flush(self) -> None:
+        self.db.flush()
+
     def latest_health_snapshot(self, engagement_id: str) -> EngagementHealthSnapshot | None:
         return self.db.scalar(
             select(EngagementHealthSnapshot)
