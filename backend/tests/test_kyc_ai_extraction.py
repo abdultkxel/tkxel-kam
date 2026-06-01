@@ -1,0 +1,378 @@
+from collections.abc import Generator
+from dataclasses import replace
+
+import pytest
+from fastapi.testclient import TestClient
+from sqlalchemy import create_engine, select
+from sqlalchemy.orm import Session, sessionmaker
+from sqlalchemy.pool import StaticPool
+
+from app.database import Base, get_db
+from app.dependencies import get_kyc_service
+from app.main import app
+from app.models import AuditLog, KycSnapshot, TimelineEntry
+from app.services.kyc import KycService
+from app.services.kyc_gateway import DeterministicKycGatewayAdapter
+from app.services.seed import seed_default_data
+
+
+@pytest.fixture()
+def db_session() -> Generator[Session, None, None]:
+    engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+    TestingSessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False)
+    Base.metadata.create_all(bind=engine)
+
+    with TestingSessionLocal() as session:
+        seed_default_data(session)
+        yield session
+
+    Base.metadata.drop_all(bind=engine)
+
+
+@pytest.fixture()
+def client(db_session: Session) -> Generator[TestClient, None, None]:
+    def override_get_db() -> Generator[Session, None, None]:
+        yield db_session
+
+    app.dependency_overrides[get_db] = override_get_db
+    with TestClient(app) as test_client:
+        yield test_client
+    app.dependency_overrides.clear()
+
+
+def auth_headers(client: TestClient, email: str = "admin@tkxelkam.com", password: str = "Admin@12345") -> dict[str, str]:
+    response = client.post("/api/auth/login", json={"email": email, "password": password})
+    assert response.status_code == 200
+    return {"Authorization": f"Bearer {response.json()['access_token']}"}
+
+
+def seeded_user(client: TestClient, headers: dict[str, str], role: str) -> dict:
+    response = client.get("/api/admin/users", headers=headers, params={"role": role, "page": 1, "page_size": 1})
+    assert response.status_code == 200
+    return response.json()["items"][0]
+
+
+def onboarding_payload(account_name: str, owner_id: str) -> dict:
+    return {
+        "account_name": account_name,
+        "project_name": "KYC intelligence rollout",
+        "company_url": "https://customer.example.com",
+        "lifecycle_status": "Onboarding",
+        "segment": "Enterprise",
+        "region": "North America",
+        "service_context": "Modernization program with executive governance.",
+        "commercial_summary": "Monthly pod model with renewal review.",
+        "commercial_value": 240000,
+        "currency": "USD",
+        "primary_owner_id": owner_id,
+        "source_citation": "Project Charter p1: account and engagement scope.",
+        "source_documents": [
+            {
+                "title": "KYC Project Charter",
+                "source_type": "project_charter",
+                "file_name": "kyc-charter.pdf",
+                "confidence": 91,
+                "pages": 8,
+                "citations": [
+                    {"label": "Charter p1", "page_number": 1, "excerpt": "Executive governance and modernization scope.", "field_key": "project_charters"},
+                    {"label": "Charter p2", "page_number": 2, "excerpt": "Client strategy and stakeholder context.", "field_key": "strategy"},
+                ],
+            },
+            {
+                "title": "KYC Renewal SOW",
+                "source_type": "sow",
+                "file_name": "kyc-renewal-sow.pdf",
+                "extraction_status": "needs_review",
+                "confidence": 84,
+                "pages": 16,
+                "citations": [
+                    {"label": "SOW p6", "page_number": 6, "excerpt": "Renewal, notice window, billing model, and obligations.", "field_key": "renewal_cycle"},
+                    {"label": "SOW p7", "page_number": 7, "excerpt": "Support obligations and SLA language.", "field_key": "obligations"},
+                ],
+            },
+        ],
+        "engagement_drafts": [
+            {
+                "name": "KYC intelligence rollout",
+                "owner_id": owner_id,
+                "service_lines": ["Engineering", "Customer Success"],
+                "value": 240000,
+                "currency": "USD",
+                "delivery_status": "active",
+                "confidence": 88,
+                "start_date": "2026-05-30T00:00:00Z",
+                "end_date": "2026-11-30T00:00:00Z",
+                "renewal_date": "2026-11-30T00:00:00Z",
+                "notice_deadline": "2026-10-30T00:00:00Z",
+                "notice_period_days": 30,
+                "source_citation": "SOW p6: delivery and renewal terms.",
+            }
+        ],
+    }
+
+
+def create_account(client: TestClient, headers: dict[str, str], account_name: str) -> tuple[str, str]:
+    owner = seeded_user(client, headers, "account_manager")
+    draft_response = client.post("/api/onboarding/drafts", headers=headers, json=onboarding_payload(account_name, owner["id"]))
+    assert draft_response.status_code == 201
+    approve_response = client.post(f"/api/onboarding/drafts/{draft_response.json()['id']}/approve", headers=headers)
+    assert approve_response.status_code == 200
+    return approve_response.json()["approved_account_id"], owner["id"]
+
+
+def test_kyc_draft_approval_creates_snapshot_freshness_logs_and_search(client: TestClient, db_session: Session) -> None:
+    admin_headers = auth_headers(client)
+    account_id, _ = create_account(client, admin_headers, "KYC Northwind")
+    kam_headers = auth_headers(client, "kam.head.user@tkxelkam.com", "User@12345")
+
+    missing_freshness = client.get(f"/api/accounts/{account_id}/kyc/freshness", headers=kam_headers)
+    assert missing_freshness.status_code == 200
+    assert missing_freshness.json()["has_approved_snapshot"] is False
+
+    create_response = client.post(
+        f"/api/accounts/{account_id}/kyc/drafts",
+        headers=kam_headers,
+        json={"trigger_source": "account_overview", "notes": "Validate executive sponsor before sharing."},
+    )
+    assert create_response.status_code == 201
+    draft = create_response.json()
+    assert draft["status"] == "ready_for_review"
+    assert draft["ai_disclaimer"]
+    assert draft["confidence"] >= 70
+    assert draft["conflicts"]
+
+    list_response = client.get(
+        f"/api/accounts/{account_id}/kyc/drafts",
+        headers=kam_headers,
+        params={"search": "Competitor", "status": "ready_for_review", "sort": "confidence", "direction": "desc", "page": 1, "page_size": 1},
+    )
+    assert list_response.status_code == 200
+    assert list_response.json()["total"] == 1
+
+    approve_response = client.post(
+        f"/api/accounts/{account_id}/kyc/drafts/{draft['id']}/approve",
+        headers=kam_headers,
+        json={"conflicts_acknowledged": True, "low_confidence_acknowledged": True, "change_summary": ["Approved initial KYC baseline."]},
+    )
+    assert approve_response.status_code == 200
+    approved = approve_response.json()
+    assert approved["status"] == "approved"
+    assert approved["approved_snapshot_id"]
+
+    snapshots = client.get(f"/api/accounts/{account_id}/kyc/snapshots", headers=kam_headers, params={"search": "baseline", "source": "Trivoly", "page": 1, "page_size": 5})
+    assert snapshots.status_code == 200
+    assert snapshots.json()["total"] == 1
+    snapshot_id = snapshots.json()["items"][0]["id"]
+
+    snapshot = client.get(f"/api/accounts/{account_id}/kyc/snapshots/{snapshot_id}", headers=kam_headers)
+    assert snapshot.status_code == 200
+    assert snapshot.json()["version"] == 1
+    assert snapshot.json()["change_summary"] == ["Approved initial KYC baseline."]
+
+    freshness = client.get(f"/api/accounts/{account_id}/kyc/freshness", headers=kam_headers)
+    assert freshness.status_code == 200
+    assert freshness.json()["has_approved_snapshot"] is True
+    assert freshness.json()["freshness_status"] == "fresh"
+
+    account = client.get(f"/api/accounts/{account_id}", headers=kam_headers)
+    assert account.status_code == 200
+    assert account.json()["governance_completeness"]["current_kyc"] is True
+
+    assert db_session.scalar(select(KycSnapshot).where(KycSnapshot.id == snapshot_id)) is not None
+    assert db_session.scalar(select(AuditLog).where(AuditLog.entity_id == snapshot_id, AuditLog.action == "snapshot_create")) is not None
+    assert db_session.scalar(select(AuditLog).where(AuditLog.action == "kyc_ai_extraction")) is not None
+    assert db_session.scalar(select(TimelineEntry).where(TimelineEntry.source_record_id == snapshot_id, TimelineEntry.event_type == "kyc_approved")) is not None
+
+    openapi = client.get("/openapi.json")
+    assert openapi.status_code == 200
+    assert openapi.json()["paths"]["/api/accounts/{account_id}/kyc/drafts"]["post"]["summary"] == "Create KYC draft"
+
+
+def test_kyc_approval_validation_and_authorization_are_enforced(client: TestClient) -> None:
+    admin_headers = auth_headers(client)
+    account_id, _ = create_account(client, admin_headers, "KYC Validation")
+    kam_headers = auth_headers(client, "kam.head.user@tkxelkam.com", "User@12345")
+    am_headers = auth_headers(client, "account.manager.user@tkxelkam.com", "User@12345")
+
+    draft_response = client.post(f"/api/accounts/{account_id}/kyc/drafts", headers=kam_headers, json={"trigger_source": "manual"})
+    assert draft_response.status_code == 201
+    draft_id = draft_response.json()["id"]
+
+    update_response = client.patch(
+        f"/api/accounts/{account_id}/kyc/drafts/{draft_id}",
+        headers=kam_headers,
+        json={"fields": [{"key": "company_snapshot", "value": "", "reviewed": True}]},
+    )
+    assert update_response.status_code == 200
+    assert "Company snapshot" in update_response.json()["missing_fields"]
+
+    blocked = client.post(
+        f"/api/accounts/{account_id}/kyc/drafts/{draft_id}/approve",
+        headers=kam_headers,
+        json={"conflicts_acknowledged": True, "low_confidence_acknowledged": True},
+    )
+    assert blocked.status_code == 422
+    assert blocked.json()["detail"]["message"] == "KYC approval validation failed"
+
+    unauthorized = client.post(
+        f"/api/accounts/{account_id}/kyc/drafts/{draft_id}/approve",
+        headers=am_headers,
+        json={"conflicts_acknowledged": True, "low_confidence_acknowledged": True, "override_reason": "Authorized exception."},
+    )
+    assert unauthorized.status_code == 403
+
+    approved = client.post(
+        f"/api/accounts/{account_id}/kyc/drafts/{draft_id}/approve",
+        headers=kam_headers,
+        json={"conflicts_acknowledged": True, "low_confidence_acknowledged": True, "override_reason": "Company snapshot will be confirmed in next governance review."},
+    )
+    assert approved.status_code == 200
+    assert approved.json()["status"] == "approved"
+
+
+def test_kyc_agent_runs_support_partial_failure_refresh_filters_and_sensitive_masking(client: TestClient, db_session: Session) -> None:
+    class PartialGateway(DeterministicKycGatewayAdapter):
+        def run(self, request):  # noqa: ANN001, ANN201 - simple test double
+            return super().run(replace(request, research_sources=[*request.research_sources, "fail:financial_landscape"]))
+
+    admin_headers = auth_headers(client)
+    account_id, _ = create_account(client, admin_headers, "KYC Agent Runs")
+    kam_headers = auth_headers(client, "kam.head.user@tkxelkam.com", "User@12345")
+    am_headers = auth_headers(client, "account.manager.user@tkxelkam.com", "User@12345")
+
+    def override_kyc_service() -> KycService:
+        return KycService(db_session, gateway=PartialGateway())
+
+    app.dependency_overrides[get_kyc_service] = override_kyc_service
+    try:
+        run_response = client.post(f"/api/accounts/{account_id}/kyc/agent-runs", headers=kam_headers, json={"research_sources": ["Trivoly"]})
+    finally:
+        app.dependency_overrides.pop(get_kyc_service, None)
+    assert run_response.status_code == 201
+    run = run_response.json()
+    assert run["status"] == "partial"
+    assert any(workstream["workstream_key"] == "financial_landscape" and workstream["status"] == "failed" for workstream in run["workstreams"])
+
+    list_response = client.get(
+        f"/api/accounts/{account_id}/kyc/agent-runs",
+        headers=kam_headers,
+        params={"status": "partial", "workstream": "financial_landscape", "search": "architecture", "page": 1, "page_size": 1},
+    )
+    assert list_response.status_code == 200
+    assert list_response.json()["total"] == 1
+
+    refreshed = client.post(f"/api/accounts/{account_id}/kyc/agent-runs/{run['id']}/refresh", headers=kam_headers)
+    assert refreshed.status_code == 200
+    assert refreshed.json()["previous_run_id"] == run["id"]
+
+    draft_response = client.post(f"/api/accounts/{account_id}/kyc/drafts", headers=kam_headers, json={"trigger_source": "account_overview"})
+    assert draft_response.status_code == 201
+    draft_id = draft_response.json()["id"]
+
+    am_view = client.get(f"/api/accounts/{account_id}/kyc/drafts/{draft_id}", headers=am_headers)
+    assert am_view.status_code == 200
+    payment_field = next(field for field in am_view.json()["fields"] if field["key"] == "payment_behaviour")
+    assert payment_field["value"] == "Restricted KYC field"
+
+    restricted_update = client.patch(
+        f"/api/accounts/{account_id}/kyc/drafts/{draft_id}",
+        headers=am_headers,
+        json={"fields": [{"key": "payment_behaviour", "value": "Trying to overwrite hidden finance data."}]},
+    )
+    assert restricted_update.status_code == 403
+
+    kam_view = client.get(f"/api/accounts/{account_id}/kyc/drafts/{draft_id}", headers=kam_headers)
+    assert kam_view.status_code == 200
+    payment_field = next(field for field in kam_view.json()["fields"] if field["key"] == "payment_behaviour")
+    assert payment_field["value"] != "Restricted KYC field"
+
+
+def test_kyc_gateway_exception_creates_reviewable_failed_draft(client: TestClient, db_session: Session) -> None:
+    class FailingGateway:
+        def run(self, request):  # noqa: ANN001, ANN201 - simple test double
+            raise RuntimeError("provider timeout")
+
+    admin_headers = auth_headers(client)
+    account_id, _ = create_account(client, admin_headers, "KYC Gateway Failure")
+    kam_headers = auth_headers(client, "kam.head.user@tkxelkam.com", "User@12345")
+
+    def override_kyc_service() -> KycService:
+        return KycService(db_session, gateway=FailingGateway())
+
+    app.dependency_overrides[get_kyc_service] = override_kyc_service
+    try:
+        draft_response = client.post(f"/api/accounts/{account_id}/kyc/drafts", headers=kam_headers, json={"trigger_source": "account_overview"})
+    finally:
+        app.dependency_overrides.pop(get_kyc_service, None)
+
+    assert draft_response.status_code == 201
+    draft = draft_response.json()
+    assert draft["status"] == "ready_for_review"
+    assert draft["confidence"] == 0
+    assert "One or more AI KYC workstreams failed during extraction." in draft["conflicts"]
+    assert "Industry overview" in draft["missing_fields"]
+
+    run_response = client.get(f"/api/accounts/{account_id}/kyc/agent-runs/{draft['agent_run_id']}", headers=kam_headers)
+    assert run_response.status_code == 200
+    run = run_response.json()
+    assert run["status"] == "failed"
+    assert all(workstream["status"] == "failed" for workstream in run["workstreams"])
+    assert all("provider timeout" in workstream["error_message"] for workstream in run["workstreams"])
+
+    assert db_session.scalar(select(AuditLog).where(AuditLog.action == "kyc_ai_extraction")) is not None
+
+
+def test_kyc_reject_preserves_draft_and_requires_reason(client: TestClient) -> None:
+    admin_headers = auth_headers(client)
+    account_id, _ = create_account(client, admin_headers, "KYC Rejection")
+    kam_headers = auth_headers(client, "kam.head.user@tkxelkam.com", "User@12345")
+
+    draft_response = client.post(f"/api/accounts/{account_id}/kyc/drafts", headers=kam_headers, json={"trigger_source": "account_overview"})
+    assert draft_response.status_code == 201
+    draft_id = draft_response.json()["id"]
+
+    invalid_reject = client.post(f"/api/accounts/{account_id}/kyc/drafts/{draft_id}/reject", headers=kam_headers, json={"reason": ""})
+    assert invalid_reject.status_code == 422
+
+    rejected = client.post(f"/api/accounts/{account_id}/kyc/drafts/{draft_id}/reject", headers=kam_headers, json={"reason": "Needs finance stakeholder confirmation."})
+    assert rejected.status_code == 200
+    assert rejected.json()["status"] == "rejected"
+    assert rejected.json()["rejection_reason"] == "Needs finance stakeholder confirmation."
+
+    listed = client.get(f"/api/accounts/{account_id}/kyc/drafts", headers=kam_headers, params={"status": "rejected", "page": 1, "page_size": 10})
+    assert listed.status_code == 200
+    assert listed.json()["total"] == 1
+
+
+def test_kyc_configuration_requires_configure_permission_and_normalizes_sources(client: TestClient) -> None:
+    admin_headers = auth_headers(client)
+    kam_headers = auth_headers(client, "kam.head.user@tkxelkam.com", "User@12345")
+    am_headers = auth_headers(client, "account.manager.user@tkxelkam.com", "User@12345")
+
+    denied = client.get("/api/kyc/configuration", headers=am_headers)
+    assert denied.status_code == 403
+
+    config = client.get("/api/kyc/configuration", headers=kam_headers)
+    assert config.status_code == 200
+    assert "company_snapshot" in config.json()["required_field_keys"]
+    assert any(field["key"] == "gross_margins" and field["sensitive"] for field in config.json()["field_catalog"])
+
+    updated = client.patch(
+        "/api/kyc/configuration",
+        headers=kam_headers,
+        json={
+            "freshness_threshold_days": 120,
+            "low_confidence_threshold": 65,
+            "research_sources": ["Travoly", "ZoomInfo", "travoly"],
+            "required_field_keys": ["company_snapshot", "renewal_cycle"],
+        },
+    )
+    assert updated.status_code == 200
+    assert updated.json()["freshness_threshold_days"] == 120
+    assert updated.json()["research_sources"] == ["Trivoly", "ZoomInfo"]
+
+    invalid = client.patch("/api/kyc/configuration", headers=admin_headers, json={"required_field_keys": ["not_a_real_field"]})
+    assert invalid.status_code == 422
+
+    invalid_source = client.patch("/api/kyc/configuration", headers=admin_headers, json={"research_sources": ["UnapprovedSource"]})
+    assert invalid_source.status_code == 422
