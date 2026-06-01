@@ -149,7 +149,7 @@ export function CreateAccountDialog({ label = 'Create account' }: { label?: stri
       const account = await getAccount(token, approved.approvedAccountId)
       upsertAccount(account)
       setOpen(false)
-      toast.success('Account created. Complete KYC in Account Overview.')
+      toast.success('Account and initial engagement created. Complete KYC in Account Overview.')
       navigate(`/accounts/${account.id}`)
     } catch (error) {
       applyApiErrors(error)
@@ -211,7 +211,7 @@ export function CreateAccountDialog({ label = 'Create account' }: { label?: stri
               <p className="text-[10px] font-extrabold uppercase tracking-widest text-brand-blue">Account create flow</p>
               <Dialog.Title className="font-display text-2xl font-bold text-ink">Create account from SOW/charter</Dialog.Title>
               <Dialog.Description className="mt-1 text-sm text-ink-secondary">
-                Upload source documents to prefill the form. This step creates the account only; KYC stays inside Account Overview.
+                Upload source documents to prefill the form. This step creates the account and initial engagement; KYC stays inside Account Overview.
               </Dialog.Description>
             </div>
             <Dialog.Close className="tk-icon-button" aria-label="Close account create flow">
@@ -519,7 +519,6 @@ function mapApiField(field: string): CreateAccountField | undefined {
     primary_owner_name: 'managerName',
     primary_owner_email: 'managerEmail',
     source_citation: 'accountName',
-    'engagement_drafts.0.name': 'projectName',
   }
   return fieldMap[field]
 }

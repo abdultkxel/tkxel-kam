@@ -64,6 +64,7 @@ DEFAULT_ROLES: tuple[DefaultRole, ...] = (
             ("account_overview", LEADERSHIP_ACTIONS),
             ("engagement_sow_management", ("view", "create", "update", "delete", "assign", "export")),
             ("opportunity_management", CONFIG_ACTIONS),
+            ("kyc", ("view", "create", "update", "delete", "approve", "configure", "export")),
             ("client_education_content", CONFIG_ACTIONS),
             ("escalation_management", LEADERSHIP_ACTIONS),
             ("governance_reviews", LEADERSHIP_ACTIONS + ("configure",)),
@@ -126,6 +127,7 @@ DEFAULT_ROLES: tuple[DefaultRole, ...] = (
         permission_rules=tuple((module, LEADERSHIP_ACTIONS) for module in OPERATIONAL_MODULES)
         + (
             ("opportunity_management", LEADERSHIP_ACTIONS + ("configure",)),
+            ("kyc", ("configure",)),
             ("scoring_engine", CONFIG_ACTIONS),
             ("signals_attention", CONFIG_ACTIONS),
             ("playbooks_tasks_calendar", CONFIG_ACTIONS),

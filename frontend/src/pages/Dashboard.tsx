@@ -468,6 +468,7 @@ function AccountPortfolio({ rows }: { rows: ReturnType<typeof buildPortfolioRow>
               <th className="px-5 py-4">Status</th>
               <th className="px-5 py-4">Revenue</th>
               <th className="px-5 py-4">Trend</th>
+              <th className="px-5 py-4">KYC</th>
               <th className="px-5 py-4">Renewal</th>
               <th className="px-5 py-4">Next Gov.</th>
             </tr>
@@ -486,6 +487,11 @@ function AccountPortfolio({ rows }: { rows: ReturnType<typeof buildPortfolioRow>
                 </td>
                 <td className="px-5 py-4 font-semibold text-ink">{formatCompactCurrency(row.account.arr)}</td>
                 <td className="px-5 py-4">{row.trend}</td>
+                <td className="px-5 py-4">
+                  <span className={cn('rounded-full border px-2.5 py-1 text-[11px] font-semibold uppercase tracking-wider', row.kycCurrent ? 'border-rag-green/20 bg-rag-green/10 text-rag-green' : 'border-brand-orange/20 bg-brand-orange/10 text-brand-orange')}>
+                    {row.kycCurrent ? 'Current' : 'Stale'}
+                  </span>
+                </td>
                 <td className={cn('px-5 py-4 font-semibold', row.renewalDays < 30 ? 'text-brand-orange' : row.renewalDays < 0 ? 'text-rag-red' : 'text-ink-secondary')}>
                   {row.renewalDays < 0 ? `${Math.abs(row.renewalDays)}d overdue` : `${row.renewalDays}d`}
                 </td>
@@ -823,6 +829,7 @@ function buildPortfolioRow(account: Account, governanceEvents: GovernanceEventRe
   return {
     account,
     motion: isGrowthAccount(account) ? 'Growth' : 'Retention',
+    kycCurrent: !account.risks.some(risk => /current kyc|stale kyc|kyc .*incomplete/i.test(risk)),
     renewalDays,
     nextGovernance: nextGovernance?.date ?? account.nextQbr,
     trend: <TrendIcon className={cn('h-5 w-5', trendClass)} />,

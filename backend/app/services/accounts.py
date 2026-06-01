@@ -1,4 +1,4 @@
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from fastapi import HTTPException, status
 from sqlalchemy.orm import Session
@@ -6,6 +6,7 @@ from sqlalchemy.orm import Session
 from app.models import Account, AccountOwner, AccountOwnershipHistory, SourceCitation, SourceDocument, User
 from app.repositories.accounts import AccountRepository
 from app.repositories.audit import AuditRepository
+from app.repositories.kyc import KycRepository
 from app.repositories.rbac import RbacRepository
 from app.repositories.timeline import TimelineRepository
 from app.schemas import (
@@ -34,6 +35,7 @@ from app.services.user_management import page_count
 class AccountService:
     def __init__(self, db: Session) -> None:
         self.accounts = AccountRepository(db)
+        self.kyc = KycRepository(db)
         self.access = AccountAccessService(self.accounts, RbacRepository(db))
         self.audit = AuditService(AuditRepository(db))
         self.timeline = TimelineService(TimelineRepository(db))
@@ -63,6 +65,7 @@ class AccountService:
         self.access.require_module_permission(current_user, "account_overview", "view")
         if current_user.role in {"account_manager", "am"}:
             primary_am = current_user.id
+        kyc_configuration = self.kyc.get_configuration()
 
         accounts, total = self.accounts.list_accounts(
             search=search,
@@ -75,6 +78,8 @@ class AccountService:
             ops_lead=ops_lead,
             leadership_sponsor=leadership_sponsor,
             missing_am=missing_am,
+            missing_current_kyc=missing_current_kyc,
+            kyc_freshness_threshold_days=kyc_configuration.freshness_threshold_days if kyc_configuration else 180,
             missing_engagements=missing_engagements,
             missing_next_governance=missing_next_governance,
             sort=sort,
@@ -83,8 +88,6 @@ class AccountService:
             page_size=page_size,
         )
         visible = [account for account in accounts if self.access.can_view_account(current_user, account)]
-        if missing_current_kyc is True:
-            visible = [account for account in visible if account.lifecycle_status == "Active"]
         return AccountPageRead(
             items=[self._account_read(account) for account in visible],
             total=total,
@@ -434,8 +437,7 @@ class AccountService:
             source_record_route=f"/accounts/{account.id}",
         )
 
-    @staticmethod
-    def _account_read(account: Account) -> AccountRead:
+    def _account_read(self, account: Account) -> AccountRead:
         owners = [AccountOwnerRead.model_validate(owner) for owner in account.owners if owner.is_active]
         primary = next((owner for owner in owners if owner.ownership_role == "primary_am"), None)
         return AccountRead(
@@ -468,11 +470,20 @@ class AccountService:
             owners=owners,
             governance_completeness={
                 "accountable_am": primary is not None,
-                "current_kyc": False,
+                "current_kyc": self._has_current_kyc(account),
                 "engagement_records": bool(account.engagements),
                 "next_governance": account.next_governance_at is not None,
             },
         )
+
+    def _has_current_kyc(self, account: Account) -> bool:
+        if not account.kyc_snapshots:
+            return False
+        configuration = self.kyc.get_configuration()
+        threshold_days = configuration.freshness_threshold_days if configuration else 180
+        latest = max(account.kyc_snapshots, key=lambda snapshot: snapshot.approved_at)
+        approved_at = latest.approved_at.replace(tzinfo=timezone.utc) if latest.approved_at.tzinfo is None else latest.approved_at.astimezone(timezone.utc)
+        return datetime.now(timezone.utc) < approved_at + timedelta(days=threshold_days)
 
     def _summary_cards(self, account: Account) -> AccountSummaryCardsRead:
         return AccountSummaryCardsRead(

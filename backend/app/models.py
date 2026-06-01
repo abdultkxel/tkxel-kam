@@ -1,7 +1,19 @@
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from uuid import uuid4
 
-from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Integer, JSON, Numeric, String, Text, UniqueConstraint
+from sqlalchemy import (
+    Boolean,
+    DateTime,
+    Float,
+    ForeignKey,
+    Integer,
+    JSON,
+    Numeric,
+    String,
+    Text,
+    UniqueConstraint,
+    false,
+)
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database import Base
@@ -9,6 +21,17 @@ from app.database import Base
 
 def utc_now() -> datetime:
     return datetime.now(timezone.utc)
+
+
+def calendar_days_until(value: date | datetime | None) -> int | None:
+    if value is None:
+        return None
+    value_tzinfo = value.tzinfo if isinstance(value, datetime) else timezone.utc
+    now = datetime.now(value_tzinfo or timezone.utc)
+    if isinstance(value, datetime) and value.tzinfo is None:
+        now = now.replace(tzinfo=None)
+    target_date = value.date() if isinstance(value, datetime) else value
+    return (target_date - now.date()).days
 
 
 class User(Base):
@@ -166,6 +189,9 @@ class Account(Base):
     source_documents: Mapped[list["SourceDocument"]] = relationship(back_populates="account")
     governance_events: Mapped[list["GovernanceEvent"]] = relationship(back_populates="account", cascade="all, delete-orphan")
     opportunities: Mapped[list["Opportunity"]] = relationship(back_populates="account", cascade="all, delete-orphan")
+    kyc_drafts: Mapped[list["KycDraft"]] = relationship(back_populates="account", cascade="all, delete-orphan")
+    kyc_snapshots: Mapped[list["KycSnapshot"]] = relationship(back_populates="account", cascade="all, delete-orphan")
+    kyc_agent_runs: Mapped[list["KycAgentRun"]] = relationship(back_populates="account", cascade="all, delete-orphan")
 
 
 class AccountOwner(Base):
@@ -318,32 +344,179 @@ class SourceCitation(Base):
     source_document: Mapped[SourceDocument] = relationship(back_populates="citations")
 
 
+class KycDraft(Base):
+    __tablename__ = "kyc_drafts"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid4()))
+    account_id: Mapped[str] = mapped_column(ForeignKey("accounts.id", ondelete="CASCADE"), index=True, nullable=False)
+    status: Mapped[str] = mapped_column(String(40), index=True, nullable=False, default="ready_for_review")
+    trigger_source: Mapped[str] = mapped_column(String(80), index=True, nullable=False, default="account_overview")
+    agent_run_id: Mapped[str | None] = mapped_column(ForeignKey("kyc_agent_runs.id", ondelete="SET NULL"), index=True, nullable=True)
+    previous_snapshot_id: Mapped[str | None] = mapped_column(ForeignKey("kyc_snapshots.id", ondelete="SET NULL"), index=True, nullable=True)
+    source_document_ids: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    research_sources: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    fields_json: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    citations_json: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    missing_fields: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    conflicts: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    difference_summary: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    source_context: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    confidence: Mapped[int] = mapped_column(Integer, nullable=False, default=75)
+    completeness: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    source_coverage: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    freshness_status: Mapped[str] = mapped_column(String(40), index=True, nullable=False, default="fresh")
+    low_confidence_acknowledged: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    conflicts_acknowledged: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    override_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    review_notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_by_id: Mapped[str | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    created_by_name: Mapped[str] = mapped_column(String(160), nullable=False)
+    reviewed_by_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    reviewed_by_name: Mapped[str | None] = mapped_column(String(160), nullable=True)
+    approved_by_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    approved_by_name: Mapped[str | None] = mapped_column(String(160), nullable=True)
+    rejected_by_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    rejected_by_name: Mapped[str | None] = mapped_column(String(160), nullable=True)
+    rejection_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    approved_snapshot_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utc_now, onupdate=utc_now)
+    decided_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    account: Mapped[Account] = relationship(back_populates="kyc_drafts")
+    agent_run: Mapped["KycAgentRun | None"] = relationship(back_populates="drafts")
+    previous_snapshot: Mapped["KycSnapshot | None"] = relationship(foreign_keys=[previous_snapshot_id])
+
+
+class KycSnapshot(Base):
+    __tablename__ = "kyc_snapshots"
+    __table_args__ = (UniqueConstraint("account_id", "version", name="uq_kyc_snapshots_account_version"),)
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid4()))
+    account_id: Mapped[str] = mapped_column(ForeignKey("accounts.id", ondelete="CASCADE"), index=True, nullable=False)
+    version: Mapped[int] = mapped_column(Integer, nullable=False)
+    source_draft_id: Mapped[str | None] = mapped_column(
+        ForeignKey("kyc_drafts.id", ondelete="SET NULL", use_alter=True, name="fk_kyc_snapshots_source_draft_id"),
+        index=True,
+        nullable=True,
+    )
+    extraction_run_id: Mapped[str | None] = mapped_column(ForeignKey("kyc_agent_runs.id", ondelete="SET NULL"), index=True, nullable=True)
+    approved_by_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    approved_by_name: Mapped[str] = mapped_column(String(160), nullable=False)
+    approved_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True, nullable=False, default=utc_now)
+    fields_json: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    citations_json: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    source_context: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    source_document_ids: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    research_sources: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    confidence: Mapped[int] = mapped_column(Integer, nullable=False, default=75)
+    completeness: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    source_coverage: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    freshness_status: Mapped[str] = mapped_column(String(40), index=True, nullable=False, default="fresh")
+    missing_fields: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    conflicts: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    change_summary: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utc_now)
+
+    account: Mapped[Account] = relationship(back_populates="kyc_snapshots")
+    source_draft: Mapped[KycDraft | None] = relationship(foreign_keys=[source_draft_id])
+    extraction_run: Mapped["KycAgentRun | None"] = relationship(foreign_keys=[extraction_run_id])
+
+
+class KycAgentRun(Base):
+    __tablename__ = "kyc_agent_runs"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid4()))
+    account_id: Mapped[str] = mapped_column(ForeignKey("accounts.id", ondelete="CASCADE"), index=True, nullable=False)
+    status: Mapped[str] = mapped_column(String(40), index=True, nullable=False, default="pending")
+    trigger_source: Mapped[str] = mapped_column(String(80), index=True, nullable=False, default="kyc_page")
+    previous_run_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    source_document_ids: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    research_sources: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    triggered_by_id: Mapped[str | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), index=True, nullable=True)
+    triggered_by_name: Mapped[str] = mapped_column(String(160), nullable=False)
+    error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utc_now, onupdate=utc_now)
+
+    account: Mapped[Account] = relationship(back_populates="kyc_agent_runs")
+    drafts: Mapped[list[KycDraft]] = relationship(back_populates="agent_run")
+    workstreams: Mapped[list["KycWorkstreamOutput"]] = relationship(back_populates="run", cascade="all, delete-orphan")
+
+
+class KycWorkstreamOutput(Base):
+    __tablename__ = "kyc_workstream_outputs"
+    __table_args__ = (UniqueConstraint("run_id", "workstream_key", name="uq_kyc_workstream_outputs_run_key"),)
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid4()))
+    run_id: Mapped[str] = mapped_column(ForeignKey("kyc_agent_runs.id", ondelete="CASCADE"), index=True, nullable=False)
+    account_id: Mapped[str] = mapped_column(ForeignKey("accounts.id", ondelete="CASCADE"), index=True, nullable=False)
+    workstream_key: Mapped[str] = mapped_column(String(80), index=True, nullable=False)
+    title: Mapped[str] = mapped_column(String(160), nullable=False)
+    status: Mapped[str] = mapped_column(String(40), index=True, nullable=False, default="pending")
+    sort_order: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    output_json: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    citations_json: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    missing_fields: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    confidence: Mapped[int] = mapped_column(Integer, nullable=False, default=75)
+    error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utc_now)
+
+    run: Mapped[KycAgentRun] = relationship(back_populates="workstreams")
+    account: Mapped[Account] = relationship()
+
+
+class KycConfiguration(Base):
+    __tablename__ = "kyc_configurations"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid4()))
+    name: Mapped[str] = mapped_column(String(120), unique=True, index=True, nullable=False, default="default")
+    required_field_keys: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    freshness_threshold_days: Mapped[int] = mapped_column(Integer, nullable=False, default=180)
+    low_confidence_threshold: Mapped[int] = mapped_column(Integer, nullable=False, default=70)
+    research_sources: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    updated_by_id: Mapped[str | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utc_now, onupdate=utc_now)
+
+
 class Engagement(Base):
     __tablename__ = "engagements"
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid4()))
     account_id: Mapped[str] = mapped_column(ForeignKey("accounts.id", ondelete="CASCADE"), index=True, nullable=False)
     name: Mapped[str] = mapped_column(String(180), index=True, nullable=False)
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
     status: Mapped[str] = mapped_column(String(80), index=True, nullable=False, default="active")
     owner_id: Mapped[str | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), index=True, nullable=True)
     owner_name: Mapped[str] = mapped_column(String(160), nullable=False)
     ops_lead_id: Mapped[str | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), index=True, nullable=True)
     ops_lead_name: Mapped[str | None] = mapped_column(String(160), nullable=True)
     service_lines: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    source_links: Mapped[list] = mapped_column(JSON, nullable=False, default=list, server_default="[]")
     value: Mapped[float] = mapped_column(Numeric(14, 2), nullable=False, default=0)
     currency: Mapped[str] = mapped_column(String(3), nullable=False, default="USD")
     delivery_status: Mapped[str] = mapped_column(String(80), index=True, nullable=False, default="active")
+    commercial_status: Mapped[str] = mapped_column(String(40), index=True, nullable=False, default="watch", server_default="watch")
     delivery_health: Mapped[int] = mapped_column(Integer, nullable=False, default=70)
+    health_status: Mapped[str] = mapped_column(String(40), index=True, nullable=False, default="unknown", server_default="unknown")
+    renewal_risk: Mapped[str] = mapped_column(String(40), index=True, nullable=False, default="unknown", server_default="unknown")
     start_date: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     end_date: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     renewal_date: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     notice_deadline: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     notice_period_days: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    auto_renewal: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    auto_renewal: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default=false())
     commercial_context: Mapped[str | None] = mapped_column(Text, nullable=True)
     resource_dependency: Mapped[str | None] = mapped_column(Text, nullable=True)
     risks: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
     source_citation: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_by_id: Mapped[str | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    updated_by_id: Mapped[str | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utc_now)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utc_now, onupdate=utc_now)
     archived_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
@@ -353,6 +526,66 @@ class Engagement(Base):
     health_snapshots: Mapped[list["EngagementHealthSnapshot"]] = relationship(back_populates="engagement", cascade="all, delete-orphan")
     governance_events: Mapped[list["GovernanceEvent"]] = relationship(back_populates="engagement")
     opportunities: Mapped[list["Opportunity"]] = relationship(back_populates="engagement")
+
+    @property
+    def source_document_ids(self) -> list[str]:
+        return [document.id for document in self.source_documents]
+
+    @property
+    def contract_value(self) -> float:
+        return float(self.value)
+
+    @contract_value.setter
+    def contract_value(self, value: float) -> None:
+        self.value = value
+
+    @property
+    def health_score(self) -> int:
+        return self.delivery_health
+
+    @health_score.setter
+    def health_score(self, value: int) -> None:
+        self.delivery_health = value
+
+    @property
+    def resource_dependency_notes(self) -> str | None:
+        return self.resource_dependency
+
+    @resource_dependency_notes.setter
+    def resource_dependency_notes(self, value: str | None) -> None:
+        self.resource_dependency = value
+
+    @property
+    def days_to_expiry(self) -> int | None:
+        return calendar_days_until(self.end_date)
+
+    @property
+    def renewal_status(self) -> str:
+        days_to_expiry = self.days_to_expiry
+        if days_to_expiry is None:
+            return "unknown"
+        if days_to_expiry < 0:
+            return "expired"
+
+        days_to_renewal = calendar_days_until(self.renewal_date)
+        if days_to_renewal is not None and days_to_renewal <= 30:
+            return "renewal_due"
+
+        days_to_notice = calendar_days_until(self.notice_deadline)
+        if days_to_notice is not None and days_to_notice <= 30:
+            return "notice_due"
+        if days_to_notice is not None and days_to_notice <= 90:
+            return "upcoming_notice_window"
+
+        return "not_due"
+
+    @property
+    def created_by(self) -> str | None:
+        return self.created_by_id
+
+    @property
+    def updated_by(self) -> str | None:
+        return self.updated_by_id
 
 
 class OpportunityType(Base):

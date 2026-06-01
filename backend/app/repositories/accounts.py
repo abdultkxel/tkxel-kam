@@ -1,9 +1,9 @@
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import and_, func, or_, select
 from sqlalchemy.orm import Session, selectinload
 
-from app.models import Account, AccountOwner, AccountOwnershipHistory, Opportunity, SourceCitation, SourceDocument, User
+from app.models import Account, AccountOwner, AccountOwnershipHistory, KycSnapshot, Opportunity, SourceCitation, SourceDocument, User
 
 
 class AccountRepository:
@@ -23,6 +23,8 @@ class AccountRepository:
         ops_lead: str | None = None,
         leadership_sponsor: str | None = None,
         missing_am: bool | None = None,
+        missing_current_kyc: bool | None = None,
+        kyc_freshness_threshold_days: int = 180,
         missing_engagements: bool | None = None,
         missing_next_governance: bool | None = None,
         sort: str = "name",
@@ -41,6 +43,8 @@ class AccountRepository:
             ops_lead=ops_lead,
             leadership_sponsor=leadership_sponsor,
             missing_am=missing_am,
+            missing_current_kyc=missing_current_kyc,
+            kyc_freshness_threshold_days=kyc_freshness_threshold_days,
             missing_engagements=missing_engagements,
             missing_next_governance=missing_next_governance,
         )
@@ -74,7 +78,7 @@ class AccountRepository:
             self.db.scalars(
                 select(Account)
                 .where(*conditions)
-                .options(selectinload(Account.owners), selectinload(Account.engagements))
+                .options(selectinload(Account.owners), selectinload(Account.engagements), selectinload(Account.kyc_snapshots))
                 .order_by(order_column, Account.name)
                 .offset((page - 1) * page_size)
                 .limit(page_size)
@@ -89,6 +93,7 @@ class AccountRepository:
             .options(
                 selectinload(Account.owners),
                 selectinload(Account.engagements),
+                selectinload(Account.kyc_snapshots),
                 selectinload(Account.source_documents).selectinload(SourceDocument.citations),
             )
         )
@@ -272,6 +277,8 @@ class AccountRepository:
         ops_lead: str | None,
         leadership_sponsor: str | None,
         missing_am: bool | None,
+        missing_current_kyc: bool | None,
+        kyc_freshness_threshold_days: int,
         missing_engagements: bool | None,
         missing_next_governance: bool | None,
     ) -> list:
@@ -315,6 +322,9 @@ class AccountRepository:
                 )
         if missing_am is True:
             conditions.append(~Account.owners.any(and_(AccountOwner.ownership_role == "primary_am", AccountOwner.is_active.is_(True))))
+        if missing_current_kyc is True:
+            fresh_cutoff = datetime.now(timezone.utc) - timedelta(days=kyc_freshness_threshold_days)
+            conditions.append(~Account.kyc_snapshots.any(KycSnapshot.approved_at > fresh_cutoff))
         if missing_engagements is True:
             conditions.append(~Account.engagements.any())
         if missing_next_governance is True:
