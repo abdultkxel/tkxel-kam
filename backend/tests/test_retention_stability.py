@@ -37,7 +37,7 @@ def client(db_session: Session) -> Generator[TestClient, None, None]:
     app.dependency_overrides.clear()
 
 
-def auth_headers(client: TestClient, email: str = "admin@tkxelkam.com", password: str = "Admin@12345") -> dict[str, str]:
+def auth_headers(client: TestClient, email: str = "admin@tkxel.com", password: str = "Admin@12345") -> dict[str, str]:
     response = client.post("/api/auth/login", json={"email": email, "password": password})
     assert response.status_code == 200
     return {"Authorization": f"Bearer {response.json()['access_token']}"}
@@ -285,11 +285,11 @@ def test_retention_validation_errors(client: TestClient, db_session: Session) ->
 
 
 def test_retention_authorization_and_commercial_limited_update(client: TestClient, db_session: Session) -> None:
-    leadership_headers = auth_headers(client, "leadership.viewer.user@tkxelkam.com", "User@12345")
+    leadership_headers = auth_headers(client, "leadership.viewer.user@tkxel.com", "User@12345")
     denied = client.patch("/api/engagements/eng-renewal/renewal", headers=leadership_headers, json={"confidence": 90})
     assert denied.status_code == 403
 
-    commercial_headers = auth_headers(client, "commercial.stakeholder.user@tkxelkam.com", "User@12345")
+    commercial_headers = auth_headers(client, "commercial.stakeholder.user@tkxel.com", "User@12345")
     allowed = client.patch(
         "/api/engagements/eng-renewal/renewal",
         headers=commercial_headers,

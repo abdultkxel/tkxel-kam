@@ -857,8 +857,13 @@ function mapApiCalendarItem(item: CalendarItem): UnifiedCalendarItem {
         type: governanceType(item.title),
         date: item.date,
         agenda: item.detail,
+        attendeeEmails: [],
         attendees: [],
+        actionItemRecords: [],
         actionItems: [],
+        notes: [],
+        decisions: [],
+        generatedOutputs: [],
         status: item.status === 'completed' ? 'completed' : new Date(item.date) < new Date() ? 'overdue' : 'upcoming',
       },
     }
