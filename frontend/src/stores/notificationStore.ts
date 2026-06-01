@@ -13,6 +13,7 @@ const triggers: NotificationTrigger[] = [
   'sensitive_access_request',
   'integration_error',
   'retention_job_complete',
+  'governance_overdue',
 ]
 
 interface NotificationStore {
@@ -52,6 +53,7 @@ export const useNotificationStore = create<NotificationStore>((set, get) => ({
   addNotification: notification => {
     const preference = get().preferences.find(item => item.trigger === notification.trigger)
     if (preference?.mode === 'off') return
+    if (notification.sourceKey && get().notifications.some(item => item.trigger === notification.trigger && item.userId === notification.userId && item.sourceKey === notification.sourceKey)) return
     const target = users.find(user => user.id === notification.userId)
     set(state => ({
       notifications: [

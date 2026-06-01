@@ -1,4 +1,5 @@
 import * as Dialog from '@radix-ui/react-dialog'
+import { useEffect } from 'react'
 import { Outlet } from 'react-router-dom'
 import { Toaster } from 'sonner'
 import { AddNoteModal } from '@/components/timeline/AddNoteModal'
@@ -7,7 +8,12 @@ import { MobileNav } from '@/components/layout/MobileNav'
 import { Sidebar } from '@/components/layout/Sidebar'
 import { Topbar } from '@/components/layout/Topbar'
 import { V4AmbientScene } from '@/components/layout/V4AmbientScene'
+import { useAuth } from '@/contexts/AuthContext'
 import { useKeyboardShortcuts } from '@/hooks/useKeyboardShortcuts'
+import { listAccounts } from '@/services/accountWorkspace'
+import { useAccountStore } from '@/stores/accountStore'
+import { useGovernanceStore } from '@/stores/governanceStore'
+import { useNotificationStore } from '@/stores/notificationStore'
 import { useUIStore } from '@/stores/uiStore'
 
 export function AppShell() {
@@ -17,6 +23,60 @@ export function AppShell() {
   const noteOpen = useUIStore(state => state.globalNoteOpen)
   const setNoteOpen = useUIStore(state => state.setGlobalNoteOpen)
   const activeAccountId = useUIStore(state => state.activeAccountId)
+  const { token, user } = useAuth()
+  const setAccounts = useAccountStore(state => state.setAccounts)
+  const setAccountsLoading = useAccountStore(state => state.setAccountsLoading)
+  const setAccountsError = useAccountStore(state => state.setAccountsError)
+  const governanceEvents = useGovernanceStore(state => state.events)
+  const loadGovernanceEvents = useGovernanceStore(state => state.loadEvents)
+  const addNotification = useNotificationStore(state => state.addNotification)
+
+  useEffect(() => {
+    if (token) void loadGovernanceEvents(token, { pageSize: 100, sort: 'event_date', direction: 'asc' })
+  }, [loadGovernanceEvents, token])
+
+  useEffect(() => {
+    if (!token) return
+    const query = new URLSearchParams()
+    query.set('sort', 'name')
+    query.set('direction', 'asc')
+    query.set('page', '1')
+    query.set('page_size', '100')
+
+    let active = true
+    setAccountsLoading(true)
+    listAccounts(token, query)
+      .then(result => {
+        if (active) setAccounts(result.items)
+      })
+      .catch(err => {
+        if (!active) return
+        setAccounts([])
+        setAccountsError(err instanceof Error ? err.message : 'Unable to load accounts')
+      })
+
+    return () => {
+      active = false
+    }
+  }, [setAccounts, setAccountsError, setAccountsLoading, token])
+
+  useEffect(() => {
+    if (!user) return
+    governanceEvents
+      .filter(event => event.ownerId === user.id && event.status === 'overdue')
+      .forEach(event => {
+        addNotification({
+          userId: event.ownerId,
+          trigger: 'governance_overdue',
+          sentence: `${event.type} is overdue for ${event.accountName}`,
+          accountId: event.accountId,
+          accountName: event.accountName,
+          contentPreview: event.agenda,
+          route: `/accounts/${event.accountId}?tab=governance`,
+          sourceKey: event.id,
+        })
+      })
+  }, [addNotification, governanceEvents, user])
 
   return (
     <div className="v4-shell text-ink">

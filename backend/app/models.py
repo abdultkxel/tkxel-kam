@@ -187,6 +187,7 @@ class Account(Base):
     ownership_history: Mapped[list["AccountOwnershipHistory"]] = relationship(back_populates="account", cascade="all, delete-orphan")
     engagements: Mapped[list["Engagement"]] = relationship(back_populates="account", cascade="all, delete-orphan")
     source_documents: Mapped[list["SourceDocument"]] = relationship(back_populates="account")
+    governance_events: Mapped[list["GovernanceEvent"]] = relationship(back_populates="account", cascade="all, delete-orphan")
     kyc_drafts: Mapped[list["KycDraft"]] = relationship(back_populates="account", cascade="all, delete-orphan")
     kyc_snapshots: Mapped[list["KycSnapshot"]] = relationship(back_populates="account", cascade="all, delete-orphan")
     kyc_agent_runs: Mapped[list["KycAgentRun"]] = relationship(back_populates="account", cascade="all, delete-orphan")
@@ -522,6 +523,7 @@ class Engagement(Base):
     account: Mapped[Account] = relationship(back_populates="engagements")
     source_documents: Mapped[list[SourceDocument]] = relationship(back_populates="engagement")
     health_snapshots: Mapped[list["EngagementHealthSnapshot"]] = relationship(back_populates="engagement", cascade="all, delete-orphan")
+    governance_events: Mapped[list["GovernanceEvent"]] = relationship(back_populates="engagement")
 
     @property
     def source_document_ids(self) -> list[str]:
@@ -838,8 +840,8 @@ class GovernanceEvent(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utc_now)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utc_now, onupdate=utc_now)
 
-    account: Mapped[Account | None] = relationship()
-    engagement: Mapped[Engagement | None] = relationship()
+    account: Mapped[Account | None] = relationship(back_populates="governance_events")
+    engagement: Mapped[Engagement | None] = relationship(back_populates="governance_events")
     recurrence_rule: Mapped[GovernanceRecurrenceRule | None] = relationship()
     decisions: Mapped[list["GovernanceDecision"]] = relationship(back_populates="event", cascade="all, delete-orphan")
     action_items: Mapped[list["GovernanceActionItem"]] = relationship(back_populates="event", cascade="all, delete-orphan")
@@ -868,6 +870,7 @@ class GovernanceActionItem(Base):
     title: Mapped[str] = mapped_column(String(220), nullable=False)
     owner_id: Mapped[str | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), index=True, nullable=True)
     owner_name: Mapped[str] = mapped_column(String(160), nullable=False)
+    owner_email: Mapped[str | None] = mapped_column(String(255), nullable=True)
     due_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True, nullable=False)
     status: Mapped[str] = mapped_column(String(40), index=True, nullable=False, default="open")
     priority: Mapped[str] = mapped_column(String(40), index=True, nullable=False, default="medium")

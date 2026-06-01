@@ -4,10 +4,13 @@ import type { LucideIcon } from 'lucide-react'
 import { FormEvent, useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { toast } from 'sonner'
+import { AddGovernanceEventDialog } from '@/components/governance/AddGovernanceEventDialog'
+import { CompleteGovernanceEventDialog } from '@/components/governance/CompleteGovernanceEventDialog'
 import { Account } from '@/types/account'
 import { useGovernanceStore } from '@/stores/governanceStore'
 import { useV3Store } from '@/stores/v3Store'
 import { RetentionPlan } from '@/types/v3'
+import { GovernanceEventRecord } from '@/types/governance'
 import { formatDate } from '@/utils/formatters'
 import { useAuth } from '@/contexts/AuthContext'
 import { ContentRecommendation, createSentContent, Escalation, listContentRecommendations, listEscalations, listSentContent, SentContent } from '@/services/contentGovernance'
@@ -24,22 +27,7 @@ export function AccountWorkspacePanel({ account, tab }: { account: Account; tab:
     return <EscalationPanel account={account} />
   }
   if (tab === 'Governance') {
-    return (
-      <WorkspaceList
-        icon={CalendarClock}
-        eyebrow="Governance cadence"
-        title="Governance details"
-        description="QBRs, SteerCos, executive reviews, agendas, attendees, and action items."
-        action={{ label: 'View calendar', to: '/dashboard' }}
-        accountName={account.name}
-        items={governance.map(item => ({
-          title: `${item.type} on ${formatDate(item.date)}`,
-          detail: item.agenda,
-          meta: [item.status, `${item.attendees.length} attendees`, `Actions: ${item.actionItems.length}`],
-          tone: item.status === 'overdue' ? 'red' : item.status === 'completed' ? 'green' : 'blue',
-        }))}
-      />
-    )
+    return <GovernanceAccountPanel account={account} governance={governance} />
   }
   if (tab === 'Notes') {
     return <NotesPanel account={account} plans={plans} />
@@ -59,6 +47,90 @@ export function AccountWorkspacePanel({ account, tab }: { account: Account; tab:
         tone: document.confidence >= 80 ? 'green' : 'orange',
       }))}
     />
+  )
+}
+
+function GovernanceAccountPanel({ account, governance }: { account: Account; governance: GovernanceEventRecord[] }) {
+  const sortedGovernance = [...governance].sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime())
+
+  return (
+    <section className="tk-card overflow-hidden">
+      <header className="border-b border-surface-border bg-surface-secondary p-5">
+        <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+          <div className="min-w-0">
+            <div className="flex items-center gap-2">
+              <span className="flex h-10 w-10 items-center justify-center rounded-lg bg-blue-tint-20 text-brand-blue">
+                <CalendarClock className="h-5 w-5" />
+              </span>
+              <div>
+                <p className="text-[10px] font-extrabold uppercase tracking-widest text-brand-blue">Governance cadence</p>
+                <h3 className="text-base font-semibold text-ink">Governance details</h3>
+              </div>
+            </div>
+            <p className="mt-3 max-w-3xl text-sm leading-6 text-ink-secondary">
+              QBRs, SteerCos, monthly reviews, executive reviews, agendas, attendee emails, decisions, and governance-local action items.
+            </p>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <Link className="tk-button-secondary shrink-0 bg-white" to="/dashboard">
+              View calendar
+              <ArrowRight className="h-4 w-4" />
+            </Link>
+            <AddGovernanceEventDialog defaultAccountId={account.id} lockAccount triggerClassName="tk-button-primary shrink-0" />
+          </div>
+        </div>
+      </header>
+      <div className="grid gap-5 p-5 xl:grid-cols-[minmax(0,1fr)_280px]">
+        <div className="grid gap-3">
+          {sortedGovernance.length ? sortedGovernance.map(event => (
+            <article key={event.id} className="rounded-lg border border-surface-border bg-white p-4 transition-colors hover:border-brand-blue/40">
+              <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+                <div className="min-w-0">
+                  <h4 className="text-sm font-semibold text-ink">{event.type} on {formatDate(event.date)}</h4>
+                  <p className="mt-1 max-w-3xl text-sm leading-6 text-ink-secondary">{event.agenda}</p>
+                </div>
+                <StatusBadge tone={event.status === 'overdue' ? 'red' : event.status === 'completed' ? 'green' : 'blue'} label={event.status} />
+              </div>
+              <div className="mt-3 flex flex-wrap gap-2">
+                <span className="rounded-full bg-surface-secondary px-2.5 py-1 text-[11px] font-semibold uppercase tracking-wider text-ink-secondary">{event.attendeeEmails.length} attendees</span>
+                <span className="rounded-full bg-surface-secondary px-2.5 py-1 text-[11px] font-semibold uppercase tracking-wider text-ink-secondary">Actions: {event.actionItems.length}</span>
+                {event.ownerName ? <span className="rounded-full bg-surface-secondary px-2.5 py-1 text-[11px] font-semibold uppercase tracking-wider text-ink-secondary">Owner: {event.ownerName}</span> : null}
+              </div>
+              <div className="mt-4 grid gap-3 lg:grid-cols-2">
+                <GovernanceDetailList title="Attendees" items={event.attendeeEmails} empty="No attendee emails recorded." />
+                <GovernanceDetailList title="Decisions" items={event.decisions.map(item => item.decisionText)} empty="No decisions captured yet." />
+                <GovernanceDetailList title="Action items" items={event.actionItems} empty="No governance action items." />
+                <GovernanceDetailList title="Notes" items={event.notes.map(item => item.body)} empty="No completion notes yet." />
+              </div>
+              {event.status !== 'completed' && event.status !== 'cancelled' ? (
+                <div className="mt-4 flex justify-end">
+                  <CompleteGovernanceEventDialog event={event} />
+                </div>
+              ) : null}
+            </article>
+          )) : (
+            <EmptyWorkspaceState icon={CalendarClock} title="No governance events yet" body="Schedule the next QBR, SteerCo, monthly review, or executive review for this account." />
+          )}
+        </div>
+        <WorkspaceContext
+          title="Governance details"
+          count={sortedGovernance.length}
+          accountName={account.name}
+          body="Governance events stay tied to this account, while calendar surfaces can merge them with renewal, score, and future event types."
+        />
+      </div>
+    </section>
+  )
+}
+
+function GovernanceDetailList({ title, items, empty }: { title: string; items: string[]; empty: string }) {
+  return (
+    <div className="rounded-lg border border-surface-border bg-surface-secondary p-3">
+      <p className="text-xs font-semibold uppercase tracking-wider text-ink-secondary">{title}</p>
+      <div className="mt-2 space-y-1">
+        {items.length ? items.slice(0, 4).map(item => <p key={item} className="text-sm leading-5 text-ink-secondary">{item}</p>) : <p className="text-sm text-ink-tertiary">{empty}</p>}
+      </div>
+    </div>
   )
 }
 
