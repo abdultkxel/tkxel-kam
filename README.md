@@ -50,9 +50,17 @@ OpenAPI:  http://127.0.0.1:8001/openapi.json
 The seed command creates the hidden default super admin used for setup and platform ownership.
 
 ```text
-Email: admin@tkxelkam.com
+Email: admin@tkxel.com
 Password: Admin@12345
 ```
+
+Default allowed email domains are seeded as:
+
+```text
+tkxel.com, tkxel.io, camp1.tkxel.com
+```
+
+Google Sign-In requires both `GOOGLE_SIGN_IN_CLIENT_ID` for the backend and `VITE_GOOGLE_SIGN_IN_CLIENT_ID` for the frontend.
 
 ## Database
 
@@ -107,14 +115,14 @@ delivery_stakeholder
 `super_admin` is kept out of Admin user/role listings and assignment dropdowns. Seeded visible role users use this pattern:
 
 ```text
-admin.user@tkxelkam.com
-account.manager.user@tkxelkam.com
-ops.lead.user@tkxelkam.com
-kam.head.user@tkxelkam.com
-leadership.viewer.user@tkxelkam.com
-content.specialist.user@tkxelkam.com
-commercial.stakeholder.user@tkxelkam.com
-delivery.stakeholder.user@tkxelkam.com
+admin.user@tkxel.com
+account.manager.user@tkxel.com
+ops.lead.user@tkxel.com
+kam.head.user@tkxel.com
+leadership.viewer.user@tkxel.com
+content.specialist.user@tkxel.com
+commercial.stakeholder.user@tkxel.com
+delivery.stakeholder.user@tkxel.com
 Password: User@12345
 ```
 

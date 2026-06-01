@@ -31,12 +31,15 @@ def client(db_session: Session) -> Generator[TestClient, None, None]:
         yield db_session
 
     app.dependency_overrides[get_db] = override_get_db
-    with TestClient(app) as test_client:
+    test_client = TestClient(app)
+    try:
         yield test_client
-    app.dependency_overrides.clear()
+    finally:
+        test_client.close()
+        app.dependency_overrides.clear()
 
 
-def auth_headers(client: TestClient, email: str = "admin@tkxelkam.com", password: str = "Admin@12345") -> dict[str, str]:
+def auth_headers(client: TestClient, email: str = "admin@tkxel.com", password: str = "Admin@12345") -> dict[str, str]:
     response = client.post("/api/auth/login", json={"email": email, "password": password})
     assert response.status_code == 200
     return {"Authorization": f"Bearer {response.json()['access_token']}"}
@@ -253,7 +256,7 @@ def test_escalation_lifecycle_validation_authorization_notifications_and_filters
     assert notification_log.status_code == 200
     assert notification_log.json()["total"] == 1
 
-    viewer_headers = auth_headers(client, "leadership.viewer.user@tkxelkam.com", "User@12345")
+    viewer_headers = auth_headers(client, "leadership.viewer.user@tkxel.com", "User@12345")
     forbidden = client.patch(f"/api/escalations/{escalation['id']}", headers=viewer_headers, json={"summary": "No edit"})
     assert forbidden.status_code == 403
 
@@ -385,7 +388,7 @@ def test_governance_recurrence_ai_brief_integrations_and_permissions(client: Tes
     delete_rule = client.delete(f"/api/admin/governance-recurrence-rules/{rule_id}", headers=headers)
     assert delete_rule.status_code == 200
 
-    viewer_headers = auth_headers(client, "leadership.viewer.user@tkxelkam.com", "User@12345")
+    viewer_headers = auth_headers(client, "leadership.viewer.user@tkxel.com", "User@12345")
     forbidden = client.post(
         "/api/governance-events",
         headers=viewer_headers,

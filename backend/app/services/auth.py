@@ -11,12 +11,15 @@ from app.schemas import (
     ChangePasswordRequest,
     ForgotPasswordRequest,
     ForgotPasswordResponse,
+    GoogleSignInRequest,
     LoginRequest,
     MessageResponse,
     ResetPasswordRequest,
     UserRead,
 )
 from app.security import create_access_token, create_reset_token, hash_password, hash_reset_token, verify_password
+from app.services.email_domains import EmailDomainPolicyService
+from app.services.google_identity import GoogleIdentityService
 
 
 def token_is_expired(expires_at: datetime) -> bool:
@@ -31,15 +34,42 @@ def credentials_are_valid(user: User | None, password: str) -> bool:
 class AuthService:
     generic_reset_message = "If the account exists, a reset token has been generated."
 
-    def __init__(self, db: Session, repository: UserRepository | None = None) -> None:
+    def __init__(
+        self,
+        db: Session,
+        repository: UserRepository | None = None,
+        domain_policy: EmailDomainPolicyService | None = None,
+        google_identity: GoogleIdentityService | None = None,
+    ) -> None:
         self.db = db
         self.repository = repository or UserRepository(db)
         self.settings = get_settings()
+        self.domain_policy = domain_policy or EmailDomainPolicyService(db)
+        self.google_identity = google_identity or GoogleIdentityService()
 
     def login(self, payload: LoginRequest) -> AuthResponse:
+        self.domain_policy.require_allowed_email_for_auth(
+            str(payload.email),
+            message="This email domain is not allowed. Contact your administrator.",
+        )
         user = self.repository.get_by_email(payload.email)
         if not credentials_are_valid(user, payload.password):
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid email or password")
+
+        return AuthResponse(access_token=create_access_token(user.id), user=UserRead.model_validate(user))
+
+    def google_sign_in(self, payload: GoogleSignInRequest) -> AuthResponse:
+        identity = self.google_identity.verify_credential(payload.credential)
+        if not identity.email_verified:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Google Sign-In requires a verified email address.")
+
+        self.domain_policy.require_allowed_email_for_auth(
+            identity.email,
+            message="Google Sign-In is not allowed for this email domain. Contact your administrator.",
+        )
+        user = self.repository.get_by_email(identity.email)
+        if user is None or not user.is_active:
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Google Sign-In is not available for this account.")
 
         return AuthResponse(access_token=create_access_token(user.id), user=UserRead.model_validate(user))
 
@@ -47,6 +77,10 @@ class AuthService:
         return MessageResponse(message="Logged out successfully")
 
     def request_password_reset(self, payload: ForgotPasswordRequest) -> ForgotPasswordResponse:
+        if not self.domain_policy.is_email_allowed(str(payload.email)):
+            self.domain_policy.log_domain_block(str(payload.email), "password_reset")
+            return ForgotPasswordResponse(message=self.generic_reset_message, reset_token=None)
+
         user = self.repository.get_by_email(payload.email)
         token = self._issue_reset_token(user) if user and user.is_active else None
         return ForgotPasswordResponse(

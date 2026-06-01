@@ -12,7 +12,7 @@ const defaultRules: AlertRule[] = [
   { id: 'rule-renewal', type: 'renewal_approaching', threshold: '60 days', severity: 'warning', notify: 'AM + leadership', active: true, snoozeDays: 14 },
   { id: 'rule-escalation-overdue', type: 'escalation_overdue', threshold: '7 days without recovery update', severity: 'critical', notify: 'AM + leadership', active: true, snoozeDays: 7 },
   { id: 'rule-opportunity-stalled', type: 'opportunity_stalled', threshold: '30 days in same stage', severity: 'warning', notify: 'AM', active: true, snoozeDays: 7 },
-  { id: 'rule-governance', type: 'governance_overdue', threshold: '7 days overdue', severity: 'warning', notify: 'AM + leadership', active: true, snoozeDays: 7 },
+  { id: 'rule-governance', type: 'governance_overdue', threshold: '7 days overdue', severity: 'warning', notify: 'Event owner', active: true, snoozeDays: 7 },
   { id: 'rule-stakeholder-gap', type: 'stakeholder_gap', threshold: 'No executive stakeholder', severity: 'warning', notify: 'AM', active: true, snoozeDays: 14 },
   { id: 'rule-sentiment', type: 'sentiment_decline', threshold: '3 CSAT drops', severity: 'warning', notify: 'AM + leadership', active: false, snoozeDays: 14 },
 ]

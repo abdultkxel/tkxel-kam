@@ -28,18 +28,24 @@ from app.schemas import (
     GovernanceActionItemPageRead,
     GovernanceActionItemRead,
     GovernanceActionItemUpdateRequest,
+    GovernanceCalendarItemRead,
+    GovernanceCalendarPageRead,
     GovernanceDecisionCreateRequest,
     GovernanceDecisionPageRead,
     GovernanceDecisionRead,
+    GovernanceEventAgendaUpdateRequest,
+    GovernanceEventCompleteRequest,
     GovernanceEventCreateRequest,
     GovernanceEventPageRead,
     GovernanceEventRead,
     GovernanceEventUpdateRequest,
+    GovernanceGeneratedOutputCitationRead,
+    GovernanceGeneratedOutputRead,
+    GovernanceGeneratedOutputRequest,
     GovernanceRecurrenceRuleCreateRequest,
     GovernanceRecurrenceRulePageRead,
     GovernanceRecurrenceRuleRead,
     GovernanceRecurrenceRuleUpdateRequest,
-    GovernanceSourceCitationRead,
     IntegrationConnectionRead,
     IntegrationConnectionUpdateRequest,
     IntegrationSyncLogPageRead,
@@ -105,6 +111,36 @@ class GovernanceService:
         )
         return GovernanceEventPageRead(items=[self._event_read(item) for item in items], total=total, page=page, page_size=page_size, pages=page_count(total, page_size))
 
+    def calendar_items(
+        self,
+        current_user: User,
+        *,
+        account_id: str | None = None,
+        owner_id: str | None = None,
+        date_from: datetime | None = None,
+        date_to: datetime | None = None,
+        page: int = 1,
+        page_size: int = 100,
+    ) -> GovernanceCalendarPageRead:
+        events = self.list_events(
+            current_user,
+            account_id=account_id,
+            owner_id=owner_id,
+            date_from=date_from,
+            date_to=date_to,
+            sort="scheduled_at",
+            direction="asc",
+            page=page,
+            page_size=page_size,
+        )
+        return GovernanceCalendarPageRead(
+            items=[self._calendar_item(item) for item in events.items],
+            total=events.total,
+            page=events.page,
+            page_size=events.page_size,
+            pages=events.pages,
+        )
+
     def create_event(self, payload: GovernanceEventCreateRequest, current_user: User) -> GovernanceEventRead:
         self.access.require_module_permission(current_user, "governance_reviews", "create")
         account = self.accounts.get_by_id(payload.account_id)
@@ -112,20 +148,22 @@ class GovernanceService:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Account was not found")
         self.access.require_account_view(current_user, account, module="governance_reviews")
         owner = self._get_user_or_404(payload.owner_id)
+        attendees = self._event_attendees(payload.attendees, payload.attendee_emails)
+        source = self._provider_event_source(payload.source) if payload.source != "manual" else "manual"
         event = GovernanceEvent(
             account_id=payload.account_id,
             engagement_id=payload.engagement_id,
             owner_id=owner.id,
             owner_name=owner.full_name,
             governance_type=payload.governance_type,
-            source="manual",
-            deduplication_key=f"manual:{payload.account_id}:{payload.governance_type}:{payload.scheduled_at.isoformat()}",
+            source=source,
+            deduplication_key=f"{source}:{payload.account_id}:{payload.governance_type}:{payload.scheduled_at.isoformat()}",
             scheduled_at=payload.scheduled_at,
             end_at=payload.end_at,
             status=payload.status,
             agenda=payload.agenda,
             notes=payload.notes,
-            attendees=payload.attendees,
+            attendees=attendees,
             recurrence_rule_id=payload.recurrence_rule_id,
             created_by_id=current_user.id,
             created_by_name=current_user.full_name,
@@ -134,6 +172,7 @@ class GovernanceService:
         self.custom_fields.save_record_values("governance_reviews", event.id, payload.custom_field_values, current_user, audit_module="governance_reviews")
         self._write_governance_timeline(event, current_user, "scheduled")
         self.audit.log(module="governance_reviews", action="create", entity_type="governance_event", entity_id=event.id, actor=current_user, after_value=self._event_snapshot(event))
+        self._update_next_governance(event.account)
         self.repository.commit()
         return self._event_read(event)
 
@@ -148,24 +187,44 @@ class GovernanceService:
         before = self._event_snapshot(event)
         updates = payload.model_dump(exclude_unset=True)
         custom_values = updates.pop("custom_field_values", None)
+        attendee_emails = updates.pop("attendee_emails", None)
         if "owner_id" in updates and updates["owner_id"]:
             owner = self._get_user_or_404(updates["owner_id"])
             event.owner_id = owner.id
             event.owner_name = owner.full_name
             updates.pop("owner_id")
+        if attendee_emails is not None:
+            updates["attendees"] = self._event_attendees([], attendee_emails)
         for field, value in updates.items():
             setattr(event, field, value)
         if custom_values is not None:
             self.custom_fields.replace_record_values("governance_reviews", event.id, custom_values, current_user, audit_module="governance_reviews")
         self.audit.log(module="governance_reviews", action="update", entity_type="governance_event", entity_id=event.id, actor=current_user, before_value=before, after_value=self._event_snapshot(event))
+        self._update_next_governance(event.account)
         self.repository.commit()
         return self._event_read(event)
 
-    def complete_event(self, event_id: str, current_user: User) -> GovernanceEventRead:
+    def complete_event(self, event_id: str, current_user: User, payload: GovernanceEventCompleteRequest | None = None) -> GovernanceEventRead:
         event = self._get_event_or_404(event_id)
         self._require_event_update(current_user, event)
         if event.status == "cancelled":
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Cancelled governance events must be reopened or rescheduled before completion")
+        if payload is not None:
+            event.notes = payload.notes
+            for decision_payload in payload.decisions:
+                decision = self._decision_from_payload(event, decision_payload, current_user)
+                self.repository.add_decision(decision)
+                timeline_entry = self._write_governance_timeline(
+                    event,
+                    current_user,
+                    "decision",
+                    decision.decision_text,
+                    source_record_id=decision.id,
+                    source_record_type="governance_decision",
+                )
+                decision.timeline_entry_id = timeline_entry.id if timeline_entry else None
+            for action_payload in payload.action_items:
+                self.repository.add_action_item(self._action_item_from_payload(event, action_payload, current_user))
         if not event.notes and not event.decisions:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Governance completion requires notes or at least one decision")
         before = self._event_snapshot(event)
@@ -173,16 +232,18 @@ class GovernanceService:
         event.completed_at = datetime.now(timezone.utc)
         self._write_governance_timeline(event, current_user, "completed")
         self.audit.log(module="governance_reviews", action="complete", entity_type="governance_event", entity_id=event.id, actor=current_user, before_value=before, after_value=self._event_snapshot(event))
+        self._update_next_governance(event.account)
         self.repository.commit()
         return self._event_read(event)
 
-    def agenda_draft(self, event_id: str, current_user: User) -> GovernanceEventRead:
+    def agenda_draft(self, event_id: str, current_user: User, payload: GovernanceGeneratedOutputRequest | None = None) -> GovernanceGeneratedOutputRead:
         event = self._get_event_or_404(event_id)
         self._require_event_update(current_user, event)
         account = self.repository.get_account(event.account_id) if event.account_id else None
         account_name = account.name if account else "the account"
-        event.agenda = "\n".join(
+        content = "\n".join(
             [
+                "Account health and risk review",
                 f"1. Review current health and governance posture for {account_name}.",
                 "2. Confirm open risks, escalations, and recovery actions.",
                 "3. Review active opportunities, renewal posture, and client stakeholder changes.",
@@ -192,9 +253,9 @@ class GovernanceService:
         self._ensure_citation(event, "account_overview", "account", event.account_id, f"/accounts/{event.account_id}", "Account overview", f"Agenda draft generated from account profile and recent governance context for {account_name}.")
         self.audit.log(module="governance_reviews", action="agenda_draft", entity_type="governance_event", entity_id=event.id, actor=current_user)
         self.repository.commit()
-        return self._event_read(event)
+        return self._generated_output_read(event, current_user, "agenda_draft", content, payload.source_modules if payload else [])
 
-    def update_agenda(self, event_id: str, payload: GovernanceEventUpdateRequest, current_user: User) -> GovernanceEventRead:
+    def update_agenda(self, event_id: str, payload: GovernanceEventAgendaUpdateRequest, current_user: User) -> GovernanceEventRead:
         event = self._get_event_or_404(event_id)
         self._require_event_update(current_user, event)
         if payload.agenda is None:
@@ -204,7 +265,7 @@ class GovernanceService:
         self.repository.commit()
         return self._event_read(event)
 
-    def ai_brief(self, event_id: str, current_user: User) -> GovernanceAIBriefRead:
+    def ai_brief(self, event_id: str, current_user: User, payload: GovernanceGeneratedOutputRequest | None = None) -> GovernanceAIBriefRead:
         event = self._get_event_or_404(event_id)
         self._require_event_view(current_user, event)
         citations = event.source_citations or [
@@ -212,55 +273,78 @@ class GovernanceService:
         ]
         decisions = [item.decision_text for item in event.decisions]
         actions = [item.title for item in event.action_items if item.status != "completed"]
+        summary = f"Pre-meeting brief for {event.governance_type}. Review health posture, recent risks, open commitments, and escalation context before the session."
+        talking_points = [
+            "Confirm executive outcomes and decision owners.",
+            "Review overdue actions and renewal or expansion impact.",
+            "Validate escalation recovery progress and client communication cadence.",
+        ]
+        open_risks = ["No source-backed open risk data was available in this module yet."]
+        pending_decisions = decisions or ["No decisions recorded yet."]
+        action_items = actions or ["No open action items recorded yet."]
+        content = "\n".join(
+            [
+                f"Health snapshot: {summary}",
+                "Talking points:",
+                *[f"- {item}" for item in talking_points],
+                "Pending decisions:",
+                *[f"- {item}" for item in pending_decisions],
+                "Action items:",
+                *[f"- {item}" for item in action_items],
+            ]
+        )
         self.audit.log(module="governance_reviews", action="ai_brief", entity_type="governance_event", entity_id=event.id, actor=current_user)
         self.repository.commit()
-        return GovernanceAIBriefRead(
-            summary=f"Pre-meeting brief for {event.governance_type}. Review health posture, recent risks, open commitments, and escalation context before the session.",
-            talking_points=[
-                "Confirm executive outcomes and decision owners.",
-                "Review overdue actions and renewal or expansion impact.",
-                "Validate escalation recovery progress and client communication cadence.",
-            ],
-            open_risks=["No source-backed open risk data was available in this module yet."],
-            pending_decisions=decisions or ["No decisions recorded yet."],
-            action_items=actions or ["No open action items recorded yet."],
-            citations=[GovernanceSourceCitationRead.model_validate(item) for item in citations],
-            disclaimer="AI-generated brief. Verify cited sources before client or executive use.",
+        output = self._generated_output_read(event, current_user, "governance_brief", content, payload.source_modules if payload else [], citations=citations)
+        output_data = output.model_dump()
+        output_data.update(
+            summary=summary,
+            talking_points=talking_points,
+            open_risks=open_risks,
+            pending_decisions=pending_decisions,
+            action_items=action_items,
+            disclaimer="AI-generated advisory brief. Verify cited sources before client or executive use.",
         )
+        return GovernanceAIBriefRead(**output_data)
 
     def add_decision(self, event_id: str, payload: GovernanceDecisionCreateRequest, current_user: User) -> GovernanceDecisionRead:
         event = self._get_event_or_404(event_id)
         self._require_event_update(current_user, event)
-        owner = self._get_user_or_404(payload.owner_id) if payload.owner_id else current_user
-        decision = GovernanceDecision(governance_event_id=event.id, decision_text=payload.decision_text, owner_id=owner.id, owner_name=owner.full_name)
+        decision = self._decision_from_payload(event, payload, current_user)
         self.repository.add_decision(decision)
-        timeline_entry = self._write_governance_timeline(event, current_user, "decision", payload.decision_text)
+        timeline_entry = self._write_governance_timeline(
+            event,
+            current_user,
+            "decision",
+            payload.decision_text,
+            source_record_id=decision.id,
+            source_record_type="governance_decision",
+        )
         decision.timeline_entry_id = timeline_entry.id if timeline_entry else None
         self.audit.log(module="governance_reviews", action="add_decision", entity_type="governance_decision", entity_id=decision.id, actor=current_user)
         self.repository.commit()
-        return GovernanceDecisionRead.model_validate(decision)
+        return self._decision_read(decision)
 
     def list_decisions(self, event_id: str, current_user: User, page: int, page_size: int) -> GovernanceDecisionPageRead:
         event = self._get_event_or_404(event_id)
         self._require_event_view(current_user, event)
         items, total = self.repository.list_decisions_page(event.id, page, page_size)
-        return GovernanceDecisionPageRead(items=[GovernanceDecisionRead.model_validate(item) for item in items], total=total, page=page, page_size=page_size, pages=page_count(total, page_size))
+        return GovernanceDecisionPageRead(items=[self._decision_read(item) for item in items], total=total, page=page, page_size=page_size, pages=page_count(total, page_size))
 
     def add_action_item(self, event_id: str, payload: GovernanceActionItemCreateRequest, current_user: User) -> GovernanceActionItemRead:
         event = self._get_event_or_404(event_id)
         self._require_event_update(current_user, event)
-        owner = self._get_user_or_404(payload.owner_id)
-        action_item = GovernanceActionItem(governance_event_id=event.id, title=payload.title, owner_id=owner.id, owner_name=owner.full_name, due_at=payload.due_at, priority=payload.priority)
+        action_item = self._action_item_from_payload(event, payload, current_user)
         self.repository.add_action_item(action_item)
         self.audit.log(module="governance_reviews", action="add_action_item", entity_type="governance_action_item", entity_id=action_item.id, actor=current_user)
         self.repository.commit()
-        return GovernanceActionItemRead.model_validate(action_item)
+        return self._action_item_read(action_item)
 
     def list_action_items(self, event_id: str, current_user: User, page: int, page_size: int) -> GovernanceActionItemPageRead:
         event = self._get_event_or_404(event_id)
         self._require_event_view(current_user, event)
         items, total = self.repository.list_action_items_page(event.id, page, page_size)
-        return GovernanceActionItemPageRead(items=[GovernanceActionItemRead.model_validate(item) for item in items], total=total, page=page, page_size=page_size, pages=page_count(total, page_size))
+        return GovernanceActionItemPageRead(items=[self._action_item_read(item) for item in items], total=total, page=page, page_size=page_size, pages=page_count(total, page_size))
 
     def update_action_item(self, action_item_id: str, payload: GovernanceActionItemUpdateRequest, current_user: User) -> GovernanceActionItemRead:
         item = self.repository.get_action_item(action_item_id)
@@ -279,7 +363,7 @@ class GovernanceService:
             item.completed_by_id = current_user.id
         self.audit.log(module="governance_reviews", action="update_action_item", entity_type="governance_action_item", entity_id=item.id, actor=current_user)
         self.repository.commit()
-        return GovernanceActionItemRead.model_validate(item)
+        return self._action_item_read(item)
 
     def list_recurrence_rules(self, current_user: User, *, search: str | None = None, cadence: str | None = None, governance_type: str | None = None, active_state: str = "active", owner_id: str | None = None, account_id: str | None = None, segment: str | None = None, page: int = 1, page_size: int = 10) -> GovernanceRecurrenceRulePageRead:
         self.access.require_module_permission(current_user, "governance_reviews", "configure")
@@ -542,9 +626,9 @@ class GovernanceService:
 
     @staticmethod
     def _provider_event_source(provider: str) -> str:
-        if provider == "google-calendar":
+        if provider in {"google-calendar", "google_calendar"}:
             return "google_calendar"
-        if provider == "fathom":
+        if provider in {"fathom", "fathom_enriched"}:
             return "fathom_enriched"
         return provider
 
@@ -555,9 +639,200 @@ class GovernanceService:
         return event
 
     def _event_read(self, event: GovernanceEvent) -> GovernanceEventRead:
-        return GovernanceEventRead.model_validate(event).model_copy(
-            update={"custom_field_values": self.custom_fields.record_values("governance_reviews", event.id)}
+        account_name = event.account.name if event.account else ""
+        engagement_name = event.engagement.name if event.engagement else None
+        attendee_emails = self._attendee_emails(event.attendees)
+        return GovernanceEventRead(
+            id=event.id,
+            account_id=event.account_id,
+            account_name=account_name,
+            engagement_id=event.engagement_id,
+            engagement_name=engagement_name,
+            owner_id=event.owner_id,
+            owner_name=event.owner_name,
+            owner_email=None,
+            governance_type=event.governance_type,
+            source=event.source,
+            external_provider=event.external_provider,
+            external_event_id=event.external_event_id,
+            deduplication_key=event.deduplication_key,
+            mapping_confidence=event.mapping_confidence,
+            review_required=event.review_required,
+            scheduled_at=event.scheduled_at,
+            end_at=event.end_at,
+            status=self._status_for_read(event),
+            agenda=event.agenda,
+            note_text=event.notes,
+            notes=self._note_reads(event),
+            attendees=event.attendees or [],
+            attendee_emails=attendee_emails,
+            recurrence_rule_id=event.recurrence_rule_id,
+            created_by_id=event.created_by_id,
+            created_by_name=event.created_by_name,
+            completed_at=event.completed_at,
+            created_at=event.created_at,
+            updated_at=event.updated_at,
+            custom_field_values=self.custom_fields.record_values("governance_reviews", event.id),
+            decisions=[self._decision_read(item) for item in event.decisions],
+            action_items=[self._action_item_read(item) for item in event.action_items],
+            generated_outputs=[],
         )
+
+    def _calendar_item(self, event: GovernanceEventRead) -> GovernanceCalendarItemRead:
+        return GovernanceCalendarItemRead(
+            id=f"governance:{event.id}",
+            kind="governance",
+            source_record_id=event.id,
+            source_record_type="governance_event",
+            account_id=event.account_id or "",
+            account_name=event.account_name,
+            owner_id=event.owner_id,
+            date=event.scheduled_at,
+            title=f"{event.governance_type} - {event.account_name}",
+            detail=event.agenda or event.note_text or "Governance event",
+            status=event.status,
+            route=f"/accounts/{event.account_id}?tab=governance" if event.account_id else f"/governance?selected={event.id}",
+        )
+
+    def _decision_read(self, decision: GovernanceDecision) -> GovernanceDecisionRead:
+        return GovernanceDecisionRead(
+            id=decision.id,
+            governance_event_id=decision.governance_event_id,
+            event_id=decision.governance_event_id,
+            decision_text=decision.decision_text,
+            owner_id=decision.owner_id,
+            owner_name=decision.owner_name,
+            source="manual",
+            timeline_entry_id=decision.timeline_entry_id,
+            created_at=decision.created_at,
+        )
+
+    def _action_item_read(self, item: GovernanceActionItem) -> GovernanceActionItemRead:
+        return GovernanceActionItemRead(
+            id=item.id,
+            governance_event_id=item.governance_event_id,
+            event_id=item.governance_event_id,
+            title=item.title,
+            owner_id=item.owner_id,
+            owner_name=item.owner_name,
+            owner_email=item.owner_email,
+            due_at=item.due_at,
+            due_date=item.due_at,
+            status=item.status,
+            priority=item.priority,
+            source="manual",
+            completed_at=item.completed_at,
+            completed_by_id=item.completed_by_id,
+            created_at=item.created_at,
+            updated_at=item.updated_at,
+        )
+
+    def _note_reads(self, event: GovernanceEvent) -> list:
+        if not event.notes:
+            return []
+        return [
+            {
+                "id": f"{event.id}:note",
+                "event_id": event.id,
+                "body": event.notes,
+                "author_id": event.created_by_id,
+                "author_name": event.created_by_name,
+                "source": "manual",
+                "created_at": event.completed_at or event.updated_at,
+                "updated_at": event.updated_at,
+            }
+        ]
+
+    def _generated_output_read(
+        self,
+        event: GovernanceEvent,
+        actor: User,
+        output_type: str,
+        content: str,
+        source_modules: list[str],
+        *,
+        citations: list[GovernanceSourceCitation] | None = None,
+    ) -> GovernanceGeneratedOutputRead:
+        output_id = f"{event.id}:{output_type}:{int(datetime.now(timezone.utc).timestamp())}"
+        source_citations = citations if citations is not None else event.source_citations
+        return GovernanceGeneratedOutputRead(
+            id=output_id,
+            event_id=event.id,
+            output_type=output_type,
+            generation_method="deterministic",
+            status="generated",
+            content=content,
+            disclaimer="Generated governance preparation is advisory, source-backed where possible, and must be reviewed by a human before use.",
+            source_filter_metadata={"source_modules": source_modules},
+            provider_metadata=None,
+            created_by_id=actor.id,
+            created_by_name=actor.full_name,
+            created_at=datetime.now(timezone.utc),
+            citations=[self._generated_citation_read(item, output_id) for item in source_citations],
+        )
+
+    @staticmethod
+    def _generated_citation_read(citation: GovernanceSourceCitation, output_id: str) -> GovernanceGeneratedOutputCitationRead:
+        return GovernanceGeneratedOutputCitationRead(
+            id=citation.id,
+            output_id=output_id,
+            source_type=citation.source_module,
+            source_id=citation.source_entity_id or citation.governance_event_id,
+            source_title=citation.label,
+            source_url=citation.source_route,
+            snippet=citation.excerpt,
+            label=citation.label,
+            excerpt=citation.excerpt,
+            source_route=citation.source_route,
+            source_timestamp=citation.created_at,
+            created_at=citation.created_at,
+        )
+
+    def _decision_from_payload(self, event: GovernanceEvent, payload: GovernanceDecisionCreateRequest, current_user: User) -> GovernanceDecision:
+        owner = self.repository.get_user(payload.owner_id) if payload.owner_id else None
+        owner_name = owner.full_name if owner else payload.owner_name or current_user.full_name
+        return GovernanceDecision(governance_event_id=event.id, decision_text=payload.decision_text, owner_id=owner.id if owner else payload.owner_id, owner_name=owner_name)
+
+    def _action_item_from_payload(self, event: GovernanceEvent, payload: GovernanceActionItemCreateRequest, current_user: User) -> GovernanceActionItem:
+        owner = self.repository.get_user(payload.owner_id) if payload.owner_id else None
+        owner_email = str(payload.owner_email).lower() if payload.owner_email else None
+        owner_name = owner.full_name if owner else payload.owner_name or owner_email or current_user.full_name
+        return GovernanceActionItem(
+            governance_event_id=event.id,
+            title=payload.title,
+            owner_id=owner.id if owner else payload.owner_id,
+            owner_name=owner_name,
+            owner_email=owner_email,
+            due_at=payload.due_at or payload.due_date,
+            priority=payload.priority,
+        )
+
+    @staticmethod
+    def _event_attendees(attendees: list[str], attendee_emails: list) -> list[str]:
+        emails = [str(email).strip().lower() for email in attendee_emails if str(email).strip()]
+        if emails:
+            return list(dict.fromkeys(emails))
+        return attendees or []
+
+    @staticmethod
+    def _attendee_emails(attendees: list[str] | None) -> list[str]:
+        return [item for item in (attendees or []) if "@" in item]
+
+    @staticmethod
+    def _status_for_read(event: GovernanceEvent) -> str:
+        if event.status in {"completed", "cancelled", "review_required"}:
+            return event.status
+        scheduled_at = event.scheduled_at
+        if scheduled_at and scheduled_at.tzinfo is None:
+            scheduled_at = scheduled_at.replace(tzinfo=timezone.utc)
+        if scheduled_at and scheduled_at < datetime.now(timezone.utc):
+            return "overdue"
+        return "upcoming" if event.status == "scheduled" else event.status
+
+    def _update_next_governance(self, account) -> None:
+        if not account:
+            return
+        account.next_governance_at = self.repository.next_governance_date(account.id, datetime.now(timezone.utc))
 
     def _get_rule_or_404(self, rule_id: str) -> GovernanceRecurrenceRule:
         rule = self.repository.get_recurrence_rule(rule_id)
@@ -595,7 +870,16 @@ class GovernanceService:
         account = self.accounts.get_by_id(event.account_id) if event.account_id else None
         return bool(account and self.access.can_view_account(user, account))
 
-    def _write_governance_timeline(self, event: GovernanceEvent, actor: User, action: str, description: str | None = None):
+    def _write_governance_timeline(
+        self,
+        event: GovernanceEvent,
+        actor: User,
+        action: str,
+        description: str | None = None,
+        *,
+        source_record_id: str | None = None,
+        source_record_type: str = "governance",
+    ):
         if not event.account_id:
             return None
         return self.timeline.add_account_event(
@@ -606,8 +890,8 @@ class GovernanceService:
             title=f"{event.governance_type} {action}",
             description=description or event.agenda or f"Governance event {action}.",
             actor=actor,
-            source_record_id=event.id,
-            source_record_type="governance",
+            source_record_id=source_record_id or event.id,
+            source_record_type=source_record_type,
             source_record_route=f"/governance?selected={event.id}",
         )
 

@@ -1,4 +1,4 @@
-import { FormEvent, useState } from 'react'
+import { FormEvent, useCallback, useEffect, useRef, useState } from 'react'
 import { Eye, EyeOff, LogIn } from 'lucide-react'
 import { Link, useLocation, useNavigate } from 'react-router-dom'
 import { FieldError } from '@/components/form/FieldError'
@@ -8,21 +8,105 @@ import { useAuth } from '@/contexts/AuthContext'
 import { apiFieldErrors, clearFieldError, FieldErrors, hasFieldErrors } from '@/utils/formErrors'
 import { cn } from '@/utils/cn'
 
+declare global {
+  interface Window {
+    google?: {
+      accounts?: {
+        id?: {
+          initialize: (options: { client_id: string; callback: (response: { credential?: string }) => void }) => void
+          renderButton: (parent: HTMLElement, options: Record<string, string | number | boolean>) => void
+        }
+      }
+    }
+  }
+}
+
 export function Login() {
   const navigate = useNavigate()
   const location = useLocation()
-  const { login } = useAuth()
+  const { login, googleSignIn } = useAuth()
+  const googleButtonRef = useRef<HTMLDivElement | null>(null)
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [showPassword, setShowPassword] = useState(false)
   const [error, setError] = useState('')
   const [fieldErrors, setFieldErrors] = useState<FieldErrors>({})
   const [loading, setLoading] = useState(false)
+  const [googleLoading, setGoogleLoading] = useState(false)
+  const [googleReady, setGoogleReady] = useState(false)
   const from = (location.state as { from?: { pathname?: string } } | null)?.from?.pathname ?? '/dashboard'
+  const googleClientId = import.meta.env.VITE_GOOGLE_SIGN_IN_CLIENT_ID as string | undefined
 
   function clearField(field: string) {
     setFieldErrors(errors => clearFieldError(errors, field))
   }
+
+  const handleGoogleCredential = useCallback(
+    async (credential?: string) => {
+      if (!credential) {
+        setError('Google Sign-In did not return a credential.')
+        return
+      }
+      setError('')
+      setFieldErrors({})
+      setGoogleLoading(true)
+      try {
+        await googleSignIn(credential)
+        navigate(from, { replace: true })
+      } catch (err) {
+        setError(err instanceof ApiError ? err.message : 'Unable to sign in with Google')
+      } finally {
+        setGoogleLoading(false)
+      }
+    },
+    [from, googleSignIn, navigate],
+  )
+
+  useEffect(() => {
+    if (!googleClientId || !googleButtonRef.current) return
+    const clientId = googleClientId
+
+    function initializeGoogleButton() {
+      const googleId = window.google?.accounts?.id
+      if (!googleId || !googleButtonRef.current) return
+      googleButtonRef.current.innerHTML = ''
+      googleId.initialize({
+        client_id: clientId,
+        callback: response => {
+          void handleGoogleCredential(response.credential)
+        },
+      })
+      googleId.renderButton(googleButtonRef.current, {
+        theme: 'outline',
+        size: 'large',
+        width: 384,
+        text: 'continue_with',
+        shape: 'rectangular',
+      })
+      setGoogleReady(true)
+    }
+
+    const existingScript = document.getElementById('google-identity-services') as HTMLScriptElement | null
+    if (existingScript) {
+      if (window.google?.accounts?.id) initializeGoogleButton()
+      else existingScript.addEventListener('load', initializeGoogleButton, { once: true })
+      return () => existingScript.removeEventListener('load', initializeGoogleButton)
+    }
+
+    const script = document.createElement('script')
+    script.id = 'google-identity-services'
+    script.src = 'https://accounts.google.com/gsi/client'
+    script.async = true
+    script.defer = true
+    script.onload = initializeGoogleButton
+    script.onerror = () => setError('Google Sign-In is unavailable.')
+    document.head.appendChild(script)
+
+    return () => {
+      script.onload = null
+      script.onerror = null
+    }
+  }, [googleClientId, handleGoogleCredential])
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
@@ -65,6 +149,31 @@ export function Login() {
           </div>
 
           <form className="mt-8 space-y-5" onSubmit={handleSubmit} noValidate>
+            <div className="space-y-3">
+              {googleClientId ? (
+                <div className={cn('min-h-[44px]', googleLoading && 'pointer-events-none opacity-60')}>
+                  <div ref={googleButtonRef} />
+                  {!googleReady ? (
+                    <button type="button" className="tk-button-secondary w-full" disabled>
+                      <LogIn className="h-4 w-4" />
+                      Loading Google
+                    </button>
+                  ) : null}
+                  {googleLoading ? <p className="mt-2 text-sm font-medium text-ink-secondary">Signing in with Google</p> : null}
+                </div>
+              ) : (
+                <button type="button" className="tk-button-secondary w-full" disabled>
+                  <LogIn className="h-4 w-4" />
+                  Google unavailable
+                </button>
+              )}
+              <div className="flex items-center gap-3 text-xs font-bold uppercase tracking-wider text-ink-tertiary">
+                <span className="h-px flex-1 bg-surface-border" />
+                Email
+                <span className="h-px flex-1 bg-surface-border" />
+              </div>
+            </div>
+
             <label className="block">
               <span className="tk-label">Email</span>
               <input

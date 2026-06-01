@@ -1,4 +1,5 @@
 from collections.abc import Generator
+from datetime import datetime, timedelta, timezone
 
 import pytest
 from fastapi.testclient import TestClient
@@ -8,6 +9,7 @@ from sqlalchemy.pool import StaticPool
 
 from app.database import Base, get_db
 from app.main import app
+from app.models import CustomFieldValue, Engagement
 from app.models import Account, CustomFieldValue, Engagement, SourceDocument
 from app.services.seed import seed_default_data
 
@@ -35,12 +37,15 @@ def client(db_session: Session) -> Generator[TestClient, None, None]:
         yield db_session
 
     app.dependency_overrides[get_db] = override_get_db
-    with TestClient(app) as test_client:
+    test_client = TestClient(app)
+    try:
         yield test_client
-    app.dependency_overrides.clear()
+    finally:
+        test_client.close()
+        app.dependency_overrides.clear()
 
 
-def auth_headers(client: TestClient, email: str = "admin@tkxelkam.com", password: str = "Admin@12345") -> dict[str, str]:
+def auth_headers(client: TestClient, email: str = "admin@tkxel.com", password: str = "Admin@12345") -> dict[str, str]:
     response = client.post("/api/auth/login", json={"email": email, "password": password})
     assert response.status_code == 200
     return {"Authorization": f"Bearer {response.json()['access_token']}"}
@@ -52,7 +57,24 @@ def seeded_user(client: TestClient, headers: dict[str, str], role: str) -> dict:
     return response.json()["items"][0]
 
 
-def draft_payload(account_name: str, owner_id: str) -> dict:
+def draft_payload(account_name: str, owner_id: str, *, include_engagement: bool = True) -> dict:
+    engagement_drafts = []
+    if include_engagement:
+        engagement_drafts.append(
+            {
+                "name": "Customer intelligence modernization",
+                "owner_id": owner_id,
+                "service_lines": ["Account onboarding"],
+                "value": 125000,
+                "currency": "USD",
+                "delivery_status": "active",
+                "start_date": datetime.now(timezone.utc).replace(hour=12, minute=0, second=0, microsecond=0).isoformat().replace("+00:00", "Z"),
+                "commercial_context": "Project Charter p1: account and engagement scope.",
+                "risks": ["KYC has not been completed yet"],
+                "source_citation": "Project Charter p1: account and engagement scope.",
+                "confidence": 82,
+            }
+        )
     return {
         "account_name": account_name,
         "project_name": "Customer intelligence modernization",
@@ -81,29 +103,91 @@ def draft_payload(account_name: str, owner_id: str) -> dict:
                 ],
             }
         ],
-        "engagement_drafts": [
-            {
-                "name": "Customer intelligence modernization",
-                "owner_id": owner_id,
-                "service_lines": ["Engineering", "Customer Success"],
-                "value": 125000,
-                "currency": "USD",
-                "delivery_status": "active",
-                "confidence": 88,
-                "start_date": "2026-05-30T00:00:00Z",
-                "end_date": "2026-11-30T00:00:00Z",
-                "renewal_date": "2026-11-30T00:00:00Z",
-                "notice_deadline": "2026-10-30T00:00:00Z",
-                "notice_period_days": 30,
-                "source_citation": "SOW p2: delivery and renewal terms.",
-            }
-        ],
+        "engagement_drafts": engagement_drafts,
     }
 
 
-def create_approved_account(client: TestClient, headers: dict[str, str], account_name: str) -> tuple[str, str, dict]:
+def iso_days_from_now(days: int) -> str:
+    value = datetime.now(timezone.utc) + timedelta(days=days)
+    return value.replace(hour=12, minute=0, second=0, microsecond=0).isoformat().replace("+00:00", "Z")
+
+
+def date_days_from_now(days: int) -> str:
+    return (datetime.now(timezone.utc).date() + timedelta(days=days)).isoformat()
+
+
+def engagement_payload(owner_id: str, **overrides) -> dict:
+    payload = {
+        "name": "Strategic SOW QA",
+        "description": "QA coverage for manually managed Engagement/SOW records.",
+        "owner_id": owner_id,
+        "service_lines": ["Engineering", "Customer Success"],
+        "source_links": [{"title": "Signed SOW", "url": "https://customer.example.com/sow"}],
+        "contract_value": 87500,
+        "currency": "USD",
+        "delivery_status": "active",
+        "commercial_status": "healthy",
+        "health_score": 82,
+        "health_status": "green",
+        "renewal_risk": "medium",
+        "start_date": iso_days_from_now(-15),
+        "end_date": iso_days_from_now(120),
+        "renewal_date": iso_days_from_now(90),
+        "notice_period_days": 45,
+        "notice_deadline": iso_days_from_now(1),
+        "resource_dependency_notes": "Named platform engineer availability.",
+        "risks": ["Dependency on customer data access"],
+        "source_citation": "SOW section 3.",
+    }
+    payload.update(overrides)
+    return payload
+
+
+ENGAGEMENT_RESPONSE_FIELDS = {
+    "id",
+    "account_id",
+    "name",
+    "description",
+    "status",
+    "owner_id",
+    "owner_name",
+    "service_lines",
+    "source_document_ids",
+    "source_links",
+    "value",
+    "contract_value",
+    "currency",
+    "delivery_status",
+    "commercial_status",
+    "delivery_health",
+    "health_score",
+    "health_status",
+    "renewal_risk",
+    "start_date",
+    "end_date",
+    "renewal_date",
+    "notice_deadline",
+    "notice_period_days",
+    "days_to_expiry",
+    "renewal_status",
+    "resource_dependency_notes",
+    "risks",
+    "created_at",
+    "updated_at",
+    "created_by",
+    "updated_by",
+}
+
+
+def create_engagement_for_account(client: TestClient, headers: dict[str, str], account_id: str, owner_id: str, **overrides) -> dict:
+    response = client.post(f"/api/accounts/{account_id}/engagements", headers=headers, json=engagement_payload(owner_id, **overrides))
+    assert response.status_code == 201
+    return response.json()
+
+
+def create_approved_account(client: TestClient, headers: dict[str, str], account_name: str, *, include_engagement: bool = False) -> tuple[str, str, dict]:
     owner = seeded_user(client, headers, "account_manager")
-    draft_response = client.post("/api/onboarding/drafts", headers=headers, json=draft_payload(account_name, owner["id"]))
+    draft_response = client.post("/api/onboarding/drafts", headers=headers, json=draft_payload(account_name, owner["id"], include_engagement=include_engagement))
     assert draft_response.status_code == 201
 
     approve_response = client.post(f"/api/onboarding/drafts/{draft_response.json()['id']}/approve", headers=headers)
@@ -112,7 +196,7 @@ def create_approved_account(client: TestClient, headers: dict[str, str], account
     return approved["approved_account_id"], owner["id"], approved
 
 
-def test_onboarding_draft_approval_creates_account_engagement_sources_and_rollup(client: TestClient) -> None:
+def test_onboarding_draft_approval_creates_account_sources_and_engagement(client: TestClient) -> None:
     headers = auth_headers(client)
     owner = seeded_user(client, headers, "account_manager")
 
@@ -121,6 +205,7 @@ def test_onboarding_draft_approval_creates_account_engagement_sources_and_rollup
     draft = create_response.json()
     assert draft["status"] == "ready_for_review"
     assert draft["source_documents"][0]["citations"][0]["field_key"] == "account_name"
+    assert draft["engagement_drafts"][0]["name"] == "Customer intelligence modernization"
 
     list_response = client.get("/api/onboarding/drafts", headers=headers, params={"search": "Northwind", "status": "ready_for_review", "page": 1, "page_size": 5})
     assert list_response.status_code == 200
@@ -136,11 +221,14 @@ def test_onboarding_draft_approval_creates_account_engagement_sources_and_rollup
     assert overview["account"]["name"] == "Northwind Workspace"
     assert overview["account"]["primary_owner"]["user_id"] == owner["id"]
     assert overview["engagements"]["total"] == 1
+    assert overview["engagements"]["items"][0]["name"] == "Customer intelligence modernization"
     assert overview["attachments"]["total"] == 1
 
     rollup_response = client.get(f"/api/accounts/{account_id}/health/rollup", headers=headers)
     assert rollup_response.status_code == 200
-    assert rollup_response.json()["contributions"][0]["score"] == 88
+    rollup = rollup_response.json()
+    assert rollup["metric_version"] == "engagement-health-rollup-adapter-v1"
+    assert rollup["contributions"][0]["name"] == "Customer intelligence modernization"
 
 
 def test_onboarding_validation_and_authorization_errors_are_enforced(client: TestClient) -> None:
@@ -158,9 +246,352 @@ def test_onboarding_validation_and_authorization_errors_are_enforced(client: Tes
     draft_response = client.post("/api/onboarding/drafts", headers=headers, json=draft_payload("Authorization Workspace", owner["id"]))
     assert draft_response.status_code == 201
 
-    account_manager_headers = auth_headers(client, "account.manager.user@tkxelkam.com", "User@12345")
+    account_manager_headers = auth_headers(client, "account.manager.user@tkxel.com", "User@12345")
     approve_response = client.post(f"/api/onboarding/drafts/{draft_response.json()['id']}/approve", headers=account_manager_headers)
     assert approve_response.status_code == 403
+
+
+def test_engagement_list_endpoint_returns_items_empty_state_and_rejects_unauthorized_access(client: TestClient) -> None:
+    headers = auth_headers(client)
+    account_id, owner_id, _ = create_approved_account(client, headers, "Engagement List API Workspace")
+
+    empty_response = client.get(f"/api/accounts/{account_id}/engagements", headers=headers)
+    assert empty_response.status_code == 200
+    assert empty_response.json()["items"] == []
+    assert empty_response.json()["total"] == 0
+
+    created = create_engagement_for_account(client, headers, account_id, owner_id, name="Endpoint list coverage")
+    list_response = client.get(f"/api/accounts/{account_id}/engagements", headers=headers, params={"search": "Endpoint list", "page": 1, "page_size": 10})
+    assert list_response.status_code == 200
+    page = list_response.json()
+    assert page["total"] == 1
+    assert page["items"][0]["id"] == created["id"]
+    assert page["items"][0]["account_id"] == account_id
+
+    unauthorized_headers = auth_headers(client, "content.specialist.user@tkxel.com", "User@12345")
+    unauthorized_response = client.get(f"/api/accounts/{account_id}/engagements", headers=unauthorized_headers)
+    assert unauthorized_response.status_code == 403
+
+
+def test_engagement_create_endpoint_validates_payload_calculates_notice_and_returns_shape(client: TestClient) -> None:
+    headers = auth_headers(client)
+    account_id, owner_id, _ = create_approved_account(client, headers, "Engagement Create API Workspace")
+
+    create_response = client.post(f"/api/accounts/{account_id}/engagements", headers=headers, json=engagement_payload(owner_id))
+    assert create_response.status_code == 201
+    created = create_response.json()
+    assert ENGAGEMENT_RESPONSE_FIELDS.issubset(created.keys())
+    assert created["account_id"] == account_id
+    assert created["name"] == "Strategic SOW QA"
+    assert created["contract_value"] == 87500
+    assert created["health_score"] == 82
+    assert created["source_links"][0]["url"] == "https://customer.example.com/sow"
+    assert created["notice_deadline"].startswith(date_days_from_now(45))
+    assert created["days_to_expiry"] == 120
+    assert created["renewal_status"] == "upcoming_notice_window"
+
+    missing_name = engagement_payload(owner_id)
+    missing_name.pop("name")
+    missing_name_response = client.post(f"/api/accounts/{account_id}/engagements", headers=headers, json=missing_name)
+    assert missing_name_response.status_code == 422
+    assert any(error["field"] == "name" for error in missing_name_response.json()["errors"])
+
+    bad_dates_response = client.post(
+        f"/api/accounts/{account_id}/engagements",
+        headers=headers,
+        json=engagement_payload(owner_id, start_date=iso_days_from_now(5), end_date=iso_days_from_now(1)),
+    )
+    assert bad_dates_response.status_code == 422
+
+    negative_value_response = client.post(f"/api/accounts/{account_id}/engagements", headers=headers, json=engagement_payload(owner_id, contract_value=-1))
+    assert negative_value_response.status_code == 422
+
+    negative_notice_response = client.post(f"/api/accounts/{account_id}/engagements", headers=headers, json=engagement_payload(owner_id, notice_period_days=-1))
+    assert negative_notice_response.status_code == 422
+
+
+def test_engagement_detail_endpoint_returns_detail_404_and_rejects_unauthorized_access(client: TestClient) -> None:
+    headers = auth_headers(client)
+    account_id, owner_id, _ = create_approved_account(client, headers, "Engagement Detail API Workspace")
+    created = create_engagement_for_account(client, headers, account_id, owner_id, name="Endpoint detail coverage")
+
+    detail_response = client.get(f"/api/engagements/{created['id']}", headers=headers)
+    assert detail_response.status_code == 200
+    detail = detail_response.json()
+    assert ENGAGEMENT_RESPONSE_FIELDS.issubset(detail.keys())
+    assert detail["id"] == created["id"]
+    assert detail["account_id"] == account_id
+    assert detail["name"] == "Endpoint detail coverage"
+
+    missing_response = client.get("/api/engagements/missing-engagement", headers=headers)
+    assert missing_response.status_code == 404
+
+    unauthorized_headers = auth_headers(client, "content.specialist.user@tkxel.com", "User@12345")
+    unauthorized_response = client.get(f"/api/engagements/{created['id']}", headers=unauthorized_headers)
+    assert unauthorized_response.status_code == 403
+
+
+def test_engagement_patch_endpoint_updates_recalculates_notice_and_validates_payload(client: TestClient) -> None:
+    headers = auth_headers(client)
+    account_id, owner_id, _ = create_approved_account(client, headers, "Engagement Patch API Workspace")
+    created = create_engagement_for_account(client, headers, account_id, owner_id, name="Endpoint patch coverage")
+
+    update_response = client.patch(
+        f"/api/engagements/{created['id']}",
+        headers=headers,
+        json={
+            "name": "Endpoint patch updated",
+            "description": "Updated description",
+            "service_lines": ["Cloud", "Data"],
+            "contract_value": 99000,
+            "currency": "EUR",
+            "delivery_status": "watch",
+            "commercial_status": "risk",
+            "health_score": 66,
+            "health_status": "amber",
+            "renewal_risk": "high",
+            "end_date": iso_days_from_now(120),
+            "renewal_date": iso_days_from_now(40),
+            "notice_period_days": 12,
+            "notice_deadline": iso_days_from_now(1),
+            "resource_dependency_notes": "Updated resource note.",
+            "risks": ["Updated risk"],
+        },
+    )
+    assert update_response.status_code == 200
+    updated = update_response.json()
+    assert ENGAGEMENT_RESPONSE_FIELDS.issubset(updated.keys())
+    assert updated["name"] == "Endpoint patch updated"
+    assert updated["description"] == "Updated description"
+    assert updated["service_lines"] == ["Cloud", "Data"]
+    assert updated["contract_value"] == 99000
+    assert updated["currency"] == "EUR"
+    assert updated["delivery_status"] == "watch"
+    assert updated["commercial_status"] == "risk"
+    assert updated["health_score"] == 66
+    assert updated["health_status"] == "amber"
+    assert updated["renewal_risk"] == "high"
+    assert updated["resource_dependency_notes"] == "Updated resource note."
+    assert updated["risks"] == ["Updated risk"]
+    assert updated["notice_deadline"].startswith(date_days_from_now(28))
+    assert updated["renewal_status"] == "notice_due"
+
+    bad_dates_response = client.patch(
+        f"/api/engagements/{created['id']}",
+        headers=headers,
+        json={"start_date": iso_days_from_now(10), "end_date": iso_days_from_now(3)},
+    )
+    assert bad_dates_response.status_code == 422
+
+    negative_value_response = client.patch(f"/api/engagements/{created['id']}", headers=headers, json={"contract_value": -10})
+    assert negative_value_response.status_code == 422
+
+    negative_notice_response = client.patch(f"/api/engagements/{created['id']}", headers=headers, json={"notice_period_days": -1})
+    assert negative_notice_response.status_code == 422
+
+
+def test_engagement_archive_endpoint_archives_without_hard_delete_and_hides_from_active_list(client: TestClient, db_session: Session) -> None:
+    headers = auth_headers(client)
+    account_id, owner_id, _ = create_approved_account(client, headers, "Engagement Archive API Workspace")
+    created = create_engagement_for_account(client, headers, account_id, owner_id, name="Endpoint archive coverage")
+
+    archive_response = client.delete(f"/api/engagements/{created['id']}", headers=headers)
+    assert archive_response.status_code == 200
+    assert archive_response.json()["message"] == "Engagement archived successfully"
+
+    archived = db_session.get(Engagement, created["id"])
+    assert archived is not None
+    assert archived.status == "archived"
+    assert archived.archived_at is not None
+
+    active_list = client.get(f"/api/accounts/{account_id}/engagements", headers=headers, params={"search": "Endpoint archive coverage"})
+    assert active_list.status_code == 200
+    assert active_list.json()["items"] == []
+
+    detail_response = client.get(f"/api/engagements/{created['id']}", headers=headers)
+    assert detail_response.status_code == 404
+
+
+def test_engagement_summary_endpoint_returns_account_overview_and_engagement_360_fields(client: TestClient) -> None:
+    headers = auth_headers(client)
+    account_id, owner_id, _ = create_approved_account(client, headers, "Engagement Summary API Workspace")
+    created = create_engagement_for_account(client, headers, account_id, owner_id, name="Endpoint summary coverage")
+
+    summary_response = client.get(f"/api/engagements/{created['id']}/summary", headers=headers)
+    assert summary_response.status_code == 200
+    summary = summary_response.json()
+    assert summary["id"] == created["id"]
+    assert summary["account_id"] == account_id
+    assert summary["name"] == "Endpoint summary coverage"
+    assert summary["owner_id"] == owner_id
+    assert summary["service_lines"] == ["Engineering", "Customer Success"]
+    assert summary["source_links"][0]["url"] == "https://customer.example.com/sow"
+    assert summary["contract_value"] == 87500
+    assert summary["currency"] == "USD"
+    assert summary["delivery_status"] == "active"
+    assert summary["commercial_status"] == "healthy"
+    assert summary["health_score"] == 82
+    assert summary["health_status"] == "green"
+    assert summary["renewal_risk"] == "medium"
+    assert summary["notice_deadline"].startswith(date_days_from_now(45))
+    assert summary["days_to_expiry"] == 120
+    assert summary["renewal_status"] == "upcoming_notice_window"
+    assert summary["resource_dependency_notes"] == "Named platform engineer availability."
+    assert summary["risks"] == ["Dependency on customer data access"]
+    assert summary["latest_health"]["overall"] == 82
+    assert summary["created_at"]
+    assert summary["updated_at"]
+
+
+def test_manual_engagement_crud_calculations_timeline_and_access(client: TestClient) -> None:
+    headers = auth_headers(client)
+    account_id, owner_id, _ = create_approved_account(client, headers, "Engagement QA Workspace")
+
+    create_response = client.post(
+        f"/api/accounts/{account_id}/engagements",
+        headers=headers,
+        json=engagement_payload(owner_id),
+    )
+    assert create_response.status_code == 201
+    created = create_response.json()
+    engagement_id = created["id"]
+    assert created["account_id"] == account_id
+    assert created["name"] == "Strategic SOW QA"
+    assert created["contract_value"] == 87500
+    assert created["notice_deadline"].startswith(date_days_from_now(45))
+    assert created["days_to_expiry"] == 120
+    assert created["renewal_status"] == "upcoming_notice_window"
+
+    list_response = client.get(
+        f"/api/accounts/{account_id}/engagements",
+        headers=headers,
+        params={"search": "Strategic", "status": "active", "owner": owner_id, "page": 1, "page_size": 10},
+    )
+    assert list_response.status_code == 200
+    listed_ids = {item["id"] for item in list_response.json()["items"]}
+    assert engagement_id in listed_ids
+
+    detail_response = client.get(f"/api/engagements/{engagement_id}", headers=headers)
+    assert detail_response.status_code == 200
+    assert detail_response.json()["source_links"][0]["url"] == "https://customer.example.com/sow"
+
+    timeline_response = client.get(f"/api/engagements/{engagement_id}/timeline", headers=headers)
+    assert timeline_response.status_code == 200
+    assert {event["event_type"] for event in timeline_response.json()["items"]} == {"engagement_created"}
+    created_event = timeline_response.json()["items"][0]
+    assert created_event["account_id"] == account_id
+    assert created_event["engagement_id"] == engagement_id
+    assert created_event["source_module"] == "engagements"
+    assert created_event["actor_id"]
+    assert created_event["new_value"]["notice_deadline"].startswith(date_days_from_now(45))
+
+    viewer_headers = auth_headers(client, "leadership.viewer.user@tkxel.com", "User@12345")
+    viewer_list = client.get(f"/api/accounts/{account_id}/engagements", headers=viewer_headers)
+    assert viewer_list.status_code == 200
+    viewer_update = client.patch(f"/api/engagements/{engagement_id}", headers=viewer_headers, json={"health_status": "red"})
+    assert viewer_update.status_code == 403
+
+    update_response = client.patch(
+        f"/api/engagements/{engagement_id}",
+        headers=headers,
+        json={
+            "name": "Strategic SOW QA - Renewed",
+            "service_lines": ["Engineering", "Data"],
+            "contract_value": 91000,
+            "currency": "EUR",
+            "delivery_status": "watch",
+            "health_score": 68,
+            "health_status": "amber",
+            "renewal_risk": "high",
+            "start_date": iso_days_from_now(-10),
+            "end_date": iso_days_from_now(150),
+            "renewal_date": iso_days_from_now(20),
+            "notice_period_days": 10,
+        },
+    )
+    assert update_response.status_code == 200
+    updated = update_response.json()
+    assert updated["name"] == "Strategic SOW QA - Renewed"
+    assert updated["contract_value"] == 91000
+    assert updated["health_score"] == 68
+    assert updated["health_status"] == "amber"
+    assert updated["delivery_status"] == "watch"
+    assert updated["notice_deadline"].startswith(date_days_from_now(10))
+    assert updated["days_to_expiry"] == 150
+    assert updated["renewal_status"] == "renewal_due"
+
+    timeline_after_update = client.get(f"/api/engagements/{engagement_id}/timeline", headers=headers)
+    assert timeline_after_update.status_code == 200
+    event_types = {event["event_type"] for event in timeline_after_update.json()["items"]}
+    assert {
+        "engagement_created",
+        "engagement_updated",
+        "sow_terms_updated",
+        "renewal_dates_updated",
+        "engagement_health_changed",
+        "engagement_delivery_status_changed",
+    }.issubset(event_types)
+
+    archive_response = client.delete(f"/api/engagements/{engagement_id}", headers=headers)
+    assert archive_response.status_code == 200
+    assert archive_response.json()["message"] == "Engagement archived successfully"
+
+    archived_detail = client.get(f"/api/engagements/{engagement_id}", headers=headers)
+    assert archived_detail.status_code == 404
+    active_list = client.get(f"/api/accounts/{account_id}/engagements", headers=headers, params={"search": "Strategic SOW QA - Renewed"})
+    assert active_list.status_code == 200
+    assert engagement_id not in {item["id"] for item in active_list.json()["items"]}
+
+    timeline_after_archive = client.get(f"/api/engagements/{engagement_id}/timeline", headers=headers)
+    assert timeline_after_archive.status_code == 200
+    assert "engagement_archived" in {event["event_type"] for event in timeline_after_archive.json()["items"]}
+
+
+def test_manual_engagement_create_validation_errors(client: TestClient) -> None:
+    headers = auth_headers(client)
+    account_id, owner_id, _ = create_approved_account(client, headers, "Engagement Validation Workspace")
+
+    missing_name = engagement_payload(owner_id)
+    missing_name.pop("name")
+    missing_name_response = client.post(f"/api/accounts/{account_id}/engagements", headers=headers, json=missing_name)
+    assert missing_name_response.status_code == 422
+    assert any(error["field"] == "name" for error in missing_name_response.json()["errors"])
+
+    bad_dates_response = client.post(
+        f"/api/accounts/{account_id}/engagements",
+        headers=headers,
+        json=engagement_payload(owner_id, start_date=iso_days_from_now(5), end_date=iso_days_from_now(1)),
+    )
+    assert bad_dates_response.status_code == 422
+
+    negative_value_response = client.post(
+        f"/api/accounts/{account_id}/engagements",
+        headers=headers,
+        json=engagement_payload(owner_id, contract_value=-1),
+    )
+    assert negative_value_response.status_code == 422
+
+    negative_notice_response = client.post(
+        f"/api/accounts/{account_id}/engagements",
+        headers=headers,
+        json=engagement_payload(owner_id, notice_period_days=-1),
+    )
+    assert negative_notice_response.status_code == 422
+
+    expired_response = client.post(
+        f"/api/accounts/{account_id}/engagements",
+        headers=headers,
+        json=engagement_payload(
+            owner_id,
+            name="Expired SOW QA",
+            start_date=iso_days_from_now(-90),
+            end_date=iso_days_from_now(-1),
+            renewal_date=None,
+            notice_period_days=None,
+        ),
+    )
+    assert expired_response.status_code == 201
+    assert expired_response.json()["renewal_status"] == "expired"
 
 
 def test_account_filters_owner_history_engagement_health_and_openapi_docs(client: TestClient) -> None:
@@ -171,15 +602,16 @@ def test_account_filters_owner_history_engagement_health_and_openapi_docs(client
     account_list = client.get(
         "/api/accounts",
         headers=headers,
-        params={"search": "Globex", "lifecycle_status": "Onboarding", "segment": "Growth", "risk_status": "critical", "page": 1, "page_size": 1},
+        params={"search": "Globex", "lifecycle_status": "Onboarding", "segment": "Growth", "risk_status": "warning", "page": 1, "page_size": 1},
     )
     assert account_list.status_code == 200
     assert account_list.json()["items"][0]["id"] == account_id
+    assert account_list.json()["items"][0]["health"]["overall"] == 45
 
     email_search = client.get(
         "/api/accounts",
         headers=headers,
-        params={"search": "account.manager.user@tkxelkam.com", "page": 1, "page_size": 5},
+        params={"search": "account.manager.user@tkxel.com", "page": 1, "page_size": 5},
     )
     assert email_search.status_code == 200
     assert any(item["id"] == account_id for item in email_search.json()["items"])
@@ -209,6 +641,13 @@ def test_account_filters_owner_history_engagement_health_and_openapi_docs(client
     )
     assert bad_engagement.status_code == 422
 
+    created_engagement = client.post(
+        f"/api/accounts/{account_id}/engagements",
+        headers=headers,
+        json=engagement_payload(owner_id, name="Customer health workspace"),
+    )
+    assert created_engagement.status_code == 201
+
     engagements = client.get(
         f"/api/accounts/{account_id}/engagements",
         headers=headers,
@@ -216,6 +655,23 @@ def test_account_filters_owner_history_engagement_health_and_openapi_docs(client
     )
     assert engagements.status_code == 200
     engagement_id = engagements.json()["items"][0]["id"]
+
+    health_status_update = client.patch(f"/api/engagements/{engagement_id}", headers=headers, json={"health_status": "red"})
+    assert health_status_update.status_code == 200
+    assert health_status_update.json()["health_status"] == "red"
+
+    rollup_response = client.get(f"/api/accounts/{account_id}/health/rollup", headers=headers)
+    assert rollup_response.status_code == 200
+    rollup = rollup_response.json()
+    assert rollup["metric_version"] == "engagement-health-rollup-adapter-v1"
+    assert rollup["overall"] == 45
+    assert rollup["rag_status"] == "warning"
+    assert rollup["contributions"][0]["health_status"] == "red"
+    assert rollup["contributions"][0]["scoring_status"] == "pending_scoring_engine"
+
+    timeline_response = client.get(f"/api/engagements/{engagement_id}/timeline", headers=headers)
+    assert timeline_response.status_code == 200
+    assert any(event["event_type"] == "engagement_health_changed" for event in timeline_response.json()["items"])
 
     health_response = client.post(f"/api/engagements/{engagement_id}/health/recalculate", headers=headers)
     assert health_response.status_code == 200
@@ -326,7 +782,7 @@ def test_csv_import_persists_accounts_in_onboarding_hierarchy(client: TestClient
                     "industry": "Restaurants",
                     "arr": 1260000,
                     "stage": "Onboarding",
-                    "owner_email": "account.manager.user@tkxelkam.com",
+                    "owner_email": "account.manager.user@tkxel.com",
                     "segment": "Enterprise",
                     "region": "North America",
                 }
@@ -346,7 +802,7 @@ def test_csv_import_persists_accounts_in_onboarding_hierarchy(client: TestClient
     account = db_session.query(Account).filter(Account.id == result["account_id"]).one()
     assert account.name == "CSV Cafe Zupas"
     assert account.created_from_draft_id == result["draft_id"]
-    assert account.owners[0].user_email == "account.manager.user@tkxelkam.com"
+    assert account.owners[0].user_email == "account.manager.user@tkxel.com"
     assert db_session.query(Engagement).filter(Engagement.account_id == account.id).count() == 1
     document = db_session.query(SourceDocument).filter(SourceDocument.account_id == account.id).one()
     assert document.draft_id == result["draft_id"]

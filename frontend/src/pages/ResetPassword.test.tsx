@@ -31,7 +31,7 @@ describe('ResetPassword', () => {
       </AuthProvider>,
     )
 
-    await userEvent.type(screen.getByLabelText(/email/i), 'admin@tkxelkam.com')
+    await userEvent.type(screen.getByLabelText(/email/i), 'admin@tkxel.com')
     await userEvent.click(screen.getByRole('button', { name: /generate reset token/i }))
 
     expect(await screen.findByDisplayValue('reset-token-1234567890')).toBeInTheDocument()

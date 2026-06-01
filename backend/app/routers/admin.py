@@ -2,7 +2,7 @@ from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends, Query, status
 
-from app.dependencies import get_custom_field_service, get_rbac_service, get_user_management_service, require_permission
+from app.dependencies import get_custom_field_service, get_email_domain_policy_service, get_rbac_service, get_user_management_service, require_permission
 from app.models import CustomFieldDefinition, Permission, Role, User
 from app.rbac import ADMIN_MODULE
 from app.schemas import (
@@ -14,6 +14,8 @@ from app.schemas import (
     CustomFieldSort,
     CustomFieldStatus,
     CustomFieldType,
+    AllowedEmailDomainsRead,
+    AllowedEmailDomainsUpdateRequest,
     PermissionRead,
     MessageResponse,
     RoleCreateRequest,
@@ -27,6 +29,7 @@ from app.schemas import (
     UserUpdateRequest,
 )
 from app.services.custom_fields import CustomFieldService
+from app.services.email_domains import EmailDomainPolicyService
 from app.services.rbac import RbacService
 from app.services.user_management import UserManagementService
 
@@ -36,6 +39,44 @@ RoleTypeFilter = Literal["all", "system", "custom"]
 Direction = Literal["asc", "desc"]
 
 router = APIRouter(prefix="/api/admin", tags=["Admin RBAC"])
+
+
+@router.get(
+    "/settings/allowed-email-domains",
+    response_model=AllowedEmailDomainsRead,
+    summary="Read allowed email domains",
+    description="Returns the normalized allowed email domain list used by login, Google Sign-In, password reset, and Admin user management.",
+    response_description="Allowed email domains with update metadata.",
+    responses={
+        401: {"description": "Missing, invalid, or expired bearer token."},
+        403: {"description": "Authenticated user does not have Admin/RBAC configure permission."},
+    },
+)
+def read_allowed_email_domains(
+    _: AdminAccess,
+    service: Annotated[EmailDomainPolicyService, Depends(get_email_domain_policy_service)],
+) -> AllowedEmailDomainsRead:
+    return service.read_allowed_domains()
+
+
+@router.patch(
+    "/settings/allowed-email-domains",
+    response_model=AllowedEmailDomainsRead,
+    summary="Update allowed email domains",
+    description="Normalizes, validates, deduplicates, stores, and audits the configured allowed email domains.",
+    response_description="Saved normalized domains with update metadata.",
+    responses={
+        401: {"description": "Missing, invalid, or expired bearer token."},
+        403: {"description": "Authenticated user does not have Admin/RBAC configure permission."},
+        422: {"description": "Field-level validation errors with meaningful messages."},
+    },
+)
+def update_allowed_email_domains(
+    payload: AllowedEmailDomainsUpdateRequest,
+    current_user: AdminAccess,
+    service: Annotated[EmailDomainPolicyService, Depends(get_email_domain_policy_service)],
+) -> AllowedEmailDomainsRead:
+    return service.update_allowed_domains(payload, current_user)
 
 
 @router.get(
@@ -86,10 +127,10 @@ def list_users(
 )
 def create_user(
     payload: UserCreateRequest,
-    _: AdminAccess,
+    current_user: AdminAccess,
     service: Annotated[UserManagementService, Depends(get_user_management_service)],
 ) -> User:
-    return service.create_user(payload)
+    return service.create_user(payload, current_user)
 
 
 @router.get(
@@ -132,10 +173,10 @@ def read_user(
 def update_user(
     user_id: str,
     payload: UserUpdateRequest,
-    _: AdminAccess,
+    current_user: AdminAccess,
     service: Annotated[UserManagementService, Depends(get_user_management_service)],
 ) -> User:
-    return service.update_user(user_id, payload)
+    return service.update_user(user_id, payload, current_user)
 
 
 @router.delete(

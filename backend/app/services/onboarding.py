@@ -6,7 +6,6 @@ from sqlalchemy.orm import Session
 
 from app.models import (
     Account,
-    AccountHealthRollup,
     AccountOwner,
     AccountOwnershipHistory,
     Engagement,
@@ -41,6 +40,8 @@ from app.services.account_access import AccountAccessService
 from app.services.accounts import AccountService
 from app.services.audit import AuditService
 from app.services.custom_fields import CustomFieldService
+from app.services.engagements import calculate_notice_deadline
+from app.services.engagement_health_rollup import notify_account_health_impacted_by_engagement_change
 from app.services.timeline import TimelineService
 from app.services.user_management import page_count
 
@@ -54,6 +55,7 @@ class OnboardingService:
         self.audit = AuditService(AuditRepository(db))
         self.timeline = TimelineService(TimelineRepository(db))
         self.custom_fields = CustomFieldService(db, CustomFieldRepository(db))
+        self.account_service = AccountService(db)
 
     def list_drafts(
         self,
@@ -200,7 +202,7 @@ class OnboardingService:
         for document in draft.source_documents:
             document.account_id = account.id
         created_engagements = [self._create_engagement(account, engagement_draft, primary_owner, current_user) for engagement_draft in draft.engagement_drafts]
-        self._refresh_account_rollup(account, created_engagements)
+        self._notify_account_health_impacted_by_engagement_creation(account, created_engagements)
         draft.status = "approved"
         draft.approved_by_id = current_user.id
         draft.approved_account_id = account.id
@@ -478,7 +480,7 @@ class OnboardingService:
         if not account_id:
             return None
         account = self.accounts.get_by_id(account_id)
-        return AccountService._account_read(account) if account else None
+        return self.account_service._account_read(account) if account else None
 
     @staticmethod
     def _csv_row_result(
@@ -590,7 +592,6 @@ class OnboardingService:
             ("segment", bool(draft.segment), "Segment is required before approval."),
             ("region", bool(draft.region), "Region is required before approval."),
             ("source_citation", bool(self._source_citation_for_draft(draft)), "Source citation is required before approval."),
-            ("engagement_drafts", bool(draft.engagement_drafts), "At least one engagement draft is required before approval."),
         ]
         errors = [{"field": field, "message": message} for field, passed, message in checks if not passed]
         return errors + self._engagement_approval_errors(draft)
@@ -695,7 +696,7 @@ class OnboardingService:
                     start_date=payload.start_date,
                     end_date=payload.end_date,
                     renewal_date=payload.renewal_date,
-                    notice_deadline=payload.notice_deadline,
+                    notice_deadline=calculate_notice_deadline(payload.renewal_date, payload.end_date, payload.notice_period_days),
                     notice_period_days=payload.notice_period_days,
                     auto_renewal=payload.auto_renewal,
                     commercial_context=payload.commercial_context,
@@ -763,7 +764,7 @@ class OnboardingService:
             start_date=draft.start_date,
             end_date=draft.end_date,
             renewal_date=draft.renewal_date,
-            notice_deadline=draft.notice_deadline,
+            notice_deadline=calculate_notice_deadline(draft.renewal_date, draft.end_date, draft.notice_period_days),
             notice_period_days=draft.notice_period_days,
             auto_renewal=draft.auto_renewal,
             commercial_context=draft.commercial_context,
@@ -810,33 +811,21 @@ class OnboardingService:
             metadata={"source_document_ids": [document.id for document in draft.source_documents]},
         )
         for engagement in engagements:
-            self.timeline.add_account_event(
+            self.timeline.add_engagement_event(
                 account_id=account.id,
                 engagement_id=engagement.id,
                 event_type="engagement_created",
-                module="engagement",
                 title=f"Engagement created: {engagement.name}",
                 description="Engagement created from approved onboarding draft.",
                 actor=actor,
-                source_record_id=engagement.id,
-                source_record_type="engagement",
                 source_record_route=f"/accounts/{account.id}?tab=engagements",
+                new_value={"id": engagement.id, "name": engagement.name, "source": "onboarding_approval"},
             )
 
-    def _refresh_account_rollup(self, account: Account, engagements: list[Engagement]) -> None:
-        scores = [engagement.delivery_health for engagement in engagements]
-        if scores:
-            account.health_delivery = round(sum(scores) / len(scores))
-            account.health_overall = round((account.health_relationship + account.health_usage + account.health_delivery + account.health_commercial) / 4)
-            account.risk_status = self._rag_status(account.health_overall)
-        self.engagements.add_account_rollup(
-            AccountHealthRollup(
-                account_id=account.id,
-                overall=account.health_overall,
-                rag_status=account.risk_status,
-                contributions=[{"engagement_id": engagement.id, "name": engagement.name, "score": engagement.delivery_health} for engagement in engagements],
-            )
-        )
+    def _notify_account_health_impacted_by_engagement_creation(self, account: Account, engagements: list[Engagement]) -> None:
+        if not engagements:
+            return
+        notify_account_health_impacted_by_engagement_change(self.engagements, account=account, engagement=engagements[-1])
 
     @staticmethod
     def _source_citation_for_draft(draft: OnboardingDraft) -> str | None:
