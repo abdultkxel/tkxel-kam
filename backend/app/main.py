@@ -19,6 +19,7 @@ from app.routers import (
     kyc,
     onboarding,
     opportunities,
+    playbooks_tasks,
     stakeholders,
     users,
 )
@@ -77,6 +78,10 @@ openapi_tags = [
         "description": "Governance calendar, recurrence, agenda drafts, decisions, actions, AI brief, and integration sync APIs.",
     },
     {
+        "name": "Playbooks, Activities, Tasks, and Calendar",
+        "description": "Configurable playbooks, execution-generated activities, task/evidence management, and unified calendar projections.",
+    },
+    {
         "name": "Stakeholder Relationships",
         "description": "Account and engagement stakeholder maps, relationship attributes, hierarchy, and stakeholder timeline events.",
     },
@@ -123,6 +128,7 @@ app.include_router(content.router)
 app.include_router(custom_fields.router)
 app.include_router(escalations.router)
 app.include_router(governance.router)
+app.include_router(playbooks_tasks.router)
 app.include_router(stakeholders.router)
 app.include_router(opportunities.router)
 app.include_router(kyc.config_router)

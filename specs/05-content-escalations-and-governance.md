@@ -383,3 +383,11 @@ Improve account governance and client engagement by linking content, escalation 
 - Integration sync creates review-required governance events when account mapping confidence is weak or missing.
 - Sync deduplication uses provider/source record IDs and writes per-record sync logs for created, skipped, and duplicate records.
 - Verified test commands after implementation: `backend/.venv/bin/pytest backend/tests -q` passed with 30 tests, `npm test -- --run` passed with 25 tests, and `npm run build` passed with the existing Vite chunk-size warning.
+
+## Cross-Module Trace Note: Playbooks, Tasks, And Calendar
+
+- Governance calendar source context must include playbook-generated tasks, manually created tasks, task due dates, SOW expiry dates, renewal dates, and notice deadlines alongside governance events and governance action items.
+- Governance calendar and AI/context surfaces must preserve permission-aware source links for playbook tasks, task evidence, renewal/SOW source records, and governance records.
+- Recommendation-created playbook activities require explicit user confirmation through playbook execution and must not silently create governance records or task records.
+- Task evidence and task completion events should remain timeline/audit visible where the user has account and module access.
+- Renewal and playbook calendar items are projections from their source modules; governance should not duplicate or mutate those source records when displaying calendar context.

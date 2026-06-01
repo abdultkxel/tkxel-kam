@@ -20,6 +20,7 @@ from app.services.governance import GovernanceService
 from app.services.kyc import KycService
 from app.services.onboarding import OnboardingService
 from app.services.opportunities import OpportunityService
+from app.services.playbooks_tasks import PlaybooksTasksService
 from app.services.profile import ProfileService
 from app.services.rbac import RbacService
 from app.services.stakeholder_gap_service import StakeholderGapService
@@ -100,6 +101,10 @@ def get_escalation_service(db: Annotated[Session, Depends(get_db)]) -> Escalatio
 
 def get_governance_service(db: Annotated[Session, Depends(get_db)]) -> GovernanceService:
     return GovernanceService(db)
+
+
+def get_playbooks_tasks_service(db: Annotated[Session, Depends(get_db)]) -> PlaybooksTasksService:
+    return PlaybooksTasksService(db)
 
 
 def get_stakeholder_service(db: Annotated[Session, Depends(get_db)]) -> StakeholderService:

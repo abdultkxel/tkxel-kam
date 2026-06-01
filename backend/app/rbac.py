@@ -147,6 +147,7 @@ DEFAULT_ROLES: tuple[DefaultRole, ...] = (
             ("stakeholder_relationship", VIEW_ONLY_ACTIONS),
             ("opportunity_management", VIEW_ONLY_ACTIONS),
             ("retention_stability", VIEW_ONLY_ACTIONS),
+            ("playbooks_tasks_calendar", VIEW_ONLY_ACTIONS),
             ("escalation_management", VIEW_ONLY_ACTIONS),
             ("governance_reviews", VIEW_ONLY_ACTIONS),
             ("handover_summary", VIEW_ONLY_ACTIONS),

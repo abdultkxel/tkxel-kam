@@ -52,6 +52,10 @@ GovernanceCadence = Literal["weekly", "monthly", "quarterly", "yearly"]
 GovernanceEndPolicy = Literal["never", "after_occurrences", "on_date"]
 IntegrationProvider = Literal["google-calendar", "fathom"]
 IntegrationStatus = Literal["configuration_required", "connected", "syncing", "error", "disabled"]
+PlaybookOwnerRule = Literal["account_primary_am", "task_creator", "ops_lead", "template_owner"]
+TaskStatus = Literal["todo", "in_progress", "done", "skipped", "blocked", "cancelled"]
+TaskPriority = Literal["low", "medium", "high", "urgent"]
+TaskEvidenceType = Literal["note", "link", "file"]
 StakeholderRole = Literal[
     "executive_sponsor",
     "economic_buyer",
@@ -3337,6 +3341,386 @@ class GovernanceAIBriefRead(GovernanceGeneratedOutputRead):
     pending_decisions: list[str]
     action_items: list[str]
     citations: list[GovernanceGeneratedOutputCitationRead]
+
+
+class PlaybookTemplateActivityInput(BaseModel):
+    title: str
+    description: str | None = None
+    owner_rule: PlaybookOwnerRule = "account_primary_am"
+    due_offset_days: int = Field(default=7, ge=0, le=365)
+    priority: TaskPriority = "medium"
+    success_criteria: list[str] = Field(default_factory=list)
+    skip_allowed: bool = True
+    requires_evidence: bool = False
+    sort_order: int = Field(default=0, ge=0, le=10000)
+
+    @field_validator("title")
+    @classmethod
+    def title_is_valid(cls, value: str) -> str:
+        return validate_short_text(value, "Activity title", 220)
+
+    @field_validator("description")
+    @classmethod
+    def description_is_valid(cls, value: str | None) -> str | None:
+        return validate_optional_long_text(value, "Activity description", 4000)
+
+    @field_validator("success_criteria")
+    @classmethod
+    def success_criteria_are_valid(cls, value: list[str]) -> list[str]:
+        return validate_string_list(value, "Activity success criteria", max_items=20)
+
+
+class PlaybookTemplateActivityRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    template_id: str
+    title: str
+    description: str | None = None
+    owner_rule: str
+    due_offset_days: int
+    priority: str
+    success_criteria: list[str] = Field(default_factory=list)
+    skip_allowed: bool
+    requires_evidence: bool
+    sort_order: int
+    created_at: datetime
+    updated_at: datetime
+
+
+class PlaybookTemplateRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    name: str
+    objective: str
+    description: str | None = None
+    signal_types: list[str] = Field(default_factory=list)
+    weak_metrics: list[str] = Field(default_factory=list)
+    default_owner_rule: str
+    due_date_rule: dict[str, Any] = Field(default_factory=dict)
+    success_criteria: list[str] = Field(default_factory=list)
+    skip_rules: list[str] = Field(default_factory=list)
+    version: int
+    is_active: bool
+    created_by_id: str | None = None
+    updated_by_id: str | None = None
+    created_at: datetime
+    updated_at: datetime
+    activities: list[PlaybookTemplateActivityRead] = Field(default_factory=list)
+    custom_field_values: dict[str, Any] = Field(default_factory=dict)
+
+
+class PlaybookTemplatePageRead(BaseModel):
+    items: list[PlaybookTemplateRead]
+    total: int
+    page: int
+    page_size: int
+    pages: int
+
+
+class PlaybookTemplateCreateRequest(BaseModel):
+    name: str
+    objective: str
+    description: str | None = None
+    signal_types: list[str] = Field(default_factory=list)
+    weak_metrics: list[str] = Field(default_factory=list)
+    default_owner_rule: PlaybookOwnerRule = "account_primary_am"
+    due_date_rule: dict[str, Any] = Field(default_factory=lambda: {"basis": "execution_date", "offset_days": 7})
+    success_criteria: list[str] = Field(default_factory=list)
+    skip_rules: list[str] = Field(default_factory=list)
+    activities: list[PlaybookTemplateActivityInput] = Field(default_factory=list)
+    is_active: bool = True
+    custom_field_values: dict[str, Any] = Field(default_factory=dict, description="Field Builder values keyed by field_key.")
+
+    @field_validator("name")
+    @classmethod
+    def name_is_valid(cls, value: str) -> str:
+        return validate_short_text(value, "Playbook name", 180)
+
+    @field_validator("objective")
+    @classmethod
+    def objective_is_valid(cls, value: str) -> str:
+        return validate_short_text(value, "Playbook objective", 2000)
+
+    @field_validator("description")
+    @classmethod
+    def description_is_valid(cls, value: str | None) -> str | None:
+        return validate_optional_long_text(value, "Playbook description", 4000)
+
+    @field_validator("signal_types", "weak_metrics", "success_criteria", "skip_rules")
+    @classmethod
+    def string_lists_are_valid(cls, value: list[str]) -> list[str]:
+        return validate_string_list(value, "Playbook list", max_items=30)
+
+    @field_validator("custom_field_values")
+    @classmethod
+    def custom_field_keys_are_valid(cls, value: dict[str, Any]) -> dict[str, Any]:
+        return {validate_slug(key, "Custom field key"): item for key, item in value.items()}
+
+    @model_validator(mode="after")
+    def template_is_complete(self) -> "PlaybookTemplateCreateRequest":
+        if not self.activities:
+            raise ValueError("At least one activity is required.")
+        if not self.success_criteria:
+            raise ValueError("At least one success criterion is required.")
+        if not self.due_date_rule:
+            raise ValueError("Due-date rule is required.")
+        return self
+
+
+class PlaybookTemplateUpdateRequest(BaseModel):
+    name: str | None = None
+    objective: str | None = None
+    description: str | None = None
+    signal_types: list[str] | None = None
+    weak_metrics: list[str] | None = None
+    default_owner_rule: PlaybookOwnerRule | None = None
+    due_date_rule: dict[str, Any] | None = None
+    success_criteria: list[str] | None = None
+    skip_rules: list[str] | None = None
+    activities: list[PlaybookTemplateActivityInput] | None = None
+    is_active: bool | None = None
+    custom_field_values: dict[str, Any] | None = Field(default=None, description="Full replacement Field Builder values keyed by field_key.")
+
+    @field_validator("name")
+    @classmethod
+    def name_is_valid(cls, value: str | None) -> str | None:
+        return validate_short_text(value, "Playbook name", 180) if value is not None else None
+
+    @field_validator("objective")
+    @classmethod
+    def objective_is_valid(cls, value: str | None) -> str | None:
+        return validate_short_text(value, "Playbook objective", 2000) if value is not None else None
+
+    @field_validator("description")
+    @classmethod
+    def description_is_valid(cls, value: str | None) -> str | None:
+        return validate_optional_long_text(value, "Playbook description", 4000)
+
+    @field_validator("signal_types", "weak_metrics", "success_criteria", "skip_rules")
+    @classmethod
+    def optional_string_lists_are_valid(cls, value: list[str] | None) -> list[str] | None:
+        return validate_string_list(value, "Playbook list", max_items=30) if value is not None else None
+
+    @field_validator("custom_field_values")
+    @classmethod
+    def optional_custom_field_keys_are_valid(cls, value: dict[str, Any] | None) -> dict[str, Any] | None:
+        return {validate_slug(key, "Custom field key"): item for key, item in value.items()} if value is not None else None
+
+
+class PlaybookExecutionRequest(BaseModel):
+    account_id: str
+    engagement_id: str | None = None
+    source_signal_id: str | None = None
+    source_signal_type: str | None = None
+    source_metric: str | None = None
+    confirmed: bool = False
+    skipped_activity_ids: list[str] = Field(default_factory=list)
+    skip_reasons: dict[str, str] = Field(default_factory=dict)
+
+    @field_validator("source_signal_type", "source_metric")
+    @classmethod
+    def optional_signal_context_is_valid(cls, value: str | None) -> str | None:
+        return optional_text(value, "Signal context", max_length=120)
+
+    @field_validator("skip_reasons")
+    @classmethod
+    def skip_reasons_are_valid(cls, value: dict[str, str]) -> dict[str, str]:
+        return {validate_short_text(key, "Activity id", 120): validate_short_text(reason, "Skip reason", 500) for key, reason in value.items()}
+
+
+class TaskEvidenceRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    task_id: str
+    evidence_type: str
+    title: str | None = None
+    body: str | None = None
+    url: str | None = None
+    file_name: str | None = None
+    file_mime_type: str | None = None
+    file_size_bytes: int | None = None
+    created_by_id: str | None = None
+    created_by_name: str
+    created_at: datetime
+
+
+class TaskRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    account_id: str
+    engagement_id: str | None = None
+    playbook_execution_id: str | None = None
+    template_activity_id: str | None = None
+    source_type: str
+    source_record_id: str | None = None
+    source_metric: str | None = None
+    title: str
+    description: str | None = None
+    owner_id: str | None = None
+    owner_name: str
+    due_at: datetime
+    status: str
+    priority: str
+    notes: str | None = None
+    outcome: str | None = None
+    success_criteria: list[str] = Field(default_factory=list)
+    requires_evidence: bool
+    skipped_reason: str | None = None
+    completed_at: datetime | None = None
+    completed_by_id: str | None = None
+    created_by_id: str | None = None
+    updated_by_id: str | None = None
+    created_at: datetime
+    updated_at: datetime
+    evidence: list[TaskEvidenceRead] = Field(default_factory=list)
+    custom_field_values: dict[str, Any] = Field(default_factory=dict)
+
+
+class TaskPageRead(BaseModel):
+    items: list[TaskRead]
+    total: int
+    page: int
+    page_size: int
+    pages: int
+
+
+class PlaybookExecutionRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    template_id: str | None = None
+    template_name_snapshot: str
+    template_version_snapshot: int
+    account_id: str
+    engagement_id: str | None = None
+    source_signal_id: str | None = None
+    source_signal_type: str | None = None
+    source_metric: str | None = None
+    status: str
+    skipped_activity_ids: list[str] = Field(default_factory=list)
+    skip_reasons: dict[str, str] = Field(default_factory=dict)
+    created_by_id: str | None = None
+    created_by_name: str
+    created_at: datetime
+    updated_at: datetime
+    tasks: list[TaskRead] = Field(default_factory=list)
+
+
+class TaskCreateRequest(BaseModel):
+    account_id: str
+    engagement_id: str | None = None
+    title: str
+    description: str | None = None
+    owner_id: str
+    due_at: datetime
+    status: TaskStatus = "todo"
+    priority: TaskPriority = "medium"
+    notes: str | None = None
+    outcome: str | None = None
+    source_type: str = "manual"
+    source_record_id: str | None = None
+    source_metric: str | None = None
+    success_criteria: list[str] = Field(default_factory=list)
+    requires_evidence: bool = False
+    custom_field_values: dict[str, Any] = Field(default_factory=dict, description="Field Builder values keyed by field_key.")
+
+    @field_validator("title")
+    @classmethod
+    def title_is_valid(cls, value: str) -> str:
+        return validate_short_text(value, "Task title", 220)
+
+    @field_validator("description", "notes", "outcome")
+    @classmethod
+    def text_is_valid(cls, value: str | None) -> str | None:
+        return validate_optional_long_text(value, "Task text", 4000)
+
+    @field_validator("source_type", "source_metric")
+    @classmethod
+    def optional_short_is_valid(cls, value: str | None) -> str | None:
+        return optional_text(value, "Task source", max_length=120) if value is not None else None
+
+    @field_validator("success_criteria")
+    @classmethod
+    def success_criteria_are_valid(cls, value: list[str]) -> list[str]:
+        return validate_string_list(value, "Task success criteria", max_items=20)
+
+    @field_validator("custom_field_values")
+    @classmethod
+    def custom_field_keys_are_valid(cls, value: dict[str, Any]) -> dict[str, Any]:
+        return {validate_slug(key, "Custom field key"): item for key, item in value.items()}
+
+
+class TaskUpdateRequest(BaseModel):
+    title: str | None = None
+    description: str | None = None
+    owner_id: str | None = None
+    due_at: datetime | None = None
+    status: TaskStatus | None = None
+    priority: TaskPriority | None = None
+    notes: str | None = None
+    outcome: str | None = None
+    skipped_reason: str | None = None
+    success_criteria: list[str] | None = None
+    requires_evidence: bool | None = None
+    custom_field_values: dict[str, Any] | None = Field(default=None, description="Full replacement Field Builder values keyed by field_key.")
+
+    @field_validator("title")
+    @classmethod
+    def title_is_valid(cls, value: str | None) -> str | None:
+        return validate_short_text(value, "Task title", 220) if value is not None else None
+
+    @field_validator("description", "notes", "outcome", "skipped_reason")
+    @classmethod
+    def text_is_valid(cls, value: str | None) -> str | None:
+        return validate_optional_long_text(value, "Task text", 4000)
+
+    @field_validator("success_criteria")
+    @classmethod
+    def success_criteria_are_valid(cls, value: list[str] | None) -> list[str] | None:
+        return validate_string_list(value, "Task success criteria", max_items=20) if value is not None else None
+
+    @field_validator("custom_field_values")
+    @classmethod
+    def optional_custom_field_keys_are_valid(cls, value: dict[str, Any] | None) -> dict[str, Any] | None:
+        return {validate_slug(key, "Custom field key"): item for key, item in value.items()} if value is not None else None
+
+
+class RecommendedPlaybookRead(BaseModel):
+    template: PlaybookTemplateRead
+    rationale: str
+    match_score: int
+    matched_signal_types: list[str] = Field(default_factory=list)
+    matched_metrics: list[str] = Field(default_factory=list)
+
+
+class CalendarItemRead(BaseModel):
+    id: str
+    kind: str
+    title: str
+    detail: str
+    account_id: str | None = None
+    account_name: str
+    engagement_id: str | None = None
+    owner_id: str | None = None
+    owner_name: str | None = None
+    date: datetime
+    status: str
+    priority: str | None = None
+    source_route: str | None = None
+    source_record_id: str | None = None
+    source_record_type: str | None = None
+
+
+class CalendarItemPageRead(BaseModel):
+    items: list[CalendarItemRead]
+    total: int
+    page: int
+    page_size: int
+    pages: int
 
 
 class IntegrationConnectionRead(BaseModel):
