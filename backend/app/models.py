@@ -1729,6 +1729,222 @@ class EscalationNotification(Base):
     escalation: Mapped[Escalation] = relationship(back_populates="notifications")
 
 
+class NotificationTriggerConfig(Base):
+    __tablename__ = "notification_trigger_configs"
+    __table_args__ = (UniqueConstraint("trigger", name="uq_notification_trigger_configs_trigger"),)
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid4()))
+    trigger: Mapped[str] = mapped_column(String(120), index=True, nullable=False)
+    label: Mapped[str] = mapped_column(String(160), nullable=False)
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    default_mode: Mapped[str] = mapped_column(String(40), nullable=False, default="in_app")
+    default_digest_cadence: Mapped[str] = mapped_column(String(40), nullable=False, default="daily")
+    supported_channels: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    mandatory: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    is_active: Mapped[bool] = mapped_column(Boolean, index=True, nullable=False, default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utc_now, onupdate=utc_now)
+
+
+class NotificationPreference(Base):
+    __tablename__ = "notification_preferences"
+    __table_args__ = (UniqueConstraint("user_id", "trigger", name="uq_notification_preferences_user_trigger"),)
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid4()))
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True, nullable=False)
+    trigger: Mapped[str] = mapped_column(String(120), index=True, nullable=False)
+    mode: Mapped[str] = mapped_column(String(40), nullable=False, default="in_app")
+    digest_cadence: Mapped[str] = mapped_column(String(40), nullable=False, default="daily")
+    policy_override: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utc_now, onupdate=utc_now)
+
+
+class NotificationRecord(Base):
+    __tablename__ = "notification_records"
+    __table_args__ = (UniqueConstraint("deduplication_key", name="uq_notification_records_deduplication_key"),)
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid4()))
+    recipient_user_id: Mapped[str | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), index=True, nullable=True)
+    recipient_name: Mapped[str] = mapped_column(String(160), nullable=False)
+    recipient_email: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    trigger: Mapped[str] = mapped_column(String(120), index=True, nullable=False)
+    title: Mapped[str] = mapped_column(String(220), nullable=False)
+    body: Mapped[str] = mapped_column(Text, nullable=False)
+    account_id: Mapped[str | None] = mapped_column(ForeignKey("accounts.id", ondelete="SET NULL"), index=True, nullable=True)
+    account_name_snapshot: Mapped[str | None] = mapped_column(String(180), nullable=True)
+    source_record_type: Mapped[str | None] = mapped_column(String(80), index=True, nullable=True)
+    source_record_id: Mapped[str | None] = mapped_column(String(36), index=True, nullable=True)
+    source_record_route: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    priority: Mapped[str] = mapped_column(String(40), index=True, nullable=False, default="medium")
+    channel: Mapped[str] = mapped_column(String(40), index=True, nullable=False, default="in_app")
+    delivery_status: Mapped[str] = mapped_column(String(40), index=True, nullable=False, default="queued")
+    delivery_metadata_json: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    deduplication_key: Mapped[str] = mapped_column(String(255), nullable=False)
+    email_queued: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    retry_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    read_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), index=True, nullable=True)
+    delivered_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True, nullable=False, default=utc_now)
+
+
+class SlaRule(Base):
+    __tablename__ = "sla_rules"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid4()))
+    name: Mapped[str] = mapped_column(String(160), index=True, nullable=False)
+    item_type: Mapped[str] = mapped_column(String(40), index=True, nullable=False)
+    severity: Mapped[str | None] = mapped_column(String(40), index=True, nullable=True)
+    priority: Mapped[str | None] = mapped_column(String(40), index=True, nullable=True)
+    inactivity_minutes: Mapped[int] = mapped_column(Integer, nullable=False, default=1440)
+    qualifying_activities: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    recipient_policy: Mapped[str] = mapped_column(String(80), nullable=False, default="kam_head")
+    is_active: Mapped[bool] = mapped_column(Boolean, index=True, nullable=False, default=True)
+    created_by_id: Mapped[str | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    updated_by_id: Mapped[str | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utc_now, onupdate=utc_now)
+
+
+class SlaEscalatedItem(Base):
+    __tablename__ = "sla_escalated_items"
+    __table_args__ = (UniqueConstraint("deduplication_key", name="uq_sla_escalated_items_deduplication_key"),)
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid4()))
+    rule_id: Mapped[str | None] = mapped_column(ForeignKey("sla_rules.id", ondelete="SET NULL"), index=True, nullable=True)
+    source_type: Mapped[str] = mapped_column(String(40), index=True, nullable=False)
+    source_record_id: Mapped[str] = mapped_column(String(36), index=True, nullable=False)
+    account_id: Mapped[str | None] = mapped_column(ForeignKey("accounts.id", ondelete="SET NULL"), index=True, nullable=True)
+    title: Mapped[str] = mapped_column(String(220), nullable=False)
+    severity: Mapped[str | None] = mapped_column(String(40), index=True, nullable=True)
+    owner_id: Mapped[str | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), index=True, nullable=True)
+    owner_name: Mapped[str | None] = mapped_column(String(160), nullable=True)
+    recipient_user_id: Mapped[str | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), index=True, nullable=True)
+    recipient_name: Mapped[str | None] = mapped_column(String(160), nullable=True)
+    last_activity_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), index=True, nullable=True)
+    escalated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True, nullable=False, default=utc_now)
+    sla_window_key: Mapped[str] = mapped_column(String(120), index=True, nullable=False)
+    state: Mapped[str] = mapped_column(String(40), index=True, nullable=False, default="escalated")
+    deduplication_key: Mapped[str] = mapped_column(String(255), nullable=False)
+    resolved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utc_now, onupdate=utc_now)
+
+
+class DigestSchedule(Base):
+    __tablename__ = "digest_schedules"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid4()))
+    name: Mapped[str] = mapped_column(String(160), index=True, nullable=False)
+    owner_id: Mapped[str | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), index=True, nullable=True)
+    owner_name: Mapped[str] = mapped_column(String(160), nullable=False)
+    cadence: Mapped[str] = mapped_column(String(40), index=True, nullable=False, default="weekly")
+    timezone: Mapped[str] = mapped_column(String(120), nullable=False, default="UTC")
+    recipients_json: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    sections_json: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    filters_json: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    delivery_channels: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    is_active: Mapped[bool] = mapped_column(Boolean, index=True, nullable=False, default=True)
+    last_run_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    next_run_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), index=True, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utc_now, onupdate=utc_now)
+
+
+class DigestRun(Base):
+    __tablename__ = "digest_runs"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid4()))
+    schedule_id: Mapped[str | None] = mapped_column(ForeignKey("digest_schedules.id", ondelete="SET NULL"), index=True, nullable=True)
+    title: Mapped[str] = mapped_column(String(220), nullable=False)
+    status: Mapped[str] = mapped_column(String(40), index=True, nullable=False, default="generated")
+    recipients_json: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    sections_json: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    content_json: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    redactions_json: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    delivery_attempts_json: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    generated_by_id: Mapped[str | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    generated_by_name: Mapped[str] = mapped_column(String(160), nullable=False)
+    generated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True, nullable=False, default=utc_now)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utc_now)
+
+
+class ReportDefinition(Base):
+    __tablename__ = "report_definitions"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid4()))
+    owner_id: Mapped[str | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), index=True, nullable=True)
+    owner_name: Mapped[str] = mapped_column(String(160), nullable=False)
+    name: Mapped[str] = mapped_column(String(160), index=True, nullable=False)
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    visibility: Mapped[str] = mapped_column(String(40), index=True, nullable=False, default="private")
+    data_source: Mapped[str] = mapped_column(String(80), index=True, nullable=False)
+    fields_json: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    filters_json: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    grouping_json: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    layout_json: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    export_format: Mapped[str] = mapped_column(String(40), nullable=False, default="csv")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True, nullable=False, default=utc_now, onupdate=utc_now)
+
+
+class ReportSchedule(Base):
+    __tablename__ = "report_schedules"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid4()))
+    report_id: Mapped[str] = mapped_column(ForeignKey("report_definitions.id", ondelete="CASCADE"), index=True, nullable=False)
+    owner_id: Mapped[str | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), index=True, nullable=True)
+    owner_name: Mapped[str] = mapped_column(String(160), nullable=False)
+    cadence: Mapped[str] = mapped_column(String(40), index=True, nullable=False, default="weekly")
+    timezone: Mapped[str] = mapped_column(String(120), nullable=False, default="UTC")
+    recipients_json: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    delivery_channels: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    is_active: Mapped[bool] = mapped_column(Boolean, index=True, nullable=False, default=True)
+    last_run_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    next_run_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), index=True, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utc_now, onupdate=utc_now)
+
+
+class ReportRun(Base):
+    __tablename__ = "report_runs"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid4()))
+    report_id: Mapped[str | None] = mapped_column(ForeignKey("report_definitions.id", ondelete="SET NULL"), index=True, nullable=True)
+    schedule_id: Mapped[str | None] = mapped_column(ForeignKey("report_schedules.id", ondelete="SET NULL"), index=True, nullable=True)
+    status: Mapped[str] = mapped_column(String(40), index=True, nullable=False, default="generated")
+    export_format: Mapped[str] = mapped_column(String(40), index=True, nullable=False, default="csv")
+    content_json: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    storage_metadata_json: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    permission_scope_json: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    recipients_json: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    generated_by_id: Mapped[str | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    generated_by_name: Mapped[str] = mapped_column(String(160), nullable=False)
+    generated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True, nullable=False, default=utc_now)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utc_now)
+
+
+class ScheduledWorkerRun(Base):
+    __tablename__ = "scheduled_worker_runs"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid4()))
+    job_type: Mapped[str] = mapped_column(String(80), index=True, nullable=False)
+    mode: Mapped[str] = mapped_column(String(40), index=True, nullable=False, default="scheduled")
+    status: Mapped[str] = mapped_column(String(40), index=True, nullable=False, default="complete")
+    matched_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    affected_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    actor_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    actor_name: Mapped[str] = mapped_column(String(160), nullable=False, default="System")
+    error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    metadata_json: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utc_now)
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True, nullable=False, default=utc_now)
+
+
 class GovernanceRecurrenceRule(Base):
     __tablename__ = "governance_recurrence_rules"
 

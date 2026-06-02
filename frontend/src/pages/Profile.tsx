@@ -2,6 +2,7 @@ import { FormEvent, useEffect, useState } from 'react'
 import { KeyRound, LogOut, Save, UserRound } from 'lucide-react'
 import { toast } from 'sonner'
 import { FieldError } from '@/components/form/FieldError'
+import { NotificationPreferencesPanel } from '@/components/notifications/NotificationPreferencesPanel'
 import { ApiError } from '@/services/api'
 import { useAuth } from '@/contexts/AuthContext'
 import { apiFieldErrors, clearFieldError, FieldErrors, hasFieldErrors } from '@/utils/formErrors'
@@ -124,7 +125,6 @@ export function Profile() {
                 }}
                 aria-invalid={Boolean(profileFieldErrors.name)}
                 aria-describedby={profileFieldErrors.name ? 'profile-name-error' : undefined}
-                required
               />
               <FieldError id="profile-name-error" message={profileFieldErrors.name} />
             </label>
@@ -168,7 +168,6 @@ export function Profile() {
                 aria-invalid={Boolean(profileFieldErrors.avatarInitials)}
                 aria-describedby={profileFieldErrors.avatarInitials ? 'profile-avatar-error' : undefined}
                 maxLength={8}
-                required
               />
               <FieldError id="profile-avatar-error" message={profileFieldErrors.avatarInitials} />
             </label>
@@ -212,7 +211,6 @@ export function Profile() {
                 aria-invalid={Boolean(passwordFieldErrors.currentPassword)}
                 aria-describedby={passwordFieldErrors.currentPassword ? 'profile-current-password-error' : undefined}
                 minLength={8}
-                required
               />
               <FieldError id="profile-current-password-error" message={passwordFieldErrors.currentPassword} />
             </label>
@@ -230,7 +228,6 @@ export function Profile() {
                 aria-invalid={Boolean(passwordFieldErrors.newPassword)}
                 aria-describedby={passwordFieldErrors.newPassword ? 'profile-new-password-error' : undefined}
                 minLength={8}
-                required
               />
               <FieldError id="profile-new-password-error" message={passwordFieldErrors.newPassword} />
             </label>
@@ -242,6 +239,7 @@ export function Profile() {
           </form>
         </section>
       </div>
+      <NotificationPreferencesPanel />
     </div>
   )
 }

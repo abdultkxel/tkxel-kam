@@ -29,6 +29,7 @@ from app.models import (
 from app.rbac import DEFAULT_ROLES
 from app.security import hash_password
 from app.services.email_domains import EmailDomainPolicyService
+from app.services.notifications import NotificationsService
 from app.services.rbac import RbacService
 from app.services.users import initials_for_name, normalize_email
 
@@ -45,6 +46,7 @@ def seed_default_data(db: Session) -> User:
     seed_relationship_planning_reference_data(db)
     seed_scoring_signals_playbooks(db, super_admin)
     seed_timeline_reference_data(db, super_admin)
+    seed_notifications_dashboards_reporting(db, super_admin)
     seed_demo_opportunities(db)
     return super_admin
 
@@ -52,6 +54,10 @@ def seed_default_data(db: Session) -> User:
 def seed_allowed_email_domains(db: Session, super_admin: User) -> None:
     settings = get_settings()
     EmailDomainPolicyService(db).seed_allowed_domains(settings.allowed_email_domains, actor=super_admin)
+
+
+def seed_notifications_dashboards_reporting(db: Session, super_admin: User) -> None:
+    NotificationsService(db).seed_defaults(super_admin)
 
 
 def seed_kyc_configuration(db: Session) -> KycConfiguration:

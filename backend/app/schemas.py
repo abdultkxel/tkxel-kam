@@ -1,6 +1,7 @@
 from datetime import datetime, timezone
 from typing import Any, Literal
 from urllib.parse import urlparse
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from pydantic import AliasChoices, BaseModel, ConfigDict, EmailStr, Field, ValidationInfo, field_validator, model_validator
 
@@ -5487,3 +5488,733 @@ class SignalAIExplanationRead(BaseModel):
     advisory_only: bool = True
     explanation: str
     citations: list[dict[str, Any]] = Field(default_factory=list)
+
+
+NotificationMode = Literal["in_app", "in_app_email", "off"]
+DigestCadence = Literal["immediate", "daily", "weekly", "monthly"]
+NotificationChannel = Literal["in_app", "email"]
+NotificationPriority = Literal["low", "medium", "high", "critical"]
+SlaItemType = Literal["signal", "task", "kyc", "escalation"]
+SlaState = Literal["escalated", "resolved"]
+ScheduleCadence = Literal["daily", "weekly", "monthly"]
+ReportDataSource = Literal["accounts", "tasks", "signals", "escalations", "opportunities"]
+ReportVisibility = Literal["private", "shared"]
+ReportExportFormat = Literal["csv", "pdf"]
+
+
+def validate_timezone_name(value: str) -> str:
+    timezone_name = validate_short_text(value, "Timezone", 120)
+    try:
+        ZoneInfo(timezone_name)
+    except ZoneInfoNotFoundError as exc:
+        raise ValueError("Timezone must be a valid IANA timezone such as UTC or Asia/Karachi.") from exc
+    return timezone_name
+
+
+def validate_recipient_ids(value: list[str], field_label: str = "Recipients") -> list[str]:
+    if not value:
+        raise ValueError(f"{field_label} must include at least one recipient.")
+    if len(value) > 100:
+        raise ValueError(f"{field_label} can include at most 100 users.")
+    return validate_string_list(value, field_label, max_items=100)
+
+
+def validate_channels(value: list[str]) -> list[str]:
+    if not value:
+        raise ValueError("Delivery channels must include at least one channel.")
+    allowed = {"in_app", "email"}
+    channels = validate_string_list(value, "Delivery channels", max_items=3)
+    invalid = [channel for channel in channels if channel not in allowed]
+    if invalid:
+        raise ValueError("Delivery channels must be in_app or email.")
+    return channels
+
+
+class NotificationTriggerConfigRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    trigger: str
+    label: str
+    description: str | None = None
+    default_mode: str
+    default_digest_cadence: str
+    supported_channels: list[str] = Field(default_factory=list)
+    mandatory: bool
+    is_active: bool
+    created_at: datetime
+    updated_at: datetime
+
+
+class NotificationTriggerConfigRequest(BaseModel):
+    trigger: str
+    label: str
+    description: str | None = None
+    default_mode: NotificationMode = "in_app"
+    default_digest_cadence: DigestCadence = "daily"
+    supported_channels: list[NotificationChannel] = Field(default_factory=lambda: ["in_app"])
+    mandatory: bool = False
+    is_active: bool = True
+
+    @field_validator("trigger")
+    @classmethod
+    def trigger_is_valid(cls, value: str) -> str:
+        return validate_slug(value, "Trigger")
+
+    @field_validator("label")
+    @classmethod
+    def label_is_valid(cls, value: str) -> str:
+        return validate_short_text(value, "Trigger label", 160)
+
+    @field_validator("description")
+    @classmethod
+    def description_is_valid(cls, value: str | None) -> str | None:
+        return validate_optional_long_text(value, "Trigger description", 1000)
+
+
+class NotificationDefaultsRead(BaseModel):
+    items: list[NotificationTriggerConfigRead] = Field(default_factory=list)
+
+
+class NotificationDefaultsUpdateRequest(BaseModel):
+    items: list[NotificationTriggerConfigRequest]
+
+    @field_validator("items")
+    @classmethod
+    def items_are_valid(cls, value: list[NotificationTriggerConfigRequest]) -> list[NotificationTriggerConfigRequest]:
+        if not value:
+            raise ValueError("At least one notification trigger is required.")
+        triggers = [item.trigger for item in value]
+        if len(triggers) != len(set(triggers)):
+            raise ValueError("Notification triggers must be unique.")
+        return value
+
+
+class NotificationPreferenceRead(BaseModel):
+    trigger: str
+    label: str
+    mode: NotificationMode
+    digest_cadence: DigestCadence
+    mandatory: bool = False
+    supported_channels: list[str] = Field(default_factory=list)
+    policy_override: bool = False
+
+
+class NotificationPreferenceUpdateItem(BaseModel):
+    trigger: str
+    mode: NotificationMode
+    digest_cadence: DigestCadence = "daily"
+
+    @field_validator("trigger")
+    @classmethod
+    def trigger_is_valid(cls, value: str) -> str:
+        return validate_slug(value, "Trigger")
+
+
+class NotificationPreferenceUpdateRequest(BaseModel):
+    items: list[NotificationPreferenceUpdateItem]
+
+    @field_validator("items")
+    @classmethod
+    def items_are_valid(cls, value: list[NotificationPreferenceUpdateItem]) -> list[NotificationPreferenceUpdateItem]:
+        if not value:
+            raise ValueError("At least one preference is required.")
+        triggers = [item.trigger for item in value]
+        if len(triggers) != len(set(triggers)):
+            raise ValueError("Preference triggers must be unique.")
+        return value
+
+
+class NotificationRecordRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    recipient_user_id: str | None = None
+    recipient_name: str
+    recipient_email: str | None = None
+    trigger: str
+    title: str
+    body: str
+    account_id: str | None = None
+    account_name_snapshot: str | None = None
+    source_record_type: str | None = None
+    source_record_id: str | None = None
+    source_record_route: str | None = None
+    priority: str
+    channel: str
+    delivery_status: str
+    delivery_metadata_json: dict[str, Any] = Field(default_factory=dict)
+    email_queued: bool
+    retry_count: int
+    error_message: str | None = None
+    read_at: datetime | None = None
+    delivered_at: datetime | None = None
+    created_at: datetime
+
+
+class NotificationPageRead(BaseModel):
+    items: list[NotificationRecordRead]
+    total: int
+    page: int
+    page_size: int
+    pages: int
+    unread_count: int
+
+
+class SlaRuleRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    name: str
+    item_type: str
+    severity: str | None = None
+    priority: str | None = None
+    inactivity_minutes: int
+    qualifying_activities: list[str] = Field(default_factory=list)
+    recipient_policy: str
+    is_active: bool
+    created_by_id: str | None = None
+    updated_by_id: str | None = None
+    created_at: datetime
+    updated_at: datetime
+
+
+class SlaRulePageRead(BaseModel):
+    items: list[SlaRuleRead]
+    total: int
+    page: int
+    page_size: int
+    pages: int
+
+
+class SlaRuleCreateRequest(BaseModel):
+    name: str
+    item_type: SlaItemType
+    severity: str | None = None
+    priority: str | None = None
+    inactivity_minutes: int = 1440
+    qualifying_activities: list[str] = Field(default_factory=list)
+    recipient_policy: str = "kam_head"
+    is_active: bool = True
+
+    @field_validator("name")
+    @classmethod
+    def name_is_valid(cls, value: str) -> str:
+        return validate_short_text(value, "SLA rule name", 160)
+
+    @field_validator("severity", "priority")
+    @classmethod
+    def optional_short_text_is_valid(cls, value: str | None) -> str | None:
+        return validate_optional_long_text(value, "Filter", 80)
+
+    @field_validator("inactivity_minutes")
+    @classmethod
+    def inactivity_minutes_is_valid(cls, value: int) -> int:
+        return validate_positive_int(value, "Inactivity window", 100000)
+
+    @field_validator("qualifying_activities")
+    @classmethod
+    def qualifying_activities_are_valid(cls, value: list[str]) -> list[str]:
+        return validate_string_list(value, "Qualifying activities", max_items=20)
+
+    @field_validator("recipient_policy")
+    @classmethod
+    def recipient_policy_is_valid(cls, value: str) -> str:
+        policy = validate_slug(value, "Recipient policy")
+        if policy not in {"kam_head", "account_owner", "admin"}:
+            raise ValueError("Recipient policy must be kam_head, account_owner, or admin.")
+        return policy
+
+
+class SlaRuleUpdateRequest(BaseModel):
+    name: str | None = None
+    severity: str | None = None
+    priority: str | None = None
+    inactivity_minutes: int | None = None
+    qualifying_activities: list[str] | None = None
+    recipient_policy: str | None = None
+    is_active: bool | None = None
+
+    @field_validator("name")
+    @classmethod
+    def name_is_valid(cls, value: str | None) -> str | None:
+        return validate_optional_long_text(value, "SLA rule name", 160)
+
+    @field_validator("inactivity_minutes")
+    @classmethod
+    def inactivity_minutes_is_valid(cls, value: int | None) -> int | None:
+        return validate_positive_int(value, "Inactivity window", 100000) if value is not None else None
+
+    @field_validator("qualifying_activities")
+    @classmethod
+    def qualifying_activities_are_valid(cls, value: list[str] | None) -> list[str] | None:
+        return validate_string_list(value, "Qualifying activities", max_items=20) if value is not None else None
+
+    @field_validator("recipient_policy")
+    @classmethod
+    def recipient_policy_is_valid(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        policy = validate_slug(value, "Recipient policy")
+        if policy not in {"kam_head", "account_owner", "admin"}:
+            raise ValueError("Recipient policy must be kam_head, account_owner, or admin.")
+        return policy
+
+
+class SlaEscalatedItemRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    rule_id: str | None = None
+    source_type: str
+    source_record_id: str
+    account_id: str | None = None
+    title: str
+    severity: str | None = None
+    owner_id: str | None = None
+    owner_name: str | None = None
+    recipient_user_id: str | None = None
+    recipient_name: str | None = None
+    last_activity_at: datetime | None = None
+    escalated_at: datetime
+    sla_window_key: str
+    state: str
+    resolved_at: datetime | None = None
+    created_at: datetime
+    updated_at: datetime
+
+
+class SlaEscalatedItemPageRead(BaseModel):
+    items: list[SlaEscalatedItemRead]
+    total: int
+    page: int
+    page_size: int
+    pages: int
+
+
+class SlaEvaluationRead(BaseModel):
+    evaluated_rules: int
+    matched_items: int
+    escalated_items: int
+    notifications_created: int
+    duplicate_notifications: int
+    worker_run_id: str | None = None
+
+
+class DigestScheduleRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    name: str
+    owner_id: str | None = None
+    owner_name: str
+    cadence: str
+    timezone: str
+    recipients_json: list[str] = Field(default_factory=list)
+    sections_json: list[str] = Field(default_factory=list)
+    filters_json: dict[str, Any] = Field(default_factory=dict)
+    delivery_channels: list[str] = Field(default_factory=list)
+    is_active: bool
+    last_run_at: datetime | None = None
+    next_run_at: datetime | None = None
+    created_at: datetime
+    updated_at: datetime
+
+
+class DigestSchedulePageRead(BaseModel):
+    items: list[DigestScheduleRead]
+    total: int
+    page: int
+    page_size: int
+    pages: int
+
+
+class DigestScheduleRequest(BaseModel):
+    name: str
+    cadence: ScheduleCadence = "weekly"
+    timezone: str = "UTC"
+    recipient_user_ids: list[str]
+    sections: list[str] = Field(default_factory=lambda: ["strategic_risks", "retention_outlook", "growth_opportunities", "major_escalations", "required_decisions"])
+    filters: dict[str, Any] = Field(default_factory=dict)
+    delivery_channels: list[NotificationChannel] = Field(default_factory=lambda: ["in_app"])
+    is_active: bool = True
+
+    @field_validator("name")
+    @classmethod
+    def name_is_valid(cls, value: str) -> str:
+        return validate_short_text(value, "Digest schedule name", 160)
+
+    @field_validator("timezone")
+    @classmethod
+    def timezone_is_valid(cls, value: str) -> str:
+        return validate_timezone_name(value)
+
+    @field_validator("recipient_user_ids")
+    @classmethod
+    def recipients_are_valid(cls, value: list[str]) -> list[str]:
+        return validate_recipient_ids(value)
+
+    @field_validator("sections")
+    @classmethod
+    def sections_are_valid(cls, value: list[str]) -> list[str]:
+        return validate_string_list(value, "Digest sections", max_items=20)
+
+    @field_validator("delivery_channels")
+    @classmethod
+    def channels_are_valid(cls, value: list[str]) -> list[str]:
+        return validate_channels(value)
+
+
+class DigestScheduleUpdateRequest(BaseModel):
+    name: str | None = None
+    cadence: ScheduleCadence | None = None
+    timezone: str | None = None
+    recipient_user_ids: list[str] | None = None
+    sections: list[str] | None = None
+    filters: dict[str, Any] | None = None
+    delivery_channels: list[NotificationChannel] | None = None
+    is_active: bool | None = None
+
+    @field_validator("name")
+    @classmethod
+    def name_is_valid(cls, value: str | None) -> str | None:
+        return validate_optional_long_text(value, "Digest schedule name", 160)
+
+    @field_validator("timezone")
+    @classmethod
+    def timezone_is_valid(cls, value: str | None) -> str | None:
+        return validate_timezone_name(value) if value is not None else None
+
+    @field_validator("recipient_user_ids")
+    @classmethod
+    def recipients_are_valid(cls, value: list[str] | None) -> list[str] | None:
+        return validate_recipient_ids(value) if value is not None else None
+
+    @field_validator("sections")
+    @classmethod
+    def sections_are_valid(cls, value: list[str] | None) -> list[str] | None:
+        return validate_string_list(value, "Digest sections", max_items=20) if value is not None else None
+
+    @field_validator("delivery_channels")
+    @classmethod
+    def channels_are_valid(cls, value: list[str] | None) -> list[str] | None:
+        return validate_channels(value) if value is not None else None
+
+
+class DigestPreviewRequest(BaseModel):
+    sections: list[str] = Field(default_factory=lambda: ["strategic_risks", "retention_outlook", "growth_opportunities", "major_escalations", "required_decisions"])
+    filters: dict[str, Any] = Field(default_factory=dict)
+
+
+class DigestRunRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    schedule_id: str | None = None
+    title: str
+    status: str
+    recipients_json: list[str] = Field(default_factory=list)
+    sections_json: list[str] = Field(default_factory=list)
+    content_json: dict[str, Any] = Field(default_factory=dict)
+    redactions_json: dict[str, Any] = Field(default_factory=dict)
+    delivery_attempts_json: list[dict[str, Any]] = Field(default_factory=list)
+    error_message: str | None = None
+    generated_by_id: str | None = None
+    generated_by_name: str
+    generated_at: datetime
+    created_at: datetime
+
+
+class DigestRunPageRead(BaseModel):
+    items: list[DigestRunRead]
+    total: int
+    page: int
+    page_size: int
+    pages: int
+
+
+class DashboardWidgetRead(BaseModel):
+    key: str
+    title: str
+    status: Literal["complete", "empty", "failed"] = "complete"
+    generated_at: datetime
+    data_scope: str
+    value: Any | None = None
+    items: list[dict[str, Any]] = Field(default_factory=list)
+    metadata: dict[str, Any] = Field(default_factory=dict)
+    error: str | None = None
+
+
+class DashboardRead(BaseModel):
+    dashboard: str
+    generated_at: datetime
+    data_scope: str
+    widgets: list[DashboardWidgetRead]
+
+
+class TaskSummaryRefreshRead(BaseModel):
+    widget: DashboardWidgetRead
+
+
+class ReportFieldRead(BaseModel):
+    data_source: str
+    field: str
+    label: str
+    field_type: str = "text"
+    sortable: bool = True
+    filterable: bool = True
+    sensitive: bool = False
+    custom_field: bool = False
+
+
+class ReportFieldsRead(BaseModel):
+    data_sources: list[str]
+    fields: list[ReportFieldRead]
+
+
+class ReportPreviewRequest(BaseModel):
+    data_source: ReportDataSource
+    fields: list[str]
+    filters: dict[str, Any] = Field(default_factory=dict)
+    grouping: list[str] = Field(default_factory=list)
+    sort: str | None = None
+    direction: Literal["asc", "desc"] = "asc"
+    page: int = 1
+    page_size: int = 25
+
+    @field_validator("fields")
+    @classmethod
+    def fields_are_valid(cls, value: list[str]) -> list[str]:
+        if not value:
+            raise ValueError("Select at least one report field.")
+        return validate_string_list(value, "Report fields", max_items=30)
+
+    @field_validator("grouping")
+    @classmethod
+    def grouping_is_valid(cls, value: list[str]) -> list[str]:
+        return validate_string_list(value, "Report grouping", max_items=10)
+
+    @field_validator("page")
+    @classmethod
+    def page_is_valid(cls, value: int) -> int:
+        return validate_positive_int(value, "Page", 100000)
+
+    @field_validator("page_size")
+    @classmethod
+    def page_size_is_valid(cls, value: int) -> int:
+        return validate_positive_int(value, "Page size", 500)
+
+
+class ReportPreviewRead(BaseModel):
+    rows: list[dict[str, Any]]
+    columns: list[ReportFieldRead]
+    total: int
+    page: int
+    page_size: int
+    pages: int
+    generated_at: datetime
+
+
+class ReportDefinitionRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    owner_id: str | None = None
+    owner_name: str
+    name: str
+    description: str | None = None
+    visibility: str
+    data_source: str
+    fields_json: list[str] = Field(default_factory=list)
+    filters_json: dict[str, Any] = Field(default_factory=dict)
+    grouping_json: list[str] = Field(default_factory=list)
+    layout_json: dict[str, Any] = Field(default_factory=dict)
+    export_format: str
+    created_at: datetime
+    updated_at: datetime
+
+
+class ReportDefinitionPageRead(BaseModel):
+    items: list[ReportDefinitionRead]
+    total: int
+    page: int
+    page_size: int
+    pages: int
+
+
+class ReportCreateRequest(BaseModel):
+    name: str
+    description: str | None = None
+    visibility: ReportVisibility = "private"
+    data_source: ReportDataSource
+    fields: list[str]
+    filters: dict[str, Any] = Field(default_factory=dict)
+    grouping: list[str] = Field(default_factory=list)
+    layout: dict[str, Any] = Field(default_factory=dict)
+    export_format: ReportExportFormat = "csv"
+
+    @field_validator("name")
+    @classmethod
+    def name_is_valid(cls, value: str) -> str:
+        return validate_short_text(value, "Report name", 160)
+
+    @field_validator("description")
+    @classmethod
+    def description_is_valid(cls, value: str | None) -> str | None:
+        return validate_optional_long_text(value, "Report description", 1000)
+
+    @field_validator("fields")
+    @classmethod
+    def fields_are_valid(cls, value: list[str]) -> list[str]:
+        if not value:
+            raise ValueError("Select at least one report field.")
+        return validate_string_list(value, "Report fields", max_items=30)
+
+    @field_validator("grouping")
+    @classmethod
+    def grouping_is_valid(cls, value: list[str]) -> list[str]:
+        return validate_string_list(value, "Report grouping", max_items=10)
+
+    @model_validator(mode="after")
+    def export_format_is_compatible(self) -> "ReportCreateRequest":
+        if self.export_format == "pdf" and self.layout.get("type") == "table_only":
+            raise ValueError("PDF exports require a report layout.")
+        return self
+
+
+class ReportUpdateRequest(BaseModel):
+    name: str | None = None
+    description: str | None = None
+    visibility: ReportVisibility | None = None
+    fields: list[str] | None = None
+    filters: dict[str, Any] | None = None
+    grouping: list[str] | None = None
+    layout: dict[str, Any] | None = None
+    export_format: ReportExportFormat | None = None
+
+    @field_validator("name")
+    @classmethod
+    def name_is_valid(cls, value: str | None) -> str | None:
+        return validate_optional_long_text(value, "Report name", 160)
+
+    @field_validator("description")
+    @classmethod
+    def description_is_valid(cls, value: str | None) -> str | None:
+        return validate_optional_long_text(value, "Report description", 1000)
+
+    @field_validator("fields")
+    @classmethod
+    def fields_are_valid(cls, value: list[str] | None) -> list[str] | None:
+        if value is None:
+            return None
+        if not value:
+            raise ValueError("Select at least one report field.")
+        return validate_string_list(value, "Report fields", max_items=30)
+
+    @field_validator("grouping")
+    @classmethod
+    def grouping_is_valid(cls, value: list[str] | None) -> list[str] | None:
+        return validate_string_list(value, "Report grouping", max_items=10) if value is not None else None
+
+
+class ReportExportRequest(BaseModel):
+    export_format: ReportExportFormat | None = None
+
+
+class ReportRunRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    report_id: str | None = None
+    schedule_id: str | None = None
+    status: str
+    export_format: str
+    content_json: dict[str, Any] = Field(default_factory=dict)
+    storage_metadata_json: dict[str, Any] = Field(default_factory=dict)
+    permission_scope_json: dict[str, Any] = Field(default_factory=dict)
+    recipients_json: list[str] = Field(default_factory=list)
+    error_message: str | None = None
+    generated_by_id: str | None = None
+    generated_by_name: str
+    generated_at: datetime
+    created_at: datetime
+
+
+class ReportRunPageRead(BaseModel):
+    items: list[ReportRunRead]
+    total: int
+    page: int
+    page_size: int
+    pages: int
+
+
+class ReportScheduleRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    report_id: str
+    owner_id: str | None = None
+    owner_name: str
+    cadence: str
+    timezone: str
+    recipients_json: list[str] = Field(default_factory=list)
+    delivery_channels: list[str] = Field(default_factory=list)
+    is_active: bool
+    last_run_at: datetime | None = None
+    next_run_at: datetime | None = None
+    created_at: datetime
+    updated_at: datetime
+
+
+class ReportSchedulePageRead(BaseModel):
+    items: list[ReportScheduleRead]
+    total: int
+    page: int
+    page_size: int
+    pages: int
+
+
+class ReportScheduleRequest(BaseModel):
+    cadence: ScheduleCadence = "weekly"
+    timezone: str = "UTC"
+    recipient_user_ids: list[str]
+    delivery_channels: list[NotificationChannel] = Field(default_factory=lambda: ["in_app"])
+    is_active: bool = True
+
+    @field_validator("timezone")
+    @classmethod
+    def timezone_is_valid(cls, value: str) -> str:
+        return validate_timezone_name(value)
+
+    @field_validator("recipient_user_ids")
+    @classmethod
+    def recipients_are_valid(cls, value: list[str]) -> list[str]:
+        return validate_recipient_ids(value)
+
+    @field_validator("delivery_channels")
+    @classmethod
+    def channels_are_valid(cls, value: list[str]) -> list[str]:
+        return validate_channels(value)
+
+
+class ReportScheduleUpdateRequest(BaseModel):
+    cadence: ScheduleCadence | None = None
+    timezone: str | None = None
+    recipient_user_ids: list[str] | None = None
+    delivery_channels: list[NotificationChannel] | None = None
+    is_active: bool | None = None
+
+    @field_validator("timezone")
+    @classmethod
+    def timezone_is_valid(cls, value: str | None) -> str | None:
+        return validate_timezone_name(value) if value is not None else None
+
+    @field_validator("recipient_user_ids")
+    @classmethod
+    def recipients_are_valid(cls, value: list[str] | None) -> list[str] | None:
+        return validate_recipient_ids(value) if value is not None else None
+
+    @field_validator("delivery_channels")
+    @classmethod
+    def channels_are_valid(cls, value: list[str] | None) -> list[str] | None:
+        return validate_channels(value) if value is not None else None

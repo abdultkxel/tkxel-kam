@@ -19,11 +19,14 @@ from app.services.engagements import EngagementService
 from app.services.escalations import EscalationService
 from app.services.governance import GovernanceService
 from app.services.kyc import KycService
+from app.services.dashboards import DashboardsService
+from app.services.notifications import NotificationsService
 from app.services.onboarding import OnboardingService
 from app.services.opportunities import OpportunityService
 from app.services.playbooks_tasks import PlaybooksTasksService
 from app.services.profile import ProfileService
 from app.services.rbac import RbacService
+from app.services.reports import ReportsService
 from app.services.scoring import ScoringService
 from app.services.service_catalog import ServiceCatalogService
 from app.services.signals import SignalsService
@@ -156,6 +159,18 @@ def get_signals_service(db: Annotated[Session, Depends(get_db)]) -> SignalsServi
 
 def get_timeline_service(db: Annotated[Session, Depends(get_db)]) -> TimelineService:
     return TimelineService(db)
+
+
+def get_notifications_service(db: Annotated[Session, Depends(get_db)]) -> NotificationsService:
+    return NotificationsService(db)
+
+
+def get_dashboards_service(db: Annotated[Session, Depends(get_db)]) -> DashboardsService:
+    return DashboardsService(db)
+
+
+def get_reports_service(db: Annotated[Session, Depends(get_db)]) -> ReportsService:
+    return ReportsService(db)
 
 
 def require_permission(module: str, action: str):
