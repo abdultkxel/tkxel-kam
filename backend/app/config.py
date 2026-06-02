@@ -36,7 +36,7 @@ class Settings:
         self.s3_region = os.getenv("S3_REGION", "")
         self.google_calendar_client_id = os.getenv("GOOGLE_CALENDAR_CLIENT_ID", "")
         self.google_calendar_client_secret = os.getenv("GOOGLE_CALENDAR_CLIENT_SECRET", "")
-        self.google_calendar_redirect_uri = os.getenv("GOOGLE_CALENDAR_REDIRECT_URI", "http://127.0.0.1:8002/api/admin/integrations/google-calendar/oauth-callback")
+        self.google_calendar_redirect_uri = os.getenv("GOOGLE_CALENDAR_REDIRECT_URI", "http://127.0.0.1:8001/api/admin/integrations/google-calendar/oauth-callback")
         self.google_calendar_default_calendar_id = os.getenv("GOOGLE_CALENDAR_DEFAULT_CALENDAR_ID", "primary")
         self.google_sign_in_client_id = os.getenv("GOOGLE_SIGN_IN_CLIENT_ID", "")
         self.allowed_email_domains = os.getenv("ALLOWED_EMAIL_DOMAINS", "tkxel.com,tkxel.io,camp1.tkxel.com,camp1.tkxel.io")

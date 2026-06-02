@@ -69,26 +69,6 @@ function apiDraft(status: 'ready_for_review' | 'approved' = 'ready_for_review') 
   }
 }
 
-const apiAccount = {
-  id: 'acct-1',
-  name: 'Acme Corp',
-  project_name: 'Customer intelligence',
-  company_url: 'https://acme.example.com',
-  segment: 'Growth',
-  region: 'Global',
-  lifecycle_status: 'Onboarding',
-  risk_status: 'warning',
-  commercial_value: 0,
-  currency: 'USD',
-  health: { overall: 45, relationship: 45, usage: 45, delivery: 45, commercial: 45 },
-  next_governance_at: null,
-  created_at: '2026-05-30T00:00:00Z',
-  updated_at: '2026-05-30T00:00:00Z',
-  primary_owner: { id: 'owner-1', user_id: 'usr-am', user_name: 'Account Manager KAM', ownership_role: 'primary_am' },
-  owners: [],
-  governance_completeness: { accountable_am: true, current_kyc: false, engagement_records: true, next_governance: false },
-}
-
 const customFields = [
   {
     id: 'field-1',
@@ -116,14 +96,12 @@ async function fillForm() {
 }
 
 describe('CreateAccountDialog', () => {
-  it('creates and approves an onboarding draft before navigating to the account', async () => {
+  it('creates an onboarding draft before navigating to onboarding review', async () => {
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input)
       const method = init?.method ?? 'GET'
       if (url.endsWith('/api/accounts/custom-fields') && method === 'GET') return jsonResponse([])
       if (url.endsWith('/api/onboarding/drafts') && method === 'POST') return jsonResponse(apiDraft())
-      if (url.endsWith('/api/onboarding/drafts/draft-1/approve') && method === 'POST') return jsonResponse(apiDraft('approved'))
-      if (url.endsWith('/api/accounts/acct-1') && method === 'GET') return jsonResponse(apiAccount)
       return jsonResponse({})
     })
     vi.stubGlobal('fetch', fetchMock)
@@ -132,16 +110,16 @@ describe('CreateAccountDialog', () => {
       <MemoryRouter initialEntries={['/accounts']}>
         <Routes>
           <Route path="/accounts" element={<CreateAccountDialog />} />
-          <Route path="/accounts/:id" element={<div>Account page loaded</div>} />
+          <Route path="/accounts/onboarding" element={<div>Onboarding review loaded</div>} />
         </Routes>
       </MemoryRouter>,
     )
 
     await fillForm()
-    await userEvent.click(screen.getAllByRole('button', { name: /create account/i }).at(-1)!)
+    await userEvent.click(screen.getByRole('button', { name: /create draft/i }))
 
-    expect(await screen.findByText('Account page loaded')).toBeInTheDocument()
-    expect(fetchMock.mock.calls.some(call => String(call[0]).endsWith('/api/onboarding/drafts/draft-1/approve'))).toBe(true)
+    expect(await screen.findByText('Onboarding review loaded')).toBeInTheDocument()
+    expect(fetchMock.mock.calls.some(call => String(call[0]).endsWith('/api/onboarding/drafts/draft-1/approve'))).toBe(false)
     expect(fetchMock.mock.calls.some(call => {
       const [url, init] = call
       if (!String(url).endsWith('/api/onboarding/drafts') || init?.method !== 'POST') return false
@@ -153,7 +131,7 @@ describe('CreateAccountDialog', () => {
         payload.engagement_drafts[0].service_lines?.[0] === 'Account onboarding'
       )
     })).toBe(true)
-    expect(toast.success).toHaveBeenCalledWith('Account and initial engagement created. Complete KYC in Account Overview.')
+    expect(toast.success).toHaveBeenCalledWith('Account draft created for onboarding review.')
   })
 
   it('shows backend validation errors at matching account fields', async () => {
@@ -185,7 +163,7 @@ describe('CreateAccountDialog', () => {
     )
 
     await fillForm()
-    await userEvent.click(screen.getAllByRole('button', { name: /create account/i }).at(-1)!)
+    await userEvent.click(screen.getByRole('button', { name: /create draft/i }))
 
     expect(await screen.findByText('Account name is already in review.')).toBeInTheDocument()
     expect(screen.getByText('Project name needs source evidence.')).toBeInTheDocument()
@@ -197,8 +175,6 @@ describe('CreateAccountDialog', () => {
       const method = init?.method ?? 'GET'
       if (url.endsWith('/api/accounts/custom-fields') && method === 'GET') return jsonResponse(customFields)
       if (url.endsWith('/api/onboarding/drafts') && method === 'POST') return jsonResponse(apiDraft())
-      if (url.endsWith('/api/onboarding/drafts/draft-1/approve') && method === 'POST') return jsonResponse(apiDraft('approved'))
-      if (url.endsWith('/api/accounts/acct-1') && method === 'GET') return jsonResponse(apiAccount)
       return jsonResponse({})
     })
     vi.stubGlobal('fetch', fetchMock)
@@ -207,7 +183,7 @@ describe('CreateAccountDialog', () => {
       <MemoryRouter initialEntries={['/accounts']}>
         <Routes>
           <Route path="/accounts" element={<CreateAccountDialog />} />
-          <Route path="/accounts/:id" element={<div>Account page loaded</div>} />
+          <Route path="/accounts/onboarding" element={<div>Onboarding review loaded</div>} />
         </Routes>
       </MemoryRouter>,
     )
@@ -215,9 +191,9 @@ describe('CreateAccountDialog', () => {
     await fillForm()
     expect(await screen.findByLabelText(/customer tier/i)).toBeInTheDocument()
     await userEvent.selectOptions(screen.getByLabelText(/customer tier/i), 'Gold')
-    await userEvent.click(screen.getAllByRole('button', { name: /create account/i }).at(-1)!)
+    await userEvent.click(screen.getByRole('button', { name: /create draft/i }))
 
-    await screen.findByText('Account page loaded')
+    await screen.findByText('Onboarding review loaded')
     expect(fetchMock.mock.calls.some(call => {
       const [url, init] = call
       if (!String(url).endsWith('/api/onboarding/drafts') || init?.method !== 'POST') return false
