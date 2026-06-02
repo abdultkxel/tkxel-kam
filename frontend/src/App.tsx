@@ -4,6 +4,7 @@ import { AppShell } from '@/components/layout/AppShell'
 import { AccountDetail } from '@/pages/AccountDetail'
 import { Accounts } from '@/pages/Accounts'
 import { Admin } from '@/pages/Admin'
+import { AttentionCenter } from '@/pages/AttentionCenter'
 import { Dashboard } from '@/pages/Dashboard'
 import { Escalations } from '@/pages/Escalations'
 import { EngagementDetail } from '@/pages/EngagementDetail'
@@ -30,7 +31,7 @@ export default function App() {
         <Route path="/accounts/onboarding" element={<Onboarding />} />
         <Route path="/accounts/:accountId/engagements/:engagementId" element={<EngagementDetail />} />
         <Route path="/accounts/:id" element={<AccountDetail />} />
-        <Route path="/attention" element={<Navigate to="/tasks" replace />} />
+        <Route path="/attention" element={<AttentionCenter />} />
         <Route path="/opportunities" element={<Opportunities />} />
         <Route path="/escalations" element={<Escalations />} />
         <Route path="/tasks" element={<Tasks />} />

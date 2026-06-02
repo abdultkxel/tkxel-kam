@@ -50,6 +50,7 @@ export type ScoreCalculatorSummary = {
     commercial: number
   }
   serviceCoverage: number
+  totalServiceLines: number
   selectedServiceLines: string[]
   selections: CalculatorSelections
   activityEvidence: ScoreActivityEvidence[]
@@ -441,6 +442,7 @@ function buildSummary(
       commercial: contract,
     },
     serviceCoverage: Math.round((selectedServiceLines.length / serviceLines.length) * 100),
+    totalServiceLines: serviceLines.length,
     selectedServiceLines,
     selections,
     activityEvidence,

@@ -4765,6 +4765,28 @@ class ScoreRecalculateRequest(BaseModel):
         return validate_short_text(value, "Trigger source", 120)
 
 
+class MetricSnapshotRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    score_snapshot_id: str
+    metric_id: str | None = None
+    metric_slug: str
+    metric_name: str
+    category: str
+    criterion_key: str | None = None
+    raw_score: float | None = None
+    raw_scale: float | None = None
+    normalized_score: int | None = None
+    weight: float
+    weighted_score: float
+    status: str
+    freshness_status: str
+    evidence_json: list = Field(default_factory=list)
+    source_context: dict = Field(default_factory=dict)
+    created_at: datetime
+
+
 class ScoreSnapshotRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -4787,6 +4809,7 @@ class ScoreSnapshotRead(BaseModel):
     calculated_by_name: str | None = None
     calculated_at: datetime
     created_at: datetime
+    metric_snapshots: list[MetricSnapshotRead] = Field(default_factory=list)
 
 
 class ScoreSnapshotPageRead(BaseModel):

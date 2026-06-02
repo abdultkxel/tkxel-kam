@@ -22,7 +22,7 @@ import { HandoverSummary } from '@/components/timeline/HandoverSummary'
 import { AddOpportunityDialog, OpportunityDetailDialog, type OwnerOption } from '@/pages/Opportunities'
 import { useAuth } from '@/contexts/AuthContext'
 import { useRole } from '@/hooks/useRole'
-import { recalculateAccountScore, ScoreRead } from '@/services/scoringSignalsTasks'
+import { getAccountScore, recalculateAccountScore, ScoreRead } from '@/services/scoring'
 import { useAccountStore } from '@/stores/accountStore'
 import { useAlertStore } from '@/stores/alertStore'
 import { useGovernanceStore } from '@/stores/governanceStore'
@@ -48,6 +48,9 @@ export function Account360({ account }: { account: Account }) {
   const [handoverOpen, setHandoverOpen] = useState(false)
   const [savingHealth, setSavingHealth] = useState(false)
   const [savingStage, setSavingStage] = useState(false)
+  const [accountScore, setAccountScore] = useState<ScoreRead | null>(null)
+  const [scoreLoading, setScoreLoading] = useState(Boolean(token))
+  const [scoreError, setScoreError] = useState('')
   const requestedTab = searchParams.get('tab')
   const [activeTab, setActiveTab] = useState(() => tabs.find(tab => tab.toLowerCase() === requestedTab?.toLowerCase()) ?? 'Overview')
   const setHealth = useAccountStore(state => state.setHealth)
@@ -107,16 +110,36 @@ export function Account360({ account }: { account: Account }) {
     () => alerts.filter(alert => alert.accountId === account.id && !alert.dismissedAt),
     [account.id, alerts],
   )
-  const healthDimensions = [
-    { key: 'relationship', label: 'Relationship', value: account.health.relationship },
-    { key: 'usage', label: 'Usage', value: account.health.usage },
-    { key: 'delivery', label: 'Delivery', value: account.health.delivery },
-    { key: 'commercial', label: 'Commercial', value: account.health.commercial },
-  ]
+  const healthDimensions = useMemo(() => {
+    const preferredOrder = ['relationship', 'resource', 'service_line', 'contract', 'account_risk', 'csat']
+    const driverByKey = new Map((accountScore?.drivers ?? []).map(driver => [driver.key, driver]))
+    const labels: Record<string, string> = {
+      relationship: 'Relationship',
+      resource: 'Resource',
+      service_line: 'Service Line',
+      contract: 'Contract',
+      account_risk: 'Account Risk',
+      csat: 'CSAT',
+    }
+    const driverRows = preferredOrder
+      .map(key => driverByKey.get(key))
+      .filter(Boolean)
+      .map(driver => ({ key: driver!.key, label: labels[driver!.key] ?? driver!.label, value: Number(driver!.score), status: String(driver!.status ?? '') }))
+    if (driverRows.length) return driverRows
+    return [
+      { key: 'relationship', label: 'Relationship', value: account.health.relationship, status: '' },
+      { key: 'resource', label: 'Resource', value: account.health.delivery, status: '' },
+      { key: 'contract', label: 'Contract', value: account.health.commercial, status: '' },
+      { key: 'csat', label: 'CSAT', value: account.health.usage, status: '' },
+    ]
+  }, [account.health.commercial, account.health.delivery, account.health.relationship, account.health.usage, accountScore?.drivers])
+  const displayHealthOverall = accountScore?.overall ?? account.health.overall
+  const displayRiskStatus = accountScore?.rag_status ?? account.riskStatus
+  const metricConfigMissing = accountScore?.reason_codes?.some(reason => reason.code === 'metric_config_missing') ?? false
   const riskTone =
-    account.riskStatus === 'critical'
+    displayRiskStatus === 'critical' || displayRiskStatus === 'red'
       ? 'border-rag-red/20 bg-rag-red/10 text-rag-red'
-      : account.riskStatus === 'warning'
+      : displayRiskStatus === 'warning' || displayRiskStatus === 'amber'
         ? 'border-brand-orange/20 bg-brand-orange/10 text-brand-orange'
       : 'border-rag-green/20 bg-rag-green/10 text-rag-green'
   const [selectedOpportunityId, setSelectedOpportunityId] = useState('')
@@ -132,16 +155,64 @@ export function Account360({ account }: { account: Account }) {
     const scoreByKey = Object.fromEntries(score.drivers.map(driver => [driver.key, driver.score]))
     return {
       overall: score.overall,
-      relationship: Number(scoreByKey.relationship ?? account.health.relationship),
-      usage: Number(scoreByKey.usage ?? account.health.usage),
-      delivery: Number(scoreByKey.delivery ?? account.health.delivery),
-      commercial: Number(scoreByKey.commercial ?? account.health.commercial),
+      relationship: Number(scoreByKey.relationship ?? scoreByKey.relationship_health ?? account.health.relationship),
+      usage: Number(scoreByKey.csat ?? scoreByKey.service_line ?? scoreByKey.usage ?? account.health.usage),
+      delivery: Number(scoreByKey.resource ?? scoreByKey.delivery ?? account.health.delivery),
+      commercial: Number(scoreByKey.contract ?? scoreByKey.commercial ?? account.health.commercial),
     }
+  }
+
+  function buildHealthManualValues(summary: ScoreCalculatorSummary) {
+    const values: Record<string, number> = {
+      'service_line.coverage': summary.serviceCoverage,
+      'service_line.selected_count': summary.selectedServiceLines.length,
+      'service_line.total_count': summary.totalServiceLines,
+    }
+    const groups: { source: keyof ScoreCalculatorSummary['selections']; target: string }[] = [
+      { source: 'relationship', target: 'relationship' },
+      { source: 'resource', target: 'resource' },
+      { source: 'contract', target: 'contract' },
+      { source: 'risk', target: 'account_risk' },
+      { source: 'csat', target: 'csat' },
+    ]
+    groups.forEach(group => {
+      Object.entries(summary.selections[group.source]).forEach(([criterion, value]) => {
+        if (typeof value === 'number') values[`${group.target}.${criterion}`] = value
+      })
+    })
+    return values
   }
 
   useEffect(() => {
     setActiveAccountId(account.id)
   }, [account.id, setActiveAccountId])
+
+  useEffect(() => {
+    if (!token) {
+      setScoreLoading(false)
+      return
+    }
+    let cancelled = false
+    setScoreLoading(true)
+    setScoreError('')
+    getAccountScore(token, account.id)
+      .then(score => {
+        if (cancelled) return
+        setAccountScore(score)
+        if (score.latest_snapshot) {
+          setHealth(account.id, healthFromScore(score))
+        }
+      })
+      .catch(err => {
+        if (!cancelled) setScoreError(err instanceof Error ? err.message : 'Unable to load account score')
+      })
+      .finally(() => {
+        if (!cancelled) setScoreLoading(false)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [account.id, token])
 
   useEffect(() => {
     const nextTab = tabs.find(tab => tab.toLowerCase() === requestedTab?.toLowerCase())
@@ -162,6 +233,7 @@ export function Account360({ account }: { account: Account }) {
     try {
       if (!token) throw new Error('You must be logged in to recalculate health')
       const score = await recalculateAccountScore(token, account.id, { trigger_source: 'account_health_tab', include_signal_evaluation: true })
+      setAccountScore(score)
       const after = { ...healthFromScore(score), scoringVersion: score.metric_version }
       setHealth(account.id, after)
       const entry = emit.scoreChanged(account.id, user.id, user.name, before, after, score.metric_version)
@@ -195,15 +267,20 @@ export function Account360({ account }: { account: Account }) {
     const before = { ...account.health, scoringVersion: 'v1.3' }
     try {
       if (!token) throw new Error('You must be logged in to save calculator scores')
+      const manualValues = buildHealthManualValues(summary)
       const score = await recalculateAccountScore(token, account.id, {
         trigger_source: 'score_calculator',
         include_signal_evaluation: true,
         manual_submission: {
           calculator_id: 'account_health',
-          values: summary.platformHealth,
-          evidence: summary.activityEvidence,
+          values: manualValues,
+          evidence: [
+            ...summary.activityEvidence,
+            { type: 'service_line_mapping', label: 'Mapped service lines', value: summary.selectedServiceLines.length, total: summary.totalServiceLines },
+          ],
         },
       })
+      setAccountScore(score)
       const after = healthFromScore(score)
       const afterValue = {
         ...after,
@@ -451,9 +528,9 @@ export function Account360({ account }: { account: Account }) {
             <section className="tk-card p-5">
               <div className="grid gap-6 xl:grid-cols-[260px_1fr]">
                 <div className="flex flex-col items-center justify-center rounded-lg bg-surface-secondary p-5 text-center">
-                  <HealthScoreRing value={account.health.overall} size={176} />
+                  <HealthScoreRing value={displayHealthOverall} size={176} />
                   <span className={`mt-4 rounded-full border px-3 py-1 text-[11px] font-semibold uppercase tracking-wider ${riskTone}`}>
-                    {account.riskStatus}
+                    {displayRiskStatus}
                   </span>
                 </div>
 
@@ -465,6 +542,18 @@ export function Account360({ account }: { account: Account }) {
                       <p className="mt-1 max-w-2xl text-sm text-ink-secondary">
                         Review the live score, complete evidence-linked activities, then save calculator changes with timeline audit.
                       </p>
+                      {scoreLoading ? <p className="mt-2 text-xs font-semibold text-ink-secondary">Loading account-scoped score...</p> : null}
+                      {scoreError ? <p className="mt-2 rounded-md border border-rag-red/20 bg-rag-red/10 px-3 py-2 text-xs font-semibold text-rag-red">{scoreError}</p> : null}
+                      {metricConfigMissing ? (
+                        <p className="mt-2 rounded-md border border-rag-red/20 bg-rag-red/10 px-3 py-2 text-xs font-semibold text-rag-red">
+                          No active published scoring metrics are configured. Admin/KAM Head must publish metrics before this account can receive an authoritative score.
+                        </p>
+                      ) : null}
+                      {accountScore?.is_dirty && !metricConfigMissing ? (
+                        <p className="mt-2 rounded-md border border-brand-orange/20 bg-brand-orange/10 px-3 py-2 text-xs font-semibold text-brand-orange">
+                          Score is incomplete because some Health-tab inputs are using fallback evidence.
+                        </p>
+                      ) : null}
                     </div>
                     <button className="tk-button-primary shrink-0" disabled={savingHealth} onClick={recalcHealth}>
                       {savingHealth ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCcw className="h-4 w-4" />}
@@ -473,11 +562,20 @@ export function Account360({ account }: { account: Account }) {
                   </div>
 
                   <div className="mt-5 grid gap-3 sm:grid-cols-2">
-                    <HealthDimensionMeter label="Overall" value={account.health.overall} prominent />
+                    <HealthDimensionMeter label="Overall" value={displayHealthOverall} prominent />
                     {healthDimensions.map(dimension => (
                       <HealthDimensionMeter key={dimension.key} label={dimension.label} value={dimension.value} />
                     ))}
                   </div>
+                  {accountScore?.reason_codes?.length ? (
+                    <div className="mt-4 flex flex-wrap gap-2">
+                      {accountScore.reason_codes.slice(0, 8).map(reason => (
+                        <span key={reason.code} className="rounded-full border border-surface-border bg-white px-3 py-1 text-[11px] font-semibold text-ink-secondary">
+                          {reason.label}
+                        </span>
+                      ))}
+                    </div>
+                  ) : null}
                 </div>
               </div>
             </section>

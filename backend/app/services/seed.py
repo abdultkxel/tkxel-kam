@@ -326,42 +326,114 @@ def seed_relationship_planning_reference_data(db: Session) -> None:
 
 
 def seed_scoring_signals_playbooks(db: Session, super_admin: User) -> None:
+    raw_thresholds = {"red_max": 49, "amber_min": 50, "green_min": 67}
+    default_thresholds = {"red_max": 59, "amber_min": 60, "green_min": 75}
     metric_specs = (
         (
             "relationship_health",
             "Relationship Health",
             "Account-level relationship quality, stakeholder depth, and sponsor coverage.",
             "account",
-            25,
-            {"red_max": 59, "amber_min": 60, "green_min": 75},
-            {"op": "field", "field": "health_relationship"},
+            17,
+            raw_thresholds,
+            {
+                "op": "weighted_sum",
+                "scale": 3,
+                "items": [
+                    {"field": "relationship.ceo", "label": "CEO Engagement", "weight": 20},
+                    {"field": "relationship.kam", "label": "KAM Engagement", "weight": 30},
+                    {"field": "relationship.delivery", "label": "Delivery Leadership", "weight": 25},
+                    {"field": "relationship.finance", "label": "Finance Connection", "weight": 5},
+                    {"field": "relationship.inperson", "label": "In-Person Meeting", "weight": 20},
+                ],
+            },
         ),
         (
-            "usage_adoption_health",
-            "Usage and Adoption Health",
-            "Account-level usage/adoption and value realization signal.",
+            "resource_health",
+            "Resource Health",
+            "Key resource depth, account alignment, and continuity backup coverage.",
             "account",
-            25,
-            {"red_max": 59, "amber_min": 60, "green_min": 75},
-            {"op": "field", "field": "health_usage"},
+            17,
+            raw_thresholds,
+            {
+                "op": "weighted_sum",
+                "scale": 3,
+                "items": [
+                    {"field": "resource.keyres", "label": "Number of Key Resources", "weight": 50},
+                    {"field": "resource.alignment", "label": "Key Resource Alignment", "weight": 25},
+                    {"field": "resource.backup", "label": "Backup", "weight": 25},
+                ],
+            },
         ),
         (
-            "delivery_health",
-            "Delivery Health",
-            "Account and engagement delivery quality, risk, and execution confidence.",
+            "service_line_health",
+            "Service Line Score",
+            "Adopted/current service lines against applicable service lines for the account.",
             "account",
-            25,
-            {"red_max": 59, "amber_min": 60, "green_min": 75},
-            {"op": "field", "field": "health_delivery"},
+            16,
+            default_thresholds,
+            {
+                "op": "ratio",
+                "numerator": {"op": "field", "field": "service_line.selected_count"},
+                "denominator": {"op": "field", "field": "service_line.total_count"},
+                "multiplier": 100,
+            },
         ),
         (
-            "commercial_health",
-            "Commercial Health",
-            "Commercial stability, expansion opportunity, renewal outlook, and escalation drag.",
+            "contract_health",
+            "Contract Health",
+            "Contract length, notice period, and renewal terms stability.",
             "account",
-            25,
-            {"red_max": 59, "amber_min": 60, "green_min": 75},
-            {"op": "field", "field": "health_commercial"},
+            17,
+            raw_thresholds,
+            {
+                "op": "average",
+                "scale": 3,
+                "values": [
+                    {"op": "field", "field": "contract.length"},
+                    {"op": "field", "field": "contract.notice"},
+                    {"op": "field", "field": "contract.renewal"},
+                ],
+            },
+        ),
+        (
+            "account_risk_health",
+            "Account Risk Score",
+            "Account stability score across competitors, leadership, funding, payments, roadmap alignment, and geo risk.",
+            "account",
+            17,
+            raw_thresholds,
+            {
+                "op": "weighted_sum",
+                "scale": 3,
+                "items": [
+                    {"field": "account_risk.competitors", "label": "Competitors", "weight": 30},
+                    {"field": "account_risk.leadership_tenure", "label": "Current Leadership Tenure", "weight": 15},
+                    {"field": "account_risk.funding_revenue", "label": "Funding and Revenue Changes", "weight": 15},
+                    {"field": "account_risk.payment_behavior", "label": "Payment Behavior", "weight": 15},
+                    {"field": "account_risk.roadmap_alignment", "label": "Roadmap Alignment", "weight": 20},
+                    {"field": "account_risk.geopolitical", "label": "Geopolitical Situation", "weight": 5},
+                ],
+            },
+        ),
+        (
+            "csat_health",
+            "CSAT Score",
+            "Customer satisfaction score across delivery excellence, communication, proactiveness, trust, and value.",
+            "account",
+            16,
+            {"red_max": 59, "amber_min": 60, "green_min": 80},
+            {
+                "op": "weighted_sum",
+                "scale": 5,
+                "items": [
+                    {"field": "csat.delivery_ex", "label": "Delivery Excellence", "weight": 30},
+                    {"field": "csat.communication", "label": "Communication", "weight": 20},
+                    {"field": "csat.proactiveness", "label": "Proactiveness", "weight": 15},
+                    {"field": "csat.trust", "label": "Trust", "weight": 20},
+                    {"field": "csat.value", "label": "Value for Money", "weight": 15},
+                ],
+            },
         ),
         (
             "engagement_delivery_health",
@@ -369,7 +441,7 @@ def seed_scoring_signals_playbooks(db: Session, super_admin: User) -> None:
             "Engagement-level delivery and renewal-readiness score.",
             "engagement",
             100,
-            {"red_max": 59, "amber_min": 60, "green_min": 75},
+            default_thresholds,
             {"op": "field", "field": "delivery_health"},
         ),
     )
@@ -410,6 +482,13 @@ def seed_scoring_signals_playbooks(db: Session, super_admin: User) -> None:
         if metric.current_version <= 0:
             metric.current_version = 1
             db.add(ScoringMetricVersion(metric_id=metric.id, version=1, config_json=_metric_config(metric), published_by_id=super_admin.id, published_by_name=super_admin.full_name))
+
+    for legacy_slug in ("usage_adoption_health", "delivery_health", "commercial_health"):
+        legacy = db.scalar(select(ScoringMetricDefinition).where(ScoringMetricDefinition.slug == legacy_slug, ScoringMetricDefinition.scope == "account"))
+        if legacy is not None:
+            legacy.status = "inactive"
+            legacy.is_active = False
+            legacy.updated_by_id = super_admin.id
 
     rule_specs = (
         ("sow_expiry", "SOW Expiry Window", "sow_expiry", "warning", {"date_field": "engagement.end_date", "days_before": 45}),
@@ -453,7 +532,7 @@ def seed_scoring_signals_playbooks(db: Session, super_admin: User) -> None:
             "Renewal Rescue",
             "Stabilize an upcoming renewal or notice window before commercial risk escalates.",
             ["notice_window", "renewal_date", "sow_expiry"],
-            ["renewal", "commercial"],
+            ["renewal", "commercial", "contract"],
             [
                 {"title": "Confirm renewal owner and decision process", "description": "Identify client approver, procurement path, and internal commercial owner.", "priority": "high", "due_offset_days": 2},
                 {"title": "Prepare renewal risk brief", "description": "Summarize blockers, value delivered, open asks, and next-best offer.", "priority": "high", "due_offset_days": 4},
@@ -465,7 +544,7 @@ def seed_scoring_signals_playbooks(db: Session, super_admin: User) -> None:
             "Health Recovery",
             "Address weak health metrics or escalation drag with an owner-backed recovery plan.",
             ["weak_metric", "escalation_sla", "stale_kyc"],
-            ["relationship", "usage", "delivery", "commercial", "stale_kyc"],
+            ["relationship", "resource", "service_line", "contract", "account_risk", "csat", "usage", "delivery", "commercial", "stale_kyc"],
             [
                 {"title": "Review score drivers and evidence", "description": "Validate weak metrics, evidence, and recent account activity.", "priority": "high", "due_offset_days": 1},
                 {"title": "Create recovery action plan", "description": "Document actions, owners, due dates, and success criteria.", "priority": "high", "due_offset_days": 3},

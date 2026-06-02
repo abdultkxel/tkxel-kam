@@ -1298,6 +1298,32 @@ class ScoreSnapshot(Base):
     account: Mapped[Account] = relationship(back_populates="score_snapshots")
     engagement: Mapped[Engagement | None] = relationship(back_populates="score_snapshots")
     job: Mapped["ScoringJob | None"] = relationship(back_populates="snapshots")
+    metric_snapshots: Mapped[list["MetricSnapshot"]] = relationship(back_populates="score_snapshot", cascade="all, delete-orphan")
+
+
+class MetricSnapshot(Base):
+    __tablename__ = "metric_snapshots"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid4()))
+    score_snapshot_id: Mapped[str] = mapped_column(ForeignKey("score_snapshots.id", ondelete="CASCADE"), index=True, nullable=False)
+    metric_id: Mapped[str | None] = mapped_column(ForeignKey("scoring_metric_definitions.id", ondelete="SET NULL"), index=True, nullable=True)
+    metric_slug: Mapped[str] = mapped_column(String(120), index=True, nullable=False)
+    metric_name: Mapped[str] = mapped_column(String(180), nullable=False)
+    category: Mapped[str] = mapped_column(String(80), index=True, nullable=False)
+    criterion_key: Mapped[str | None] = mapped_column(String(120), index=True, nullable=True)
+    raw_score: Mapped[float | None] = mapped_column(Float, nullable=True)
+    raw_scale: Mapped[float | None] = mapped_column(Float, nullable=True)
+    normalized_score: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    weight: Mapped[float] = mapped_column(Float, nullable=False, default=0)
+    weighted_score: Mapped[float] = mapped_column(Float, nullable=False, default=0)
+    status: Mapped[str] = mapped_column(String(40), index=True, nullable=False, default="complete")
+    freshness_status: Mapped[str] = mapped_column(String(40), index=True, nullable=False, default="fresh")
+    evidence_json: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    source_context: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utc_now)
+
+    score_snapshot: Mapped[ScoreSnapshot] = relationship(back_populates="metric_snapshots")
+    metric: Mapped[ScoringMetricDefinition | None] = relationship()
 
 
 class ScoringJob(Base):

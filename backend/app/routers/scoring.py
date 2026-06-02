@@ -22,8 +22,8 @@ from app.schemas import (
 from app.services.scoring import ScoringService
 
 Direction = Literal["asc", "desc"]
-MetricSort = Literal["name", "scope", "status", "weight", "updated_at", "created_at"]
-SnapshotSort = Literal["calculated_at", "overall", "rag_status", "freshness_status", "trend"]
+MetricSort = Literal["name", "scope", "status", "weight", "effective_date", "updated_at", "created_at"]
+SnapshotSort = Literal["calculated_at", "overall", "score", "rag_status", "freshness_status", "trend"]
 ActiveState = Literal["all", "active", "inactive"]
 
 router = APIRouter(prefix="/api", tags=["Scoring Engine"])
@@ -37,12 +37,30 @@ def list_metrics(
     scope: Literal["account", "engagement"] | None = None,
     status_filter: Annotated[str | None, Query(alias="status")] = None,
     active_state: ActiveState = "active",
+    source: str | None = None,
+    owner_role: str | None = None,
+    effective_from: datetime | None = None,
+    effective_to: datetime | None = None,
     sort: MetricSort = "updated_at",
     direction: Direction = "desc",
     page: int = Query(1, ge=1),
     page_size: int = Query(10, ge=1, le=100),
 ) -> ScoringMetricPageRead:
-    return service.list_metrics(current_user, search=search, scope=scope, status_filter=status_filter, active_state=active_state, sort=sort, direction=direction, page=page, page_size=page_size)
+    return service.list_metrics(
+        current_user,
+        search=search,
+        scope=scope,
+        status_filter=status_filter,
+        active_state=active_state,
+        source=source,
+        owner_role=owner_role,
+        effective_from=effective_from,
+        effective_to=effective_to,
+        sort=sort,
+        direction=direction,
+        page=page,
+        page_size=page_size,
+    )
 
 
 @router.post("/admin/metrics", response_model=ScoringMetricRead, status_code=status.HTTP_201_CREATED, summary="Create scoring metric", description="Creates a draft or active scoring metric definition after formula and threshold validation.")
@@ -89,6 +107,10 @@ def list_account_score_snapshots(
     engagement_id: str | None = None,
     rag_status: Literal["red", "amber", "green"] | None = None,
     status_filter: Annotated[str | None, Query(alias="status")] = None,
+    metric_slug: str | None = None,
+    category: str | None = None,
+    dirty: bool | None = None,
+    freshness_status: Literal["fresh", "stale"] | None = None,
     date_from: datetime | None = None,
     date_to: datetime | None = None,
     sort: SnapshotSort = "calculated_at",
@@ -96,7 +118,24 @@ def list_account_score_snapshots(
     page: int = Query(1, ge=1),
     page_size: int = Query(10, ge=1, le=100),
 ) -> ScoreSnapshotPageRead:
-    return service.list_account_snapshots(account_id, current_user, scope=scope, engagement_id=engagement_id, rag_status=rag_status, status_filter=status_filter, date_from=date_from, date_to=date_to, sort=sort, direction=direction, page=page, page_size=page_size)
+    return service.list_account_snapshots(
+        account_id,
+        current_user,
+        scope=scope,
+        engagement_id=engagement_id,
+        rag_status=rag_status,
+        status_filter=status_filter,
+        metric_slug=metric_slug,
+        category=category,
+        dirty=dirty,
+        freshness_status=freshness_status,
+        date_from=date_from,
+        date_to=date_to,
+        sort=sort,
+        direction=direction,
+        page=page,
+        page_size=page_size,
+    )
 
 
 @router.get("/engagements/{engagement_id}/scores", response_model=ScoreRead, summary="Read engagement score", description="Returns the latest engagement score snapshot or current delivery-health score if no snapshot exists.")

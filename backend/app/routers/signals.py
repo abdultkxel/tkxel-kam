@@ -101,12 +101,29 @@ def attention_center(
     current_user: Annotated[User, Depends(get_current_user)],
     service: Annotated[SignalsService, Depends(get_signals_service)],
     account_id: str | None = None,
+    search: str | None = None,
+    signal_type: str | None = None,
     severity: Literal["info", "warning", "critical"] | None = None,
+    status_filter: Annotated[str | None, Query(alias="status")] = None,
     owner_id: str | None = None,
+    sort: SignalSort = "due_at",
+    direction: Direction = "asc",
     page: int = Query(1, ge=1),
     page_size: int = Query(25, ge=1, le=100),
 ) -> SignalPageRead:
-    return service.attention_center(current_user, account_id=account_id, severity=severity, owner_id=owner_id, page=page, page_size=page_size)
+    return service.attention_center(
+        current_user,
+        account_id=account_id,
+        search=search,
+        signal_type=signal_type,
+        severity=severity,
+        status_filter=status_filter,
+        owner_id=owner_id,
+        sort=sort,
+        direction=direction,
+        page=page,
+        page_size=page_size,
+    )
 
 
 @router.post("/signals/evaluate", response_model=SignalEvaluationRead, summary="Evaluate signal rules", description="Runs deterministic rule evaluation for one account/engagement or authorized portfolio scope.")

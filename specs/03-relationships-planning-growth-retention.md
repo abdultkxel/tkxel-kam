@@ -41,6 +41,7 @@ Protect retention and grow strategic accounts by making relationships, whitespac
 - Configure service catalog and adjacency rules.
 - Capture whitespace inputs and generate adjacency recommendations.
 - Allow whitespace inputs and adjacent-service recommendations to influence growth/opportunity scoring and account planning where configured.
+- Relationship, stakeholder coverage, whitespace, service adjacency, renewal, and retention data may be used as scoring inputs only through active published Admin -> Scoring metric definitions; this feature supplies source context, while formula ownership remains in the configurable scoring engine.
 - Manage account-level and engagement-level opportunities in board and list views.
 - Configure opportunity types.
 - Seed/configure opportunity types for cross-sell, upsell, renewal, expansion, rescue/recovery, and other.
@@ -324,6 +325,7 @@ Coverage report: `specs/03-relationships-planning-growth-retention-coverage-repo
 - Direct approved-SOW workflow for creating renewal signals, notice-window tasks, and calendar items is not implemented as a single end-to-end flow; retention recommendations can create tasks only after explicit user confirmation.
 - Retention plan milestones and actions are supported by backend APIs but do not yet have a full Account 360 frontend milestone/action editor.
 - Whitespace and adjacent-service recommendations can create opportunities and inform planning records, but they are not wired into a scoring-engine formula.
+- PRD comparison for configurable scoring: service catalog/adjacency, stakeholder coverage, renewal risk, and retention/stabilization outputs are valid candidate score inputs, but they must be referenced through Admin -> Scoring source mappings and published metric versions before they affect Account Health. AI recommendations, task completion, or opportunity creation must not directly improve authoritative scores unless underlying approved source data changes.
 - Dedicated stakeholder/gap sorting and account-plan action search/filter/pagination remain limited compared with the full search/filter/sort matrix.
 - Opportunity board drag/drop stage move pending state is not implemented as a separate interaction; stage changes are saved through existing API-backed detail flows.
 - Per-field commercial permissions are not implemented beyond current module-level RBAC.

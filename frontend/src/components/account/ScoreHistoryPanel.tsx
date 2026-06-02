@@ -1,8 +1,8 @@
-import { GitCompare, LineChart } from 'lucide-react'
+import { ChevronLeft, ChevronRight, GitCompare, LineChart, Loader2 } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { useAuth } from '@/contexts/AuthContext'
-import { listScoreSnapshots } from '@/services/scoringSignalsTasks'
+import { listScoreSnapshots } from '@/services/scoring'
 import { useScoreStore } from '@/stores/scoreStore'
 import { ScoreSnapshot } from '@/types/account'
 import { cn } from '@/utils/cn'
@@ -13,12 +13,33 @@ function rowDelta(a: number, b: number) {
   return `${delta >= 0 ? '+' : ''}${delta}`
 }
 
+const dimensionLabels: Record<string, string> = {
+  relationship: 'Relationship',
+  resource: 'Resource',
+  service_line: 'Service Line',
+  contract: 'Contract',
+  account_risk: 'Account Risk',
+  csat: 'CSAT',
+  usage: 'Usage',
+  delivery: 'Delivery',
+  commercial: 'Commercial',
+}
+
 export function ScoreHistoryPanel({ accountId }: { accountId: string }) {
   const { token } = useAuth()
   const snapshots = useScoreStore(state => state.snapshots)
   const [remoteSnapshots, setRemoteSnapshots] = useState<ScoreSnapshot[]>([])
   const [loading, setLoading] = useState(Boolean(token))
   const [error, setError] = useState('')
+  const [page, setPage] = useState(1)
+  const [pages, setPages] = useState(1)
+  const [ragStatus, setRagStatus] = useState('')
+  const [freshness, setFreshness] = useState('')
+  const [dirty, setDirty] = useState('')
+  const [metricSlug, setMetricSlug] = useState('')
+  const [category, setCategory] = useState('')
+  const [dateFrom, setDateFrom] = useState('')
+  const [dateTo, setDateTo] = useState('')
   const accountSnapshots = useMemo(
     () => (remoteSnapshots.length ? remoteSnapshots : snapshots.filter(snapshot => snapshot.accountId === accountId)).sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()),
     [accountId, remoteSnapshots, snapshots],
@@ -34,8 +55,20 @@ export function ScoreHistoryPanel({ accountId }: { accountId: string }) {
     }
     setLoading(true)
     setError('')
-    listScoreSnapshots(token, accountId, { page: 1, page_size: 25, scope: 'account' })
+    listScoreSnapshots(token, accountId, {
+      page,
+      page_size: 10,
+      scope: 'account',
+      rag_status: ragStatus || undefined,
+      freshness_status: freshness || undefined,
+      dirty: dirty === '' ? undefined : dirty === 'true',
+      metric_slug: metricSlug || undefined,
+      category: category || undefined,
+      date_from: dateFrom ? new Date(dateFrom).toISOString() : undefined,
+      date_to: dateTo ? new Date(dateTo).toISOString() : undefined,
+    })
       .then(page => {
+        setPages(Math.max(1, page.pages))
         setRemoteSnapshots(
           page.items.map(snapshot => {
             const dimensions = Object.fromEntries(snapshot.drivers.map(driver => [driver.key, driver.score]))
@@ -44,12 +77,9 @@ export function ScoreHistoryPanel({ accountId }: { accountId: string }) {
               accountId: snapshot.account_id,
               timestamp: snapshot.calculated_at,
               overall: snapshot.overall,
-              dimensions: {
-                relationship: Number(dimensions.relationship ?? snapshot.overall),
-                usage: Number(dimensions.usage ?? snapshot.overall),
-                delivery: Number(dimensions.delivery ?? snapshot.overall),
-                commercial: Number(dimensions.commercial ?? snapshot.overall),
-              },
+              dimensions: Object.keys(dimensions).length
+                ? Object.fromEntries(Object.entries(dimensions).map(([key, value]) => [key, Number(value)]))
+                : { overall: snapshot.overall },
               calculatorVersion: snapshot.metric_version,
               changedBy: snapshot.calculated_by_name ?? 'system',
               changedByName: snapshot.calculated_by_name ?? 'System',
@@ -60,7 +90,12 @@ export function ScoreHistoryPanel({ accountId }: { accountId: string }) {
       })
       .catch(err => setError(err instanceof Error ? err.message : 'Unable to load score snapshots'))
       .finally(() => setLoading(false))
-  }, [accountId, token])
+  }, [accountId, token, page, ragStatus, freshness, dirty, metricSlug, category, dateFrom, dateTo])
+
+  function resetPage(valueSetter: (value: string) => void, value: string) {
+    valueSetter(value)
+    setPage(1)
+  }
 
   function toggle(id: string) {
     setSelected(current => (current.includes(id) ? current.filter(item => item !== id) : [...current.slice(-1), id]))
@@ -74,8 +109,33 @@ export function ScoreHistoryPanel({ accountId }: { accountId: string }) {
           <h3 className="text-base font-semibold text-ink">Snapshots and calculator changes</h3>
         </div>
         <div className="flex items-center gap-2 text-xs font-semibold text-ink-secondary">
-          <LineChart className="h-4 w-4 text-brand-blue" />
+          {loading ? <Loader2 className="h-4 w-4 animate-spin text-brand-blue" /> : <LineChart className="h-4 w-4 text-brand-blue" />}
           Dotted lines mark calculator version changes
+        </div>
+      </div>
+
+      <div className="mb-4 grid gap-2 rounded-lg border border-surface-border bg-surface-secondary p-3 md:grid-cols-3 xl:grid-cols-6">
+        <select value={ragStatus} onChange={event => resetPage(setRagStatus, event.target.value)} className="tk-input">
+          <option value="">All RAG</option>
+          <option value="green">Green</option>
+          <option value="amber">Amber</option>
+          <option value="red">Red</option>
+        </select>
+        <select value={freshness} onChange={event => resetPage(setFreshness, event.target.value)} className="tk-input">
+          <option value="">All freshness</option>
+          <option value="fresh">Fresh</option>
+          <option value="stale">Stale</option>
+        </select>
+        <select value={dirty} onChange={event => resetPage(setDirty, event.target.value)} className="tk-input">
+          <option value="">All completeness</option>
+          <option value="false">Complete</option>
+          <option value="true">Dirty</option>
+        </select>
+        <input value={metricSlug} onChange={event => resetPage(setMetricSlug, event.target.value)} className="tk-input" placeholder="Metric slug" />
+        <input value={category} onChange={event => resetPage(setCategory, event.target.value)} className="tk-input" placeholder="Category" />
+        <div className="grid gap-2 sm:grid-cols-2 md:col-span-3 xl:col-span-1">
+          <input type="date" value={dateFrom} onChange={event => resetPage(setDateFrom, event.target.value)} className="tk-input" aria-label="Score date from" />
+          <input type="date" value={dateTo} onChange={event => resetPage(setDateTo, event.target.value)} className="tk-input" aria-label="Score date to" />
         </div>
       </div>
 
@@ -109,7 +169,7 @@ export function ScoreHistoryPanel({ accountId }: { accountId: string }) {
         {accountSnapshots.map(snapshot => (
           <article key={snapshot.id} className="grid gap-3 rounded-lg border border-surface-border p-3 md:grid-cols-[120px_1fr_auto] md:items-center">
             <div className="flex h-12 items-end gap-1">
-              {[snapshot.dimensions.relationship, snapshot.dimensions.usage, snapshot.dimensions.delivery, snapshot.dimensions.commercial].map((value, index) => (
+              {Object.values(snapshot.dimensions).slice(0, 6).map((value, index) => (
                 <span key={index} className="w-5 rounded-t-sm bg-brand-blue" style={{ height: `${Math.max(12, value / 2)}px` }} />
               ))}
             </div>
@@ -132,6 +192,18 @@ export function ScoreHistoryPanel({ accountId }: { accountId: string }) {
         ))}
       </div>
 
+      {accountSnapshots.length ? (
+        <div className="mt-4 flex items-center justify-between rounded-lg border border-surface-border bg-white p-3">
+          <button className="tk-button-secondary px-3 py-2" disabled={page <= 1} onClick={() => setPage(value => Math.max(1, value - 1))}>
+            <ChevronLeft className="h-4 w-4" />
+          </button>
+          <span className="text-sm font-semibold text-ink-secondary">Page {page} of {pages}</span>
+          <button className="tk-button-secondary px-3 py-2" disabled={page >= pages} onClick={() => setPage(value => Math.min(pages, value + 1))}>
+            <ChevronRight className="h-4 w-4" />
+          </button>
+        </div>
+      ) : null}
+
       {compare.length === 2 ? (
         <div className="mt-5 overflow-hidden rounded-lg border border-surface-border">
           <table className="w-full text-left text-sm">
@@ -144,13 +216,13 @@ export function ScoreHistoryPanel({ accountId }: { accountId: string }) {
               </tr>
             </thead>
             <tbody>
-              {['overall', 'relationship', 'usage', 'delivery', 'commercial'].map(key => {
-                const first = key === 'overall' ? compare[0].overall : compare[0].dimensions[key]
-                const second = key === 'overall' ? compare[1].overall : compare[1].dimensions[key]
+              {Array.from(new Set(['overall', ...Object.keys(compare[0].dimensions), ...Object.keys(compare[1].dimensions)])).map(key => {
+                const first = Number(key === 'overall' ? compare[0].overall : compare[0].dimensions[key] ?? 0)
+                const second = Number(key === 'overall' ? compare[1].overall : compare[1].dimensions[key] ?? 0)
                 const changed = first !== second
                 return (
                   <tr key={key} className="border-t border-surface-border">
-                    <td className="px-4 py-3 font-medium capitalize text-ink">{key}</td>
+                    <td className="px-4 py-3 font-medium text-ink">{dimensionLabels[key] ?? key}</td>
                     <td className={cn('px-4 py-3', changed ? 'font-semibold text-brand-orange' : 'text-ink-secondary')}>{first}</td>
                     <td className={cn('px-4 py-3', changed ? 'font-semibold text-brand-orange' : 'text-ink-secondary')}>{second}</td>
                     <td className={cn('px-4 py-3', changed ? 'font-semibold text-brand-orange' : 'text-ink-secondary')}>{rowDelta(first, second)}</td>

@@ -1,4 +1,5 @@
 from collections.abc import Generator
+from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
 
 import pytest
@@ -11,6 +12,11 @@ from app.database import Base, get_db
 from app.main import app
 from app.models import Account, AccountOwner, Engagement, Task, TimelineEntry
 from app.services.seed import seed_default_data
+
+
+@asynccontextmanager
+async def noop_lifespan(_app):
+    yield
 
 
 @pytest.fixture()
@@ -35,10 +41,15 @@ def client(db_session: Session) -> Generator[TestClient, None, None]:
     def override_get_db() -> Generator[Session, None, None]:
         yield db_session
 
+    original_lifespan = app.router.lifespan_context
+    app.router.lifespan_context = noop_lifespan
     app.dependency_overrides[get_db] = override_get_db
-    with TestClient(app) as test_client:
-        yield test_client
-    app.dependency_overrides.clear()
+    try:
+        with TestClient(app) as test_client:
+            yield test_client
+    finally:
+        app.dependency_overrides.clear()
+        app.router.lifespan_context = original_lifespan
 
 
 def auth_headers(client: TestClient, email: str = "admin@tkxel.com", password: str = "Admin@12345") -> dict[str, str]:
@@ -111,7 +122,7 @@ def test_metric_configuration_validation_publish_and_pagination(client: TestClie
 
     seeded_metrics = client.get("/api/admin/metrics", headers=headers, params={"page": 1, "page_size": 2, "active_state": "all"})
     assert seeded_metrics.status_code == 200
-    assert seeded_metrics.json()["total"] >= 5
+    assert seeded_metrics.json()["total"] >= 7
     assert seeded_metrics.json()["pages"] >= 3
 
     invalid = client.post(
@@ -137,11 +148,73 @@ def test_metric_configuration_validation_publish_and_pagination(client: TestClie
             "scope": "account",
             "weight": 10,
             "thresholds": {"red_max": 59, "amber_min": 60, "green_min": 75},
-            "formula": {"op": "field", "field": "health_usage"},
+            "formula": {
+                "op": "weighted_sum",
+                "scale": 3,
+                "items": [
+                    {"field": "relationship.ceo", "label": "CEO Engagement", "weight": 50},
+                    {"field": "relationship.kam", "label": "KAM Engagement", "weight": 50},
+                ],
+            },
+            "freshness_rule": {"stale_after_days": 45},
+            "owner_role": "kam_head",
+            "source": "manual",
+            "effective_date": datetime.now(timezone.utc).isoformat(),
         },
     )
     assert created.status_code == 201
     metric = created.json()
+
+    filtered = client.get(
+        "/api/admin/metrics",
+        headers=headers,
+        params={"source": "manual", "owner_role": "kam_head", "sort": "effective_date", "direction": "desc", "active_state": "all"},
+    )
+    assert filtered.status_code == 200
+    assert any(item["slug"] == "portfolio_momentum" for item in filtered.json()["items"])
+
+    unsupported = client.post(
+        "/api/admin/metrics",
+        headers=headers,
+        json={
+            "slug": "unsupported_formula",
+            "name": "Unsupported Formula",
+            "scope": "account",
+            "weight": 10,
+            "thresholds": {"red_max": 59, "amber_min": 60, "green_min": 75},
+            "formula": {"op": "sum", "values": [{"op": "field", "field": "health_relationship"}]},
+        },
+    )
+    assert unsupported.status_code == 422
+
+    stale_rule = client.post(
+        "/api/admin/metrics",
+        headers=headers,
+        json={
+            "slug": "bad_freshness_metric",
+            "name": "Bad Freshness Metric",
+            "scope": "account",
+            "weight": 10,
+            "thresholds": {"red_max": 59, "amber_min": 60, "green_min": 75},
+            "formula": {"op": "constant", "value": 80},
+            "freshness_rule": {"stale_after_days": 0},
+        },
+    )
+    assert stale_rule.status_code == 422
+
+    self_dependency = client.post(
+        "/api/admin/metrics",
+        headers=headers,
+        json={
+            "slug": "self_dependency_metric",
+            "name": "Self Dependency Metric",
+            "scope": "account",
+            "weight": 10,
+            "thresholds": {"red_max": 59, "amber_min": 60, "green_min": 75},
+            "formula": {"op": "weighted_sum", "items": [{"metric_slug": "self_dependency_metric", "weight": 100}]},
+        },
+    )
+    assert self_dependency.status_code == 422
 
     validation = client.post(f"/api/admin/metrics/{metric['id']}/validate", headers=headers)
     assert validation.status_code == 200
@@ -154,6 +227,51 @@ def test_metric_configuration_validation_publish_and_pagination(client: TestClie
     versions = client.get(f"/api/admin/metrics/{metric['id']}/versions", headers=headers)
     assert versions.status_code == 200
     assert versions.json()["total"] == 1
+
+    dependent_metric = client.post(
+        "/api/admin/metrics",
+        headers=headers,
+        json={
+            "slug": "relationship_dependency_rollup",
+            "name": "Relationship Dependency Rollup",
+            "scope": "account",
+            "weight": 5,
+            "thresholds": {"red_max": 59, "amber_min": 60, "green_min": 75},
+            "formula": {"op": "weighted_sum", "items": [{"metric_slug": "relationship_health", "weight": 100}]},
+        },
+    )
+    assert dependent_metric.status_code == 201
+    dependent_publish = client.post(f"/api/admin/metrics/{dependent_metric.json()['id']}/publish", headers=headers)
+    assert dependent_publish.status_code == 200
+
+    inactive_dependency = client.post(
+        "/api/admin/metrics",
+        headers=headers,
+        json={
+            "slug": "inactive_dependency_metric",
+            "name": "Inactive Dependency Metric",
+            "scope": "account",
+            "weight": 5,
+            "thresholds": {"red_max": 59, "amber_min": 60, "green_min": 75},
+            "formula": {"op": "constant", "value": 50},
+            "status": "inactive",
+            "is_active": False,
+        },
+    )
+    assert inactive_dependency.status_code == 201
+    blocked_dependency = client.post(
+        "/api/admin/metrics",
+        headers=headers,
+        json={
+            "slug": "blocked_dependency_metric",
+            "name": "Blocked Dependency Metric",
+            "scope": "account",
+            "weight": 5,
+            "thresholds": {"red_max": 59, "amber_min": 60, "green_min": 75},
+            "formula": {"op": "weighted_sum", "items": [{"metric_slug": "inactive_dependency_metric", "weight": 100}]},
+        },
+    )
+    assert blocked_dependency.status_code == 422
 
     rules = client.get("/api/admin/signal-rules", headers=headers, params={"page": 1, "page_size": 3, "active_state": "all"})
     assert rules.status_code == 200
@@ -190,6 +308,23 @@ def test_metric_configuration_validation_publish_and_pagination(client: TestClie
     )
     assert denied_rule_create.status_code == 403
 
+    owner_metric_view = client.get(
+        "/api/admin/metrics",
+        headers=owner_headers,
+        params={"status": "inactive", "active_state": "all", "page": 1, "page_size": 100},
+    )
+    assert owner_metric_view.status_code == 200
+    assert owner_metric_view.json()["items"]
+    assert all(item["status"] == "published" and item["is_active"] is True for item in owner_metric_view.json()["items"])
+    assert all(item["slug"] != "inactive_dependency_metric" for item in owner_metric_view.json()["items"])
+
+    denied_job = client.post(
+        "/api/scoring/jobs",
+        headers=owner_headers,
+        json={"job_type": "scheduled", "scope": "portfolio", "trigger_source": "test"},
+    )
+    assert denied_job.status_code == 403
+
 
 def test_account_scoring_signal_lifecycle_conversion_and_authorization(client: TestClient, db_session: Session) -> None:
     admin_headers = auth_headers(client)
@@ -203,6 +338,14 @@ def test_account_scoring_signal_lifecycle_conversion_and_authorization(client: T
     boosted_weight = client.patch(f"/api/admin/metrics/{relationship_metric_id}", headers=admin_headers, json={"weight": 100, "thresholds": {"red_max": 49, "amber_min": 50, "green_min": 70}})
     assert boosted_weight.status_code == 200
     assert client.post(f"/api/admin/metrics/{relationship_metric_id}/publish", headers=admin_headers).status_code == 200
+    draft_edit = client.patch(f"/api/admin/metrics/{relationship_metric_id}", headers=admin_headers, json={"weight": 1})
+    assert draft_edit.status_code == 200
+    assert draft_edit.json()["status"] == "draft"
+    published_view = client.get("/api/admin/metrics", headers=owner_headers, params={"search": "Relationship Health", "page": 1, "page_size": 10})
+    assert published_view.status_code == 200
+    relationship_view = next(item for item in published_view.json()["items"] if item["slug"] == "relationship_health")
+    assert relationship_view["status"] == "published"
+    assert relationship_view["weight"] == 100
 
     score_response = client.post(
         f"/api/accounts/{account_id}/scores/recalculate",
@@ -212,7 +355,33 @@ def test_account_scoring_signal_lifecycle_conversion_and_authorization(client: T
             "include_signal_evaluation": True,
             "manual_submission": {
                 "calculator_id": "account_health",
-                "values": {"relationship": 50, "usage": 63, "delivery": 56, "commercial": 62},
+                "values": {
+                    "relationship.ceo": 0,
+                    "relationship.kam": 2,
+                    "relationship.delivery": 1,
+                    "relationship.finance": 0,
+                    "relationship.inperson": 0,
+                    "resource.keyres": 2,
+                    "resource.alignment": 2,
+                    "resource.backup": 1,
+                    "contract.length": 1,
+                    "contract.notice": 1,
+                    "contract.renewal": 0,
+                    "account_risk.competitors": 0,
+                    "account_risk.leadership_tenure": 2,
+                    "account_risk.funding_revenue": 2,
+                    "account_risk.payment_behavior": 1,
+                    "account_risk.roadmap_alignment": 1,
+                    "account_risk.geopolitical": 3,
+                    "csat.delivery_ex": 2,
+                    "csat.communication": 2,
+                    "csat.proactiveness": 2,
+                    "csat.trust": 2,
+                    "csat.value": 2,
+                    "service_line.selected_count": 1,
+                    "service_line.total_count": 10,
+                    "service_line.coverage": 10,
+                },
                 "evidence": [{"label": "Review note", "value": "Manual calculator submission"}],
             },
         },
@@ -221,13 +390,21 @@ def test_account_scoring_signal_lifecycle_conversion_and_authorization(client: T
     score = score_response.json()
     assert score["overall"] < 60
     assert score["rag_status"] == "red"
-    assert any(driver["key"] == "relationship_health" and driver["weight"] > 40 for driver in score["drivers"])
+    assert any(driver["key"] == "relationship" and driver["weight"] > 40 for driver in score["drivers"])
     assert score["latest_snapshot"]["source_context"]["manual_submission_id"]
     assert score["latest_snapshot"]["source_context"]["published_metrics"]
+    assert len(score["latest_snapshot"]["metric_snapshots"]) >= 6
 
     snapshots = client.get(f"/api/accounts/{account_id}/score-snapshots", headers=owner_headers, params={"page": 1, "page_size": 1, "rag_status": "red"})
     assert snapshots.status_code == 200
     assert snapshots.json()["total"] == 1
+    filtered_snapshots = client.get(
+        f"/api/accounts/{account_id}/score-snapshots",
+        headers=owner_headers,
+        params={"page": 1, "page_size": 5, "metric_slug": "relationship_health", "category": "relationship", "freshness_status": "stale", "dirty": False},
+    )
+    assert filtered_snapshots.status_code == 200
+    assert filtered_snapshots.json()["total"] == 1
 
     attention = client.get("/api/attention-center", headers=owner_headers, params={"account_id": account_id, "page": 1, "page_size": 10})
     assert attention.status_code == 200
@@ -259,6 +436,93 @@ def test_account_scoring_signal_lifecycle_conversion_and_authorization(client: T
     unowned_headers = auth_headers(client, other_owner["email"], "User@12345")
     denied = client.post(f"/api/accounts/{account_id}/scores/recalculate", headers=unowned_headers, json={"trigger_source": "forbidden"})
     assert denied.status_code == 403
+
+
+def test_engagement_scoring_recalculation_snapshots_jobs_and_validation(client: TestClient, db_session: Session) -> None:
+    admin_headers = auth_headers(client)
+    owner = seeded_user(client, admin_headers, "account_manager")
+    account_id = create_account_with_engagement(db_session, owner, account_id="engagement-score-account")
+    engagement_id = db_session.scalar(select(Engagement.id).where(Engagement.account_id == account_id))
+    assert engagement_id
+    owner_headers = auth_headers(client, owner["email"], "User@12345")
+
+    initial = client.get(f"/api/engagements/{engagement_id}/scores", headers=owner_headers)
+    assert initial.status_code == 200
+    assert initial.json()["scope"] == "engagement"
+    assert initial.json()["latest_snapshot"] is None
+
+    invalid = client.post(
+        f"/api/engagements/{engagement_id}/scores/recalculate",
+        headers=owner_headers,
+        json={
+            "trigger_source": "invalid_manual",
+            "manual_submission": {"calculator_id": "engagement_health", "values": {"relationship.ceo": 2}},
+        },
+    )
+    assert invalid.status_code == 422
+
+    recalculated = client.post(
+        f"/api/engagements/{engagement_id}/scores/recalculate",
+        headers=owner_headers,
+        json={
+            "trigger_source": "engagement_review",
+            "manual_submission": {
+                "calculator_id": "engagement_health",
+                "values": {"delivery": 90},
+                "evidence": [{"label": "Ops update", "value": "Delivery recovery confirmed"}],
+            },
+        },
+    )
+    assert recalculated.status_code == 200
+    score = recalculated.json()
+    assert score["scope"] == "engagement"
+    assert score["engagement_id"] == engagement_id
+    assert score["overall"] < 90
+    assert score["latest_snapshot"]["source_context"]["manual_submission_id"]
+    assert score["latest_snapshot"]["source_context"]["published_metrics"]
+
+    latest = client.get(f"/api/engagements/{engagement_id}/scores", headers=owner_headers)
+    assert latest.status_code == 200
+    assert latest.json()["latest_snapshot"]["id"] == score["latest_snapshot"]["id"]
+
+    job = client.post(
+        "/api/scoring/jobs",
+        headers=admin_headers,
+        json={"job_type": "scheduled", "scope": "engagement", "engagement_id": engagement_id, "trigger_source": "nightly-test"},
+    )
+    assert job.status_code == 201
+    assert job.json()["status"] == "complete"
+    assert job.json()["result_json"]["snapshot_id"]
+
+    snapshots = client.get(
+        f"/api/accounts/{account_id}/score-snapshots",
+        headers=owner_headers,
+        params={"scope": "engagement", "engagement_id": engagement_id, "sort": "score", "direction": "asc", "page": 1, "page_size": 5},
+    )
+    assert snapshots.status_code == 200
+    body = snapshots.json()
+    assert body["total"] >= 2
+    assert all(item["scope"] == "engagement" and item["engagement_id"] == engagement_id for item in body["items"])
+
+
+def test_account_scoring_marks_missing_metric_configuration_incomplete(client: TestClient, db_session: Session) -> None:
+    admin_headers = auth_headers(client)
+    owner = seeded_user(client, admin_headers, "account_manager")
+    owner_headers = auth_headers(client, owner["email"], "User@12345")
+    account_id = create_account_with_engagement(db_session, owner, account_id="missing-config-account")
+
+    metrics = client.get("/api/admin/metrics", headers=admin_headers, params={"scope": "account", "active_state": "active", "page": 1, "page_size": 100})
+    assert metrics.status_code == 200
+    for metric in metrics.json()["items"]:
+        response = client.patch(f"/api/admin/metrics/{metric['id']}", headers=admin_headers, json={"is_active": False, "status": "inactive"})
+        assert response.status_code == 200
+
+    score = client.post(f"/api/accounts/{account_id}/scores/recalculate", headers=owner_headers, json={"trigger_source": "missing_config_test"})
+    assert score.status_code == 200
+    body = score.json()
+    assert body["status"] == "incomplete"
+    assert body["is_dirty"] is True
+    assert any(reason["code"] == "metric_config_missing" for reason in body["reason_codes"])
 
 
 def test_playbook_execution_tasks_calendar_and_completion_validation(client: TestClient, db_session: Session) -> None:

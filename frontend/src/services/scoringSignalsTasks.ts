@@ -20,11 +20,29 @@ export interface ScoringMetric {
   freshness_rule: Record<string, unknown>
   owner_role?: string | null
   source: string
+  effective_date?: string | null
   status: 'draft' | 'published' | 'inactive'
   is_active: boolean
   current_version: number
   created_at: string
   updated_at: string
+}
+
+export interface ScoringMetricVersion {
+  id: string
+  metric_id: string
+  version: number
+  config_json: Record<string, unknown>
+  published_by_id?: string | null
+  published_by_name: string
+  published_at: string
+  created_at: string
+}
+
+export interface MetricValidation {
+  valid: boolean
+  errors: string[]
+  warnings: string[]
 }
 
 export interface ScoreDriver {
@@ -33,6 +51,26 @@ export interface ScoreDriver {
   score: number
   weight?: number
   [key: string]: unknown
+}
+
+export interface MetricSnapshot {
+  id: string
+  score_snapshot_id: string
+  metric_id?: string | null
+  metric_slug: string
+  metric_name: string
+  category: string
+  criterion_key?: string | null
+  raw_score?: number | null
+  raw_scale?: number | null
+  normalized_score?: number | null
+  weight: number
+  weighted_score: number
+  status: string
+  freshness_status: string
+  evidence_json: Record<string, unknown>[]
+  source_context: Record<string, unknown>
+  created_at: string
 }
 
 export interface ScoreSnapshot {
@@ -53,6 +91,7 @@ export interface ScoreSnapshot {
   calculated_by_name?: string | null
   calculated_at: string
   created_at: string
+  metric_snapshots?: MetricSnapshot[]
 }
 
 export interface ScoreRead {
@@ -96,6 +135,20 @@ export interface SignalRead {
   updated_at: string
 }
 
+export interface SignalEvidence {
+  signal_id: string
+  evidence: Record<string, unknown>[]
+  citations: Record<string, unknown>[]
+}
+
+export interface SignalAIExplanation {
+  signal_id: string
+  provider: string
+  advisory_only: boolean
+  explanation: string
+  citations: Record<string, unknown>[]
+}
+
 export interface PlaybookTemplate {
   id: string
   slug: string
@@ -108,6 +161,14 @@ export interface PlaybookTemplate {
   is_active: boolean
   current_version: number
   updated_at: string
+}
+
+export interface RecommendedPlaybook {
+  template: PlaybookTemplate
+  rationale: string
+  match_score: number
+  matched_signal_types: string[]
+  matched_metrics: string[]
 }
 
 export interface TaskRead {
@@ -164,8 +225,16 @@ export function updateScoringMetric(token: string, metricId: string, payload: Re
   return apiRequest<ScoringMetric>(`/api/admin/metrics/${metricId}`, { method: 'PATCH', token, body: JSON.stringify(payload) })
 }
 
+export function validateScoringMetric(token: string, metricId: string) {
+  return apiRequest<MetricValidation>(`/api/admin/metrics/${metricId}/validate`, { method: 'POST', token })
+}
+
 export function publishScoringMetric(token: string, metricId: string) {
-  return apiRequest(`/api/admin/metrics/${metricId}/publish`, { method: 'POST', token })
+  return apiRequest<ScoringMetricVersion>(`/api/admin/metrics/${metricId}/publish`, { method: 'POST', token })
+}
+
+export function listScoringMetricVersions(token: string, metricId: string, params: Record<string, string | number | boolean | undefined> = {}) {
+  return apiRequest<Page<ScoringMetricVersion>>(`/api/admin/metrics/${metricId}/versions${queryString(params)}`, { token })
 }
 
 export function getAccountScore(token: string, accountId: string) {
@@ -198,6 +267,18 @@ export function updateSignalStatus(token: string, signalId: string, status: Sign
 
 export function convertSignal(token: string, signalId: string, payload: Record<string, unknown>) {
   return apiRequest(`/api/signals/${signalId}/convert`, { method: 'POST', token, body: JSON.stringify(payload) })
+}
+
+export function getSignalEvidence(token: string, signalId: string) {
+  return apiRequest<SignalEvidence>(`/api/signals/${signalId}/evidence`, { token })
+}
+
+export function explainSignal(token: string, signalId: string) {
+  return apiRequest<SignalAIExplanation>(`/api/signals/${signalId}/ai-explanation`, { method: 'POST', token })
+}
+
+export function listRecommendedPlaybooksForSignal(token: string, signalId: string) {
+  return apiRequest<RecommendedPlaybook[]>(`/api/signals/${signalId}/recommended-playbooks`, { token })
 }
 
 export function listPlaybookTemplates(token: string, params: Record<string, string | number | boolean | undefined> = {}) {

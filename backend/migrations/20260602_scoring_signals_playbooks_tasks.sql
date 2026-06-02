@@ -88,6 +88,26 @@ CREATE TABLE IF NOT EXISTS score_snapshots (
     created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
+CREATE TABLE IF NOT EXISTS metric_snapshots (
+    id VARCHAR(36) PRIMARY KEY,
+    score_snapshot_id VARCHAR(36) NOT NULL REFERENCES score_snapshots(id) ON DELETE CASCADE,
+    metric_id VARCHAR(36) REFERENCES scoring_metric_definitions(id) ON DELETE SET NULL,
+    metric_slug VARCHAR(120) NOT NULL,
+    metric_name VARCHAR(180) NOT NULL,
+    category VARCHAR(80) NOT NULL,
+    criterion_key VARCHAR(120),
+    raw_score DOUBLE PRECISION,
+    raw_scale DOUBLE PRECISION,
+    normalized_score INTEGER,
+    weight DOUBLE PRECISION NOT NULL DEFAULT 0,
+    weighted_score DOUBLE PRECISION NOT NULL DEFAULT 0,
+    status VARCHAR(40) NOT NULL DEFAULT 'complete',
+    freshness_status VARCHAR(40) NOT NULL DEFAULT 'fresh',
+    evidence_json JSONB NOT NULL DEFAULT '[]'::jsonb,
+    source_context JSONB NOT NULL DEFAULT '{}'::jsonb,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
 CREATE TABLE IF NOT EXISTS signal_rules (
     id VARCHAR(36) PRIMARY KEY,
     slug VARCHAR(120) UNIQUE NOT NULL,
@@ -248,7 +268,13 @@ CREATE TABLE IF NOT EXISTS task_history (
 
 CREATE INDEX IF NOT EXISTS ix_scoring_metric_definitions_slug ON scoring_metric_definitions(slug);
 CREATE INDEX IF NOT EXISTS ix_scoring_metric_definitions_status ON scoring_metric_definitions(status);
+CREATE INDEX IF NOT EXISTS ix_scoring_metric_definitions_source ON scoring_metric_definitions(source);
+CREATE INDEX IF NOT EXISTS ix_scoring_metric_definitions_owner_role ON scoring_metric_definitions(owner_role);
+CREATE INDEX IF NOT EXISTS ix_scoring_metric_definitions_effective_date ON scoring_metric_definitions(effective_date);
 CREATE INDEX IF NOT EXISTS ix_score_snapshots_account_scope ON score_snapshots(account_id, scope, calculated_at DESC);
+CREATE INDEX IF NOT EXISTS ix_score_snapshots_dirty_freshness ON score_snapshots(is_dirty, freshness_status);
+CREATE INDEX IF NOT EXISTS ix_metric_snapshots_snapshot_category ON metric_snapshots(score_snapshot_id, category);
+CREATE INDEX IF NOT EXISTS ix_metric_snapshots_metric_slug ON metric_snapshots(metric_slug);
 CREATE INDEX IF NOT EXISTS ix_scoring_jobs_status ON scoring_jobs(status);
 CREATE INDEX IF NOT EXISTS ix_signal_rules_slug ON signal_rules(slug);
 CREATE INDEX IF NOT EXISTS ix_signals_account_status ON signals(account_id, status);

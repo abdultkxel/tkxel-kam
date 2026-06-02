@@ -10,6 +10,8 @@ docs/features/_feature-template.md
 
 ## Features
 
+- [Account Health Score Metrics](account-health-score-metrics.md)
+- [Configurable Scoring And Metric Engine](configurable-scoring-metric-engine.md)
 - [Governance & Reviews](governance-reviews.md)
 - [Growth & Opportunity Management](growth-opportunity-management.md)
 - [Relationships Planning Growth And Retention](relationships-planning-growth-retention.md)

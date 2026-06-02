@@ -165,19 +165,27 @@ class SignalsService:
         current_user: User,
         *,
         account_id: str | None = None,
+        search: str | None = None,
+        signal_type: str | None = None,
         severity: str | None = None,
+        status_filter: str | None = None,
         owner_id: str | None = None,
+        sort: str = "due_at",
+        direction: str = "asc",
         page: int = 1,
         page_size: int = 25,
     ) -> SignalPageRead:
         return self.list_signals(
             current_user,
             account_id=account_id,
+            search=search,
+            signal_type=signal_type,
             severity=severity,
+            status_filter=status_filter,
             owner_id=owner_id,
             active_only=True,
-            sort="due_at",
-            direction="asc",
+            sort=sort,
+            direction=direction,
             page=page,
             page_size=page_size,
         )
@@ -694,7 +702,20 @@ class SignalsService:
     def _first_weak_metric(signal: Signal) -> str | None:
         for reason in signal.reason_codes:
             code = str(reason.get("code", "")).lower()
-            for metric in ("relationship", "usage", "delivery", "commercial", "renewal", "stakeholder", "stale_kyc"):
+            for metric in (
+                "relationship",
+                "resource",
+                "service_line",
+                "contract",
+                "account_risk",
+                "csat",
+                "usage",
+                "delivery",
+                "commercial",
+                "renewal",
+                "stakeholder",
+                "stale_kyc",
+            ):
                 if metric in code:
                     return metric
         return None
