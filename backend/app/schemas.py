@@ -1771,18 +1771,34 @@ class TimelineEventRead(BaseModel):
     account_id: str
     engagement_id: str | None = None
     event_type: str
+    module: str | None = None
     title: str
     description: str
     previous_value: dict[str, Any] | None = None
     new_value: dict[str, Any] | None = None
+    before_value: dict[str, Any] | None = None
+    after_value: dict[str, Any] | None = None
     actor_id: str
     actor_name: str
+    performed_by: str | None = None
+    performed_by_name: str | None = None
     source_module: str
     source_record_id: str | None = None
     source_record_type: str | None = None
     source_record_route: str | None = None
     metadata: dict[str, Any] | None = None
+    event_at: datetime | None = None
+    timestamp: datetime | None = None
+    is_sensitive: bool = False
+    sensitivity_level: str | None = None
+    tags: list[str] = Field(default_factory=list)
+    mentions: list[str] = Field(default_factory=list)
+    attachments: list[dict[str, Any]] = Field(default_factory=list)
+    status: str = "active"
+    is_system_generated: bool = True
+    is_immutable: bool = True
     created_at: datetime
+    updated_at: datetime | None = None
 
 
 class TimelineEventPageRead(BaseModel):
@@ -1791,6 +1807,452 @@ class TimelineEventPageRead(BaseModel):
     page: int
     page_size: int
     pages: int
+
+
+class TimelineNoteCreateRequest(BaseModel):
+    event_type: str = "manual_note"
+    title: str | None = None
+    description: str
+    event_at: datetime | None = None
+    owner_id: str | None = None
+    mentions: list[str] = Field(default_factory=list)
+    attachments: list[dict[str, Any]] = Field(default_factory=list)
+    is_sensitive: bool = False
+    sensitivity_level: str | None = None
+    tags: list[str] = Field(default_factory=list)
+
+    @field_validator("event_type")
+    @classmethod
+    def event_type_is_valid(cls, value: str) -> str:
+        return validate_slug(value, "Event type")
+
+    @field_validator("title")
+    @classmethod
+    def title_is_valid(cls, value: str | None) -> str | None:
+        return optional_text(value, "Timeline title", max_length=220)
+
+    @field_validator("description")
+    @classmethod
+    def description_is_valid(cls, value: str) -> str:
+        return optional_text(value, "Description", max_length=2000, min_length=3) or value
+
+    @field_validator("owner_id")
+    @classmethod
+    def owner_is_valid(cls, value: str | None) -> str | None:
+        return optional_text(value, "Owner", max_length=36)
+
+    @field_validator("mentions")
+    @classmethod
+    def mentions_are_valid(cls, value: list[str]) -> list[str]:
+        return validate_string_list(value, "Mentions", max_items=50)
+
+    @field_validator("tags")
+    @classmethod
+    def tags_are_valid(cls, value: list[str]) -> list[str]:
+        return validate_string_list(value, "Tags", max_items=20)
+
+
+class TimelineEventUpdateRequest(BaseModel):
+    title: str | None = None
+    description: str | None = None
+    event_at: datetime | None = None
+    is_sensitive: bool | None = None
+    sensitivity_level: str | None = None
+    tags: list[str] | None = None
+    mentions: list[str] | None = None
+    attachments: list[dict[str, Any]] | None = None
+
+    @field_validator("title")
+    @classmethod
+    def title_is_valid(cls, value: str | None) -> str | None:
+        return optional_text(value, "Timeline title", max_length=220)
+
+    @field_validator("description")
+    @classmethod
+    def description_is_valid(cls, value: str | None) -> str | None:
+        return optional_text(value, "Description", max_length=2000, min_length=3)
+
+    @field_validator("tags", "mentions")
+    @classmethod
+    def string_list_is_valid(cls, value: list[str] | None) -> list[str] | None:
+        return validate_string_list(value, "Timeline values", max_items=50) if value is not None else None
+
+
+class TimelineCommentRead(BaseModel):
+    id: str
+    timeline_entry_id: str
+    author_id: str
+    author_name: str
+    body: str
+    mentions: list[str] = Field(default_factory=list)
+    is_sensitive: bool = False
+    sensitivity_level: str | None = None
+    edited_at: datetime | None = None
+    deleted_at: datetime | None = None
+    created_at: datetime
+    updated_at: datetime
+
+
+class TimelineCommentPageRead(BaseModel):
+    items: list[TimelineCommentRead]
+    total: int
+    page: int
+    page_size: int
+    pages: int
+
+
+class TimelineCommentCreateRequest(BaseModel):
+    body: str
+    mentions: list[str] = Field(default_factory=list)
+
+    @field_validator("body")
+    @classmethod
+    def body_is_valid(cls, value: str) -> str:
+        return optional_text(value, "Comment", max_length=2000, min_length=1) or value
+
+    @field_validator("mentions")
+    @classmethod
+    def mentions_are_valid(cls, value: list[str]) -> list[str]:
+        return validate_string_list(value, "Mentions", max_items=50)
+
+
+class TimelineCommentUpdateRequest(BaseModel):
+    body: str
+    mentions: list[str] = Field(default_factory=list)
+
+    @field_validator("body")
+    @classmethod
+    def body_is_valid(cls, value: str) -> str:
+        return optional_text(value, "Comment", max_length=2000, min_length=1) or value
+
+    @field_validator("mentions")
+    @classmethod
+    def mentions_are_valid(cls, value: list[str]) -> list[str]:
+        return validate_string_list(value, "Mentions", max_items=50)
+
+
+class TimelineEventTypeRead(BaseModel):
+    id: str
+    slug: str
+    name: str
+    category: str
+    module: str
+    color_token: str
+    display_order: int
+    default_visibility: str
+    retention_policy_id: str | None = None
+    is_active: bool
+    is_critical: bool
+    critical_rule_json: dict[str, Any] = Field(default_factory=dict)
+    created_at: datetime
+    updated_at: datetime
+
+
+class TimelineEventTypePageRead(BaseModel):
+    items: list[TimelineEventTypeRead]
+    total: int
+    page: int
+    page_size: int
+    pages: int
+
+
+class TimelineEventTypeCreateRequest(BaseModel):
+    slug: str
+    name: str
+    category: str = "general"
+    module: str = "manual"
+    color_token: str = "brand-blue"
+    display_order: int = 0
+    default_visibility: Literal["public", "restricted"] = "public"
+    retention_policy_id: str | None = None
+    is_active: bool = True
+    is_critical: bool = False
+    critical_rule_json: dict[str, Any] = Field(default_factory=dict)
+
+    @field_validator("slug")
+    @classmethod
+    def slug_is_valid(cls, value: str) -> str:
+        return validate_slug(value, "Event type")
+
+    @field_validator("name")
+    @classmethod
+    def name_is_valid(cls, value: str) -> str:
+        return validate_short_text(value, "Event type name", 160)
+
+    @field_validator("category", "module", "color_token")
+    @classmethod
+    def short_fields_are_valid(cls, value: str) -> str:
+        return validate_short_text(value, "Event type field", 80)
+
+
+class TimelineEventTypeUpdateRequest(BaseModel):
+    name: str | None = None
+    category: str | None = None
+    module: str | None = None
+    color_token: str | None = None
+    display_order: int | None = None
+    default_visibility: Literal["public", "restricted"] | None = None
+    retention_policy_id: str | None = None
+    is_active: bool | None = None
+    is_critical: bool | None = None
+    critical_rule_json: dict[str, Any] | None = None
+
+    @field_validator("name")
+    @classmethod
+    def name_is_valid(cls, value: str | None) -> str | None:
+        return validate_short_text(value, "Event type name", 160) if value is not None else None
+
+    @field_validator("category", "module", "color_token")
+    @classmethod
+    def short_fields_are_valid(cls, value: str | None) -> str | None:
+        return validate_short_text(value, "Event type field", 80) if value is not None else None
+
+
+class TimelineRetentionPolicyRead(BaseModel):
+    id: str
+    name: str
+    entity_type: str
+    action: str
+    duration_days: int
+    reason_template: str
+    critical_behavior: str
+    schedule_enabled: bool
+    schedule_interval_hours: int
+    last_run_at: datetime | None = None
+    next_run_at: datetime | None = None
+    is_active: bool
+    created_at: datetime
+    updated_at: datetime
+
+
+class TimelineRetentionPolicyPageRead(BaseModel):
+    items: list[TimelineRetentionPolicyRead]
+    total: int
+    page: int
+    page_size: int
+    pages: int
+
+
+class TimelineRetentionPolicyCreateRequest(BaseModel):
+    name: str
+    entity_type: str = "timeline_entry"
+    action: Literal["archive", "restrict", "delete"] = "archive"
+    duration_days: int = 1095
+    reason_template: str = "Retention policy applied."
+    critical_behavior: Literal["tombstone"] = "tombstone"
+    schedule_enabled: bool = False
+    schedule_interval_hours: int = 24
+    is_active: bool = True
+
+    @field_validator("name")
+    @classmethod
+    def name_is_valid(cls, value: str) -> str:
+        return validate_short_text(value, "Retention policy name", 160)
+
+    @field_validator("duration_days")
+    @classmethod
+    def duration_is_valid(cls, value: int) -> int:
+        return validate_positive_int(value, "Retention duration", max_value=3650)
+
+    @field_validator("schedule_interval_hours")
+    @classmethod
+    def schedule_is_valid(cls, value: int) -> int:
+        return validate_positive_int(value, "Schedule interval", max_value=8760)
+
+    @field_validator("reason_template")
+    @classmethod
+    def reason_is_valid(cls, value: str) -> str:
+        return optional_text(value, "Retention reason", max_length=1000, min_length=3) or value
+
+
+class TimelineRetentionPolicyUpdateRequest(BaseModel):
+    name: str | None = None
+    entity_type: str | None = None
+    action: Literal["archive", "restrict", "delete"] | None = None
+    duration_days: int | None = None
+    reason_template: str | None = None
+    schedule_enabled: bool | None = None
+    schedule_interval_hours: int | None = None
+    is_active: bool | None = None
+
+    @field_validator("name")
+    @classmethod
+    def name_is_valid(cls, value: str | None) -> str | None:
+        return validate_short_text(value, "Retention policy name", 160) if value is not None else None
+
+    @field_validator("entity_type")
+    @classmethod
+    def entity_type_is_valid(cls, value: str | None) -> str | None:
+        return validate_slug(value, "Retention entity type") if value is not None else None
+
+    @field_validator("duration_days")
+    @classmethod
+    def duration_is_valid(cls, value: int | None) -> int | None:
+        return validate_positive_int(value, "Retention duration", max_value=3650) if value is not None else None
+
+    @field_validator("schedule_interval_hours")
+    @classmethod
+    def schedule_is_valid(cls, value: int | None) -> int | None:
+        return validate_positive_int(value, "Schedule interval", max_value=8760) if value is not None else None
+
+
+class TimelineRetentionRunRequest(BaseModel):
+    reason: str | None = None
+    limit: int = 500
+
+    @field_validator("reason")
+    @classmethod
+    def reason_is_valid(cls, value: str | None) -> str | None:
+        return optional_text(value, "Retention reason", max_length=1000)
+
+    @field_validator("limit")
+    @classmethod
+    def limit_is_valid(cls, value: int) -> int:
+        return validate_positive_int(value, "Retention limit", max_value=5000)
+
+
+class TimelineRetentionResultRead(BaseModel):
+    policy_id: str
+    action: str
+    mode: str
+    matched_count: int
+    affected_count: int
+    sample_event_ids: list[str] = Field(default_factory=list)
+
+
+class TimelineRetentionActionRead(BaseModel):
+    id: str
+    policy_id: str | None = None
+    entity_type: str
+    action: str
+    mode: str
+    status: str
+    matched_count: int
+    affected_count: int
+    reason: str | None = None
+    actor_id: str
+    actor_name: str
+    error_message: str | None = None
+    metadata: dict[str, Any] = Field(default_factory=dict)
+    created_at: datetime
+
+
+class TimelineRetentionActionPageRead(BaseModel):
+    items: list[TimelineRetentionActionRead]
+    total: int
+    page: int
+    page_size: int
+    pages: int
+
+
+class HandoverSummaryCreateRequest(BaseModel):
+    selected_sections: list[str] = Field(default_factory=list)
+    date_from: datetime | None = None
+    date_to: datetime | None = None
+    ownership_change_id: str | None = None
+
+    @field_validator("selected_sections")
+    @classmethod
+    def sections_are_valid(cls, value: list[str]) -> list[str]:
+        return validate_string_list(value, "Handover sections", max_items=20)
+
+
+class HandoverSummaryRead(BaseModel):
+    id: str
+    account_id: str
+    generated_by_id: str
+    generated_by_name: str
+    ownership_change_id: str | None = None
+    selected_sections: list[str] = Field(default_factory=list)
+    source_set: list[dict[str, Any]] = Field(default_factory=list)
+    redaction_summary: dict[str, Any] = Field(default_factory=dict)
+    citations: list[dict[str, Any]] = Field(default_factory=list)
+    content: dict[str, Any] = Field(default_factory=dict)
+    status: str
+    export_metadata: dict[str, Any] = Field(default_factory=dict)
+    share_metadata: dict[str, Any] = Field(default_factory=dict)
+    created_at: datetime
+    updated_at: datetime
+
+
+class HandoverSummaryPageRead(BaseModel):
+    items: list[HandoverSummaryRead]
+    total: int
+    page: int
+    page_size: int
+    pages: int
+
+
+class HandoverShareRead(BaseModel):
+    summary_id: str
+    share_id: str
+    internal_share_url: str
+    created_at: datetime
+    expires_at: datetime | None = None
+
+
+class TimelineAiSearchRequest(BaseModel):
+    query: str
+    scopes: list[str] = Field(default_factory=lambda: ["timeline"])
+    document_search: bool = False
+    source_module: str | None = None
+    source_type: str | None = None
+    mode: Literal["all", "structured", "semantic"] = "all"
+    date_from: datetime | None = None
+    date_to: datetime | None = None
+    limit: int = 10
+
+    @field_validator("query")
+    @classmethod
+    def query_is_valid(cls, value: str) -> str:
+        return optional_text(value, "Search query", max_length=500, min_length=2) or value
+
+    @field_validator("scopes")
+    @classmethod
+    def scopes_are_valid(cls, value: list[str]) -> list[str]:
+        return validate_string_list(value, "Search scopes", max_items=10)
+
+    @field_validator("source_module", "source_type")
+    @classmethod
+    def source_filters_are_valid(cls, value: str | None) -> str | None:
+        return validate_slug(value, "Search source filter") if value is not None else None
+
+    @field_validator("limit")
+    @classmethod
+    def limit_is_valid(cls, value: int) -> int:
+        return validate_positive_int(value, "Search limit", max_value=50)
+
+
+class TimelineAiSearchResultRead(BaseModel):
+    id: str
+    title: str
+    excerpt: str
+    event_type: str
+    source_module: str
+    source_route: str | None = None
+    event_at: datetime
+    relevance: float
+    mode: str
+
+
+class TimelineAiDocumentResultRead(BaseModel):
+    id: str
+    source_label: str
+    excerpt: str
+    source_route: str | None = None
+
+
+class TimelineAiSearchResponse(BaseModel):
+    query: str
+    interpreted_intent: str
+    mode: str
+    confidence: str
+    answer: str
+    disclaimer: str
+    results: list[TimelineAiSearchResultRead]
+    document_results: list[TimelineAiDocumentResultRead] = Field(default_factory=list)
+    audit_id: str
+    can_try_in_kam_ai: bool = True
 
 
 class EngagementHealthRead(BaseModel):

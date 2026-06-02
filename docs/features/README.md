@@ -14,6 +14,7 @@ docs/features/_feature-template.md
 - [Growth & Opportunity Management](growth-opportunity-management.md)
 - [Relationships Planning Growth And Retention](relationships-planning-growth-retention.md)
 - [Scoring, Signals, Playbooks, and Tasks](scoring-signals-playbooks-and-tasks.md)
+- [Timeline And Handover](timeline-and-handover.md)
 
 ## Handoff Notes
 

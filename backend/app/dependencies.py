@@ -30,6 +30,7 @@ from app.services.signals import SignalsService
 from app.services.stakeholder_gap_service import StakeholderGapService
 from app.services.stakeholder_config import StakeholderConfigService
 from app.services.stakeholders import StakeholderService
+from app.services.timeline import TimelineService
 from app.services.retention import RetentionService
 from app.services.user_management import UserManagementService
 
@@ -151,6 +152,10 @@ def get_scoring_service(db: Annotated[Session, Depends(get_db)]) -> ScoringServi
 
 def get_signals_service(db: Annotated[Session, Depends(get_db)]) -> SignalsService:
     return SignalsService(db)
+
+
+def get_timeline_service(db: Annotated[Session, Depends(get_db)]) -> TimelineService:
+    return TimelineService(db)
 
 
 def require_permission(module: str, action: str):

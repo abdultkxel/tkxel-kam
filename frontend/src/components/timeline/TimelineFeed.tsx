@@ -7,9 +7,9 @@ import { AddNoteModal } from '@/components/timeline/AddNoteModal'
 import { TimelineCard } from '@/components/timeline/TimelineCard'
 import { TimelineFilters } from '@/components/timeline/TimelineFilters'
 import { TimelineAISearch } from '@/components/ai/TimelineAISearch'
-import { useRole } from '@/hooks/useRole'
-import { useTimeline } from '@/hooks/useTimeline'
+import { useAuth } from '@/contexts/AuthContext'
 import { useTimelineFilters } from '@/hooks/useTimelineFilters'
+import { getAccountTimeline } from '@/services/timeline'
 import { TimelineEntry } from '@/types/timeline'
 
 interface ItemData {
@@ -29,18 +29,82 @@ function Row({ index, style, data }: ListChildComponentProps<ItemData>) {
 
 export function TimelineFeed({ accountId }: { accountId: string }) {
   const [isLoading, setIsLoading] = useState(true)
+  const [isPageLoading, setIsPageLoading] = useState(false)
+  const [error, setError] = useState('')
+  const [entries, setEntries] = useState<TimelineEntry[]>([])
+  const [page, setPage] = useState(1)
+  const [pages, setPages] = useState(1)
   const [sortDirection, setSortDirection] = useState<'newest' | 'oldest'>('newest')
   const [noteOpen, setNoteOpen] = useState(false)
   const [flashId, setFlashId] = useState('')
   const listRef = useRef<VariableSizeList>(null)
-  const role = useRole()
+  const { token } = useAuth()
   const { filters, setFilter, clearAll } = useTimelineFilters()
-  const entries = useTimeline(accountId, filters, role.role, role.id, sortDirection)
+  const eventTypeFilter = filters.eventTypes[0] ?? ''
+  const moduleFilter = filters.modules[0] ?? ''
 
   useEffect(() => {
-    const timer = window.setTimeout(() => setIsLoading(false), 500)
-    return () => window.clearTimeout(timer)
-  }, [accountId])
+    if (!token) return
+    let active = true
+    setIsLoading(true)
+    setError('')
+    getAccountTimeline(token, accountId, {
+      search: filters.search,
+      event_type: eventTypeFilter,
+      module: moduleFilter,
+      owner_id: filters.owner,
+      date_from: filters.dateFrom ? `${filters.dateFrom}T00:00:00Z` : undefined,
+      date_to: filters.dateTo ? `${filters.dateTo}T23:59:59Z` : undefined,
+      show_sensitive: filters.showSensitive,
+      direction: sortDirection === 'newest' ? 'desc' : 'asc',
+      page: 1,
+      page_size: 100,
+    })
+      .then(result => {
+        if (!active) return
+        setEntries(result.items)
+        setPage(result.page)
+        setPages(result.pages)
+      })
+      .catch(err => {
+        if (!active) return
+        setError(err instanceof Error ? err.message : 'Timeline could not be loaded')
+        setEntries([])
+      })
+      .finally(() => {
+        if (active) setIsLoading(false)
+      })
+    return () => {
+      active = false
+    }
+  }, [accountId, eventTypeFilter, filters.dateFrom, filters.dateTo, filters.owner, filters.search, filters.showSensitive, moduleFilter, sortDirection, token])
+
+  async function loadMore() {
+    if (!token || isPageLoading || page >= pages) return
+    setIsPageLoading(true)
+    setError('')
+    try {
+      const result = await getAccountTimeline(token, accountId, {
+        search: filters.search,
+        event_type: eventTypeFilter,
+        module: moduleFilter,
+        owner_id: filters.owner,
+        date_from: filters.dateFrom ? `${filters.dateFrom}T00:00:00Z` : undefined,
+        date_to: filters.dateTo ? `${filters.dateTo}T23:59:59Z` : undefined,
+        show_sensitive: filters.showSensitive,
+        direction: sortDirection === 'newest' ? 'desc' : 'asc',
+        page: page + 1,
+        page_size: 100,
+      })
+      setEntries(items => [...items, ...result.items])
+      setPage(result.page)
+      setPages(result.pages)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'More timeline events could not be loaded')
+    } finally {
+      setIsPageLoading(false)
+    }
+  }
 
   function sizeFor(index: number) {
     const entry = entries[index]
@@ -50,6 +114,7 @@ export function TimelineFeed({ accountId }: { accountId: string }) {
 
   function handleAdded(entry: TimelineEntry) {
     setSortDirection('newest')
+    setEntries(items => [entry, ...items.filter(item => item.id !== entry.id)])
     setFlashId(entry.id)
     window.setTimeout(() => listRef.current?.scrollToItem(0, 'start'), 0)
     window.setTimeout(() => setFlashId(''), 1400)
@@ -87,6 +152,12 @@ export function TimelineFeed({ accountId }: { accountId: string }) {
 
       <TimelineFilters filters={filters} setFilter={setFilter} clearAll={clearAll} />
 
+      {error ? (
+        <div className="rounded-lg border border-rag-red/20 bg-rag-red/10 p-4 text-sm font-medium text-rag-red">
+          {error}
+        </div>
+      ) : null}
+
       {entries.length === 0 ? (
         <EmptyState
           icon={CalendarDays}
@@ -107,6 +178,14 @@ export function TimelineFeed({ accountId }: { accountId: string }) {
           {Row}
         </VariableSizeList>
       )}
+
+      {entries.length > 0 && page < pages ? (
+        <div className="flex justify-center">
+          <button type="button" className="tk-button-secondary" disabled={isPageLoading} onClick={loadMore}>
+            {isPageLoading ? 'Loading...' : 'Load more'}
+          </button>
+        </div>
+      ) : null}
 
       <AddNoteModal accountId={accountId} open={noteOpen} onOpenChange={setNoteOpen} onAdded={handleAdded} />
     </section>

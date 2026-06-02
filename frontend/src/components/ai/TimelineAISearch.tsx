@@ -2,13 +2,12 @@ import * as Collapsible from '@radix-ui/react-collapsible'
 import * as Dialog from '@radix-ui/react-dialog'
 import { Check, ChevronDown, FileSearch, Loader2, Search, Sparkles, X } from 'lucide-react'
 import { FormEvent, useEffect, useMemo, useState } from 'react'
-import { useRole } from '@/hooks/useRole'
-import { runAISearch, AISearchResult, INTENT_EXAMPLES, INTENT_KEYS } from '@/services/aiSearch'
-import { searchDocumentChunks, SemanticDocumentChunk } from '@/services/semanticDocumentSearch'
-import { useAccountStore } from '@/stores/accountStore'
-import { useOpportunityStore } from '@/stores/opportunityStore'
-import { useTimelineStore } from '@/stores/timelineStore'
+import { useAuth } from '@/contexts/AuthContext'
+import { AISearchResult, INTENT_EXAMPLES, INTENT_KEYS } from '@/services/aiSearch'
+import { SemanticDocumentChunk } from '@/services/semanticDocumentSearch'
+import { runTimelineAiSearch } from '@/services/timeline'
 import { useUIStore } from '@/stores/uiStore'
+import { TimelineEntry } from '@/types/timeline'
 import { cn } from '@/utils/cn'
 import { formatRelative, titleize } from '@/utils/formatters'
 
@@ -26,10 +25,7 @@ export function TimelineAISearch({ accountId }: Props) {
   const [docResults, setDocResults] = useState<SemanticDocumentChunk[]>([])
   const [selectedDoc, setSelectedDoc] = useState<SemanticDocumentChunk | null>(null)
   const [sourcesOpen, setSourcesOpen] = useState(false)
-  const user = useRole()
-  const timeline = useTimelineStore(state => state.entries)
-  const opportunities = useOpportunityStore(state => state.opportunities)
-  const accounts = useAccountStore(state => state.accounts)
+  const { token } = useAuth()
   const openAI = useUIStore(state => state.openAI)
 
   useEffect(() => {
@@ -47,25 +43,59 @@ export function TimelineAISearch({ accountId }: Props) {
   async function submit(nextQuery = query) {
     const trimmed = nextQuery.trim()
     if (!trimmed) return
+    if (!token) return
     setLoading(true)
     setSourcesOpen(false)
-    await new Promise(resolve => window.setTimeout(resolve, 350))
-    const answer = await runAISearch(
-      {
-        accountId,
+    try {
+      const answer = await runTimelineAiSearch(token, accountId, {
         query: trimmed,
-        scope: ['timeline', 'opportunities', 'escalations', 'governance', 'notes', 'kyc'],
-        role: user.role,
-        userId: user.id,
-      },
-      { timeline, opportunities, accounts },
-    )
-    const documentMatches = searchDocuments
-      ? searchDocumentChunks({ accountId, query: trimmed, role: user.role, userId: user.id, entries: timeline })
-      : []
-    setDocResults(documentMatches)
-    setResult(answer)
-    setLoading(false)
+        scopes: ['timeline', 'opportunities', 'escalations', 'governance', 'notes', 'kyc'],
+        document_search: searchDocuments,
+        limit: 10,
+      })
+      setDocResults(answer.document_results.map((item, index) => ({
+        id: item.id,
+        accountId,
+        entryId: item.id,
+        documentName: item.source_label,
+        pageNumber: 1,
+        excerpt: item.excerpt,
+        sourceLabel: item.source_label,
+        score: index + 1,
+      })))
+      setResult({
+        answer: answer.answer,
+        sourceEntries: answer.results.map(item => ({
+          id: item.id,
+          accountId,
+          eventType: item.event_type as TimelineEntry['eventType'],
+          module: item.source_module as TimelineEntry['module'],
+          title: item.title,
+          description: item.excerpt,
+          performedBy: 'system',
+          performedByName: 'Authorized timeline source',
+          timestamp: item.event_at,
+          sourceRecordRoute: item.source_route ?? undefined,
+          isSensitive: false,
+          isSystemGenerated: true,
+          isImmutable: true,
+        })),
+        queryIntent: `${titleize(answer.mode)}: ${titleize(answer.interpreted_intent)}`,
+        confidence: answer.confidence,
+        disclaimer: answer.disclaimer,
+      })
+    } catch (err) {
+      setDocResults([])
+      setResult({
+        answer: err instanceof Error ? err.message : 'AI Timeline Search could not run.',
+        sourceEntries: [],
+        queryIntent: 'Error',
+        confidence: 'low',
+        disclaimer: 'Try again or use standard timeline search.',
+      })
+    } finally {
+      setLoading(false)
+    }
   }
 
   function handleSubmit(event: FormEvent) {

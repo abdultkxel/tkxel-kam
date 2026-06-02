@@ -8,13 +8,14 @@ import { DayPicker } from 'react-day-picker'
 import { useForm } from 'react-hook-form'
 import { toast } from 'sonner'
 import { MentionTextarea } from '@/components/collaboration/MentionTextarea'
+import { useAuth } from '@/contexts/AuthContext'
 import { useRole } from '@/hooks/useRole'
 import { useAccountStore } from '@/stores/accountStore'
 import { useNotificationStore } from '@/stores/notificationStore'
 import { useTimelineStore } from '@/stores/timelineStore'
+import { createTimelineNote, getTimelineEventTypes } from '@/services/timeline'
 import { TimelineEntry, SensitivityLevel, TimelineEventType } from '@/types/timeline'
 import { cn } from '@/utils/cn'
-import { emitTimelineEvent } from '@/utils/emitTimelineEvent'
 import { extractMentionIds } from '@/utils/mentions'
 
 interface FormValues {
@@ -35,13 +36,17 @@ interface Props {
 export function AddNoteModal({ accountId, open: controlledOpen, onOpenChange, onAdded }: Props) {
   const [internalOpen, setInternalOpen] = useState(false)
   const [selectedDate, setSelectedDate] = useState<Date>(new Date())
+  const [backendError, setBackendError] = useState('')
+  const { token } = useAuth()
   const user = useRole()
   const accountName = useAccountStore(state => state.accounts.find(account => account.id === accountId)?.name ?? 'Account')
   const addNotification = useNotificationStore(state => state.addNotification)
-  const allEventTypes = useTimelineStore(state => state.eventTypes)
+  const fallbackEventTypes = useTimelineStore(state => state.eventTypes)
+  const [serverEventTypes, setServerEventTypes] = useState(fallbackEventTypes)
+  const allEventTypes = serverEventTypes.length ? serverEventTypes : fallbackEventTypes
   const eventTypes = useMemo(() => allEventTypes.filter(item => item.active), [allEventTypes])
   const open = controlledOpen ?? internalOpen
-  const leadership = user.role === 'leadership' || user.role === 'admin' || user.role === 'super_admin'
+  const leadership = user.role === 'leadership' || user.role === 'leadership_viewer' || user.role === 'kam_head' || user.role === 'admin' || user.role === 'super_admin'
   const {
     register,
     handleSubmit,
@@ -74,8 +79,14 @@ export function AddNoteModal({ accountId, open: controlledOpen, onOpenChange, on
     if (open) {
       reset()
       setSelectedDate(new Date())
+      setBackendError('')
+      if (token) {
+        getTimelineEventTypes(token, 'active')
+          .then(result => setServerEventTypes(result.items))
+          .catch(() => setServerEventTypes(fallbackEventTypes))
+      }
     }
-  }, [open])
+  }, [fallbackEventTypes, open, reset, token])
 
   function setOpen(next: boolean) {
     if (onOpenChange) onOpenChange(next)
@@ -83,39 +94,44 @@ export function AddNoteModal({ accountId, open: controlledOpen, onOpenChange, on
   }
 
   async function onSubmit(values: FormValues) {
-    await new Promise(resolve => window.setTimeout(resolve, 350))
+    if (!token) {
+      setBackendError('You must be logged in to add a timeline event.')
+      return
+    }
     const mentions = extractMentionIds(values.description)
-    const entry = emitTimelineEvent({
-      accountId,
-      eventType: values.eventType,
-      module: selectedConfig?.module ?? 'manual',
-      title: selectedConfig?.name ?? 'Manual note',
-      description: values.description,
-      performedBy: user.id,
-      performedByName: user.name,
-      timestamp: selectedDate.toISOString(),
-      tags: ['manual'],
-      mentions,
-      attachments: values.attachmentUrl ? [{ name: 'Attachment', url: values.attachmentUrl }] : undefined,
-      isSensitive: leadership ? values.sensitive : false,
-      sensitivityLevel: leadership && values.sensitive ? values.sensitivityLevel : undefined,
-      isSystemGenerated: false,
-      isImmutable: false,
-    })
-    mentions.forEach(mentionedUserId => {
-      addNotification({
-        userId: mentionedUserId,
-        trigger: 'timeline_mention',
-        sentence: `${user.name} mentioned you in a timeline note`,
-        accountId,
-        accountName,
-        contentPreview: values.description.replace(/@\{([^}]+)\}/g, '@mention').slice(0, 120),
-        route: `/accounts/${accountId}`,
+    setBackendError('')
+    try {
+      const entry = await createTimelineNote(token, accountId, {
+        event_type: values.eventType,
+        title: selectedConfig?.name ?? 'Manual note',
+        description: values.description,
+        event_at: selectedDate.toISOString(),
+        owner_id: user.id,
+        tags: ['manual'],
+        mentions,
+        attachments: values.attachmentUrl ? [{ name: 'Attachment', url: values.attachmentUrl }] : [],
+        is_sensitive: leadership ? values.sensitive : false,
+        sensitivity_level: leadership && values.sensitive ? values.sensitivityLevel : undefined,
       })
-    })
-    toast.success('Timeline event added')
-    onAdded?.(entry)
-    setOpen(false)
+      mentions.forEach(mentionedUserId => {
+        addNotification({
+          userId: mentionedUserId,
+          trigger: 'timeline_mention',
+          sentence: `${user.name} mentioned you in a timeline note`,
+          accountId,
+          accountName,
+          contentPreview: 'You were mentioned in a timeline note. Open the account to view authorized details.',
+          route: `/accounts/${accountId}`,
+        })
+      })
+      toast.success('Timeline event added')
+      onAdded?.(entry)
+      setOpen(false)
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Timeline event could not be saved'
+      setBackendError(message)
+      toast.error(message)
+    }
   }
 
   return (
@@ -141,6 +157,7 @@ export function AddNoteModal({ accountId, open: controlledOpen, onOpenChange, on
 
           <form onSubmit={handleSubmit(onSubmit)} className="grid gap-5 lg:grid-cols-[1fr_280px]">
             <div className="space-y-4">
+              {backendError ? <p className="rounded-md border border-rag-red/20 bg-rag-red/10 p-3 text-sm font-medium text-rag-red">{backendError}</p> : null}
               <div className="space-y-1">
                 <label className={cn('tk-label flex items-center gap-1', errors.eventType ? 'text-rag-red' : '')}>
                   Event type <span className="text-rag-amber">*</span>
