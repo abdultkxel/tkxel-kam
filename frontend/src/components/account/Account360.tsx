@@ -1,6 +1,7 @@
 import * as Tabs from '@radix-ui/react-tabs'
 import { differenceInCalendarDays } from 'date-fns'
-import { AlertTriangle, ArrowRight, BriefcaseBusiness, CalendarClock, CalendarPlus, CheckCircle2, Clock3, FileText, History, Loader2, PhoneCall, RefreshCcw, ShieldCheck, Sparkles, Target, TrendingUp } from 'lucide-react'
+import { AlertTriangle, ArrowRight, BriefcaseBusiness, CalendarClock, CalendarPlus, CheckCircle2, Clock3, FileText, Loader2, PhoneCall, RefreshCcw, ShieldCheck, Sparkles, Target, TrendingUp } from 'lucide-react'
+import type { LucideIcon } from 'lucide-react'
 import { nanoid } from 'nanoid'
 import { useEffect, useMemo, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
@@ -22,6 +23,7 @@ import { HandoverSummary } from '@/components/timeline/HandoverSummary'
 import { AddOpportunityDialog, OpportunityDetailDialog, type OwnerOption } from '@/pages/Opportunities'
 import { useAuth } from '@/contexts/AuthContext'
 import { useRole } from '@/hooks/useRole'
+import type { AccountOverviewView } from '@/services/accountWorkspace'
 import { getAccountScore, recalculateAccountScore, ScoreRead } from '@/services/scoring'
 import { useAccountStore } from '@/stores/accountStore'
 import { useAlertStore } from '@/stores/alertStore'
@@ -37,11 +39,11 @@ import { canViewTimelineEntry } from '@/types/timeline'
 import { EngagementRecord, KYCDraft, SourceDocument } from '@/types/v3'
 import { emit } from '@/utils/emitTimelineEvent'
 import { emitTimelineEvent } from '@/utils/emitTimelineEvent'
-import { formatCompactCurrency, formatCurrency, formatDate, formatRelative } from '@/utils/formatters'
+import { formatCompactCurrency, formatCurrency, formatDate } from '@/utils/formatters'
 
 const tabs = ['Overview', 'Engagements', 'Stakeholders', 'Planning', 'Growth', 'Renewal', 'Retention', 'KYC', 'Health', 'Stage', 'Opportunities', 'Education', 'Escalation', 'Governance', 'Notes', 'Timeline', 'Documents']
 
-export function Account360({ account }: { account: Account }) {
+export function Account360({ account, overview }: { account: Account; overview?: AccountOverviewView }) {
   const { token } = useAuth()
   const user = useRole()
   const [searchParams, setSearchParams] = useSearchParams()
@@ -105,11 +107,86 @@ export function Account360({ account }: { account: Account }) {
     [account, accountDocuments, accountEngagements, accountKYCDraft, opportunities, visibleEntries],
   )
   const recentDecisions = visibleEntries.filter(entry => entry.eventType === 'approval_event' || entry.eventType === 'executive_event').length
-  const privileged = user.role === 'leadership' || user.role === 'admin' || user.role === 'super_admin'
+  const readOnly = overview?.permissions.readOnly ?? (user.role === 'leadership' || user.role === 'leadership_viewer')
+  const canOperate = !readOnly && (overview?.permissions.canUpdate ?? true)
+  const canGenerateHandover = canOperate && ['account_manager', 'am', 'kam_head', 'admin', 'super_admin'].includes(user.role)
   const accountAlerts = useMemo(
     () => alerts.filter(alert => alert.accountId === account.id && !alert.dismissedAt),
     [account.id, alerts],
   )
+  const summaryCards = {
+    commercialValue: overview?.summaryCards.commercialValue ?? account.arr,
+    currency: overview?.summaryCards.currency ?? 'USD',
+    lifecycleStatus: overview?.summaryCards.lifecycleStatus ?? account.stage,
+    riskStatus: overview?.summaryCards.riskStatus ?? account.riskStatus,
+    healthOverall: overview?.summaryCards.healthOverall ?? account.health.overall,
+    openSignals: overview?.summaryCards.openSignals ?? accountAlerts.length,
+    overdueActivities: overview?.summaryCards.overdueActivities ?? 0,
+    nextGovernanceAt: overview?.summaryCards.nextGovernanceAt ?? nextGovernance?.date ?? null,
+    openOpportunities: overview?.summaryCards.openOpportunities ?? opportunities.filter(item => item.stage !== 'Won' && item.stage !== 'Lost').length,
+    activeEscalations: overview?.summaryCards.activeEscalations ?? 0,
+  }
+  const displayHealthOverall = accountScore?.overall ?? summaryCards.healthOverall
+  const displayRiskStatus = accountScore?.rag_status ?? summaryCards.riskStatus
+  const metricConfigMissing = accountScore?.reason_codes?.some(reason => reason.code === 'metric_config_missing') ?? false
+  const overviewMetrics = [
+    {
+      icon: BriefcaseBusiness,
+      label: 'Commercial value',
+      value: formatCurrency(summaryCards.commercialValue),
+      detail: `${summaryCards.currency} account value from source-backed profile`,
+      tab: 'Documents',
+    },
+    {
+      icon: ArrowRight,
+      label: 'Stage',
+      value: summaryCards.lifecycleStatus,
+      detail: `${summaryCards.riskStatus} risk posture`,
+      tab: 'Stage',
+    },
+    {
+      icon: ShieldCheck,
+      label: 'Health',
+      value: `${displayHealthOverall}/100`,
+      detail: 'Open score breakdown and calculators',
+      tab: 'Health',
+    },
+    {
+      icon: Sparkles,
+      label: 'Open signals',
+      value: summaryCards.openSignals,
+      detail: 'Review signal-driven health context',
+      tab: 'Health',
+    },
+    {
+      icon: Clock3,
+      label: 'Overdue activities',
+      value: summaryCards.overdueActivities,
+      detail: 'Open timeline and activity history',
+      tab: 'Timeline',
+    },
+    {
+      icon: CalendarClock,
+      label: 'Next governance',
+      value: summaryCards.nextGovernanceAt ? formatDate(summaryCards.nextGovernanceAt) : 'Not set',
+      detail: 'Open governance cadence',
+      tab: 'Governance',
+    },
+    {
+      icon: Target,
+      label: 'Open opportunities',
+      value: summaryCards.openOpportunities,
+      detail: `${formatCompactCurrency(openOpportunityValue)} open pipeline`,
+      tab: 'Opportunities',
+    },
+    {
+      icon: AlertTriangle,
+      label: 'Active escalations',
+      value: summaryCards.activeEscalations,
+      detail: 'Open escalation workspace',
+      tab: 'Escalation',
+    },
+  ]
   const healthDimensions = useMemo(() => {
     const preferredOrder = ['relationship', 'resource', 'service_line', 'contract', 'account_risk', 'csat']
     const driverByKey = new Map((accountScore?.drivers ?? []).map(driver => [driver.key, driver]))
@@ -133,9 +210,6 @@ export function Account360({ account }: { account: Account }) {
       { key: 'csat', label: 'CSAT', value: account.health.usage, status: '' },
     ]
   }, [account.health.commercial, account.health.delivery, account.health.relationship, account.health.usage, accountScore?.drivers])
-  const displayHealthOverall = accountScore?.overall ?? account.health.overall
-  const displayRiskStatus = accountScore?.rag_status ?? account.riskStatus
-  const metricConfigMissing = accountScore?.reason_codes?.some(reason => reason.code === 'metric_config_missing') ?? false
   const riskTone =
     displayRiskStatus === 'critical' || displayRiskStatus === 'red'
       ? 'border-rag-red/20 bg-rag-red/10 text-rag-red'
@@ -445,7 +519,7 @@ export function Account360({ account }: { account: Account }) {
                       <span className="text-xs font-medium text-ink-secondary">Owner: {account.ownerName}</span>
                     </div>
                   </div>
-                  {privileged ? (
+                  {canGenerateHandover ? (
                     <button className="tk-button-primary" onClick={() => setHandoverOpen(true)}>
                       <FileText className="h-4 w-4" />
                       Generate handover
@@ -453,11 +527,18 @@ export function Account360({ account }: { account: Account }) {
                   ) : null}
                 </div>
               </div>
-              <div className="grid gap-0 divide-y divide-surface-border md:grid-cols-4 md:divide-x md:divide-y-0">
-                <OverviewMetric icon={BriefcaseBusiness} label="ARR" value={formatCurrency(account.arr)} detail={`${formatCompactCurrency(openOpportunityValue)} open pipeline`} />
-                <OverviewMetric icon={Target} label="Open opportunities" value={opportunities.length} detail={`${opportunities.filter(item => item.stage !== 'Won' && item.stage !== 'Lost').length} active pursuits`} />
-                <OverviewMetric icon={CalendarClock} label="Next governance" value={nextGovernance ? formatDate(nextGovernance.date) : 'Not set'} detail={nextGovernance ? nextGovernance.type : 'Schedule from Governance'} />
-                <OverviewMetric icon={History} label="Timeline" value={visibleEntries.length} detail={latestEntry ? `Last event ${formatRelative(latestEntry.timestamp)}` : 'No events yet'} />
+              <div className="grid gap-0 divide-y divide-surface-border md:grid-cols-2 md:divide-x md:divide-y-0 xl:grid-cols-4">
+                {overviewMetrics.map(metric => (
+                  <OverviewMetric
+                    key={metric.label}
+                    icon={metric.icon}
+                    label={metric.label}
+                    value={metric.value}
+                    detail={metric.detail}
+                    tab={metric.tab}
+                    onOpen={changeTab}
+                  />
+                ))}
               </div>
               {accountAlerts.length ? (
                 <div className="m-5 rounded-lg border border-brand-orange/20 bg-brand-orange/10 p-4">
@@ -469,22 +550,24 @@ export function Account360({ account }: { account: Account }) {
                         <p className="mt-1 text-xs text-ink-secondary">{accountAlerts[0].headline}</p>
                       </div>
                     </div>
-                    <div className="flex flex-wrap gap-2">
-                      {accountAlerts[0].suggestedActions.slice(0, 3).map(action => (
-                        <button key={action} className="tk-button-secondary bg-white" onClick={() => handleAlertAction(action)}>
-                          {action === 'Schedule QBR' ? <CalendarPlus className="h-4 w-4" /> : <PhoneCall className="h-4 w-4" />}
-                          {action}
-                        </button>
-                      ))}
-                    </div>
+                    {canOperate ? (
+                      <div className="flex flex-wrap gap-2">
+                        {accountAlerts[0].suggestedActions.slice(0, 3).map(action => (
+                          <button key={action} className="tk-button-secondary bg-white" onClick={() => handleAlertAction(action)}>
+                            {action === 'Schedule QBR' ? <CalendarPlus className="h-4 w-4" /> : <PhoneCall className="h-4 w-4" />}
+                            {action}
+                          </button>
+                        ))}
+                      </div>
+                    ) : null}
                   </div>
                 </div>
               ) : null}
             </section>
             <section className="tk-card flex flex-col items-center justify-center p-5 text-center">
               <p className="mb-3 text-[10px] font-extrabold uppercase tracking-widest text-brand-blue">Health posture</p>
-              <HealthScoreRing value={account.health.overall} />
-              <p className="mt-4 text-sm font-semibold text-ink">Current score: {account.health.overall}/100</p>
+              <HealthScoreRing value={displayHealthOverall} />
+              <p className="mt-4 text-sm font-semibold text-ink">Current score: {displayHealthOverall}/100</p>
               <p className="mt-1 text-xs text-ink-secondary">{recentDecisions} decision events visible in this account</p>
             </section>
           </div>
@@ -497,7 +580,7 @@ export function Account360({ account }: { account: Account }) {
             userId={user.id}
             userName={user.name}
           />
-          <KYCAgentOverview accountId={account.id} onReview={reviewKYCData} />
+          <KYCAgentOverview accountId={account.id} canManage={canOperate} onReview={reviewKYCData} />
         </Tabs.Content>
 
         <Tabs.Content value="KYC">
@@ -555,10 +638,12 @@ export function Account360({ account }: { account: Account }) {
                         </p>
                       ) : null}
                     </div>
-                    <button className="tk-button-primary shrink-0" disabled={savingHealth} onClick={recalcHealth}>
-                      {savingHealth ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCcw className="h-4 w-4" />}
-                      Recalculate
-                    </button>
+                    {canOperate ? (
+                      <button className="tk-button-primary shrink-0" disabled={savingHealth} onClick={recalcHealth}>
+                        {savingHealth ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCcw className="h-4 w-4" />}
+                        Recalculate
+                      </button>
+                    ) : null}
                   </div>
 
                   <div className="mt-5 grid gap-3 sm:grid-cols-2">
@@ -579,7 +664,7 @@ export function Account360({ account }: { account: Account }) {
                 </div>
               </div>
             </section>
-            <ScoreCalculators account={account} saving={savingHealth} onApply={applyCalculatorScores} />
+            {canOperate ? <ScoreCalculators account={account} saving={savingHealth} onApply={applyCalculatorScores} /> : null}
             <ScoreHistoryPanel accountId={account.id} />
           </div>
         </Tabs.Content>
@@ -594,10 +679,12 @@ export function Account360({ account }: { account: Account }) {
                     Stage changes are immutable timeline events. Review AI prediction, source evidence, and governance context before transition.
                   </p>
                 </div>
-                <button className="tk-button-primary shrink-0" disabled={savingStage} onClick={transitionStage}>
-                  {savingStage ? <Loader2 className="h-4 w-4 animate-spin" /> : <ArrowRight className="h-4 w-4" />}
-                  Apply stage review
-                </button>
+                {canOperate ? (
+                  <button className="tk-button-primary shrink-0" disabled={savingStage} onClick={transitionStage}>
+                    {savingStage ? <Loader2 className="h-4 w-4 animate-spin" /> : <ArrowRight className="h-4 w-4" />}
+                    Apply stage review
+                  </button>
+                ) : null}
               </div>
             </div>
             <div className="grid gap-5 p-5">
@@ -629,7 +716,7 @@ export function Account360({ account }: { account: Account }) {
               <h2 className="text-base font-bold text-ink">Account opportunities</h2>
               <p className="mt-1 text-sm text-ink-secondary">{opportunities.length} opportunities tied to this account.</p>
             </div>
-            <AddOpportunityDialog accounts={[account]} types={opportunityTypes} ownerOptions={ownerOptions} initialAccountId={account.id} onCreated={opportunity => setSelectedOpportunityId(opportunity.id)} />
+            {canOperate ? <AddOpportunityDialog accounts={[account]} types={opportunityTypes} ownerOptions={ownerOptions} initialAccountId={account.id} onCreated={opportunity => setSelectedOpportunityId(opportunity.id)} /> : null}
           </section>
           <OpportunityBoard items={opportunities} onOpen={opportunity => setSelectedOpportunityId(opportunity.id)} />
           <OpportunityDetailDialog
@@ -643,7 +730,7 @@ export function Account360({ account }: { account: Account }) {
             onArchived={() => setSelectedOpportunityId('')}
           />
         </Tabs.Content>
-        {['Education', 'Governance', 'Notes', 'Documents'].map(tab => (
+        {['Education', 'Escalation', 'Governance', 'Notes', 'Documents'].map(tab => (
           <Tabs.Content key={tab} value={tab}>
             <AccountWorkspacePanel account={account} tab={tab} />
           </Tabs.Content>
@@ -674,9 +761,28 @@ function HealthDimensionMeter({ label, value, prominent = false }: { label: stri
   )
 }
 
-function OverviewMetric({ icon: Icon, label, value, detail }: { icon: typeof BriefcaseBusiness; label: string; value: string | number; detail: string }) {
+function OverviewMetric({
+  icon: Icon,
+  label,
+  value,
+  detail,
+  tab,
+  onOpen,
+}: {
+  icon: LucideIcon
+  label: string
+  value: string | number
+  detail: string
+  tab: string
+  onOpen: (tab: string) => void
+}) {
   return (
-    <div className="p-4">
+    <button
+      type="button"
+      className="min-h-[136px] w-full p-4 text-left transition-colors hover:bg-surface-secondary focus:outline-none focus:ring-2 focus:ring-brand-blue focus:ring-offset-2"
+      onClick={() => onOpen(tab)}
+      aria-label={`${label}: open ${tab} section`}
+    >
       <div className="flex items-start justify-between gap-3">
         <div>
           <p className="text-[10px] font-semibold uppercase tracking-wider text-ink-secondary">{label}</p>
@@ -687,7 +793,7 @@ function OverviewMetric({ icon: Icon, label, value, detail }: { icon: typeof Bri
         </span>
       </div>
       <p className="mt-3 text-xs leading-5 text-ink-secondary">{detail}</p>
-    </div>
+    </button>
   )
 }
 

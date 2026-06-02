@@ -84,7 +84,7 @@ const kycAgentSteps: AgentStep[] = [
   },
 ]
 
-export function KYCAgentOverview({ accountId, compact = false, onReview }: { accountId: string; compact?: boolean; onReview: () => void }) {
+export function KYCAgentOverview({ accountId, compact = false, canManage = true, onReview }: { accountId: string; compact?: boolean; canManage?: boolean; onReview: () => void }) {
   const { token } = useAuth()
   const [runs, setRuns] = useState<{ items: KycAgentRun[]; total: number; page: number; page_size: number; pages: number } | null>(null)
   const [freshnessStatus, setFreshnessStatus] = useState('missing')
@@ -168,16 +168,18 @@ export function KYCAgentOverview({ accountId, compact = false, onReview }: { acc
               Latest run status: {latestRun ? latestRun.status.replace(/_/g, ' ') : 'not started'}; approved snapshot freshness: {freshnessStatus}.
             </p>
           </div>
-          <div className="flex flex-wrap gap-2">
-            <button type="button" className="tk-button-secondary bg-white" onClick={refreshData} disabled={Boolean(loading)}>
-              {loading === 'refresh' ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCcw className="h-4 w-4" />}
-              Refresh AI data
-            </button>
-            <button type="button" className="tk-button-primary" onClick={onReview}>
-              <SearchCheck className="h-4 w-4" />
-              Review data
-            </button>
-          </div>
+          {canManage ? (
+            <div className="flex flex-wrap gap-2">
+              <button type="button" className="tk-button-secondary bg-white" onClick={refreshData} disabled={Boolean(loading)}>
+                {loading === 'refresh' ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCcw className="h-4 w-4" />}
+                Refresh AI data
+              </button>
+              <button type="button" className="tk-button-primary" onClick={onReview}>
+                <SearchCheck className="h-4 w-4" />
+                Review data
+              </button>
+            </div>
+          ) : null}
         </div>
       </div>
 
@@ -229,7 +231,7 @@ export function KYCAgentOverview({ accountId, compact = false, onReview }: { acc
           icon={FileSearch}
           heading="No KYC agent runs"
           body="Start an AI KYC refresh for this account."
-          action={{ label: 'Start AI data refresh', onClick: refreshData }}
+          action={canManage ? { label: 'Start AI data refresh', onClick: refreshData } : undefined}
         />
       ) : null}
 

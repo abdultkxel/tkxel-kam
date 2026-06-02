@@ -7,6 +7,7 @@ from app.repositories.users import UserRepository
 from app.schemas import MessageResponse, UserCreateRequest, UserPageRead, UserUpdateRequest
 from app.security import hash_password
 from app.services.email_domains import EmailDomainPolicyService
+from app.services.email_delivery import EmailDeliveryService
 from app.services.users import initials_for_name, normalize_email
 
 
@@ -16,10 +17,12 @@ class UserManagementService:
         db: Session,
         user_repository: UserRepository | None = None,
         rbac_repository: RbacRepository | None = None,
+        email_delivery: EmailDeliveryService | None = None,
     ) -> None:
         self.users = user_repository or UserRepository(db)
         self.rbac = rbac_repository or RbacRepository(db)
         self.domain_policy = EmailDomainPolicyService(db)
+        self.email_delivery = email_delivery or EmailDeliveryService()
 
     def list_users(
         self,
@@ -55,7 +58,19 @@ class UserManagementService:
             avatar_initials=payload.avatar_initials or initials_for_name(payload.full_name),
             is_active=payload.is_active,
         )
-        return self.users.create_user(user)
+        created = self.users.create_user(user)
+        self.email_delivery.send_template(
+            "user_created",
+            recipient_email=created.email,
+            recipient_name=created.full_name,
+            context={
+                "recipient_name": created.full_name,
+                "email": created.email,
+                "temporary_password": payload.password,
+                "login_url": self.email_delivery.absolute_url("/login"),
+            },
+        )
+        return created
 
     def update_user(self, user_id: str, payload: UserUpdateRequest, actor: User | None = None) -> User:
         user = self.get_user(user_id)

@@ -1,19 +1,18 @@
 import * as Collapsible from '@radix-ui/react-collapsible'
-import { ChevronDown, ExternalLink, Link as LinkIcon, Link2, Lock, MessageCircle, PenLine, Pencil, Send } from 'lucide-react'
+import { ChevronDown, ExternalLink, Link as LinkIcon, Link2, Loader2, Lock, MessageCircle, PenLine, Pencil, Send, Trash2 } from 'lucide-react'
 import { ReactNode, useEffect, useMemo, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { toast } from 'sonner'
-import { nanoid } from 'nanoid'
 import { MentionText } from '@/components/collaboration/MentionText'
 import { MentionTextarea } from '@/components/collaboration/MentionTextarea'
+import { useAuth } from '@/contexts/AuthContext'
 import { useRole } from '@/hooks/useRole'
 import { useAccountStore } from '@/stores/accountStore'
 import { useIntegrationStore } from '@/stores/integrationStore'
 import { useNotificationStore } from '@/stores/notificationStore'
-import { useTimelineStore } from '@/stores/timelineStore'
-import { TimelineEntry, MODULE_COLOURS } from '@/types/timeline'
+import { createTimelineComment, deleteTimelineComment, getTimelineComments, updateTimelineComment } from '@/services/timeline'
+import { TimelineComment, TimelineEntry, MODULE_COLOURS } from '@/types/timeline'
 import { cn } from '@/utils/cn'
-import { emitTimelineEvent } from '@/utils/emitTimelineEvent'
 import { formatRelative, titleize } from '@/utils/formatters'
 import { extractMentionIds } from '@/utils/mentions'
 
@@ -46,19 +45,40 @@ export function TimelineCard({ entry, searchQuery, flash = false }: { entry: Tim
   const [expanded, setExpanded] = useState(false)
   const [commentsOpen, setCommentsOpen] = useState(false)
   const [commentText, setCommentText] = useState('')
+  const [comments, setComments] = useState<TimelineComment[]>([])
+  const [commentsLoading, setCommentsLoading] = useState(false)
+  const [commentsError, setCommentsError] = useState('')
+  const [editingCommentId, setEditingCommentId] = useState('')
+  const [editingText, setEditingText] = useState('')
   const user = useRole()
+  const { token } = useAuth()
   const loggedSensitiveView = useRef(false)
   const addAccessAudit = useIntegrationStore(state => state.addAccessAudit)
   const accountName = useAccountStore(state => state.accounts.find(account => account.id === entry.accountId)?.name ?? 'Account')
-  const allComments = useTimelineStore(state => state.comments)
-  const addComment = useTimelineStore(state => state.addComment)
   const addNotification = useNotificationStore(state => state.addNotification)
-  const comments = useMemo(
-    () => allComments.filter(comment => comment.entryId === entry.id).sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()),
-    [allComments, entry.id],
-  )
   const rows = diffRows(entry)
   const canAnnotate = (user.role === 'admin' || user.role === 'super_admin') && entry.isImmutable
+  const canModerate = user.role === 'admin' || user.role === 'super_admin' || user.role === 'kam_head'
+
+  useEffect(() => {
+    if (!commentsOpen || !token) return
+    let active = true
+    setCommentsLoading(true)
+    setCommentsError('')
+    getTimelineComments(token, entry.id)
+      .then(result => {
+        if (active) setComments(result.items)
+      })
+      .catch(err => {
+        if (active) setCommentsError(err instanceof Error ? err.message : 'Comments could not be loaded')
+      })
+      .finally(() => {
+        if (active) setCommentsLoading(false)
+      })
+    return () => {
+      active = false
+    }
+  }, [commentsOpen, entry.id, token])
 
   useEffect(() => {
     if (!entry.isSensitive || loggedSensitiveView.current) return
@@ -74,61 +94,79 @@ export function TimelineCard({ entry, searchQuery, flash = false }: { entry: Tim
   }, [addAccessAudit, entry.id, entry.isSensitive, user.name])
 
   function annotate() {
-    emitTimelineEvent({
-      accountId: entry.accountId,
-      eventType: 'manual_note',
-      module: 'manual',
-      title: `Annotation for ${entry.title}`,
-      description: 'Admin annotation added to immutable event.',
-      performedBy: user.id,
-      performedByName: user.name,
-      sourceRecordId: entry.id,
-      sourceRecordType: 'timeline_entry',
-      isSensitive: false,
-      isSystemGenerated: false,
-      isImmutable: false,
-    })
-    toast.success('Annotation added')
+    setCommentsOpen(true)
+    setCommentText(`Annotation for ${entry.title}: `)
   }
 
-  function submitComment() {
+  async function submitComment() {
     const content = commentText.trim()
     if (!content) return
-    const mentions = extractMentionIds(content)
-    addComment({
-      id: nanoid(),
-      entryId: entry.id,
-      authorId: user.id,
-      authorName: user.name,
-      content,
-      timestamp: new Date().toISOString(),
-      mentions,
-    })
-    if (entry.performedBy !== user.id) {
-      addNotification({
-        userId: entry.performedBy,
-        trigger: 'timeline_comment',
-        sentence: `${user.name} commented on your timeline note`,
-        accountId: entry.accountId,
-        accountName,
-        contentPreview: content.replace(/@\{([^}]+)\}/g, '@mention').slice(0, 120),
-        route: `/accounts/${entry.accountId}`,
-      })
+    if (!token) {
+      setCommentsError('You must be logged in to comment.')
+      return
     }
-    mentions.forEach(mentionedUserId => {
-      addNotification({
-        userId: mentionedUserId,
-        trigger: 'timeline_mention',
-        sentence: `${user.name} mentioned you in a timeline comment`,
-        accountId: entry.accountId,
-        accountName,
-        contentPreview: content.replace(/@\{([^}]+)\}/g, '@mention').slice(0, 120),
-        route: `/accounts/${entry.accountId}`,
+    const mentions = extractMentionIds(content)
+    setCommentsError('')
+    try {
+      const comment = await createTimelineComment(token, entry.id, content, mentions)
+      setComments(items => [...items, comment])
+      if (entry.performedBy !== user.id) {
+        addNotification({
+          userId: entry.performedBy,
+          trigger: 'timeline_comment',
+          sentence: `${user.name} commented on your timeline note`,
+          accountId: entry.accountId,
+          accountName,
+          contentPreview: 'A timeline comment was added. Open the account to view authorized details.',
+          route: `/accounts/${entry.accountId}`,
+        })
+      }
+      mentions.forEach(mentionedUserId => {
+        addNotification({
+          userId: mentionedUserId,
+          trigger: 'timeline_mention',
+          sentence: `${user.name} mentioned you in a timeline comment`,
+          accountId: entry.accountId,
+          accountName,
+          contentPreview: 'You were mentioned in a timeline comment. Open the account to view authorized details.',
+          route: `/accounts/${entry.accountId}`,
+        })
       })
-    })
-    setCommentText('')
-    setCommentsOpen(true)
-    toast.success('Comment added')
+      setCommentText('')
+      setCommentsOpen(true)
+      toast.success('Comment added')
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Comment could not be saved'
+      setCommentsError(message)
+      toast.error(message)
+    }
+  }
+
+  async function saveComment(comment: TimelineComment) {
+    if (!token) return
+    const body = editingText.trim()
+    if (!body) return
+    const mentions = extractMentionIds(body)
+    try {
+      const updated = await updateTimelineComment(token, entry.id, comment.id, body, mentions)
+      setComments(items => items.map(item => (item.id === updated.id ? updated : item)))
+      setEditingCommentId('')
+      setEditingText('')
+      toast.success('Comment updated')
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Comment could not be updated')
+    }
+  }
+
+  async function removeComment(comment: TimelineComment) {
+    if (!token) return
+    try {
+      await deleteTimelineComment(token, entry.id, comment.id)
+      setComments(items => items.filter(item => item.id !== comment.id))
+      toast.success('Comment deleted')
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Comment could not be deleted')
+    }
   }
 
   return (
@@ -207,12 +245,10 @@ export function TimelineCard({ entry, searchQuery, flash = false }: { entry: Tim
                 Add annotation
               </button>
             ) : null}
-            {!entry.isSystemGenerated ? (
-              <button className="inline-flex min-h-[44px] items-center gap-1 rounded-md px-2 font-semibold text-brand-blue hover:bg-white" onClick={() => setCommentsOpen(value => !value)}>
-                <MessageCircle className="h-3.5 w-3.5" />
-                {comments.length} comments
-              </button>
-            ) : null}
+            <button className="inline-flex min-h-[44px] items-center gap-1 rounded-md px-2 font-semibold text-brand-blue hover:bg-white" onClick={() => setCommentsOpen(value => !value)}>
+              <MessageCircle className="h-3.5 w-3.5" />
+              {comments.length} comments
+            </button>
           </div>
 
           {rows.length ? (
@@ -243,20 +279,51 @@ export function TimelineCard({ entry, searchQuery, flash = false }: { entry: Tim
             </Collapsible.Root>
           ) : null}
 
-          {!entry.isSystemGenerated && commentsOpen ? (
+          {commentsOpen ? (
             <div className="mt-4 rounded-lg border border-surface-border bg-white p-3">
               <div className="space-y-3">
-                {comments.length ? comments.map(comment => (
+                {commentsLoading ? (
+                  <div className="flex items-center gap-2 text-sm text-ink-secondary">
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                    Loading comments
+                  </div>
+                ) : null}
+                {commentsError ? <p className="rounded-md border border-rag-red/20 bg-rag-red/10 p-2 text-xs font-medium text-rag-red">{commentsError}</p> : null}
+                {!commentsLoading && comments.length ? comments.map(comment => (
                   <div key={comment.id} className="rounded-lg bg-surface-tertiary p-3 text-sm">
                     <div className="mb-1 flex items-center justify-between gap-3">
                       <span className="font-semibold text-ink">{comment.authorName}</span>
-                      <span className="text-xs text-ink-secondary">{formatRelative(comment.timestamp)}</span>
+                      <span className="flex items-center gap-2 text-xs text-ink-secondary">
+                        {formatRelative(comment.timestamp)}
+                        {comment.authorId === user.id || canModerate ? (
+                          <>
+                            <button className="font-semibold text-brand-blue" onClick={() => {
+                              setEditingCommentId(comment.id)
+                              setEditingText(comment.content)
+                            }}>Edit</button>
+                            <button className="font-semibold text-rag-red" onClick={() => void removeComment(comment)}>
+                              <Trash2 className="inline h-3.5 w-3.5" />
+                            </button>
+                          </>
+                        ) : null}
+                      </span>
                     </div>
-                    <p className="leading-6 text-ink-secondary">
-                      <MentionText text={comment.content} />
-                    </p>
+                    {editingCommentId === comment.id ? (
+                      <div className="space-y-2">
+                        <MentionTextarea value={editingText} onChange={setEditingText} className="min-h-[80px]" />
+                        <div className="flex justify-end gap-2">
+                          <button className="tk-button-secondary" onClick={() => setEditingCommentId('')}>Cancel</button>
+                          <button className="tk-button-primary" onClick={() => void saveComment(comment)}>Save</button>
+                        </div>
+                      </div>
+                    ) : (
+                      <p className="leading-6 text-ink-secondary">
+                        <MentionText text={comment.content} />
+                      </p>
+                    )}
                   </div>
-                )) : <p className="text-sm text-ink-secondary">No comments yet.</p>}
+                )) : null}
+                {!commentsLoading && !comments.length ? <p className="text-sm text-ink-secondary">No comments yet.</p> : null}
               </div>
               <div className="mt-3 grid gap-2 sm:grid-cols-[1fr_auto]">
                 <MentionTextarea value={commentText} onChange={setCommentText} className="min-h-[80px]" placeholder="Add a comment with @mentions" />

@@ -39,10 +39,27 @@ class Settings:
         self.google_calendar_default_calendar_id = os.getenv("GOOGLE_CALENDAR_DEFAULT_CALENDAR_ID", "primary")
         self.google_sign_in_client_id = os.getenv("GOOGLE_SIGN_IN_CLIENT_ID", "")
         self.allowed_email_domains = os.getenv("ALLOWED_EMAIL_DOMAINS", "tkxel.com,tkxel.io,camp1.tkxel.com,camp1.tkxel.io")
+        self.frontend_app_url = os.getenv("FRONTEND_APP_URL", os.getenv("VITE_API_BASE_URL", "http://127.0.0.1:5173")).rstrip("/")
+        self.mail_mailer = os.getenv("MAIL_MAILER", os.getenv("SMTP_MAILER", "smtp")).lower()
+        self.mail_host = os.getenv("MAIL_HOST", os.getenv("SMTP_HOST", ""))
+        self.mail_port = int(os.getenv("MAIL_PORT", os.getenv("SMTP_PORT", "587")))
+        self.mail_username = os.getenv("MAIL_USERNAME", os.getenv("SMTP_USERNAME", ""))
+        self.mail_password = os.getenv("MAIL_PASSWORD", os.getenv("SMTP_PASSWORD", ""))
+        self.mail_encryption = os.getenv("MAIL_ENCRYPTION", os.getenv("SMTP_ENCRYPTION", "tls")).lower()
+        self.mail_from_email = os.getenv("MAIL_FROM_EMAIL", os.getenv("SMTP_FROM_EMAIL", self.super_admin_email))
+        self.mail_from_name = os.getenv("MAIL_FROM_NAME", os.getenv("SMTP_FROM_NAME", "KAM Intelligence Platform"))
+        self.mail_enabled = os.getenv("MAIL_ENABLED", "false").lower() == "true"
+        self.mail_send_during_tests = os.getenv("MAIL_SEND_DURING_TESTS", "false").lower() == "true"
         self.fathom_api_key = os.getenv("FATHOM_API_KEY", "")
         self.fathom_base_url = os.getenv("FATHOM_BASE_URL", "https://api.fathom.video")
         self.fathom_recordings_path = os.getenv("FATHOM_RECORDINGS_PATH", "/recordings")
         self.fathom_webhook_secret = os.getenv("FATHOM_WEBHOOK_SECRET", "")
+        self.timeline_retention_worker_enabled = os.getenv("TIMELINE_RETENTION_WORKER_ENABLED", "true").lower() == "true"
+        self.timeline_retention_worker_initial_delay_seconds = int(os.getenv("TIMELINE_RETENTION_WORKER_INITIAL_DELAY_SECONDS", "60"))
+        self.timeline_retention_worker_interval_seconds = int(os.getenv("TIMELINE_RETENTION_WORKER_INTERVAL_SECONDS", "86400"))
+        self.notifications_reporting_worker_enabled = os.getenv("NOTIFICATIONS_REPORTING_WORKER_ENABLED", "true").lower() == "true"
+        self.notifications_reporting_worker_initial_delay_seconds = int(os.getenv("NOTIFICATIONS_REPORTING_WORKER_INITIAL_DELAY_SECONDS", "30"))
+        self.notifications_reporting_worker_interval_seconds = int(os.getenv("NOTIFICATIONS_REPORTING_WORKER_INTERVAL_SECONDS", "300"))
 
 
 @lru_cache

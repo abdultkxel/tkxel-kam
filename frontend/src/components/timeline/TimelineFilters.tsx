@@ -1,10 +1,12 @@
 import { Check, Search } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
 import { users } from '@/data/mock'
+import { useAuth } from '@/contexts/AuthContext'
 import { useRole } from '@/hooks/useRole'
 import { TimelineFilterState } from '@/hooks/useTimelineFilters'
 import { useTimelineStore } from '@/stores/timelineStore'
 import { FilterBar } from '@/components/ui/FilterBar'
+import { getTimelineEventTypes } from '@/services/timeline'
 import { TimelineModule } from '@/types/timeline'
 
 const modules: TimelineModule[] = ['kyc', 'scoring', 'stage', 'opportunity', 'education', 'escalation', 'governance', 'approval', 'manual']
@@ -19,7 +21,10 @@ export function TimelineFilters({
   clearAll: () => void
 }) {
   const [search, setSearch] = useState(filters.search)
-  const allEventTypes = useTimelineStore(state => state.eventTypes)
+  const { token } = useAuth()
+  const fallbackEventTypes = useTimelineStore(state => state.eventTypes)
+  const [serverEventTypes, setServerEventTypes] = useState(fallbackEventTypes)
+  const allEventTypes = serverEventTypes.length ? serverEventTypes : fallbackEventTypes
   const eventTypes = useMemo(() => allEventTypes.filter(item => item.active), [allEventTypes])
   const user = useRole()
   const canSeeSensitive = user.role === 'leadership' || user.role === 'admin' || user.role === 'super_admin'
@@ -30,6 +35,21 @@ export function TimelineFilters({
     const timer = window.setTimeout(() => setFilter('q', search), 300)
     return () => window.clearTimeout(timer)
   }, [search, setFilter])
+
+  useEffect(() => {
+    if (!token) return
+    let active = true
+    getTimelineEventTypes(token, 'active')
+      .then(result => {
+        if (active) setServerEventTypes(result.items)
+      })
+      .catch(() => {
+        if (active) setServerEventTypes(fallbackEventTypes)
+      })
+    return () => {
+      active = false
+    }
+  }, [fallbackEventTypes, token])
 
   return (
     <div className="space-y-3">

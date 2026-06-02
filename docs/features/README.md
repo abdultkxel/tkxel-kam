@@ -12,10 +12,14 @@ docs/features/_feature-template.md
 
 - [Account Health Score Metrics](account-health-score-metrics.md)
 - [Configurable Scoring And Metric Engine](configurable-scoring-metric-engine.md)
+- [Account Overview](account-overview.md)
 - [Governance & Reviews](governance-reviews.md)
 - [Growth & Opportunity Management](growth-opportunity-management.md)
+- [Mailtrap Email Delivery](mailtrap-email-delivery.md)
+- [Notifications, Dashboards, And Reporting](notifications-dashboards-reporting.md)
 - [Relationships Planning Growth And Retention](relationships-planning-growth-retention.md)
 - [Scoring, Signals, Playbooks, and Tasks](scoring-signals-playbooks-and-tasks.md)
+- [Timeline And Handover](timeline-and-handover.md)
 
 ## Handoff Notes
 

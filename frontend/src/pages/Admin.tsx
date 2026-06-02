@@ -2,7 +2,7 @@ import * as Switch from '@radix-ui/react-switch'
 import { BellRing, Download, PlugZap, Plus, Save, ShieldCheck, SlidersHorizontal } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import { nanoid } from 'nanoid'
-import { FormEvent, useState } from 'react'
+import { FormEvent, useEffect, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { toast } from 'sonner'
 import { AllowedEmailDomainsPanel } from '@/components/admin/AllowedEmailDomainsPanel'
@@ -10,6 +10,7 @@ import { AdminCustomizationPanel } from '@/components/admin/AdminCustomizationPa
 import { AdminContentPanel } from '@/components/admin/AdminContentPanel'
 import { AdminFieldBuilderPanel } from '@/components/admin/AdminFieldBuilderPanel'
 import { AdminGovernancePanel } from '@/components/admin/AdminGovernancePanel'
+import { AdminNotificationsReportingPanel } from '@/components/admin/AdminNotificationsReportingPanel'
 import { AdminOpportunityTypesPanel } from '@/components/admin/AdminOpportunityTypesPanel'
 import { AdminRelationshipPlanningPanel } from '@/components/admin/AdminRelationshipPlanningPanel'
 import { AdminRolesPanel } from '@/components/admin/AdminRolesPanel'
@@ -21,6 +22,8 @@ import { SensitivePolicyTable } from '@/components/admin/SensitivePolicyTable'
 import { SegmentSettings } from '@/components/admin/SegmentSettings'
 import { ScoringEngineBuilder } from '@/components/admin/ScoringEngineBuilder'
 import { PageHeader } from '@/components/ui/PageHeader'
+import { useAuth } from '@/contexts/AuthContext'
+import { createTimelineEventType, getTimelineEventTypes, updateTimelineEventType } from '@/services/timeline'
 import { useAlertStore } from '@/stores/alertStore'
 import { useIntegrationStore } from '@/stores/integrationStore'
 import { useNotificationStore } from '@/stores/notificationStore'
@@ -87,9 +90,12 @@ const statusToneClass = {
 }
 
 export function Admin() {
-  const configs = useTimelineStore(state => state.eventTypes)
+  const { token } = useAuth()
+  const fallbackConfigs = useTimelineStore(state => state.eventTypes)
+  const [serverConfigs, setServerConfigs] = useState(fallbackConfigs)
+  const configs = serverConfigs.length ? serverConfigs : fallbackConfigs
   const upsert = useTimelineStore(state => state.upsertEventType)
-  const toggle = useTimelineStore(state => state.toggleEventType)
+  const fallbackToggle = useTimelineStore(state => state.toggleEventType)
   const updateRetention = useTimelineStore(state => state.updateRetention)
   const integrations = useIntegrationStore(state => state.configs)
   const alertRules = useAlertStore(state => state.rules)
@@ -135,15 +141,47 @@ export function Admin() {
     },
   ]
 
+  useEffect(() => {
+    if (!token) return
+    let active = true
+    getTimelineEventTypes(token, 'all')
+      .then(result => {
+        if (active) setServerConfigs(result.items)
+      })
+      .catch(() => {
+        if (active) setServerConfigs(fallbackConfigs)
+      })
+    return () => {
+      active = false
+    }
+  }, [fallbackConfigs, token])
+
   function chooseSection(id: string) {
     const next = new URLSearchParams(searchParams)
     next.set('section', id)
     setSearchParams(next, { replace: true })
   }
 
-  function submit(event: FormEvent) {
+  async function submit(event: FormEvent) {
     event.preventDefault()
     if (!name.trim()) return
+    if (token) {
+      try {
+        const created = await createTimelineEventType(token, {
+          slug: slugify(name),
+          name,
+          module,
+          category: module,
+        })
+        setServerConfigs(items => [created, ...items])
+        setName('')
+        toast.success('Timeline event type added')
+        return
+      } catch (err) {
+        toast.error(err instanceof Error ? err.message : 'Timeline event type could not be added')
+        return
+      }
+    }
     upsert({
       id: nanoid(),
       name,
@@ -157,6 +195,45 @@ export function Admin() {
     })
     setName('')
     toast.success('Timeline event type added')
+  }
+
+  function updateConfigDraft(id: string, updates: Partial<(typeof configs)[number]>) {
+    setServerConfigs(items => items.map(item => (item.id === id ? { ...item, ...updates } : item)))
+    if (!serverConfigs.length) {
+      const config = configs.find(item => item.id === id)
+      if (config) upsert({ ...config, ...updates })
+    }
+  }
+
+  async function toggleConfig(id: string) {
+    const config = configs.find(item => item.id === id)
+    if (!config) return
+    if (!token) {
+      fallbackToggle(id)
+      return
+    }
+    try {
+      const updated = await updateTimelineEventType(token, id, { is_active: !config.active })
+      setServerConfigs(items => items.map(item => (item.id === id ? updated : item)))
+      toast.success('Timeline event type updated')
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Timeline event type could not be updated')
+    }
+  }
+
+  async function saveConfig(id: string) {
+    const config = configs.find(item => item.id === id)
+    if (!config || !token) {
+      toast.success('Timeline event type saved')
+      return
+    }
+    try {
+      const updated = await updateTimelineEventType(token, id, { name: config.name, module: config.module })
+      setServerConfigs(items => items.map(item => (item.id === id ? updated : item)))
+      toast.success('Timeline event type saved')
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Timeline event type could not be saved')
+    }
   }
 
   return (
@@ -264,10 +341,10 @@ export function Admin() {
                   {configs.map(config => (
                     <tr key={config.id} className="border-b border-surface-border last:border-b-0">
                       <td className="px-4 py-3">
-                        <input className="tk-input" value={config.name} onChange={event => upsert({ ...config, name: event.target.value })} />
+                        <input className="tk-input" value={config.name} onChange={event => updateConfigDraft(config.id, { name: event.target.value })} />
                       </td>
                       <td className="px-4 py-3">
-                        <select className="tk-input" value={config.module} onChange={event => upsert({ ...config, module: event.target.value as TimelineModule })}>
+                        <select className="tk-input" value={config.module} onChange={event => updateConfigDraft(config.id, { module: event.target.value as TimelineModule })}>
                           {modules.map(item => <option key={item}>{item}</option>)}
                         </select>
                       </td>
@@ -275,7 +352,7 @@ export function Admin() {
                         <span className={`inline-flex h-5 w-5 rounded-full border border-surface-border ${swatchClass[config.colorToken] ?? 'bg-brand-blue'}`} />
                       </td>
                       <td className="px-4 py-3">
-                        <Switch.Root checked={config.active} onCheckedChange={() => toggle(config.id)} className="relative min-h-[44px] w-11 rounded-full bg-transparent after:absolute after:left-0 after:top-1/2 after:h-6 after:w-11 after:-translate-y-1/2 after:rounded-full after:bg-surface-border data-[state=checked]:after:bg-brand-blue">
+                        <Switch.Root checked={config.active} onCheckedChange={() => void toggleConfig(config.id)} className="relative min-h-[44px] w-11 rounded-full bg-transparent after:absolute after:left-0 after:top-1/2 after:h-6 after:w-11 after:-translate-y-1/2 after:rounded-full after:bg-surface-border data-[state=checked]:after:bg-brand-blue">
                           <Switch.Thumb className="absolute left-0 top-1/2 z-10 block h-5 w-5 translate-x-0.5 -translate-y-1/2 rounded-full bg-white transition-transform data-[state=checked]:translate-x-5" />
                         </Switch.Root>
                       </td>
@@ -296,7 +373,7 @@ export function Admin() {
                         </select>
                       </td>
                       <td className="px-4 py-3">
-                        <button className="tk-button-secondary">
+                        <button type="button" className="tk-button-secondary" onClick={() => void saveConfig(config.id)}>
                           <Save className="h-4 w-4" />
                           Save
                         </button>
@@ -320,7 +397,7 @@ export function Admin() {
             <div id="settings" className="scroll-mt-24">
               <div className="space-y-4">
                 <AllowedEmailDomainsPanel />
-                <NotificationSettingsPanel />
+                <AdminNotificationsReportingPanel />
               </div>
             </div>
           ) : null}
@@ -356,6 +433,11 @@ export function Admin() {
       </div>
     </div>
   )
+}
+
+function slugify(value: string) {
+  const slug = value.toLowerCase().trim().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '')
+  return slug || `timeline_event_${Date.now()}`
 }
 
 function AdminStatusStrip({ items }: { items: { label: string; value: string; detail: string; icon: LucideIcon; tone: keyof typeof statusToneClass }[] }) {

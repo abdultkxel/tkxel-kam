@@ -19,6 +19,7 @@ from app.schemas import (
 )
 from app.security import create_access_token, create_reset_token, hash_password, hash_reset_token, verify_password
 from app.services.email_domains import EmailDomainPolicyService
+from app.services.email_delivery import EmailDeliveryService
 from app.services.google_identity import GoogleIdentityService
 
 
@@ -40,12 +41,14 @@ class AuthService:
         repository: UserRepository | None = None,
         domain_policy: EmailDomainPolicyService | None = None,
         google_identity: GoogleIdentityService | None = None,
+        email_delivery: EmailDeliveryService | None = None,
     ) -> None:
         self.db = db
         self.repository = repository or UserRepository(db)
         self.settings = get_settings()
         self.domain_policy = domain_policy or EmailDomainPolicyService(db)
         self.google_identity = google_identity or GoogleIdentityService()
+        self.email_delivery = email_delivery or EmailDeliveryService()
 
     def login(self, payload: LoginRequest) -> AuthResponse:
         self.domain_policy.require_allowed_email_for_auth(
@@ -83,6 +86,14 @@ class AuthService:
 
         user = self.repository.get_by_email(payload.email)
         token = self._issue_reset_token(user) if user and user.is_active else None
+        if user and token:
+            reset_url = self.email_delivery.absolute_url(f"/reset-password?token={token}")
+            self.email_delivery.send_template(
+                "password_reset",
+                recipient_email=user.email,
+                recipient_name=user.full_name,
+                context={"recipient_name": user.full_name, "reset_url": reset_url, "expires_minutes": self.settings.reset_token_expire_minutes},
+            )
         return ForgotPasswordResponse(
             message=self.generic_reset_message,
             reset_token=token if self.settings.expose_reset_tokens else None,
@@ -96,6 +107,12 @@ class AuthService:
         reset_token.user.hashed_password = hash_password(payload.new_password)
         reset_token.used_at = utc_now()
         self.db.commit()
+        self.email_delivery.send_template(
+            "password_changed",
+            recipient_email=reset_token.user.email,
+            recipient_name=reset_token.user.full_name,
+            context={"recipient_name": reset_token.user.full_name},
+        )
         return MessageResponse(message="Password has been reset successfully")
 
     def change_password(self, payload: ChangePasswordRequest, user: User) -> MessageResponse:
@@ -104,6 +121,12 @@ class AuthService:
 
         user.hashed_password = hash_password(payload.new_password)
         self.repository.save_user(user)
+        self.email_delivery.send_template(
+            "password_changed",
+            recipient_email=user.email,
+            recipient_name=user.full_name,
+            context={"recipient_name": user.full_name},
+        )
         return MessageResponse(message="Password updated successfully")
 
     def _issue_reset_token(self, user: User) -> str:
