@@ -1,0 +1,1295 @@
+import json
+from collections.abc import Generator
+from datetime import datetime, timezone
+from typing import Any
+
+from sqlalchemy import create_engine, inspect, select, text
+from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
+from sqlalchemy.schema import CreateColumn, CreateIndex
+
+from app.config import get_settings
+
+settings = get_settings()
+
+engine = create_engine(settings.database_url, pool_pre_ping=True)
+SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False)
+
+
+_MISSING = object()
+_TABLE_BACKFILL_DEFAULTS: dict[str, dict[str, Any]] = {
+    "engagements": {
+        "status": "active",
+        "service_lines": [],
+        "source_links": [],
+        "value": 0,
+        "currency": "USD",
+        "delivery_status": "active",
+        "commercial_status": "watch",
+        "delivery_health": 70,
+        "health_status": "unknown",
+        "renewal_risk": "unknown",
+        "auto_renewal": False,
+        "risks": [],
+        "created_at": lambda: datetime.now(timezone.utc),
+        "updated_at": lambda: datetime.now(timezone.utc),
+    },
+    "engagement_health_snapshots": {
+        "overall": 0,
+        "rag_status": "warning",
+        "drivers": [],
+        "freshness_status": "fresh",
+        "is_dirty": False,
+        "contribution": 0,
+        "metric_version": "engagement-v1",
+        "created_by_name": "System",
+        "created_at": lambda: datetime.now(timezone.utc),
+    },
+    "account_health_rollups": {
+        "overall": 0,
+        "rag_status": "warning",
+        "contributions": [],
+        "metric_version": "account-rollup-v1",
+        "created_at": lambda: datetime.now(timezone.utc),
+    },
+    "timeline_entries": {
+        "is_sensitive": False,
+        "is_system_generated": True,
+        "is_immutable": True,
+        "event_at": lambda: datetime.now(timezone.utc),
+        "tags": [],
+        "mentions": [],
+        "attachments": [],
+        "status": "active",
+        "updated_at": lambda: datetime.now(timezone.utc),
+        "created_at": lambda: datetime.now(timezone.utc),
+    },
+    "timeline_event_types": {
+        "category": "general",
+        "module": "manual",
+        "color_token": "brand-blue",
+        "display_order": 0,
+        "default_visibility": "public",
+        "is_active": True,
+        "is_critical": False,
+        "critical_rule_json": {},
+        "created_at": lambda: datetime.now(timezone.utc),
+        "updated_at": lambda: datetime.now(timezone.utc),
+    },
+    "timeline_comments": {
+        "author_name": "System",
+        "body": "",
+        "mentions": [],
+        "is_sensitive": False,
+        "created_at": lambda: datetime.now(timezone.utc),
+        "updated_at": lambda: datetime.now(timezone.utc),
+    },
+    "timeline_retention_policies": {
+        "entity_type": "timeline_entry",
+        "action": "archive",
+        "duration_days": 1095,
+        "reason_template": "Retention policy applied.",
+        "critical_behavior": "tombstone",
+        "schedule_enabled": False,
+        "schedule_interval_hours": 24,
+        "is_active": True,
+        "created_at": lambda: datetime.now(timezone.utc),
+        "updated_at": lambda: datetime.now(timezone.utc),
+    },
+    "timeline_retention_actions": {
+        "entity_type": "timeline_entry",
+        "mode": "manual",
+        "status": "complete",
+        "matched_count": 0,
+        "affected_count": 0,
+        "actor_id": "system",
+        "actor_name": "System",
+        "metadata_json": {},
+        "created_at": lambda: datetime.now(timezone.utc),
+    },
+    "timeline_tombstones": {
+        "deleted_by_id": "system",
+        "deleted_by_name": "System",
+        "redacted_metadata_json": {},
+        "created_at": lambda: datetime.now(timezone.utc),
+    },
+    "handover_summaries": {
+        "generated_by_name": "System",
+        "selected_sections": [],
+        "source_set_json": [],
+        "redaction_summary": {},
+        "citations_json": [],
+        "content_json": {},
+        "status": "complete",
+        "export_metadata_json": {},
+        "share_metadata_json": {},
+        "created_at": lambda: datetime.now(timezone.utc),
+        "updated_at": lambda: datetime.now(timezone.utc),
+    },
+    "handover_shares": {
+        "share_token": "share",
+        "created_by_id": "system",
+        "created_by_name": "System",
+        "created_at": lambda: datetime.now(timezone.utc),
+    },
+    "timeline_ai_search_audits": {
+        "interpreted_intent": "semantic_timeline_search",
+        "scopes": [],
+        "source_ids": [],
+        "redactions": {},
+        "created_at": lambda: datetime.now(timezone.utc),
+    },
+    "scoring_metric_definitions": {
+        "weight": 20,
+        "thresholds": {},
+        "formula": {},
+        "freshness_rule": {},
+        "source": "manual",
+        "status": "draft",
+        "is_active": True,
+        "current_version": 0,
+        "created_at": lambda: datetime.now(timezone.utc),
+        "updated_at": lambda: datetime.now(timezone.utc),
+    },
+    "scoring_metric_versions": {
+        "config_json": {},
+        "published_by_name": "System",
+        "published_at": lambda: datetime.now(timezone.utc),
+        "created_at": lambda: datetime.now(timezone.utc),
+    },
+    "manual_score_submissions": {
+        "scope": "account",
+        "values_json": {},
+        "evidence_json": [],
+        "validation_status": "validated",
+        "submitted_by_name": "System",
+        "created_at": lambda: datetime.now(timezone.utc),
+    },
+    "score_snapshots": {
+        "scope": "account",
+        "overall": 0,
+        "rag_status": "amber",
+        "drivers": [],
+        "reason_codes": [],
+        "metric_version": "scoring-v1",
+        "freshness_status": "fresh",
+        "is_dirty": False,
+        "trend": 0,
+        "status": "complete",
+        "source_context": {},
+        "calculated_at": lambda: datetime.now(timezone.utc),
+        "created_at": lambda: datetime.now(timezone.utc),
+    },
+    "scoring_jobs": {
+        "job_type": "manual",
+        "scope": "account",
+        "status": "queued",
+        "trigger_source": "manual",
+        "result_json": {},
+        "created_at": lambda: datetime.now(timezone.utc),
+        "updated_at": lambda: datetime.now(timezone.utc),
+    },
+    "signal_rules": {
+        "severity": "warning",
+        "condition_json": {},
+        "owner_rule_json": {},
+        "sla_rule_json": {},
+        "is_active": True,
+        "current_version": 1,
+        "created_at": lambda: datetime.now(timezone.utc),
+        "updated_at": lambda: datetime.now(timezone.utc),
+    },
+    "signals": {
+        "severity": "warning",
+        "status": "new",
+        "detail": "",
+        "reason_codes": [],
+        "evidence_json": [],
+        "citations_json": [],
+        "created_at": lambda: datetime.now(timezone.utc),
+        "updated_at": lambda: datetime.now(timezone.utc),
+    },
+    "signal_events": {
+        "event_type": "status_change",
+        "metadata_json": {},
+        "created_at": lambda: datetime.now(timezone.utc),
+    },
+    "playbook_templates": {
+        "objective": "",
+        "description": "",
+        "signal_types": [],
+        "weak_metrics": [],
+        "activities_json": [],
+        "default_owner_rule": "account_primary_am",
+        "due_date_rule": {},
+        "success_criteria": [],
+        "skip_rules": [],
+        "status": "active",
+        "current_version": 1,
+        "version": 1,
+        "is_active": True,
+        "created_at": lambda: datetime.now(timezone.utc),
+        "updated_at": lambda: datetime.now(timezone.utc),
+    },
+    "playbook_template_activities": {
+        "title": "Playbook activity",
+        "owner_rule": "account_primary_am",
+        "due_offset_days": 7,
+        "priority": "medium",
+        "success_criteria": [],
+        "skip_allowed": True,
+        "requires_evidence": False,
+        "sort_order": 0,
+        "created_at": lambda: datetime.now(timezone.utc),
+        "updated_at": lambda: datetime.now(timezone.utc),
+    },
+    "playbook_executions": {
+        "template_name_snapshot": "Playbook",
+        "template_version_snapshot": 1,
+        "status": "active",
+        "skipped_activity_ids": [],
+        "skip_reasons": {},
+        "template_snapshot": {},
+        "created_by_name": "System",
+        "created_at": lambda: datetime.now(timezone.utc),
+        "updated_at": lambda: datetime.now(timezone.utc),
+    },
+    "tasks": {
+        "source_type": "manual",
+        "due_at": lambda: datetime.now(timezone.utc),
+        "status": "open",
+        "priority": "medium",
+        "owner_name": "System",
+        "success_criteria": [],
+        "requires_evidence": False,
+        "created_at": lambda: datetime.now(timezone.utc),
+        "updated_at": lambda: datetime.now(timezone.utc),
+    },
+    "task_evidence": {
+        "evidence_type": "note",
+        "created_by_name": "System",
+        "created_at": lambda: datetime.now(timezone.utc),
+    },
+    "stakeholders": {
+        "role": "operational_poc",
+        "influence": "medium",
+        "relationship_strength": "unknown",
+        "sentiment": "neutral",
+        "political_risk": "unknown",
+        "status": "active",
+        "is_sensitive": False,
+        "created_at": lambda: datetime.now(timezone.utc),
+        "updated_at": lambda: datetime.now(timezone.utc),
+    },
+    "stakeholder_interactions": {
+        "interaction_type": "note",
+        "subject": "Stakeholder interaction",
+        "interaction_at": lambda: datetime.now(timezone.utc),
+        "is_sensitive": False,
+        "created_by_name": "System",
+        "created_at": lambda: datetime.now(timezone.utc),
+        "updated_at": lambda: datetime.now(timezone.utc),
+    },
+    "stakeholder_coverage_gaps": {
+        "severity": "medium",
+        "title": "Stakeholder coverage gap",
+        "description": "Stakeholder coverage gap detected by deterministic rules.",
+        "evidence": {},
+        "status": "open",
+        "created_at": lambda: datetime.now(timezone.utc),
+        "updated_at": lambda: datetime.now(timezone.utc),
+    },
+    "stakeholder_roles": {
+        "slug": "operational_poc",
+        "name": "Operational POC",
+        "is_active": True,
+        "display_order": 0,
+        "created_at": lambda: datetime.now(timezone.utc),
+        "updated_at": lambda: datetime.now(timezone.utc),
+    },
+    "stakeholder_gap_rules": {
+        "rule_key": "coverage_gap",
+        "title": "Stakeholder coverage gap",
+        "description": "Stakeholder coverage gap detected by configured rule.",
+        "severity": "warning",
+        "condition_json": {},
+        "is_active": True,
+        "display_order": 0,
+        "created_at": lambda: datetime.now(timezone.utc),
+        "updated_at": lambda: datetime.now(timezone.utc),
+    },
+    "opportunity_stage_definitions": {
+        "requires_outcome_reason": False,
+    },
+    "opportunity_stage_transitions": {
+        "from_stage": "Identified",
+        "to_stage": "Qualified",
+        "is_active": True,
+        "requires_reason": False,
+        "created_at": lambda: datetime.now(timezone.utc),
+        "updated_at": lambda: datetime.now(timezone.utc),
+    },
+    "account_plans": {
+        "risks": [],
+        "commitments": [],
+        "service_gaps": [],
+        "status": "draft",
+        "created_by_name": "System",
+        "created_at": lambda: datetime.now(timezone.utc),
+        "updated_at": lambda: datetime.now(timezone.utc),
+    },
+    "account_plan_versions": {
+        "version": 1,
+        "snapshot_json": {},
+        "actor_name": "System",
+        "created_at": lambda: datetime.now(timezone.utc),
+    },
+    "account_plan_actions": {
+        "title": "Plan action",
+        "owner_name": "System",
+        "due_at": lambda: datetime.now(timezone.utc),
+        "status": "open",
+        "priority": "medium",
+        "success_criteria": [],
+        "created_by_name": "System",
+        "created_at": lambda: datetime.now(timezone.utc),
+        "updated_at": lambda: datetime.now(timezone.utc),
+    },
+    "service_catalog_items": {
+        "slug": "service",
+        "name": "Service",
+        "tags": [],
+        "is_active": True,
+        "display_order": 0,
+        "created_at": lambda: datetime.now(timezone.utc),
+        "updated_at": lambda: datetime.now(timezone.utc),
+    },
+    "service_adjacency_rules": {
+        "relevance_score": 70,
+        "rationale": "Configured adjacency.",
+        "is_active": True,
+        "created_at": lambda: datetime.now(timezone.utc),
+        "updated_at": lambda: datetime.now(timezone.utc),
+    },
+    "account_whitespace_items": {
+        "service_name_snapshot": "Service",
+        "coverage_status": "unknown",
+        "source": "manual",
+        "created_at": lambda: datetime.now(timezone.utc),
+        "updated_at": lambda: datetime.now(timezone.utc),
+    },
+    "service_recommendations": {
+        "relevance_score": 70,
+        "rationale": "Recommended adjacent service.",
+        "status": "recommended",
+        "source_context": "adjacency",
+        "created_at": lambda: datetime.now(timezone.utc),
+        "updated_at": lambda: datetime.now(timezone.utc),
+    },
+    "engagement_renewal_profiles": {
+        "renewal_readiness": "unknown",
+        "renewal_risk": "unknown",
+        "confidence": 75,
+        "commercial_exposure": 0,
+        "commercial_exposure_currency": "USD",
+        "source_type": "manual",
+        "created_at": lambda: datetime.now(timezone.utc),
+        "updated_at": lambda: datetime.now(timezone.utc),
+    },
+    "retention_plans": {
+        "plan_type": "retention",
+        "status": "active",
+        "title": "Retention plan",
+        "owner_name": "System",
+        "success_criteria": [],
+        "created_by_name": "System",
+        "created_at": lambda: datetime.now(timezone.utc),
+        "updated_at": lambda: datetime.now(timezone.utc),
+    },
+    "retention_plan_milestones": {
+        "title": "Retention milestone",
+        "due_at": lambda: datetime.now(timezone.utc),
+        "status": "open",
+        "enforce_action_due_dates": True,
+        "created_at": lambda: datetime.now(timezone.utc),
+        "updated_at": lambda: datetime.now(timezone.utc),
+    },
+    "retention_plan_actions": {
+        "title": "Retention action",
+        "owner_name": "System",
+        "due_at": lambda: datetime.now(timezone.utc),
+        "status": "open",
+        "priority": "medium",
+        "success_criteria": [],
+        "created_by_name": "System",
+        "created_at": lambda: datetime.now(timezone.utc),
+        "updated_at": lambda: datetime.now(timezone.utc),
+    },
+    "retention_recommendations": {
+        "title": "Retention recommendation",
+        "rationale": "Recommended from deterministic account posture.",
+        "severity": "medium",
+        "recommended_action": "Review with account owner.",
+        "source_context": "deterministic",
+        "status": "recommended",
+        "created_at": lambda: datetime.now(timezone.utc),
+        "updated_at": lambda: datetime.now(timezone.utc),
+    },
+    "notification_trigger_configs": {
+        "label": "Notification trigger",
+        "default_mode": "in_app",
+        "default_digest_cadence": "daily",
+        "supported_channels": ["in_app"],
+        "mandatory": False,
+        "is_active": True,
+        "created_at": lambda: datetime.now(timezone.utc),
+        "updated_at": lambda: datetime.now(timezone.utc),
+    },
+    "notification_preferences": {
+        "mode": "in_app",
+        "digest_cadence": "daily",
+        "policy_override": False,
+        "created_at": lambda: datetime.now(timezone.utc),
+        "updated_at": lambda: datetime.now(timezone.utc),
+    },
+    "notification_records": {
+        "recipient_name": "User",
+        "title": "Notification",
+        "body": "",
+        "priority": "medium",
+        "channel": "in_app",
+        "delivery_status": "queued",
+        "delivery_metadata_json": {},
+        "deduplication_key": "notification",
+        "email_queued": False,
+        "retry_count": 0,
+        "created_at": lambda: datetime.now(timezone.utc),
+    },
+    "sla_rules": {
+        "name": "SLA rule",
+        "item_type": "signal",
+        "inactivity_minutes": 1440,
+        "qualifying_activities": [],
+        "recipient_policy": "kam_head",
+        "is_active": True,
+        "created_at": lambda: datetime.now(timezone.utc),
+        "updated_at": lambda: datetime.now(timezone.utc),
+    },
+    "sla_escalated_items": {
+        "source_type": "signal",
+        "source_record_id": "source",
+        "title": "Escalated item",
+        "escalated_at": lambda: datetime.now(timezone.utc),
+        "sla_window_key": "window",
+        "state": "escalated",
+        "deduplication_key": "sla",
+        "created_at": lambda: datetime.now(timezone.utc),
+        "updated_at": lambda: datetime.now(timezone.utc),
+    },
+    "digest_schedules": {
+        "name": "Executive digest",
+        "owner_name": "System",
+        "cadence": "weekly",
+        "timezone": "UTC",
+        "recipients_json": [],
+        "sections_json": [],
+        "filters_json": {},
+        "delivery_channels": ["in_app"],
+        "is_active": True,
+        "created_at": lambda: datetime.now(timezone.utc),
+        "updated_at": lambda: datetime.now(timezone.utc),
+    },
+    "digest_runs": {
+        "title": "Executive digest",
+        "status": "generated",
+        "recipients_json": [],
+        "sections_json": [],
+        "content_json": {},
+        "redactions_json": {},
+        "delivery_attempts_json": [],
+        "generated_by_name": "System",
+        "generated_at": lambda: datetime.now(timezone.utc),
+        "created_at": lambda: datetime.now(timezone.utc),
+    },
+    "report_definitions": {
+        "owner_name": "System",
+        "name": "Report",
+        "visibility": "private",
+        "data_source": "accounts",
+        "fields_json": [],
+        "filters_json": {},
+        "grouping_json": [],
+        "layout_json": {},
+        "export_format": "csv",
+        "created_at": lambda: datetime.now(timezone.utc),
+        "updated_at": lambda: datetime.now(timezone.utc),
+    },
+    "report_schedules": {
+        "owner_name": "System",
+        "cadence": "weekly",
+        "timezone": "UTC",
+        "recipients_json": [],
+        "delivery_channels": ["in_app"],
+        "is_active": True,
+        "created_at": lambda: datetime.now(timezone.utc),
+        "updated_at": lambda: datetime.now(timezone.utc),
+    },
+    "report_runs": {
+        "status": "generated",
+        "export_format": "csv",
+        "content_json": {},
+        "storage_metadata_json": {},
+        "permission_scope_json": {},
+        "recipients_json": [],
+        "generated_by_name": "System",
+        "generated_at": lambda: datetime.now(timezone.utc),
+        "created_at": lambda: datetime.now(timezone.utc),
+    },
+    "scheduled_worker_runs": {
+        "job_type": "scheduler",
+        "mode": "scheduled",
+        "status": "complete",
+        "matched_count": 0,
+        "affected_count": 0,
+        "actor_name": "System",
+        "metadata_json": {},
+        "started_at": lambda: datetime.now(timezone.utc),
+        "created_at": lambda: datetime.now(timezone.utc),
+    },
+    "integration_connections": {
+        "enabled": False,
+        "status": "configuration_required",
+        "auth_type": "api_key",
+        "settings_json": {},
+        "scopes": [],
+        "failure_count": 0,
+        "created_at": lambda: datetime.now(timezone.utc),
+        "updated_at": lambda: datetime.now(timezone.utc),
+    },
+    "integration_sync_runs": {
+        "trigger_type": "manual",
+        "status": "running",
+        "retry_count": 0,
+        "created_count": 0,
+        "updated_count": 0,
+        "skipped_count": 0,
+        "error_count": 0,
+        "metadata_json": {},
+        "started_at": lambda: datetime.now(timezone.utc),
+    },
+    "integration_mapping_rules": {
+        "source_field": "title",
+        "priority": 100,
+        "is_active": True,
+        "created_at": lambda: datetime.now(timezone.utc),
+        "updated_at": lambda: datetime.now(timezone.utc),
+    },
+    "integration_imported_items": {
+        "mapping_status": "unmapped",
+        "review_status": "pending",
+        "review_required": True,
+        "sanitized_payload_json": {},
+        "created_at": lambda: datetime.now(timezone.utc),
+        "updated_at": lambda: datetime.now(timezone.utc),
+    },
+    "fathom_task_suggestions": {
+        "status": "pending",
+        "created_at": lambda: datetime.now(timezone.utc),
+        "updated_at": lambda: datetime.now(timezone.utc),
+    },
+    "csat_scores": {
+        "score": 0,
+        "scale_min": 1,
+        "scale_max": 5,
+        "normalized_score": 0,
+        "category_scores_json": {},
+        "category_weights_json": {},
+        "weighted_score": 0,
+        "source_label": "manual",
+        "source_id": "manual",
+        "source_recorded_at": lambda: datetime.now(timezone.utc),
+        "freshness_status": "fresh",
+        "score_impact_json": {},
+        "trend_json": {},
+        "created_by_name": "System",
+        "created_at": lambda: datetime.now(timezone.utc),
+        "updated_at": lambda: datetime.now(timezone.utc),
+    },
+    "ai_gateway_runs": {
+        "request_type": "gateway_health_check",
+        "status": "complete",
+        "permission_scope_json": {},
+        "source_context_json": [],
+        "research_sources_json": [],
+        "response_labels_json": [],
+        "usage_json": {},
+        "affected_records_json": [],
+        "created_at": lambda: datetime.now(timezone.utc),
+    },
+}
+_JSON_BACKFILL_COLUMNS = {
+    "service_lines",
+    "source_links",
+    "risks",
+    "drivers",
+    "contributions",
+    "thresholds",
+    "formula",
+    "freshness_rule",
+    "config_json",
+    "values_json",
+    "evidence_json",
+    "reason_codes",
+    "source_context",
+    "result_json",
+    "condition_json",
+    "owner_rule_json",
+    "sla_rule_json",
+    "metadata_json",
+    "tags",
+    "mentions",
+    "attachments",
+    "critical_rule_json",
+    "redacted_metadata_json",
+    "selected_sections",
+    "source_set_json",
+    "redaction_summary",
+    "citations_json",
+    "content_json",
+    "export_metadata_json",
+    "share_metadata_json",
+    "scopes",
+    "source_ids",
+    "redactions",
+    "signal_types",
+    "weak_metrics",
+    "activities_json",
+    "due_date_rule",
+    "success_criteria",
+    "skip_rules",
+    "skipped_activity_ids",
+    "skip_reasons",
+    "template_snapshot",
+    "citations_json",
+    "evidence",
+    "condition_json",
+    "risks",
+    "commitments",
+    "service_gaps",
+    "snapshot_json",
+    "tags",
+    "success_criteria",
+    "supported_channels",
+    "delivery_metadata_json",
+    "qualifying_activities",
+    "recipients_json",
+    "sections_json",
+    "filters_json",
+    "delivery_channels",
+    "content_json",
+    "redactions_json",
+    "delivery_attempts_json",
+    "fields_json",
+    "grouping_json",
+    "layout_json",
+    "storage_metadata_json",
+    "permission_scope_json",
+    "settings_json",
+    "scopes",
+    "metadata_json",
+    "sanitized_payload_json",
+    "score_impact_json",
+    "trend_json",
+    "permission_scope_json",
+    "source_context_json",
+    "research_sources_json",
+    "response_labels_json",
+    "usage_json",
+    "affected_records_json",
+    "category_scores_json",
+    "category_weights_json",
+    "metadata_json",
+}
+_LEGACY_TABLE_BACKFILL_DEFAULTS: dict[str, dict[str, Any]] = {
+    "engagements": {
+        "source_document_links": [],
+        "attachments": [],
+        "activity_notes": [],
+        "escalation_notes": [],
+        "health_drivers": [],
+        "health_freshness": "fresh",
+        "health_dirty": False,
+        "health_contribution": 0,
+    },
+    "engagement_health_snapshots": {
+        "score": 0,
+        "freshness": "fresh",
+        "contribution_to_account_health": 0,
+        "formula_version": "engagement-v1",
+        "dirty": False,
+        "metric_inputs": [],
+    },
+}
+_LEGACY_JSON_COLUMNS = {
+    "source_document_links",
+    "attachments",
+    "activity_notes",
+    "escalation_notes",
+    "health_drivers",
+    "metric_inputs",
+}
+
+
+class Base(DeclarativeBase):
+    pass
+
+
+def get_db() -> Generator[Session, None, None]:
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
+
+
+def init_db() -> None:
+    from app import models  # noqa: F401
+
+    Base.metadata.create_all(bind=engine)
+    apply_additive_migrations()
+    sync_playbooks_tasks_schema()
+    sync_legacy_governance_schema()
+
+
+def sync_playbooks_tasks_schema() -> None:
+    """Convert older local playbook/task columns that auto-migration cannot type-change."""
+    if engine.dialect.name != "postgresql":
+        return
+
+    inspector = inspect(engine)
+    if not inspector.has_table("playbook_templates"):
+        return
+
+    columns = {column["name"]: column for column in inspector.get_columns("playbook_templates")}
+    with engine.begin() as connection:
+        if "slug" in columns:
+            connection.execute(
+                text(
+                    """
+                    UPDATE playbook_templates
+                    SET slug = lower(regexp_replace(coalesce(nullif(name, ''), 'playbook-template'), '[^a-zA-Z0-9]+', '-', 'g')) || '-' || left(id, 8)
+                    WHERE slug IS NULL OR slug = ''
+                    """
+                )
+            )
+            connection.execute(text("ALTER TABLE playbook_templates ALTER COLUMN slug SET NOT NULL"))
+            connection.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS ux_playbook_templates_slug ON playbook_templates(slug)"))
+        if "activities_json" in columns:
+            connection.execute(text("UPDATE playbook_templates SET activities_json = '[]'::jsonb WHERE activities_json IS NULL"))
+            connection.execute(text("ALTER TABLE playbook_templates ALTER COLUMN activities_json SET DEFAULT '[]'::jsonb"))
+            connection.execute(text("ALTER TABLE playbook_templates ALTER COLUMN activities_json SET NOT NULL"))
+        if "status" in columns:
+            connection.execute(text("UPDATE playbook_templates SET status = CASE WHEN is_active THEN 'active' ELSE 'inactive' END WHERE status IS NULL OR status = ''"))
+            connection.execute(text("ALTER TABLE playbook_templates ALTER COLUMN status SET DEFAULT 'active'"))
+            connection.execute(text("ALTER TABLE playbook_templates ALTER COLUMN status SET NOT NULL"))
+        if "current_version" in columns:
+            connection.execute(text("UPDATE playbook_templates SET current_version = coalesce(nullif(version, 0), 1) WHERE current_version IS NULL OR current_version = 0"))
+            connection.execute(text("ALTER TABLE playbook_templates ALTER COLUMN current_version SET DEFAULT 1"))
+            connection.execute(text("ALTER TABLE playbook_templates ALTER COLUMN current_version SET NOT NULL"))
+
+        owner_rule_column = columns.get("default_owner_rule")
+        if owner_rule_column is not None and "json" in str(owner_rule_column.get("type", "")).lower():
+            connection.execute(
+                text(
+                    """
+                    ALTER TABLE playbook_templates
+                    ALTER COLUMN default_owner_rule DROP DEFAULT,
+                    ALTER COLUMN default_owner_rule TYPE VARCHAR(80)
+                    USING CASE
+                        WHEN default_owner_rule IS NULL THEN 'account_primary_am'
+                        WHEN jsonb_typeof(default_owner_rule::jsonb) = 'string' THEN trim(both '"' from default_owner_rule::text)
+                        WHEN default_owner_rule::jsonb ? 'default' THEN
+                            CASE
+                                WHEN default_owner_rule::jsonb ->> 'default' = 'primary_am' THEN 'account_primary_am'
+                                ELSE default_owner_rule::jsonb ->> 'default'
+                            END
+                        ELSE 'account_primary_am'
+                    END,
+                    ALTER COLUMN default_owner_rule SET DEFAULT 'account_primary_am'
+                    """
+                )
+            )
+
+
+def sync_legacy_governance_schema() -> None:
+    """Nudge older local governance tables toward the merged development shape."""
+    if engine.dialect.name != "postgresql":
+        return
+
+    inspector = inspect(engine)
+    additive_columns = {
+        "governance_events": {
+            "end_at": "TIMESTAMP WITH TIME ZONE",
+            "notes": "TEXT",
+            "attendees": "JSONB",
+            "external_provider": "VARCHAR(80)",
+            "external_event_id": "VARCHAR(255)",
+            "deduplication_key": "VARCHAR(255)",
+            "mapping_confidence": "INTEGER",
+            "review_required": "BOOLEAN",
+            "recurrence_rule_id": "VARCHAR(36)",
+            "created_by_name": "VARCHAR(160)",
+        },
+        "governance_decisions": {
+            "governance_event_id": "VARCHAR(36)",
+            "timeline_entry_id": "VARCHAR(36)",
+        },
+        "governance_action_items": {
+            "governance_event_id": "VARCHAR(36)",
+            "owner_email": "VARCHAR(255)",
+            "due_at": "TIMESTAMP WITH TIME ZONE",
+            "priority": "VARCHAR(40)",
+            "completed_at": "TIMESTAMP WITH TIME ZONE",
+            "completed_by_id": "VARCHAR(36)",
+        },
+    }
+    nullable_columns = {
+        "governance_action_items": (
+            "event_id",
+            "owner_name",
+            "due_date",
+            "source",
+            "governance_event_id",
+            "due_at",
+            "priority",
+            "completed_by_id",
+        ),
+        "governance_decisions": ("event_id", "owner_name", "source", "governance_event_id"),
+        "governance_events": (
+            "attendees",
+            "created_by_name",
+            "deduplication_key",
+            "mapping_confidence",
+            "review_required",
+        ),
+    }
+
+    with engine.begin() as connection:
+        for table_name, columns_to_add in additive_columns.items():
+            if not inspector.has_table(table_name):
+                continue
+            existing = {column["name"] for column in inspector.get_columns(table_name)}
+            for column_name, column_type in columns_to_add.items():
+                if column_name not in existing:
+                    connection.execute(text(f"ALTER TABLE {table_name} ADD COLUMN {column_name} {column_type}"))
+
+        for table_name, column_names in nullable_columns.items():
+            if not inspector.has_table(table_name):
+                continue
+            columns = {column["name"]: column for column in inspector.get_columns(table_name)}
+            for column_name in column_names:
+                if column_name in columns and not columns[column_name].get("nullable", True):
+                    connection.execute(text(f"ALTER TABLE {table_name} ALTER COLUMN {column_name} DROP NOT NULL"))
+
+
+def apply_additive_migrations() -> None:
+    from app.models import (
+        AccessLog,
+        AiGatewayRun,
+        AccountHealthRollup,
+        AccountChangeAlert,
+        CsatScore,
+        Engagement,
+        EngagementHealthSnapshot,
+        FathomTaskSuggestion,
+        FieldPermission,
+        ConfigurationChange,
+        IntegrationConnection,
+        IntegrationImportedItem,
+        IntegrationMappingRule,
+        IntegrationSyncRun,
+        ManualScoreSubmission,
+        PlaybookExecution,
+        PlaybookTemplate,
+        PlaybookTemplateActivity,
+        ScoreSnapshot,
+        ScoringJob,
+        ScoringMetricDefinition,
+        ScoringMetricVersion,
+        Signal,
+        SignalEvent,
+        SignalRule,
+        OpportunityStageDefinition,
+        AccountPlan,
+        AccountPlanAction,
+        AccountPlanVersion,
+        AccountWhitespaceItem,
+        EngagementRenewalProfile,
+        OpportunityStageTransition,
+        RetentionPlan,
+        RetentionPlanAction,
+        RetentionPlanMilestone,
+        RetentionRecommendation,
+        ServiceAdjacencyRule,
+        ServiceCatalogItem,
+        ServiceRecommendation,
+        Task,
+        TaskEvidence,
+        Stakeholder,
+        StakeholderCoverageGap,
+        StakeholderGapRule,
+        StakeholderInteraction,
+        StakeholderRoleConfig,
+        TimelineEntry,
+        TimelineEventTypeConfig,
+        TimelineComment,
+        TimelineRetentionPolicy,
+        TimelineRetentionAction,
+        TimelineTombstone,
+        HandoverSummary,
+        HandoverShare,
+        TimelineAiSearchAudit,
+        NotificationTriggerConfig,
+        NotificationPreference,
+        NotificationRecord,
+        SlaRule,
+        SlaEscalatedItem,
+        DigestSchedule,
+        DigestRun,
+        ReportDefinition,
+        ReportSchedule,
+        ReportRun,
+        ScheduledWorkerRun,
+        User,
+    )
+
+    migrate_missing_columns(
+        [
+            User.__table__,
+            FieldPermission.__table__,
+            ConfigurationChange.__table__,
+            Engagement.__table__,
+            EngagementHealthSnapshot.__table__,
+            AccountHealthRollup.__table__,
+            AccountChangeAlert.__table__,
+            TimelineEntry.__table__,
+            ScoringMetricDefinition.__table__,
+            ScoringMetricVersion.__table__,
+            ManualScoreSubmission.__table__,
+            ScoreSnapshot.__table__,
+            ScoringJob.__table__,
+            SignalRule.__table__,
+            Signal.__table__,
+            SignalEvent.__table__,
+            PlaybookTemplate.__table__,
+            PlaybookTemplateActivity.__table__,
+            PlaybookExecution.__table__,
+            Task.__table__,
+            TaskEvidence.__table__,
+            Stakeholder.__table__,
+            StakeholderInteraction.__table__,
+            StakeholderCoverageGap.__table__,
+            StakeholderRoleConfig.__table__,
+            StakeholderGapRule.__table__,
+            OpportunityStageDefinition.__table__,
+            OpportunityStageTransition.__table__,
+            AccountPlan.__table__,
+            AccountPlanVersion.__table__,
+            AccountPlanAction.__table__,
+            ServiceCatalogItem.__table__,
+            ServiceAdjacencyRule.__table__,
+            AccountWhitespaceItem.__table__,
+            ServiceRecommendation.__table__,
+            EngagementRenewalProfile.__table__,
+            RetentionPlan.__table__,
+            RetentionPlanMilestone.__table__,
+            RetentionPlanAction.__table__,
+            RetentionRecommendation.__table__,
+            TimelineEventTypeConfig.__table__,
+            TimelineComment.__table__,
+            TimelineRetentionPolicy.__table__,
+            TimelineRetentionAction.__table__,
+            TimelineTombstone.__table__,
+            HandoverSummary.__table__,
+            HandoverShare.__table__,
+            TimelineAiSearchAudit.__table__,
+            NotificationTriggerConfig.__table__,
+            NotificationPreference.__table__,
+            NotificationRecord.__table__,
+            SlaRule.__table__,
+            SlaEscalatedItem.__table__,
+            DigestSchedule.__table__,
+            DigestRun.__table__,
+            ReportDefinition.__table__,
+            ReportSchedule.__table__,
+            ReportRun.__table__,
+            ScheduledWorkerRun.__table__,
+            AccessLog.__table__,
+            IntegrationConnection.__table__,
+            IntegrationSyncRun.__table__,
+            IntegrationMappingRule.__table__,
+            IntegrationImportedItem.__table__,
+            FathomTaskSuggestion.__table__,
+            CsatScore.__table__,
+            AiGatewayRun.__table__,
+        ]
+    )
+    backfill_user_primary_calendar_ids()
+    normalize_task_statuses()
+    encrypt_existing_integration_credentials()
+
+
+def backfill_user_primary_calendar_ids() -> None:
+    with engine.begin() as connection:
+        inspector = inspect(connection)
+        if not inspector.has_table("users"):
+            return
+        columns = {column["name"] for column in inspector.get_columns("users")}
+        if "primary_google_calendar_id" not in columns:
+            return
+        if connection.dialect.name == "postgresql":
+            connection.execute(text("UPDATE users SET primary_google_calendar_id = email WHERE primary_google_calendar_id IS NULL OR primary_google_calendar_id = ''"))
+        else:
+            connection.execute(text("UPDATE users SET primary_google_calendar_id = email WHERE primary_google_calendar_id IS NULL OR primary_google_calendar_id = ''"))
+
+
+def normalize_task_statuses() -> None:
+    with engine.begin() as connection:
+        inspector = inspect(connection)
+        if not inspector.has_table("tasks"):
+            return
+        columns = {column["name"] for column in inspector.get_columns("tasks")}
+        if "status" not in columns:
+            return
+        connection.execute(text("UPDATE tasks SET status = 'open' WHERE status = 'todo'"))
+        connection.execute(text("UPDATE tasks SET status = 'cancelled' WHERE status = 'skipped'"))
+
+
+def encrypt_existing_integration_credentials() -> None:
+    from app.models import IntegrationConnection
+    from app.services.secret_encryption import encrypt_credentials
+
+    db = SessionLocal()
+    try:
+        changed = False
+        for connection in db.scalars(select(IntegrationConnection)).all():
+            encrypted = encrypt_credentials(connection.credentials_json)
+            if encrypted != connection.credentials_json:
+                connection.credentials_json = encrypted
+                changed = True
+        if changed:
+            db.commit()
+    finally:
+        db.close()
+
+
+def migrate_missing_columns(tables: list) -> None:
+    with engine.begin() as connection:
+        inspector = inspect(connection)
+        existing_tables = set(inspector.get_table_names())
+        for table in tables:
+            if table.name not in existing_tables:
+                continue
+            existing_column_info = {column["name"]: column for column in inspector.get_columns(table.name)}
+            existing_columns = set(existing_column_info)
+            for column in table.columns:
+                if column.name in existing_columns:
+                    continue
+                column_definition = nullable_column_definition(column)
+                table_name = quote_identifier(connection, table.name)
+                connection.execute(text(f"ALTER TABLE {table_name} ADD COLUMN {column_definition}"))
+                backfill_missing_column(connection, table.name, column)
+                enforce_not_null_if_safe(connection, table.name, column)
+                existing_columns.add(column.name)
+            for column in table.columns:
+                if column.name not in existing_columns or column.nullable:
+                    continue
+                column_info = existing_column_info.get(column.name, {})
+                if column_info.get("nullable") is not True:
+                    continue
+                if column.name not in _TABLE_BACKFILL_DEFAULTS.get(table.name, {}):
+                    continue
+                backfill_missing_column(connection, table.name, column)
+                enforce_not_null_if_safe(connection, table.name, column)
+            relax_nullable_columns(connection, table, existing_columns, existing_column_info)
+            normalize_legacy_columns(connection, table.name, existing_columns, existing_column_info)
+            existing_indexes = {index["name"] for index in inspector.get_indexes(table.name)}
+            for index in table.indexes:
+                if index.name in existing_indexes:
+                    continue
+                index_columns = {column.name for column in index.columns}
+                if not index_columns.issubset(existing_columns):
+                    continue
+                connection.execute(CreateIndex(index))
+
+
+def relax_nullable_columns(connection: Any, table: Any, existing_columns: set[str], existing_column_info: dict[str, Any]) -> None:
+    if connection.dialect.name != "postgresql":
+        return
+
+    quoted_table_name = quote_identifier(connection, table.name)
+    for column in table.columns:
+        if column.name not in existing_columns or not column.nullable:
+            continue
+        if existing_column_info.get(column.name, {}).get("nullable") is not False:
+            continue
+        quoted_column_name = quote_identifier(connection, column.name)
+        connection.execute(text(f"ALTER TABLE {quoted_table_name} ALTER COLUMN {quoted_column_name} DROP NOT NULL"))
+
+
+def normalize_legacy_columns(
+    connection: Any,
+    table_name: str,
+    existing_columns: set[str],
+    existing_column_info: dict[str, Any],
+) -> None:
+    for column_name, default in _LEGACY_TABLE_BACKFILL_DEFAULTS.get(table_name, {}).items():
+        if column_name not in existing_columns:
+            continue
+        backfill_legacy_column(connection, table_name, column_name, existing_column_info.get(column_name), default)
+
+    if table_name == "engagements" and "source_document_links" in existing_columns and "source_links" in existing_columns:
+        copy_legacy_source_links(connection, table_name)
+    if table_name == "engagement_health_snapshots":
+        copy_legacy_health_snapshot_values(connection, table_name, existing_columns)
+
+
+def backfill_legacy_column(connection: Any, table_name: str, column_name: str, column_info: Any, default: Any) -> None:
+    quoted_table_name = quote_identifier(connection, table_name)
+    quoted_column_name = quote_identifier(connection, column_name)
+
+    if connection.dialect.name == "postgresql":
+        default_literal = default_literal_for_column(column_info, default, as_json=column_name in _LEGACY_JSON_COLUMNS)
+        connection.execute(text(f"UPDATE {quoted_table_name} SET {quoted_column_name} = {default_literal} WHERE {quoted_column_name} IS NULL"))
+        connection.execute(text(f"ALTER TABLE {quoted_table_name} ALTER COLUMN {quoted_column_name} SET DEFAULT {default_literal}"))
+        connection.execute(text(f"ALTER TABLE {quoted_table_name} ALTER COLUMN {quoted_column_name} DROP NOT NULL"))
+        return
+
+    connection.execute(
+        text(
+            f"UPDATE {quoted_table_name} "
+            f"SET {quoted_column_name} = :value "
+            f"WHERE {quoted_column_name} IS NULL"
+        ),
+        {"value": json.dumps(default)},
+    )
+
+
+def copy_legacy_health_snapshot_values(connection: Any, table_name: str, existing_columns: set[str]) -> None:
+    copy_legacy_column_value(connection, table_name, existing_columns, target="overall", source="score", fallback=0)
+    copy_legacy_column_value(connection, table_name, existing_columns, target="freshness_status", source="freshness", fallback="fresh")
+    copy_legacy_column_value(connection, table_name, existing_columns, target="is_dirty", source="dirty", fallback=False)
+    copy_legacy_column_value(connection, table_name, existing_columns, target="contribution", source="contribution_to_account_health", fallback=0)
+    copy_legacy_column_value(connection, table_name, existing_columns, target="metric_version", source="formula_version", fallback="engagement-v1")
+
+
+def copy_legacy_column_value(connection: Any, table_name: str, existing_columns: set[str], *, target: str, source: str, fallback: Any) -> None:
+    if connection.dialect.name != "postgresql" or target not in existing_columns or source not in existing_columns:
+        return
+    quoted_table_name = quote_identifier(connection, table_name)
+    target_column = quote_identifier(connection, target)
+    source_column = quote_identifier(connection, source)
+    condition = fallback_condition_for_column(target_column, source_column, fallback)
+    connection.execute(text(f"UPDATE {quoted_table_name} SET {target_column} = {source_column} WHERE {source_column} IS NOT NULL AND {condition}"))
+
+
+def fallback_condition_for_column(target_column: str, source_column: str, fallback: Any) -> str:
+    if isinstance(fallback, bool):
+        return f"{target_column} IS NULL OR ({target_column} IS false AND {source_column} IS true)"
+    if isinstance(fallback, (int, float)):
+        return f"{target_column} IS NULL OR ({target_column} = {fallback} AND {source_column} <> {fallback})"
+    value = str(fallback).replace("'", "''")
+    return f"{target_column} IS NULL OR ({target_column} = '{value}' AND {source_column} <> '{value}')"
+
+
+def copy_legacy_source_links(connection: Any, table_name: str) -> None:
+    quoted_table_name = quote_identifier(connection, table_name)
+    source_links = quote_identifier(connection, "source_links")
+    legacy_links = quote_identifier(connection, "source_document_links")
+    empty_source_links = (
+        f"({source_links} IS NULL OR {source_links}::text IN ('[]', 'null'))"
+        if connection.dialect.name == "postgresql"
+        else f"({source_links} IS NULL OR {source_links} IN ('[]', 'null'))"
+    )
+    connection.execute(
+        text(
+            f"UPDATE {quoted_table_name} "
+            f"SET {source_links} = {legacy_links} "
+            f"WHERE {legacy_links} IS NOT NULL AND {empty_source_links}"
+        )
+    )
+
+
+def default_literal_for_column(column_info: Any, default: Any, *, as_json: bool = False) -> str:
+    type_name = str((column_info or {}).get("type", "")).lower()
+    value = json.dumps(default).replace("'", "''") if as_json else str(default).replace("'", "''")
+    if "jsonb" in type_name:
+        return f"'{value}'::jsonb"
+    if "json" in type_name:
+        return f"'{value}'::json"
+    if "bool" in type_name or type_name == "boolean":
+        return "true" if bool(default) else "false"
+    if any(numeric_type in type_name for numeric_type in ("integer", "numeric", "double", "real")):
+        return str(default)
+    return f"'{value}'"
+
+
+def nullable_column_definition(column: Any) -> str:
+    column_copy = column._copy()
+    column_copy.nullable = True
+    column_copy.primary_key = False
+    return str(CreateColumn(column_copy).compile(dialect=engine.dialect))
+
+
+def backfill_missing_column(connection: Any, table_name: str, column: Any) -> None:
+    default = _TABLE_BACKFILL_DEFAULTS.get(table_name, {}).get(column.name, _MISSING)
+    if default is _MISSING:
+        return
+
+    value = default() if callable(default) else default
+    quoted_table_name = quote_identifier(connection, table_name)
+    quoted_column_name = quote_identifier(connection, column.name)
+
+    if column.name in _JSON_BACKFILL_COLUMNS:
+        value = json.dumps(value)
+        if connection.dialect.name == "postgresql":
+            connection.execute(
+                text(
+                    f"UPDATE {quoted_table_name} "
+                    f"SET {quoted_column_name} = CAST(:value AS JSON) "
+                    f"WHERE {quoted_column_name} IS NULL"
+                ),
+                {"value": value},
+            )
+            return
+
+    connection.execute(
+        text(
+            f"UPDATE {quoted_table_name} "
+            f"SET {quoted_column_name} = :value "
+            f"WHERE {quoted_column_name} IS NULL"
+        ),
+        {"value": value},
+    )
+
+
+def enforce_not_null_if_safe(connection: Any, table_name: str, column: Any) -> None:
+    if column.nullable or connection.dialect.name != "postgresql":
+        return
+    if column.name not in _TABLE_BACKFILL_DEFAULTS.get(table_name, {}) and not table_is_empty(connection, table_name):
+        return
+
+    quoted_table_name = quote_identifier(connection, table_name)
+    quoted_column_name = quote_identifier(connection, column.name)
+    connection.execute(
+        text(f"ALTER TABLE {quoted_table_name} ALTER COLUMN {quoted_column_name} SET NOT NULL")
+    )
+
+
+def table_is_empty(connection: Any, table_name: str) -> bool:
+    quoted_table_name = quote_identifier(connection, table_name)
+    result = connection.execute(text(f"SELECT 1 FROM {quoted_table_name} LIMIT 1"))
+    return result.first() is None
+
+
+def quote_identifier(connection: Any, identifier: str) -> str:
+    return connection.dialect.identifier_preparer.quote(identifier)
