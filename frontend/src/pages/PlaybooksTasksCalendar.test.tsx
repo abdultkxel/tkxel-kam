@@ -117,7 +117,7 @@ describe('playbooks, tasks, and calendar UI', () => {
 
     render(<Playbook />, { wrapper: MemoryRouter })
 
-    expect(await screen.findByText('Renewal readiness recovery')).toBeInTheDocument()
+    expect(await screen.findAllByText('Renewal readiness recovery')).not.toHaveLength(0)
     await userEvent.clear(screen.getByPlaceholderText('relationship_gap'))
     await userEvent.type(screen.getByPlaceholderText('relationship_gap'), 'notice_window')
     await waitFor(() => expect(fetchMock.mock.calls.some(call => String(call[0]).includes('signal_type=notice_window'))).toBe(true))

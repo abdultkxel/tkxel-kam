@@ -16,10 +16,14 @@ from app.schemas import (
     OpportunityDecisionPageRead,
     OpportunityDecisionRead,
     OpportunityPageRead,
+    OpportunityStageDefinitionCreateRequest,
     OpportunityRead,
     OpportunityStageDefinitionRead,
+    OpportunityStageDefinitionUpdateRequest,
+    OpportunityStageTransitionConfigRead,
     OpportunityStageTransitionRead,
     OpportunityStageTransitionRequest,
+    OpportunityStageTransitionsUpdateRequest,
     OpportunityTypeCreateRequest,
     OpportunityTypePageRead,
     OpportunityTypeRead,
@@ -271,3 +275,54 @@ def update_opportunity_type(type_id: str, payload: OpportunityTypeUpdateRequest,
 )
 def delete_opportunity_type(type_id: str, current_user: Annotated[User, Depends(get_current_user)], service: Annotated[OpportunityService, Depends(get_opportunity_service)]) -> MessageResponse:
     return service.delete_type(type_id, current_user)
+
+
+@router.get(
+    "/admin/opportunity-stages",
+    response_model=list[OpportunityStageDefinitionRead],
+    summary="List admin opportunity stages",
+    description="Admin/KAM Head stage taxonomy with terminal-state and outcome-reason configuration.",
+)
+def list_admin_opportunity_stages(current_user: Annotated[User, Depends(get_current_user)], service: Annotated[OpportunityService, Depends(get_opportunity_service)]) -> list[OpportunityStageDefinitionRead]:
+    return service.list_admin_stages(current_user)
+
+
+@router.post(
+    "/admin/opportunity-stages",
+    response_model=OpportunityStageDefinitionRead,
+    status_code=status.HTTP_201_CREATED,
+    summary="Create opportunity stage",
+    description="Creates an opportunity stage for board/list controls and configured transition validation.",
+)
+def create_opportunity_stage(payload: OpportunityStageDefinitionCreateRequest, current_user: Annotated[User, Depends(get_current_user)], service: Annotated[OpportunityService, Depends(get_opportunity_service)]) -> OpportunityStageDefinitionRead:
+    return service.create_stage(payload, current_user)
+
+
+@router.patch(
+    "/admin/opportunity-stages/{stage_id}",
+    response_model=OpportunityStageDefinitionRead,
+    summary="Update opportunity stage",
+    description="Updates an opportunity stage, including active state, terminal marker, and outcome-reason requirement.",
+)
+def update_opportunity_stage(stage_id: str, payload: OpportunityStageDefinitionUpdateRequest, current_user: Annotated[User, Depends(get_current_user)], service: Annotated[OpportunityService, Depends(get_opportunity_service)]) -> OpportunityStageDefinitionRead:
+    return service.update_stage(stage_id, payload, current_user)
+
+
+@router.get(
+    "/admin/opportunity-stage-transitions",
+    response_model=list[OpportunityStageTransitionConfigRead],
+    summary="List opportunity stage transitions",
+    description="Returns configured allowed stage transitions used by opportunity board/list movement validation.",
+)
+def list_opportunity_stage_transitions(current_user: Annotated[User, Depends(get_current_user)], service: Annotated[OpportunityService, Depends(get_opportunity_service)]) -> list[OpportunityStageTransitionConfigRead]:
+    return service.list_stage_transitions(current_user)
+
+
+@router.put(
+    "/admin/opportunity-stage-transitions",
+    response_model=list[OpportunityStageTransitionConfigRead],
+    summary="Replace opportunity stage transitions",
+    description="Replaces configured allowed opportunity stage transitions after validating source and target stages.",
+)
+def replace_opportunity_stage_transitions(payload: OpportunityStageTransitionsUpdateRequest, current_user: Annotated[User, Depends(get_current_user)], service: Annotated[OpportunityService, Depends(get_opportunity_service)]) -> list[OpportunityStageTransitionConfigRead]:
+    return service.replace_stage_transitions(payload, current_user)

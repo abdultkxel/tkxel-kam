@@ -11,6 +11,7 @@ from app.repositories.users import UserRepository
 from app.security import decode_access_token
 from app.services.auth import AuthService
 from app.services.accounts import AccountService
+from app.services.account_planning import AccountPlanningService
 from app.services.content import ContentService
 from app.services.custom_fields import CustomFieldService
 from app.services.email_domains import EmailDomainPolicyService
@@ -24,9 +25,12 @@ from app.services.playbooks_tasks import PlaybooksTasksService
 from app.services.profile import ProfileService
 from app.services.rbac import RbacService
 from app.services.scoring import ScoringService
+from app.services.service_catalog import ServiceCatalogService
 from app.services.signals import SignalsService
 from app.services.stakeholder_gap_service import StakeholderGapService
+from app.services.stakeholder_config import StakeholderConfigService
 from app.services.stakeholders import StakeholderService
+from app.services.retention import RetentionService
 from app.services.user_management import UserManagementService
 
 bearer_scheme = HTTPBearer(
@@ -113,12 +117,28 @@ def get_stakeholder_service(db: Annotated[Session, Depends(get_db)]) -> Stakehol
     return StakeholderService(db)
 
 
+def get_stakeholder_config_service(db: Annotated[Session, Depends(get_db)]) -> StakeholderConfigService:
+    return StakeholderConfigService(db)
+
+
 def get_stakeholder_gap_service(db: Annotated[Session, Depends(get_db)]) -> StakeholderGapService:
     return StakeholderGapService(db)
 
 
 def get_opportunity_service(db: Annotated[Session, Depends(get_db)]) -> OpportunityService:
     return OpportunityService(db)
+
+
+def get_account_planning_service(db: Annotated[Session, Depends(get_db)]) -> AccountPlanningService:
+    return AccountPlanningService(db)
+
+
+def get_service_catalog_service(db: Annotated[Session, Depends(get_db)]) -> ServiceCatalogService:
+    return ServiceCatalogService(db)
+
+
+def get_retention_service(db: Annotated[Session, Depends(get_db)]) -> RetentionService:
+    return RetentionService(db)
 
 
 def get_kyc_service(db: Annotated[Session, Depends(get_db)]) -> KycService:

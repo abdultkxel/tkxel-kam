@@ -33,17 +33,25 @@ Protect retention and grow strategic accounts by making relationships, whitespac
 - Maintain stakeholder maps at account and engagement levels.
 - Track stakeholder roles, influence, relationship strength, sentiment, political risk, and engagement history.
 - Generate stakeholder coverage gaps through configurable rules.
+- Prevent duplicate active/unresolved stakeholder coverage gaps for the same account or engagement condition.
+- Redact sensitive stakeholder fields, notes, graph nodes, and graph edges from unauthorized users.
 - Provide org-chart visualization.
 - Maintain account plan with retention focus, growth focus, risks, opportunities, commitments, service gaps, and next actions.
+- Preserve account plan history with previous values, actor, timestamp, and change summary.
 - Configure service catalog and adjacency rules.
 - Capture whitespace inputs and generate adjacency recommendations.
 - Allow whitespace inputs and adjacent-service recommendations to influence growth/opportunity scoring and account planning where configured.
 - Manage account-level and engagement-level opportunities in board and list views.
 - Configure opportunity types.
+- Seed/configure opportunity types for cross-sell, upsell, renewal, expansion, rescue/recovery, and other.
+- Track source-linked opportunity decisions and keep linked source context reachable from account timeline.
 - Track renewal readiness, renewal risk, SOW dates, notice deadlines, commercial exposure, owner, confidence, and source citation.
+- Surface renewal intelligence in Account Overview, Engagement 360, dashboards, signals, tasks, calendar, and reports where those surfaces exist.
 - Support manually entered and CSV/manual-imported commercial fields where approved integrations do not provide a source.
 - Create renewal signals, notice-window tasks, and calendar items from approved SOW terms.
 - Create retention, renewal, and stabilization plans with actions, owners, due dates, success criteria, milestones, and timeline history.
+- Keep retention, renewal, and stabilization plans visible after the renewal cycle for historical context.
+- Require explicit user confirmation before creating tasks from retention or service recommendations.
 
 ## Non-Functional Requirements
 
@@ -68,10 +76,14 @@ Protect retention and grow strategic accounts by making relationships, whitespac
 - Opportunity requires account, type, service line, owner, stage, next step, and target date.
 - Opportunity value must be non-negative.
 - Stage transition must be allowed by configuration.
+- Win/loss opportunity moves require outcome reason when configured for the target stage.
 - Renewal dates must align with approved SOW terms or manual override reason.
 - Notice deadline must be before renewal/end date.
 - CSV/manual commercial imports must validate required columns, numeric values, currency, duplicate rows, and source provenance.
 - Retention plan requires type, owner, due dates, and success criteria.
+- Retention plan action due dates cannot be after their linked renewal milestone when milestone enforcement is configured.
+- Org chart relationships must reject cycles or invalid parent/child references when hierarchical mode is configured.
+- Recommendation-to-task creation must validate a selected recommendation and explicit confirmation.
 
 ## Search Requirements
 
@@ -123,6 +135,12 @@ Protect retention and grow strategic accounts by making relationships, whitespac
 - `DELETE /api/stakeholders/{stakeholder_id}`
 - `GET /api/accounts/{account_id}/stakeholders/org-chart`
 - `GET /api/accounts/{account_id}/stakeholders/coverage-gaps`
+- `GET /api/admin/stakeholder-roles`
+- `POST /api/admin/stakeholder-roles`
+- `PATCH /api/admin/stakeholder-roles/{role_id}`
+- `GET /api/admin/stakeholder-gap-rules`
+- `POST /api/admin/stakeholder-gap-rules`
+- `PATCH /api/admin/stakeholder-gap-rules/{rule_id}`
 - `GET /api/accounts/{account_id}/plan`
 - `PUT /api/accounts/{account_id}/plan`
 - `GET /api/accounts/{account_id}/plan/history`
@@ -133,6 +151,7 @@ Protect retention and grow strategic accounts by making relationships, whitespac
 - `GET /api/accounts/{account_id}/whitespace`
 - `PUT /api/accounts/{account_id}/whitespace`
 - `GET /api/accounts/{account_id}/service-recommendations`
+- `POST /api/accounts/{account_id}/service-recommendations/{recommendation_id}/opportunity`
 - `GET /api/opportunities`
 - `POST /api/opportunities`
 - `GET /api/opportunities/{opportunity_id}`
@@ -143,6 +162,11 @@ Protect retention and grow strategic accounts by making relationships, whitespac
 - `POST /api/admin/opportunity-types`
 - `PATCH /api/admin/opportunity-types/{type_id}`
 - `DELETE /api/admin/opportunity-types/{type_id}`
+- `GET /api/admin/opportunity-stages`
+- `POST /api/admin/opportunity-stages`
+- `PATCH /api/admin/opportunity-stages/{stage_id}`
+- `PUT /api/admin/opportunity-stage-transitions`
+- `GET /api/renewals`
 - `GET /api/accounts/{account_id}/retention`
 - `PATCH /api/accounts/{account_id}/retention`
 - `GET /api/engagements/{engagement_id}/renewal`
@@ -158,11 +182,16 @@ Protect retention and grow strategic accounts by making relationships, whitespac
 - Stakeholder map/list, profile drawer, relationship editor, interaction history, org chart, and coverage gap panel.
 - Account Plan tab with editable sections and next actions.
 - Add missing Account 360 sections or clearly linked pages for stakeholder map, account plan, whitespace/service catalog recommendations, renewal intelligence, and retention plans; current frontend covers opportunities but not the full planning/relationship surface.
+- Account 360 must expose dedicated or clearly separated planning, whitespace/growth, renewal, and retention experiences instead of relying on generic notes or mock data.
+- Engagement 360 must expose renewal fields, source type, citations, manual override reason, and notice-window status.
+- Admin settings must expose stakeholder role configuration, stakeholder coverage gap rule configuration, opportunity stage/transition configuration, service catalog, and adjacency matrix management.
 - Admin service catalog and adjacency matrix screens.
 - Whitespace capture section and recommendation cards.
 - Opportunity board and list, create/edit modal, detail drawer, and pipeline totals.
+- Opportunity board moves must show a pending/saving state and only commit the visible stage change after API confirmation.
 - Renewal panel with notice badges, date fields, risk indicators, and source links.
 - Retention plan builder with milestones, task creation, and recommendation rationale.
+- Retention plan recommendation actions must allow selecting recommendations and confirming task creation before any task is created.
 
 ## Loading States
 
@@ -201,6 +230,11 @@ Protect retention and grow strategic accounts by making relationships, whitespac
 - Inactive services/types remain on historical records but hidden from new selection.
 - Deferred/lost opportunities remain in reporting.
 - Manual renewal terms must be flagged as manual.
+- Existing manual renewal terms must not silently overwrite approved SOW-derived terms without an override reason and audit entry.
+- Stakeholder coverage gap recalculation must not create duplicate unresolved gaps for the same configured rule and scope.
+- Restricted stakeholder notes and graph relationships must stay hidden even when a user can view the account.
+- Source-linked opportunity decisions must remain reachable from the account timeline even after the opportunity is won, lost, deferred, archived, or restored.
+- Retention plans must remain visible for historical cycles after renewal completion.
 - Task completion from retention plan does not automatically improve health unless source data changes.
 
 ## Missing Requirements
@@ -209,8 +243,10 @@ Protect retention and grow strategic accounts by making relationships, whitespac
 - Account plan required fields and review cadence are not specified.
 - Service catalog taxonomy and adjacency scoring formula are not specified.
 - Opportunity stage names and allowed transitions are not specified.
+- Whether opportunity win/loss outcome reason is required for every terminal stage or only configured stages is not specified.
 - Renewal risk formula and confidence scale are not specified.
 - CSV/manual commercial import schema and ownership of imported commercial values are not specified.
+- The frontend currently contains stakeholder and opportunity surfaces, but account planning, service catalog/whitespace, renewal intelligence, and retention/stabilization plan screens are missing or represented only by generic/mock sections.
 
 ## Ambiguous Requirements
 
@@ -258,3 +294,47 @@ Protect retention and grow strategic accounts by making relationships, whitespac
 - Filters/search/sort/pagination work for operational lists.
 - Sensitive and commercial data remain permission-aware.
 - Material changes are audited and timeline-linked.
+
+## Implementation Status
+
+Status date: 2026-06-02
+
+Coverage report: `specs/03-relationships-planning-growth-retention-coverage-report.md`
+
+### Completed Items
+
+- Stakeholder account/engagement maps, stakeholder list/detail surfaces, org chart, interaction history, relationship attributes, sensitive-field redaction, graph edge redaction, and hierarchy cycle validation are implemented and tested.
+- Configurable stakeholder roles and stakeholder coverage gap rules are implemented in Admin Settings and tested.
+- Duplicate unresolved stakeholder coverage gaps are prevented and tested.
+- Account plan create/update/read, next actions, plan version history, actor/timestamp/change-summary tracking, audit entries, and timeline entries are implemented and tested.
+- Service catalog, service adjacency configuration, whitespace capture, service recommendations, recommendation rationale, and recommendation-to-opportunity conversion with explicit confirmation are implemented and tested.
+- Account-level and engagement-level opportunities, board/list views, create/edit/detail flows, opportunity stage history, source context, source-linked timeline entries, opportunity type configuration, stage configuration, transition validation, and terminal outcome reason validation are implemented and tested.
+- Seed data for stakeholder roles, coverage gap rules, service catalog, adjacency rules, opportunity types, opportunity stages, and stage transitions is implemented and tested.
+- Renewal profile persistence and account-level renewal intelligence for readiness, risk, SOW dates, notice deadlines, exposure, owner, confidence, source type, and source citation are implemented and tested.
+- Retention plan persistence, plan history visibility, milestones/actions support in backend APIs, due-date validation, recommendation generation, and explicit recommendation-to-task conversion are implemented and tested.
+- Account 360 dedicated Planning, Growth, Renewal, and Retention tabs are implemented with loading, empty, and error states and tested for the confirmed retention task workflow.
+- Admin planning configuration UI for stakeholder roles, gap rules, service catalog, adjacency rules, opportunity stages, and transitions is implemented and covered by broader frontend tests.
+- Module-level RBAC for KAM, KAM Head, Leadership Viewer, Admin, and Commercial Stakeholder access is implemented and tested for the implemented surfaces.
+- Backend routers, services, repositories, schemas, database migrations, additive migration support, Swagger/OpenAPI metadata, audit logging, and timeline logging for implemented scope are complete and tested.
+
+### Remaining Items
+
+- CSV/manual commercial import endpoint, UI, validation, duplicate-row handling, currency validation, and source provenance ownership are not implemented.
+- Engagement 360 does not yet consume the richer `/api/engagements/{engagement_id}/renewal` profile for confidence, source type, source citation, manual override reason, and editable renewal intelligence; it currently exposes SOW/renewal terms and source links through the existing engagement surface.
+- Direct approved-SOW workflow for creating renewal signals, notice-window tasks, and calendar items is not implemented as a single end-to-end flow; retention recommendations can create tasks only after explicit user confirmation.
+- Retention plan milestones and actions are supported by backend APIs but do not yet have a full Account 360 frontend milestone/action editor.
+- Whitespace and adjacent-service recommendations can create opportunities and inform planning records, but they are not wired into a scoring-engine formula.
+- Dedicated stakeholder/gap sorting and account-plan action search/filter/pagination remain limited compared with the full search/filter/sort matrix.
+- Opportunity board drag/drop stage move pending state is not implemented as a separate interaction; stage changes are saved through existing API-backed detail flows.
+- Per-field commercial permissions are not implemented beyond current module-level RBAC.
+- Full tests are missing for the remaining unimplemented CSV import, rich Engagement 360 renewal editor, frontend retention milestone/action editor, and direct approved-SOW notice task/calendar flow.
+
+### Technical Notes
+
+- Database changes are captured in `backend/migrations/20260602_relationships_planning_growth_retention.sql` and additive migration support in `backend/app/database.py`.
+- Backend implementation follows repository/service/router separation through `account_planning`, `service_catalog`, `retention`, `stakeholder_config`, existing `stakeholders`, and existing `opportunities` modules.
+- Frontend implementation is centered on `frontend/src/components/account/RelationshipsPlanningGrowthRetention.tsx`, `frontend/src/components/admin/AdminRelationshipPlanningPanel.tsx`, and `frontend/src/services/relationshipsPlanning.ts`.
+- Field Builder does not currently affect account plans, service catalog, renewal profiles, or retention plans. These modules use fixed schemas plus admin-managed taxonomies. Field Builder support would require explicit module registration and `custom_field_values` persistence.
+- Recommendation-created opportunities and tasks require explicit confirmation before records are created.
+- Retention plan update and recommendation-to-task conversion rollback on validation failures to avoid partial transaction state.
+- Verification completed during Phase 3: backend compileall passed, backend pytest passed with 80 tests, frontend Vitest passed with 21 files and 47 tests, and frontend production build passed with the existing large-bundle warning.

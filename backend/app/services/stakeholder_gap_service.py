@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 from app.models import Account, Stakeholder, StakeholderCoverageGap, User, utc_now
 from app.repositories.accounts import AccountRepository
 from app.repositories.rbac import RbacRepository
+from app.repositories.stakeholder_config import StakeholderConfigRepository
 from app.repositories.stakeholder_gaps import StakeholderGapRepository
 from app.schemas import StakeholderCoverageGapRead
 from app.services.account_access import AccountAccessService
@@ -30,6 +31,7 @@ class StakeholderGapService:
         self.repository = StakeholderGapRepository(db)
         self.accounts = AccountRepository(db)
         self.rbac = RbacRepository(db)
+        self.config = StakeholderConfigRepository(db)
         self.access = AccountAccessService(self.accounts, self.rbac)
 
     def list_for_account(self, account_id: str, current_user: User) -> list[StakeholderCoverageGapRead]:
@@ -105,6 +107,13 @@ class StakeholderGapService:
         roles = {stakeholder.role for stakeholder in active_stakeholders}
         influences = {stakeholder.influence for stakeholder in active_stakeholders}
         gaps: list[DetectedStakeholderGap] = []
+        rules = self.config.list_active_rules()
+        if rules:
+            for rule in rules:
+                detected = self._detect_configured_rule(rule.rule_key, rule.title, rule.description, rule.severity, rule.condition_json or {}, account_id, active_stakeholders, latest_interaction_at, now)
+                if detected is not None:
+                    gaps.append(detected)
+            return gaps
 
         if "executive_sponsor" not in roles:
             gaps.append(
@@ -183,6 +192,66 @@ class StakeholderGapService:
             )
 
         return gaps
+
+    def _detect_configured_rule(
+        self,
+        rule_key: str,
+        title: str,
+        description: str,
+        severity: str,
+        condition: dict,
+        account_id: str,
+        active_stakeholders: list[Stakeholder],
+        latest_interaction_at: datetime | None,
+        now: datetime,
+    ) -> DetectedStakeholderGap | None:
+        condition_type = condition.get("type")
+        roles = {stakeholder.role for stakeholder in active_stakeholders}
+        influences = {stakeholder.influence for stakeholder in active_stakeholders}
+        evidence = self._coverage_evidence(account_id, active_stakeholders)
+        if condition_type == "missing_role":
+            role = condition.get("role")
+            if role and role not in roles:
+                return DetectedStakeholderGap(rule_key=rule_key, severity=severity, title=title, description=description, evidence={**evidence, "missing_role": role})
+            return None
+        if condition_type == "missing_any_role":
+            required_roles = set(condition.get("roles") or [])
+            if required_roles and not roles.intersection(required_roles):
+                return DetectedStakeholderGap(rule_key=rule_key, severity=severity, title=title, description=description, evidence={**evidence, "required_roles": sorted(required_roles)})
+            return None
+        if condition_type == "max_active_stakeholders":
+            count = int(condition.get("count") or 0)
+            if len(active_stakeholders) <= count:
+                return DetectedStakeholderGap(rule_key=rule_key, severity=severity, title=title, description=description, evidence=evidence)
+            return None
+        if condition_type == "missing_any_influence":
+            required_influences = set(condition.get("influences") or [])
+            if required_influences and not influences.intersection(required_influences):
+                return DetectedStakeholderGap(rule_key=rule_key, severity=severity, title=title, description=description, evidence={**evidence, "required_influences": sorted(required_influences)})
+            return None
+        if condition_type == "political_risk_present":
+            risk = condition.get("risk", "high")
+            risky = [stakeholder for stakeholder in active_stakeholders if stakeholder.political_risk == risk]
+            if risky:
+                return DetectedStakeholderGap(rule_key=rule_key, severity=severity, title=title, description=description, evidence={"account_id": account_id, "stakeholders": [self._stakeholder_evidence(stakeholder) for stakeholder in risky], "risk": risk})
+            return None
+        if condition_type == "stale_interaction":
+            days = int(condition.get("days") or STAKEHOLDER_INTERACTION_STALE_DAYS)
+            cutoff = now - timedelta(days=days)
+            if latest_interaction_at is None or self._as_aware(latest_interaction_at) < cutoff:
+                return DetectedStakeholderGap(
+                    rule_key=rule_key,
+                    severity=severity,
+                    title=title,
+                    description=description,
+                    evidence={
+                        "account_id": account_id,
+                        "threshold_days": days,
+                        "latest_interaction_at": latest_interaction_at.isoformat() if latest_interaction_at else None,
+                        "days_since_latest_interaction": self._days_since(latest_interaction_at, now),
+                    },
+                )
+        return None
 
     def _coverage_evidence(self, account_id: str, active_stakeholders: list[Stakeholder]) -> dict:
         return {

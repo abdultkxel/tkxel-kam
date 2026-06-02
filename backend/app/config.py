@@ -38,7 +38,7 @@ class Settings:
         self.google_calendar_redirect_uri = os.getenv("GOOGLE_CALENDAR_REDIRECT_URI", "http://127.0.0.1:8002/api/admin/integrations/google-calendar/oauth-callback")
         self.google_calendar_default_calendar_id = os.getenv("GOOGLE_CALENDAR_DEFAULT_CALENDAR_ID", "primary")
         self.google_sign_in_client_id = os.getenv("GOOGLE_SIGN_IN_CLIENT_ID", "")
-        self.allowed_email_domains = os.getenv("ALLOWED_EMAIL_DOMAINS", "tkxel.com,tkxel.io,camp1.tkxel.com")
+        self.allowed_email_domains = os.getenv("ALLOWED_EMAIL_DOMAINS", "tkxel.com,tkxel.io,camp1.tkxel.com,camp1.tkxel.io")
         self.fathom_api_key = os.getenv("FATHOM_API_KEY", "")
         self.fathom_base_url = os.getenv("FATHOM_BASE_URL", "https://api.fathom.video")
         self.fathom_recordings_path = os.getenv("FATHOM_RECORDINGS_PATH", "/recordings")

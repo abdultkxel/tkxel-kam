@@ -56,20 +56,13 @@ PlaybookOwnerRule = Literal["account_primary_am", "task_creator", "ops_lead", "t
 TaskStatus = Literal["todo", "in_progress", "done", "skipped", "blocked", "cancelled"]
 TaskPriority = Literal["low", "medium", "high", "urgent", "critical"]
 TaskEvidenceType = Literal["note", "link", "file"]
-StakeholderRole = Literal[
-    "executive_sponsor",
-    "economic_buyer",
-    "technical_decision_maker",
-    "operational_poc",
-    "commercial_owner",
-    "influencer",
-]
+StakeholderRole = str
 StakeholderInfluence = Literal["low", "medium", "high", "critical"]
 StakeholderRelationshipStrength = Literal["unknown", "weak", "developing", "strong", "champion"]
 StakeholderSentiment = Literal["negative", "neutral", "positive", "champion"]
 StakeholderPoliticalRisk = Literal["unknown", "low", "medium", "high"]
 StakeholderStatus = Literal["active", "inactive", "left_company", "do_not_contact"]
-OpportunityStage = Literal["Identified", "Qualified", "Proposal Sent", "Negotiation", "Won", "Lost"]
+OpportunityStage = str
 OpportunityActionItemStatus = Literal["open", "in_progress", "completed", "cancelled"]
 ScoringScope = Literal["account", "engagement", "portfolio"]
 MetricStatus = Literal["draft", "published", "inactive"]
@@ -2007,6 +2000,11 @@ class StakeholderCreateRequest(BaseModel):
     def phone_is_valid(cls, value: str | None) -> str | None:
         return validate_phone(value)
 
+    @field_validator("role")
+    @classmethod
+    def role_is_valid(cls, value: str) -> str:
+        return validate_slug(value, "Stakeholder role")
+
     @field_validator("notes")
     @classmethod
     def notes_are_valid(cls, value: str | None) -> str | None:
@@ -2051,6 +2049,11 @@ class StakeholderUpdateRequest(BaseModel):
     def phone_is_valid(cls, value: str | None) -> str | None:
         return validate_phone(value)
 
+    @field_validator("role")
+    @classmethod
+    def role_is_valid(cls, value: str | None) -> str | None:
+        return validate_slug(value, "Stakeholder role") if value is not None else None
+
     @field_validator("notes")
     @classmethod
     def notes_are_valid(cls, value: str | None) -> str | None:
@@ -2060,6 +2063,749 @@ class StakeholderUpdateRequest(BaseModel):
     @classmethod
     def optional_id_is_valid(cls, value: str | None) -> str | None:
         return optional_text(value, "Linked record", max_length=36)
+
+
+class StakeholderRoleConfigRead(BaseModel):
+    id: str
+    slug: str
+    name: str
+    description: str | None = None
+    is_active: bool
+    display_order: int
+    created_at: datetime
+    updated_at: datetime
+    in_use_count: int = 0
+
+
+class StakeholderRoleConfigPageRead(BaseModel):
+    items: list[StakeholderRoleConfigRead]
+    total: int
+    page: int
+    page_size: int
+    pages: int
+
+
+class StakeholderRoleConfigCreateRequest(BaseModel):
+    slug: str
+    name: str
+    description: str | None = None
+    is_active: bool = True
+    display_order: int = 0
+
+    @field_validator("slug")
+    @classmethod
+    def slug_is_valid(cls, value: str) -> str:
+        return validate_slug(value, "Stakeholder role slug")
+
+    @field_validator("name")
+    @classmethod
+    def name_is_valid(cls, value: str) -> str:
+        return validate_short_text(value, "Stakeholder role", 160)
+
+    @field_validator("description")
+    @classmethod
+    def description_is_valid(cls, value: str | None) -> str | None:
+        return validate_optional_long_text(value, "Stakeholder role description", 1000)
+
+
+class StakeholderRoleConfigUpdateRequest(BaseModel):
+    slug: str | None = None
+    name: str | None = None
+    description: str | None = None
+    is_active: bool | None = None
+    display_order: int | None = None
+
+    @field_validator("slug")
+    @classmethod
+    def slug_is_valid(cls, value: str | None) -> str | None:
+        return validate_slug(value, "Stakeholder role slug") if value is not None else None
+
+    @field_validator("name")
+    @classmethod
+    def name_is_valid(cls, value: str | None) -> str | None:
+        return validate_short_text(value, "Stakeholder role", 160) if value is not None else None
+
+    @field_validator("description")
+    @classmethod
+    def description_is_valid(cls, value: str | None) -> str | None:
+        return validate_optional_long_text(value, "Stakeholder role description", 1000)
+
+
+class StakeholderGapRuleRead(BaseModel):
+    id: str
+    rule_key: str
+    title: str
+    description: str
+    severity: str
+    condition_json: dict[str, Any]
+    is_active: bool
+    display_order: int
+    created_at: datetime
+    updated_at: datetime
+
+
+class StakeholderGapRulePageRead(BaseModel):
+    items: list[StakeholderGapRuleRead]
+    total: int
+    page: int
+    page_size: int
+    pages: int
+
+
+class StakeholderGapRuleCreateRequest(BaseModel):
+    rule_key: str
+    title: str
+    description: str
+    severity: SignalSeverity = "warning"
+    condition_json: dict[str, Any] = Field(default_factory=dict)
+    is_active: bool = True
+    display_order: int = 0
+
+    @field_validator("rule_key")
+    @classmethod
+    def rule_key_is_valid(cls, value: str) -> str:
+        return validate_slug(value, "Gap rule key")
+
+    @field_validator("title")
+    @classmethod
+    def title_is_valid(cls, value: str) -> str:
+        return validate_short_text(value, "Gap rule title", 220)
+
+    @field_validator("description")
+    @classmethod
+    def description_is_valid(cls, value: str) -> str:
+        return validate_short_text(value, "Gap rule description", 2000)
+
+
+class StakeholderGapRuleUpdateRequest(BaseModel):
+    rule_key: str | None = None
+    title: str | None = None
+    description: str | None = None
+    severity: SignalSeverity | None = None
+    condition_json: dict[str, Any] | None = None
+    is_active: bool | None = None
+    display_order: int | None = None
+
+    @field_validator("rule_key")
+    @classmethod
+    def rule_key_is_valid(cls, value: str | None) -> str | None:
+        return validate_slug(value, "Gap rule key") if value is not None else None
+
+    @field_validator("title")
+    @classmethod
+    def title_is_valid(cls, value: str | None) -> str | None:
+        return validate_short_text(value, "Gap rule title", 220) if value is not None else None
+
+    @field_validator("description")
+    @classmethod
+    def description_is_valid(cls, value: str | None) -> str | None:
+        return validate_short_text(value, "Gap rule description", 2000) if value is not None else None
+
+
+class AccountPlanActionRead(BaseModel):
+    id: str
+    account_plan_id: str
+    account_id: str
+    title: str
+    owner_id: str | None = None
+    owner_name: str
+    owner_email: EmailStr | None = None
+    due_at: datetime
+    status: str
+    priority: str
+    success_criteria: list[str] = Field(default_factory=list)
+    completed_at: datetime | None = None
+    completed_by_id: str | None = None
+    created_by_id: str | None = None
+    created_by_name: str
+    created_at: datetime
+    updated_at: datetime
+
+
+class AccountPlanActionRequest(BaseModel):
+    id: str | None = None
+    title: str
+    owner_id: str
+    due_at: datetime
+    status: str = "open"
+    priority: TaskPriority = "medium"
+    success_criteria: list[str] = Field(default_factory=list)
+
+    @field_validator("title")
+    @classmethod
+    def title_is_valid(cls, value: str) -> str:
+        return validate_short_text(value, "Plan action", 220)
+
+    @field_validator("success_criteria")
+    @classmethod
+    def success_criteria_are_valid(cls, value: list[str]) -> list[str]:
+        return validate_string_list(value, "Plan action success criteria", max_items=20)
+
+
+class AccountPlanRead(BaseModel):
+    id: str
+    account_id: str
+    retention_focus: str | None = None
+    growth_focus: str | None = None
+    risks: list[str] = Field(default_factory=list)
+    opportunities: str | None = None
+    commitments: list[str] = Field(default_factory=list)
+    service_gaps: list[str] = Field(default_factory=list)
+    review_cadence: str | None = None
+    next_review_at: datetime | None = None
+    status: str
+    created_by_id: str | None = None
+    created_by_name: str
+    updated_by_id: str | None = None
+    updated_by_name: str | None = None
+    created_at: datetime
+    updated_at: datetime
+    actions: list[AccountPlanActionRead] = Field(default_factory=list)
+
+
+class AccountPlanVersionRead(BaseModel):
+    id: str
+    account_plan_id: str
+    account_id: str
+    version: int
+    snapshot_json: dict[str, Any]
+    change_summary: str | None = None
+    actor_id: str | None = None
+    actor_name: str
+    created_at: datetime
+
+
+class AccountPlanVersionPageRead(BaseModel):
+    items: list[AccountPlanVersionRead]
+    total: int
+    page: int
+    page_size: int
+    pages: int
+
+
+class AccountPlanUpsertRequest(BaseModel):
+    retention_focus: str | None = None
+    growth_focus: str | None = None
+    risks: list[str] = Field(default_factory=list)
+    opportunities: str | None = None
+    commitments: list[str] = Field(default_factory=list)
+    service_gaps: list[str] = Field(default_factory=list)
+    review_cadence: str | None = None
+    next_review_at: datetime | None = None
+    status: str = "draft"
+    actions: list[AccountPlanActionRequest] = Field(default_factory=list)
+    change_summary: str | None = None
+
+    @field_validator("retention_focus", "growth_focus", "opportunities")
+    @classmethod
+    def long_text_is_valid(cls, value: str | None) -> str | None:
+        return validate_optional_long_text(value, "Account plan text", 4000)
+
+    @field_validator("review_cadence", "status")
+    @classmethod
+    def short_text_is_valid(cls, value: str | None) -> str | None:
+        return optional_text(value, "Account plan field", max_length=80) if value is not None else None
+
+    @field_validator("risks", "commitments", "service_gaps")
+    @classmethod
+    def string_lists_are_valid(cls, value: list[str]) -> list[str]:
+        return validate_string_list(value, "Account plan list", max_items=40)
+
+    @field_validator("change_summary")
+    @classmethod
+    def change_summary_is_valid(cls, value: str | None) -> str | None:
+        return validate_optional_long_text(value, "Change summary", 1000)
+
+
+class ServiceCatalogItemRead(BaseModel):
+    id: str
+    slug: str
+    name: str
+    category: str | None = None
+    description: str | None = None
+    tags: list[str] = Field(default_factory=list)
+    is_active: bool
+    display_order: int
+    created_at: datetime
+    updated_at: datetime
+    in_use_count: int = 0
+
+
+class ServiceCatalogPageRead(BaseModel):
+    items: list[ServiceCatalogItemRead]
+    total: int
+    page: int
+    page_size: int
+    pages: int
+
+
+class ServiceCatalogItemCreateRequest(BaseModel):
+    slug: str
+    name: str
+    category: str | None = None
+    description: str | None = None
+    tags: list[str] = Field(default_factory=list)
+    is_active: bool = True
+    display_order: int = 0
+
+    @field_validator("slug")
+    @classmethod
+    def slug_is_valid(cls, value: str) -> str:
+        return validate_slug(value, "Service slug")
+
+    @field_validator("name")
+    @classmethod
+    def name_is_valid(cls, value: str) -> str:
+        return validate_short_text(value, "Service name", 180)
+
+    @field_validator("category")
+    @classmethod
+    def category_is_valid(cls, value: str | None) -> str | None:
+        return optional_text(value, "Service category", max_length=120)
+
+    @field_validator("description")
+    @classmethod
+    def description_is_valid(cls, value: str | None) -> str | None:
+        return validate_optional_long_text(value, "Service description", 1000)
+
+    @field_validator("tags")
+    @classmethod
+    def tags_are_valid(cls, value: list[str]) -> list[str]:
+        return validate_string_list(value, "Service tags", max_items=20)
+
+
+class ServiceCatalogItemUpdateRequest(BaseModel):
+    slug: str | None = None
+    name: str | None = None
+    category: str | None = None
+    description: str | None = None
+    tags: list[str] | None = None
+    is_active: bool | None = None
+    display_order: int | None = None
+
+    @field_validator("slug")
+    @classmethod
+    def slug_is_valid(cls, value: str | None) -> str | None:
+        return validate_slug(value, "Service slug") if value is not None else None
+
+    @field_validator("name")
+    @classmethod
+    def name_is_valid(cls, value: str | None) -> str | None:
+        return validate_short_text(value, "Service name", 180) if value is not None else None
+
+    @field_validator("category")
+    @classmethod
+    def category_is_valid(cls, value: str | None) -> str | None:
+        return optional_text(value, "Service category", max_length=120)
+
+    @field_validator("description")
+    @classmethod
+    def description_is_valid(cls, value: str | None) -> str | None:
+        return validate_optional_long_text(value, "Service description", 1000)
+
+    @field_validator("tags")
+    @classmethod
+    def tags_are_valid(cls, value: list[str] | None) -> list[str] | None:
+        return validate_string_list(value, "Service tags", max_items=20) if value is not None else None
+
+
+class ServiceAdjacencyRuleRequest(BaseModel):
+    source_service_id: str
+    target_service_id: str
+    relevance_score: int = 70
+    rationale: str
+    is_active: bool = True
+
+    @field_validator("relevance_score")
+    @classmethod
+    def relevance_is_valid(cls, value: int) -> int:
+        return validate_percent(value, "Relevance score")
+
+    @field_validator("rationale")
+    @classmethod
+    def rationale_is_valid(cls, value: str) -> str:
+        return validate_short_text(value, "Adjacency rationale", 2000)
+
+
+class ServiceAdjacencyRuleRead(BaseModel):
+    id: str
+    source_service_id: str
+    source_service_name: str
+    target_service_id: str
+    target_service_name: str
+    relevance_score: int
+    rationale: str
+    is_active: bool
+    created_at: datetime
+    updated_at: datetime
+
+
+class ServiceAdjacencyUpdateRequest(BaseModel):
+    rules: list[ServiceAdjacencyRuleRequest] = Field(default_factory=list)
+
+
+class AccountWhitespaceItemRequest(BaseModel):
+    engagement_id: str | None = None
+    service_id: str
+    coverage_status: str = "unknown"
+    notes: str | None = None
+    source: str = "manual"
+
+    @field_validator("coverage_status")
+    @classmethod
+    def status_is_valid(cls, value: str) -> str:
+        status_value = validate_slug(value, "Coverage status")
+        if status_value not in {"active", "potential", "not_relevant", "unknown"}:
+            raise ValueError("Coverage status must be active, potential, not_relevant, or unknown.")
+        return status_value
+
+    @field_validator("notes")
+    @classmethod
+    def notes_are_valid(cls, value: str | None) -> str | None:
+        return validate_optional_long_text(value, "Whitespace notes", 2000)
+
+    @field_validator("source")
+    @classmethod
+    def source_is_valid(cls, value: str) -> str:
+        return validate_slug(value, "Whitespace source")
+
+
+class AccountWhitespaceUpdateRequest(BaseModel):
+    items: list[AccountWhitespaceItemRequest] = Field(default_factory=list)
+
+
+class AccountWhitespaceItemRead(BaseModel):
+    id: str
+    account_id: str
+    engagement_id: str | None = None
+    service_id: str
+    service_name: str
+    coverage_status: str
+    notes: str | None = None
+    source: str
+    created_at: datetime
+    updated_at: datetime
+
+
+class ServiceRecommendationRead(BaseModel):
+    id: str
+    account_id: str
+    source_service_id: str | None = None
+    source_service_name: str | None = None
+    target_service_id: str
+    target_service_name: str
+    relevance_score: int
+    rationale: str
+    status: str
+    source_context: str
+    created_opportunity_id: str | None = None
+    created_at: datetime
+    updated_at: datetime
+
+
+class ServiceRecommendationPageRead(BaseModel):
+    items: list[ServiceRecommendationRead]
+    total: int
+    page: int
+    page_size: int
+    pages: int
+
+
+class RecommendationOpportunityCreateRequest(BaseModel):
+    owner_id: str
+    target_date: datetime
+    value: float = 0
+    currency: str = "USD"
+    next_step: str = "Validate adjacent service fit with client stakeholders."
+    confirm: bool = False
+
+    @field_validator("value")
+    @classmethod
+    def value_is_valid(cls, value: float) -> float:
+        return validate_non_negative(value, "Opportunity value")
+
+    @field_validator("currency")
+    @classmethod
+    def currency_is_valid(cls, value: str) -> str:
+        return validate_currency(value)
+
+    @field_validator("next_step")
+    @classmethod
+    def next_step_is_valid(cls, value: str) -> str:
+        return validate_short_text(value, "Next step", 1000)
+
+
+class RenewalProfileRead(BaseModel):
+    id: str
+    account_id: str
+    engagement_id: str
+    renewal_readiness: str
+    renewal_risk: str
+    confidence: int
+    commercial_exposure: float
+    commercial_exposure_currency: str
+    owner_id: str | None = None
+    owner_name: str | None = None
+    source_type: str
+    source_citation: str | None = None
+    manual_override_reason: str | None = None
+    sow_start_date: datetime | None = None
+    sow_end_date: datetime | None = None
+    renewal_date: datetime | None = None
+    notice_deadline: datetime | None = None
+    notice_period_days: int | None = None
+    auto_renewal: bool = False
+    days_to_expiry: int | None = None
+    renewal_status: str = "unknown"
+    updated_at: datetime
+
+
+class RenewalProfilePageRead(BaseModel):
+    items: list[RenewalProfileRead]
+    total: int
+    page: int
+    page_size: int
+    pages: int
+
+
+class RenewalProfileUpdateRequest(BaseModel):
+    renewal_readiness: str | None = None
+    renewal_risk: RenewalRisk | None = None
+    confidence: int | None = None
+    commercial_exposure: float | None = None
+    commercial_exposure_currency: str | None = None
+    owner_id: str | None = None
+    source_type: str | None = None
+    source_citation: str | None = None
+    manual_override_reason: str | None = None
+    renewal_date: datetime | None = None
+    notice_deadline: datetime | None = None
+    notice_period_days: int | None = None
+    auto_renewal: bool | None = None
+
+    @field_validator("confidence")
+    @classmethod
+    def confidence_is_valid(cls, value: int | None) -> int | None:
+        return validate_percent(value, "Confidence") if value is not None else None
+
+    @field_validator("commercial_exposure")
+    @classmethod
+    def exposure_is_valid(cls, value: float | None) -> float | None:
+        return validate_non_negative(value, "Commercial exposure") if value is not None else None
+
+    @field_validator("commercial_exposure_currency")
+    @classmethod
+    def currency_is_valid(cls, value: str | None) -> str | None:
+        return validate_currency(value) if value is not None else None
+
+    @field_validator("source_type", "renewal_readiness")
+    @classmethod
+    def source_text_is_valid(cls, value: str | None) -> str | None:
+        return validate_slug(value, "Renewal field") if value is not None else None
+
+    @field_validator("source_citation", "manual_override_reason")
+    @classmethod
+    def renewal_text_is_valid(cls, value: str | None) -> str | None:
+        return validate_optional_long_text(value, "Renewal text", 2000)
+
+
+class RetentionPlanActionRead(BaseModel):
+    id: str
+    retention_plan_id: str
+    milestone_id: str | None = None
+    account_id: str
+    engagement_id: str | None = None
+    title: str
+    owner_id: str | None = None
+    owner_name: str
+    owner_email: EmailStr | None = None
+    due_at: datetime
+    status: str
+    priority: str
+    success_criteria: list[str] = Field(default_factory=list)
+    future_task_id: str | None = None
+    completed_at: datetime | None = None
+    completed_by_id: str | None = None
+    created_by_id: str | None = None
+    created_by_name: str
+    created_at: datetime
+    updated_at: datetime
+
+
+class RetentionPlanMilestoneRead(BaseModel):
+    id: str
+    retention_plan_id: str
+    title: str
+    due_at: datetime
+    status: str
+    enforce_action_due_dates: bool
+    created_at: datetime
+    updated_at: datetime
+
+
+class RetentionPlanRead(BaseModel):
+    id: str
+    account_id: str
+    engagement_id: str | None = None
+    plan_type: str
+    status: str
+    title: str
+    summary: str | None = None
+    owner_id: str | None = None
+    owner_name: str
+    owner_email: EmailStr | None = None
+    renewal_milestone_at: datetime | None = None
+    success_criteria: list[str] = Field(default_factory=list)
+    source_context: str | None = None
+    completed_at: datetime | None = None
+    created_by_id: str | None = None
+    created_by_name: str
+    updated_by_id: str | None = None
+    updated_by_name: str | None = None
+    created_at: datetime
+    updated_at: datetime
+    milestones: list[RetentionPlanMilestoneRead] = Field(default_factory=list)
+    actions: list[RetentionPlanActionRead] = Field(default_factory=list)
+
+
+class RetentionPlanPageRead(BaseModel):
+    items: list[RetentionPlanRead]
+    total: int
+    page: int
+    page_size: int
+    pages: int
+
+
+class RetentionPlanMilestoneRequest(BaseModel):
+    id: str | None = None
+    title: str
+    due_at: datetime
+    status: str = "open"
+    enforce_action_due_dates: bool = True
+
+    @field_validator("title")
+    @classmethod
+    def title_is_valid(cls, value: str) -> str:
+        return validate_short_text(value, "Milestone title", 220)
+
+
+class RetentionPlanActionRequest(BaseModel):
+    id: str | None = None
+    milestone_id: str | None = None
+    title: str
+    owner_id: str
+    due_at: datetime
+    status: str = "open"
+    priority: TaskPriority = "medium"
+    success_criteria: list[str] = Field(default_factory=list)
+
+    @field_validator("title")
+    @classmethod
+    def title_is_valid(cls, value: str) -> str:
+        return validate_short_text(value, "Retention action", 220)
+
+    @field_validator("success_criteria")
+    @classmethod
+    def success_criteria_are_valid(cls, value: list[str]) -> list[str]:
+        return validate_string_list(value, "Retention action success criteria", max_items=20)
+
+
+class RetentionPlanCreateRequest(BaseModel):
+    engagement_id: str | None = None
+    plan_type: str = "retention"
+    title: str
+    summary: str | None = None
+    owner_id: str
+    renewal_milestone_at: datetime | None = None
+    success_criteria: list[str] = Field(default_factory=list)
+    source_context: str | None = None
+    milestones: list[RetentionPlanMilestoneRequest] = Field(default_factory=list)
+    actions: list[RetentionPlanActionRequest] = Field(default_factory=list)
+
+    @field_validator("plan_type", "source_context")
+    @classmethod
+    def slug_text_is_valid(cls, value: str | None) -> str | None:
+        return validate_slug(value, "Retention plan field") if value is not None else None
+
+    @field_validator("title")
+    @classmethod
+    def title_is_valid(cls, value: str) -> str:
+        return validate_short_text(value, "Retention plan title", 220)
+
+    @field_validator("summary")
+    @classmethod
+    def summary_is_valid(cls, value: str | None) -> str | None:
+        return validate_optional_long_text(value, "Retention plan summary", 4000)
+
+    @field_validator("success_criteria")
+    @classmethod
+    def success_criteria_are_valid(cls, value: list[str]) -> list[str]:
+        return validate_string_list(value, "Retention plan success criteria", max_items=30)
+
+
+class RetentionPlanUpdateRequest(BaseModel):
+    engagement_id: str | None = None
+    plan_type: str | None = None
+    status: str | None = None
+    title: str | None = None
+    summary: str | None = None
+    owner_id: str | None = None
+    renewal_milestone_at: datetime | None = None
+    success_criteria: list[str] | None = None
+    source_context: str | None = None
+    milestones: list[RetentionPlanMilestoneRequest] | None = None
+    actions: list[RetentionPlanActionRequest] | None = None
+
+    @field_validator("plan_type", "source_context", "status")
+    @classmethod
+    def slug_text_is_valid(cls, value: str | None) -> str | None:
+        return validate_slug(value, "Retention plan field") if value is not None else None
+
+    @field_validator("title")
+    @classmethod
+    def title_is_valid(cls, value: str | None) -> str | None:
+        return validate_short_text(value, "Retention plan title", 220) if value is not None else None
+
+    @field_validator("summary")
+    @classmethod
+    def summary_is_valid(cls, value: str | None) -> str | None:
+        return validate_optional_long_text(value, "Retention plan summary", 4000)
+
+    @field_validator("success_criteria")
+    @classmethod
+    def success_criteria_are_valid(cls, value: list[str] | None) -> list[str] | None:
+        return validate_string_list(value, "Retention plan success criteria", max_items=30) if value is not None else None
+
+
+class RetentionRecommendationRead(BaseModel):
+    id: str
+    account_id: str
+    engagement_id: str | None = None
+    title: str
+    rationale: str
+    severity: str
+    recommended_action: str
+    source_context: str
+    status: str
+    created_task_id: str | None = None
+    created_at: datetime
+    updated_at: datetime
+
+
+class RetentionRecommendationTaskCreateRequest(BaseModel):
+    recommendation_ids: list[str] = Field(default_factory=list)
+    owner_id: str
+    due_at: datetime
+    confirm: bool = False
+
+    @field_validator("recommendation_ids")
+    @classmethod
+    def recommendation_ids_are_valid(cls, value: list[str]) -> list[str]:
+        if not value:
+            raise ValueError("At least one recommendation must be selected.")
+        if len(set(value)) != len(value):
+            raise ValueError("Recommendation IDs must not contain duplicates.")
+        return value
 
 
 class ContentItemRead(BaseModel):
@@ -2959,8 +3705,73 @@ class OpportunityStageDefinitionRead(BaseModel):
     slug: str
     name: OpportunityStage
     is_terminal: bool
+    requires_outcome_reason: bool = False
     is_active: bool
     display_order: int
+
+
+class OpportunityStageDefinitionCreateRequest(BaseModel):
+    slug: str
+    name: str
+    is_terminal: bool = False
+    requires_outcome_reason: bool = False
+    is_active: bool = True
+    display_order: int = 0
+
+    @field_validator("slug")
+    @classmethod
+    def slug_is_valid(cls, value: str) -> str:
+        return validate_slug(value, "Opportunity stage slug")
+
+    @field_validator("name")
+    @classmethod
+    def name_is_valid(cls, value: str) -> str:
+        return validate_short_text(value, "Opportunity stage", 120)
+
+
+class OpportunityStageDefinitionUpdateRequest(BaseModel):
+    slug: str | None = None
+    name: str | None = None
+    is_terminal: bool | None = None
+    requires_outcome_reason: bool | None = None
+    is_active: bool | None = None
+    display_order: int | None = None
+
+    @field_validator("slug")
+    @classmethod
+    def slug_is_valid(cls, value: str | None) -> str | None:
+        return validate_slug(value, "Opportunity stage slug") if value is not None else None
+
+    @field_validator("name")
+    @classmethod
+    def name_is_valid(cls, value: str | None) -> str | None:
+        return validate_short_text(value, "Opportunity stage", 120) if value is not None else None
+
+
+class OpportunityStageTransitionConfigRequest(BaseModel):
+    from_stage: str
+    to_stage: str
+    is_active: bool = True
+    requires_reason: bool = False
+
+    @field_validator("from_stage", "to_stage")
+    @classmethod
+    def stage_is_valid(cls, value: str) -> str:
+        return validate_short_text(value, "Opportunity stage", 120)
+
+
+class OpportunityStageTransitionConfigRead(BaseModel):
+    id: str
+    from_stage: str
+    to_stage: str
+    is_active: bool
+    requires_reason: bool
+    created_at: datetime
+    updated_at: datetime
+
+
+class OpportunityStageTransitionsUpdateRequest(BaseModel):
+    transitions: list[OpportunityStageTransitionConfigRequest] = Field(default_factory=list)
 
 
 class OpportunityActionItemRead(BaseModel):

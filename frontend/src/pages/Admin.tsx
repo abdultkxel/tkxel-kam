@@ -11,6 +11,7 @@ import { AdminContentPanel } from '@/components/admin/AdminContentPanel'
 import { AdminFieldBuilderPanel } from '@/components/admin/AdminFieldBuilderPanel'
 import { AdminGovernancePanel } from '@/components/admin/AdminGovernancePanel'
 import { AdminOpportunityTypesPanel } from '@/components/admin/AdminOpportunityTypesPanel'
+import { AdminRelationshipPlanningPanel } from '@/components/admin/AdminRelationshipPlanningPanel'
 import { AdminRolesPanel } from '@/components/admin/AdminRolesPanel'
 import { AdminUsersPanel } from '@/components/admin/AdminUsersPanel'
 import { AlertRulesPanel } from '@/components/admin/AlertRulesPanel'
@@ -45,6 +46,7 @@ const adminSections = [
   { id: 'content', label: 'Content' },
   { id: 'governance', label: 'Governance' },
   { id: 'opportunities', label: 'Opportunities' },
+  { id: 'planning', label: 'Planning' },
   { id: 'fields', label: 'Field builder' },
   { id: 'scoring', label: 'Scoring' },
   { id: 'customization', label: 'Customization' },
@@ -209,17 +211,25 @@ export function Admin() {
           {highlightedSection === 'content' ? <AdminContentPanel /> : null}
           {highlightedSection === 'governance' ? <AdminGovernancePanel /> : null}
           {highlightedSection === 'opportunities' ? <AdminOpportunityTypesPanel /> : null}
+          {highlightedSection === 'planning' ? <AdminRelationshipPlanningPanel /> : null}
           {highlightedSection === 'fields' ? <AdminFieldBuilderPanel /> : null}
-          <div id="scoring" className={cn('scroll-mt-24', highlightedSection !== 'scoring' && 'hidden')}>
-            <ScoringEngineBuilder />
-          </div>
-          <div id="customization" className={cn('scroll-mt-24', highlightedSection !== 'customization' && 'hidden')}>
-            <AdminCustomizationPanel />
-          </div>
-          <div id="alerts" className={cn('scroll-mt-24', highlightedSection !== 'alerts' && 'hidden')}>
-            <AlertRulesPanel />
-          </div>
-          <section id="timeline" className={cn('tk-card scroll-mt-24 overflow-hidden', highlightedSection !== 'timeline' && 'hidden')}>
+          {highlightedSection === 'scoring' ? (
+            <div id="scoring" className="scroll-mt-24">
+              <ScoringEngineBuilder />
+            </div>
+          ) : null}
+          {highlightedSection === 'customization' ? (
+            <div id="customization" className="scroll-mt-24">
+              <AdminCustomizationPanel />
+            </div>
+          ) : null}
+          {highlightedSection === 'alerts' ? (
+            <div id="alerts" className="scroll-mt-24">
+              <AlertRulesPanel />
+            </div>
+          ) : null}
+          {highlightedSection === 'timeline' ? (
+          <section id="timeline" className="tk-card scroll-mt-24 overflow-hidden">
             <div className="border-b border-surface-border p-5">
               <p className="text-[10px] font-extrabold uppercase tracking-widest text-brand-blue">FR-87 / FR-96</p>
               <h2 className="text-base font-semibold text-ink">Timeline Event Types</h2>
@@ -297,30 +307,40 @@ export function Admin() {
               </table>
             </div>
           </section>
+          ) : null}
         </div>
 
         <aside className="min-w-0 space-y-4">
-          <div id="integrations" className={cn('scroll-mt-24', highlightedSection !== 'integrations' && 'hidden')}>
-            <IntegrationsPanel />
-          </div>
-          <div id="settings" className={cn('scroll-mt-24', highlightedSection !== 'settings' && 'hidden')}>
-            {highlightedSection === 'settings' ? (
+          {highlightedSection === 'integrations' ? (
+            <div id="integrations" className="scroll-mt-24">
+              <IntegrationsPanel />
+            </div>
+          ) : null}
+          {highlightedSection === 'settings' ? (
+            <div id="settings" className="scroll-mt-24">
               <div className="space-y-4">
                 <AllowedEmailDomainsPanel />
                 <NotificationSettingsPanel />
               </div>
-            ) : null}
-          </div>
-          <div id="segments" className={cn('scroll-mt-24', highlightedSection !== 'segments' && 'hidden')}>
-            <SegmentSettings />
-          </div>
-          <div id="policies" className={cn('scroll-mt-24', highlightedSection !== 'policies' && 'hidden')}>
-            <SensitivePolicyTable />
-          </div>
-          <div id="retention" className={cn('scroll-mt-24', highlightedSection !== 'retention' && 'hidden')}>
-            <RetentionJobHistory />
-          </div>
-          <section id="audit" className={cn('tk-card scroll-mt-24 p-5', highlightedSection !== 'audit' && 'hidden')}>
+            </div>
+          ) : null}
+          {highlightedSection === 'segments' ? (
+            <div id="segments" className="scroll-mt-24">
+              <SegmentSettings />
+            </div>
+          ) : null}
+          {highlightedSection === 'policies' ? (
+            <div id="policies" className="scroll-mt-24">
+              <SensitivePolicyTable />
+            </div>
+          ) : null}
+          {highlightedSection === 'retention' ? (
+            <div id="retention" className="scroll-mt-24">
+              <RetentionJobHistory />
+            </div>
+          ) : null}
+          {highlightedSection === 'audit' ? (
+          <section id="audit" className="tk-card scroll-mt-24 p-5">
             <h3 className="text-base font-semibold text-ink">Audit Log</h3>
             <div className="mt-3 rounded-lg border border-surface-border p-3 text-sm text-ink-secondary">Timeline config reviewed by Admin.</div>
             <div className="mt-2 rounded-lg border border-surface-border p-3 text-sm text-ink-secondary">Sensitive entry access filter enabled.</div>
@@ -331,6 +351,7 @@ export function Admin() {
               </button>
             </div>
           </section>
+          ) : null}
         </aside>
       </div>
     </div>
