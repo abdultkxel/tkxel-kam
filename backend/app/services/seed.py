@@ -21,6 +21,8 @@ from app.models import (
     SignalRule,
     StakeholderGapRule,
     StakeholderRoleConfig,
+    TimelineEventTypeConfig,
+    TimelineRetentionPolicy,
     User,
     utc_now,
 )
@@ -42,6 +44,7 @@ def seed_default_data(db: Session) -> User:
     seed_opportunity_reference_data(db)
     seed_relationship_planning_reference_data(db)
     seed_scoring_signals_playbooks(db, super_admin)
+    seed_timeline_reference_data(db, super_admin)
     seed_demo_opportunities(db)
     return super_admin
 
@@ -321,6 +324,85 @@ def seed_relationship_planning_reference_data(db: Session) -> None:
             existing.is_active = True
             continue
         db.add(ServiceAdjacencyRule(source_service_id=source.id, target_service_id=target.id, relevance_score=score, rationale=rationale, is_active=True))
+
+    db.commit()
+
+
+def seed_timeline_reference_data(db: Session, actor: User) -> None:
+    event_type_specs = (
+        ("account_setup", "Account setup", "account", "manual", "brand-blue", False),
+        ("kyc_update", "KYC update", "account", "kyc", "brand-blue", False),
+        ("score_change", "Score change", "health", "scoring", "brand-orange", False),
+        ("calculator_change", "Calculator change", "health", "scoring", "brand-orange", False),
+        ("stage_change", "Stage change", "account", "stage", "brand-blue-dark", False),
+        ("opportunity_event", "Opportunity event", "growth", "opportunity", "brand-blue", False),
+        ("retention_event", "Retention event", "retention", "manual", "brand-blue", False),
+        ("client_education", "Client education", "content", "education", "rag-green", False),
+        ("escalation_event", "Escalation event", "risk", "escalation", "brand-orange", True),
+        ("governance_event", "Governance event", "governance", "governance", "brand-blue-dark", True),
+        ("approval_event", "Approval event", "governance", "approval", "rag-green", True),
+        ("executive_event", "Executive event", "governance", "executive", "brand-blue-dark", True),
+        ("ai_event", "AI event", "ai", "ai", "surface-border", False),
+        ("manual_note", "Manual note", "manual", "manual", "surface-border", False),
+        ("engagement_created", "Engagement created", "engagement", "engagements", "brand-blue", False),
+        ("engagement_updated", "Engagement updated", "engagement", "engagements", "brand-blue", False),
+        ("sow_terms_updated", "SOW terms updated", "engagement", "engagements", "brand-blue", False),
+        ("renewal_dates_updated", "Renewal dates updated", "retention", "engagements", "brand-orange", True),
+        ("engagement_health_changed", "Engagement health changed", "health", "engagements", "brand-orange", True),
+        ("engagement_delivery_status_changed", "Delivery status changed", "engagement", "engagements", "brand-orange", True),
+        ("engagement_archived", "Engagement archived", "engagement", "engagements", "brand-blue-dark", True),
+        ("delivery_delay", "Delivery delay", "risk", "engagements", "brand-orange", True),
+        ("high_severity_client_risk", "High-severity client risk", "risk", "escalation", "brand-orange", True),
+    )
+    for index, (slug, name, category, module, color_token, is_critical) in enumerate(event_type_specs, start=1):
+        existing = db.scalar(select(TimelineEventTypeConfig).where(TimelineEventTypeConfig.slug == slug))
+        critical_rule = {"software_services_default": True} if is_critical else {}
+        if existing:
+            existing.name = name
+            existing.category = category
+            existing.module = module
+            existing.color_token = color_token
+            existing.display_order = index
+            existing.is_active = True
+            existing.is_critical = is_critical
+            existing.critical_rule_json = critical_rule
+            continue
+        db.add(
+            TimelineEventTypeConfig(
+                slug=slug,
+                name=name,
+                category=category,
+                module=module,
+                color_token=color_token,
+                display_order=index,
+                default_visibility="public",
+                is_active=True,
+                is_critical=is_critical,
+                critical_rule_json=critical_rule,
+                created_by_id=actor.id,
+                updated_by_id=actor.id,
+            )
+        )
+
+    policy = db.scalar(select(TimelineRetentionPolicy).where(TimelineRetentionPolicy.name == "Default timeline archive"))
+    next_run_at = utc_now() + timedelta(days=1)
+    if policy is None:
+        db.add(
+            TimelineRetentionPolicy(
+                name="Default timeline archive",
+                entity_type="timeline_entry",
+                action="archive",
+                duration_days=1095,
+                reason_template="Default 36-month timeline retention policy.",
+                critical_behavior="tombstone",
+                schedule_enabled=False,
+                schedule_interval_hours=24,
+                next_run_at=next_run_at,
+                is_active=True,
+                created_by_id=actor.id,
+                updated_by_id=actor.id,
+            )
+        )
 
     db.commit()
 

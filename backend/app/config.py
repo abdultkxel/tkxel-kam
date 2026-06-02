@@ -43,6 +43,9 @@ class Settings:
         self.fathom_base_url = os.getenv("FATHOM_BASE_URL", "https://api.fathom.video")
         self.fathom_recordings_path = os.getenv("FATHOM_RECORDINGS_PATH", "/recordings")
         self.fathom_webhook_secret = os.getenv("FATHOM_WEBHOOK_SECRET", "")
+        self.timeline_retention_worker_enabled = os.getenv("TIMELINE_RETENTION_WORKER_ENABLED", "true").lower() == "true"
+        self.timeline_retention_worker_initial_delay_seconds = int(os.getenv("TIMELINE_RETENTION_WORKER_INITIAL_DELAY_SECONDS", "60"))
+        self.timeline_retention_worker_interval_seconds = int(os.getenv("TIMELINE_RETENTION_WORKER_INTERVAL_SECONDS", "86400"))
 
 
 @lru_cache

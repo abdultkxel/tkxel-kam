@@ -179,11 +179,14 @@ class EngagementService:
         *,
         page: int = 1,
         page_size: int = 100,
+        show_sensitive: bool = False,
     ) -> dict:
         engagement = self._get_engagement_record_or_404(engagement_id)
         account = self._get_account_or_404(engagement.account_id)
         self.access.require_account_view(current_user, account, module="account_timeline")
-        items, total = self.timeline.list_engagement_events(engagement_id, page=page, page_size=page_size)
+        include_sensitive = show_sensitive and self.timeline._can_view_sensitive(current_user)
+        include_restricted = self.timeline._can_view_restricted(current_user)
+        items, total = self.timeline.list_engagement_events(engagement_id, page=page, page_size=page_size, include_sensitive=include_sensitive, include_restricted=include_restricted)
         return {
             "items": [self._timeline_entry_value(item) for item in items],
             "total": total,
@@ -708,7 +711,18 @@ class EngagementService:
             "before_value": entry.before_value,
             "after_value": entry.after_value,
             "metadata": entry.metadata_json,
+            "event_at": entry.event_at,
+            "timestamp": entry.event_at or entry.created_at,
+            "is_sensitive": entry.is_sensitive,
+            "sensitivity_level": entry.sensitivity_level,
+            "tags": list(entry.tags or []),
+            "mentions": list(entry.mentions or []),
+            "attachments": list(entry.attachments or []),
+            "status": entry.status,
+            "is_system_generated": entry.is_system_generated,
+            "is_immutable": entry.is_immutable,
             "created_at": entry.created_at,
+            "updated_at": entry.updated_at,
         }
 
     @staticmethod

@@ -1,3 +1,6 @@
+import asyncio
+import contextlib
+import logging
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
@@ -26,9 +29,13 @@ from app.routers import (
     service_catalog,
     signals,
     stakeholders,
+    timeline,
     users,
 )
 from app.services.seed import seed_default_data
+from app.services.timeline import TimelineService
+
+logger = logging.getLogger(__name__)
 
 
 @asynccontextmanager
@@ -36,7 +43,29 @@ async def lifespan(app: FastAPI):
     init_db()
     with SessionLocal() as db:
         seed_default_data(db)
-    yield
+    retention_worker: asyncio.Task | None = None
+    if settings.timeline_retention_worker_enabled:
+        retention_worker = asyncio.create_task(timeline_retention_worker_loop())
+    try:
+        yield
+    finally:
+        if retention_worker:
+            retention_worker.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await retention_worker
+
+
+async def timeline_retention_worker_loop() -> None:
+    await asyncio.sleep(settings.timeline_retention_worker_initial_delay_seconds)
+    while True:
+        try:
+            with SessionLocal() as db:
+                results = TimelineService(db).run_due_retention_policies()
+                if results:
+                    logger.info("Timeline retention worker completed %s policy run(s)", len(results))
+        except Exception:
+            logger.exception("Timeline retention worker failed")
+        await asyncio.sleep(settings.timeline_retention_worker_interval_seconds)
 
 
 settings = get_settings()
@@ -115,6 +144,10 @@ openapi_tags = [
         "description": "AI-assisted KYC drafts, review/approval, immutable snapshots, freshness, and agent workstream APIs.",
     },
     {
+        "name": "Account History and Timeline",
+        "description": "Source-linked account timeline, notes, comments, retention policies, handover summaries, and AI Timeline Search.",
+    },
+    {
         "name": "Field Builder Runtime",
         "description": "Runtime custom field definitions used by feature screens.",
     },
@@ -159,6 +192,7 @@ app.include_router(scoring.router)
 app.include_router(signals.router)
 app.include_router(kyc.config_router)
 app.include_router(kyc.router)
+app.include_router(timeline.router)
 
 
 @app.get(

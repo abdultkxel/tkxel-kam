@@ -111,10 +111,11 @@ def list_timeline(
     engagement_id: str,
     current_user: Annotated[User, Depends(get_current_user)],
     service: Annotated[EngagementService, Depends(get_engagement_service)],
+    show_sensitive: Annotated[bool, Query(description="Request sensitive entries where caller is authorized.")] = False,
     page: Annotated[int, Query(ge=1, description="One-based page number.")] = 1,
     page_size: Annotated[int, Query(ge=1, le=100, description="Number of timeline events per page.")] = 100,
 ) -> TimelineEventPageRead:
-    return service.get_engagement_timeline(engagement_id, current_user, page=page, page_size=page_size)
+    return service.get_engagement_timeline(engagement_id, current_user, page=page, page_size=page_size, show_sensitive=show_sensitive)
 
 
 @router.get(
