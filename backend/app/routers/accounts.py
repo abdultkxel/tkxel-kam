@@ -215,6 +215,11 @@ def read_summary_cards(
     response_model=AccountPermissionsRead,
     summary="Read account permissions",
     description="Returns effective UI permissions for the authenticated user on the account.",
+    responses={
+        401: {"description": "Missing, invalid, or expired bearer token."},
+        403: {"description": "Authenticated user cannot view this account."},
+        404: {"description": "Account was not found."},
+    },
 )
 def read_permissions(
     account_id: str,

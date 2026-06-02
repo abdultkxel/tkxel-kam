@@ -108,11 +108,11 @@ class AccountService:
 
     def permissions(self, account_id: str, current_user: User) -> AccountPermissionsRead:
         account = self._get_account_or_404(account_id)
-        can_view = self.access.can_view_account(current_user, account)
-        can_update = can_view and self.access.can_update_account(current_user, account)
+        self.access.require_account_view(current_user, account)
+        can_update = self.access.can_update_account(current_user, account)
         can_assign = current_user.role in GLOBAL_EDIT_ROLES
         return AccountPermissionsRead(
-            can_view=can_view,
+            can_view=True,
             can_update=can_update,
             can_delete=current_user.role in GLOBAL_EDIT_ROLES,
             can_approve=current_user.role in GLOBAL_EDIT_ROLES,
@@ -493,5 +493,8 @@ class AccountService:
             risk_status=account.risk_status,
             health_overall=account.health_overall,
             next_governance_at=account.next_governance_at,
+            open_signals=self.accounts.count_open_signals(account.id),
+            overdue_activities=self.accounts.count_overdue_tasks(account.id),
             open_opportunities=self.accounts.count_open_opportunities(account.id),
+            active_escalations=self.accounts.count_active_escalations(account.id),
         )

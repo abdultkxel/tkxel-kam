@@ -10,6 +10,7 @@ docs/features/_feature-template.md
 
 ## Features
 
+- [Account Overview](account-overview.md)
 - [Governance & Reviews](governance-reviews.md)
 - [Growth & Opportunity Management](growth-opportunity-management.md)
 - [Scoring, Signals, Playbooks, and Tasks](scoring-signals-playbooks-and-tasks.md)

@@ -122,6 +122,37 @@ interface ApiEngagement {
   source_documents?: ApiSourceDocument[]
 }
 
+export interface ApiAccountSummaryCards {
+  commercial_value: number
+  currency: string
+  lifecycle_status: string
+  risk_status: RiskStatus
+  health_overall: number
+  open_signals: number
+  overdue_activities: number
+  next_governance_at?: string | null
+  open_opportunities: number
+  active_escalations: number
+}
+
+export interface ApiAccountPermissions {
+  can_view: boolean
+  can_update: boolean
+  can_delete: boolean
+  can_approve: boolean
+  can_assign: boolean
+  can_manage_attachments: boolean
+  read_only: boolean
+}
+
+export interface ApiAccountOverview {
+  account: ApiAccount
+  summary_cards: ApiAccountSummaryCards
+  permissions: ApiAccountPermissions
+  engagements: Page<ApiEngagement>
+  attachments: Page<ApiSourceDocument>
+}
+
 interface ApiTimelineEvent {
   id: string
   account_id: string
@@ -300,6 +331,45 @@ export interface AccountOwnerView {
   isActive: boolean
 }
 
+export interface AccountOverviewPage<T> {
+  items: T[]
+  total: number
+  page: number
+  pageSize: number
+  pages: number
+}
+
+export interface AccountOverviewSummaryCards {
+  commercialValue: number
+  currency: string
+  lifecycleStatus: AccountStage
+  riskStatus: RiskStatus
+  healthOverall: number
+  openSignals: number
+  overdueActivities: number
+  nextGovernanceAt?: string | null
+  openOpportunities: number
+  activeEscalations: number
+}
+
+export interface AccountOverviewPermissions {
+  canView: boolean
+  canUpdate: boolean
+  canDelete: boolean
+  canApprove: boolean
+  canAssign: boolean
+  canManageAttachments: boolean
+  readOnly: boolean
+}
+
+export interface AccountOverviewView {
+  account: Account
+  summaryCards: AccountOverviewSummaryCards
+  permissions: AccountOverviewPermissions
+  engagements: AccountOverviewPage<EngagementRecord>
+  attachments: AccountOverviewPage<SourceDocument>
+}
+
 export interface EngagementListParams {
   search?: string
   status?: EngagementRecord['status'] | ''
@@ -383,6 +453,10 @@ export async function listAccounts(token: string, params: URLSearchParams) {
 
 export async function getAccount(token: string, accountId: string) {
   return mapApiAccount(await apiRequest<ApiAccount>(`/api/accounts/${accountId}`, { token }))
+}
+
+export async function getAccountOverview(token: string, accountId: string) {
+  return mapAccountOverview(await apiRequest<ApiAccountOverview>(`/api/accounts/${accountId}/overview`, { token }))
 }
 
 export async function listAccountOwners(token: string, accountId: string) {
@@ -631,6 +705,54 @@ function mapDraft(draft: ApiOnboardingDraft): OnboardingDraftView {
     missingFields: draft.missing_fields,
     conflicts: draft.conflicts,
     approvedAccountId: draft.approved_account_id,
+  }
+}
+
+export function mapAccountOverview(overview: ApiAccountOverview): AccountOverviewView {
+  const account = mapApiAccount(overview.account)
+  return {
+    account,
+    summaryCards: mapSummaryCards(overview.summary_cards),
+    permissions: mapPermissions(overview.permissions),
+    engagements: mapOverviewPage(overview.engagements, engagement => mapEngagement(engagement, account.name)),
+    attachments: mapOverviewPage(overview.attachments, mapSourceDocument),
+  }
+}
+
+function mapSummaryCards(summary: ApiAccountSummaryCards): AccountOverviewSummaryCards {
+  return {
+    commercialValue: Number(summary.commercial_value ?? 0),
+    currency: summary.currency,
+    lifecycleStatus: toStage(summary.lifecycle_status),
+    riskStatus: summary.risk_status,
+    healthOverall: Number(summary.health_overall ?? 0),
+    openSignals: Number(summary.open_signals ?? 0),
+    overdueActivities: Number(summary.overdue_activities ?? 0),
+    nextGovernanceAt: summary.next_governance_at ?? null,
+    openOpportunities: Number(summary.open_opportunities ?? 0),
+    activeEscalations: Number(summary.active_escalations ?? 0),
+  }
+}
+
+function mapPermissions(permissions: ApiAccountPermissions): AccountOverviewPermissions {
+  return {
+    canView: permissions.can_view,
+    canUpdate: permissions.can_update,
+    canDelete: permissions.can_delete,
+    canApprove: permissions.can_approve,
+    canAssign: permissions.can_assign,
+    canManageAttachments: permissions.can_manage_attachments,
+    readOnly: permissions.read_only,
+  }
+}
+
+function mapOverviewPage<TApi, TView>(page: Page<TApi>, mapItem: (item: TApi) => TView): AccountOverviewPage<TView> {
+  return {
+    items: page.items.map(mapItem),
+    total: page.total,
+    page: page.page,
+    pageSize: page.page_size,
+    pages: page.pages,
   }
 }
 

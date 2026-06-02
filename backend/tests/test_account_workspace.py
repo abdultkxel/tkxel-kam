@@ -9,8 +9,7 @@ from sqlalchemy.pool import StaticPool
 
 from app.database import Base, get_db
 from app.main import app
-from app.models import CustomFieldValue, Engagement
-from app.models import Account, CustomFieldValue, Engagement, SourceDocument
+from app.models import Account, CustomFieldValue, Engagement, Escalation, Signal, SourceDocument, Task
 from app.services.seed import seed_default_data
 
 
@@ -196,6 +195,27 @@ def create_approved_account(client: TestClient, headers: dict[str, str], account
     return approved["approved_account_id"], owner["id"], approved
 
 
+def create_direct_account(db_session: Session, account_name: str) -> Account:
+    account = Account(
+        name=account_name,
+        project_name="Direct Account Overview Workspace",
+        lifecycle_status="Active",
+        segment="Growth",
+        risk_status="healthy",
+        commercial_value=0,
+        currency="USD",
+        health_overall=45,
+        health_relationship=45,
+        health_usage=45,
+        health_delivery=45,
+        health_commercial=45,
+    )
+    db_session.add(account)
+    db_session.commit()
+    db_session.refresh(account)
+    return account
+
+
 def test_onboarding_draft_approval_creates_account_sources_and_engagement(client: TestClient) -> None:
     headers = auth_headers(client)
     owner = seeded_user(client, headers, "account_manager")
@@ -229,6 +249,134 @@ def test_onboarding_draft_approval_creates_account_sources_and_engagement(client
     rollup = rollup_response.json()
     assert rollup["metric_version"] == "engagement-health-rollup-adapter-v1"
     assert rollup["contributions"][0]["name"] == "Customer intelligence modernization"
+
+
+def test_account_overview_endpoints_reject_unauthorized_access_and_missing_accounts(client: TestClient) -> None:
+    headers = auth_headers(client)
+    account_id, _, _ = create_approved_account(client, headers, "Overview Access Workspace")
+    unauthorized_headers = auth_headers(client, "content.specialist.user@tkxel.com", "User@12345")
+
+    for endpoint in ("overview", "summary-cards", "permissions"):
+        unauthorized_response = client.get(f"/api/accounts/{account_id}/{endpoint}", headers=unauthorized_headers)
+        assert unauthorized_response.status_code == 403
+
+        missing_response = client.get(f"/api/accounts/missing-account/{endpoint}", headers=headers)
+        assert missing_response.status_code == 404
+
+
+def test_account_permissions_endpoint_marks_leadership_viewer_read_only(client: TestClient) -> None:
+    headers = auth_headers(client)
+    account_id, _, _ = create_approved_account(client, headers, "Overview Read Only Workspace")
+    viewer_headers = auth_headers(client, "leadership.viewer.user@tkxel.com", "User@12345")
+
+    response = client.get(f"/api/accounts/{account_id}/permissions", headers=viewer_headers)
+
+    assert response.status_code == 200
+    permissions = response.json()
+    assert permissions["can_view"] is True
+    assert permissions["can_update"] is False
+    assert permissions["can_delete"] is False
+    assert permissions["can_approve"] is False
+    assert permissions["can_assign"] is False
+    assert permissions["can_manage_attachments"] is False
+    assert permissions["read_only"] is True
+
+
+def test_account_overview_handles_empty_downstream_module_data(client: TestClient, db_session: Session) -> None:
+    headers = auth_headers(client)
+    account = create_direct_account(db_session, "Overview Empty Downstream Workspace")
+
+    response = client.get(f"/api/accounts/{account.id}/overview", headers=headers)
+
+    assert response.status_code == 200
+    overview = response.json()
+    assert overview["account"]["name"] == "Overview Empty Downstream Workspace"
+    assert overview["engagements"]["items"] == []
+    assert overview["engagements"]["total"] == 0
+    assert overview["attachments"]["items"] == []
+    assert overview["attachments"]["total"] == 0
+    assert overview["summary_cards"]["open_signals"] == 0
+    assert overview["summary_cards"]["overdue_activities"] == 0
+    assert overview["summary_cards"]["open_opportunities"] == 0
+    assert overview["summary_cards"]["active_escalations"] == 0
+
+
+def test_account_summary_cards_count_downstream_module_records(client: TestClient, db_session: Session) -> None:
+    headers = auth_headers(client)
+    account = create_direct_account(db_session, "Overview Summary Count Workspace")
+    now = datetime.now(timezone.utc)
+    db_session.add_all(
+        [
+            Signal(
+                account_id=account.id,
+                signal_type="risk",
+                severity="warning",
+                status="new",
+                title="Open signal",
+                detail="Signal should appear in Account Overview summary cards.",
+            ),
+            Signal(
+                account_id=account.id,
+                signal_type="risk",
+                severity="warning",
+                status="resolved",
+                title="Resolved signal",
+                detail="Resolved signal should not appear in summary cards.",
+                resolved_at=now,
+            ),
+            Task(
+                account_id=account.id,
+                title="Overdue activity",
+                owner_name="Account Manager KAM",
+                due_at=now - timedelta(days=1),
+                status="todo",
+            ),
+            Task(
+                account_id=account.id,
+                title="Completed overdue activity",
+                owner_name="Account Manager KAM",
+                due_at=now - timedelta(days=2),
+                status="done",
+                completed_at=now,
+            ),
+            Task(
+                account_id=account.id,
+                title="Future activity",
+                owner_name="Account Manager KAM",
+                due_at=now + timedelta(days=1),
+                status="todo",
+            ),
+            Escalation(
+                account_id=account.id,
+                summary="Active escalation",
+                impact="Delivery risk is active.",
+                severity="high",
+                status="open",
+                owner_name="Ops Lead KAM",
+                sla_due_at=now + timedelta(days=2),
+                created_by_name="Admin KAM",
+            ),
+            Escalation(
+                account_id=account.id,
+                summary="Closed escalation",
+                impact="Resolved delivery risk.",
+                severity="high",
+                status="closed",
+                owner_name="Ops Lead KAM",
+                sla_due_at=now - timedelta(days=1),
+                created_by_name="Admin KAM",
+            ),
+        ]
+    )
+    db_session.commit()
+
+    response = client.get(f"/api/accounts/{account.id}/summary-cards", headers=headers)
+
+    assert response.status_code == 200
+    summary_cards = response.json()
+    assert summary_cards["open_signals"] == 1
+    assert summary_cards["overdue_activities"] == 1
+    assert summary_cards["active_escalations"] == 1
 
 
 def test_onboarding_validation_and_authorization_errors_are_enforced(client: TestClient) -> None:
@@ -685,7 +833,14 @@ def test_account_filters_owner_history_engagement_health_and_openapi_docs(client
     assert openapi.status_code == 200
     paths = openapi.json()["paths"]
     assert paths["/api/onboarding/drafts"]["post"]["summary"] == "Create onboarding draft"
-    assert paths["/api/accounts/{account_id}/overview"]["get"]["summary"] == "Read account overview"
+    overview_docs = paths["/api/accounts/{account_id}/overview"]["get"]
+    summary_cards_docs = paths["/api/accounts/{account_id}/summary-cards"]["get"]
+    permissions_docs = paths["/api/accounts/{account_id}/permissions"]["get"]
+    assert overview_docs["summary"] == "Read account overview"
+    assert summary_cards_docs["summary"] == "Read account summary cards"
+    assert permissions_docs["summary"] == "Read account permissions"
+    for endpoint_docs in (overview_docs, summary_cards_docs, permissions_docs):
+        assert {"401", "403", "404"}.issubset(endpoint_docs["responses"].keys())
     assert paths["/api/engagements/{engagement_id}/health/recalculate"]["post"]["summary"] == "Recalculate engagement health"
 
 
