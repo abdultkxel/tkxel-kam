@@ -20,4 +20,5 @@ export interface User {
   email: string
   title?: string | null
   phone?: string | null
+  primaryGoogleCalendarId?: string | null
 }

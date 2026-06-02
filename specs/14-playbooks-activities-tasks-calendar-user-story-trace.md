@@ -253,6 +253,19 @@ Relevant evidence:
 - Task list: paginate.
 - Calendar: date navigation and filters.
 
+## Added From Technical Logic Document
+
+- Playbook template fields must include objective, triggering signal types, weak metric conditions, default activities, default owners, due-date logic, success criteria, skip rules, evidence requirements, version, and active/inactive state.
+- Playbook recommendations must remain suggestions until an authorized user executes the selected playbook. Execution must create tasks from the selected template version and preserve source signal/metric context.
+- Task lifecycle must support `Open -> In Progress -> Blocked -> Done -> Cancelled`. Legacy labels such as `todo` or `skipped` may only be retained through explicit migration/mapping and must not be treated as the canonical lifecycle.
+- Task records must include account, optional engagement, owner, due date, status, priority, notes, evidence, outcome, source signal/metric/playbook/governance context, and timeline/audit metadata.
+- Task completion must not directly change account or engagement health. Health changes only through source-data updates and scoring recalculation.
+- Governance action items approved from governance/Fathom review must become tasks with source governance event/action-item linkage.
+- Unified calendar must show governance events, SOW end dates, renewal dates, notice deadlines, score-linked tasks, task due dates, and personal `my items`.
+- Calendar source rows must remain projections from source modules unless a persisted calendar record is explicitly required. Calendar display must not duplicate or mutate source task, governance, engagement, renewal, or signal records.
+- If a task owner is deactivated, the task remains visible to authorized users and must be reassigned before owner-only lifecycle updates can continue.
+- Evidence requirements are controlled by playbook/template/source configuration. Completion without required outcome/evidence must be blocked with field-level validation.
+
 ## Implementation Status
 
 ### Completed Items

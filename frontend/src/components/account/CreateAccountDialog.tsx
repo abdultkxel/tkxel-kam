@@ -7,8 +7,7 @@ import { toast } from 'sonner'
 import { useAuth } from '@/contexts/AuthContext'
 import { users } from '@/data/mock'
 import { ApiError } from '@/services/api'
-import { AccountCustomFieldDefinition, approveOnboardingDraft, createOnboardingDraft, getAccount, listAccountCustomFields } from '@/services/accountWorkspace'
-import { useAccountStore } from '@/stores/accountStore'
+import { AccountCustomFieldDefinition, createOnboardingDraft, listAccountCustomFields } from '@/services/accountWorkspace'
 import { cn } from '@/utils/cn'
 
 type CreateAccountField = 'accountName' | 'projectName' | 'companyUrl' | 'managerName' | 'managerEmail'
@@ -16,7 +15,6 @@ type CreateAccountField = 'accountName' | 'projectName' | 'companyUrl' | 'manage
 export function CreateAccountDialog({ label = 'Create account' }: { label?: string }) {
   const { token } = useAuth()
   const navigate = useNavigate()
-  const upsertAccount = useAccountStore(state => state.upsertAccount)
   const firstAm = users.find(item => item.role === 'am') ?? users[0]
   const [open, setOpen] = useState(false)
   const [accountName, setAccountName] = useState('')
@@ -144,13 +142,9 @@ export function CreateAccountDialog({ label = 'Create account' }: { label?: stri
         fileNames,
         customFieldValues: customValuesForSubmit(customFields, customValues),
       })
-      const approved = await approveOnboardingDraft(token, draft.id)
-      if (!approved.approvedAccountId) throw new Error('Draft approved without an account reference')
-      const account = await getAccount(token, approved.approvedAccountId)
-      upsertAccount(account)
       setOpen(false)
-      toast.success('Account and initial engagement created. Complete KYC in Account Overview.')
-      navigate(`/accounts/${account.id}`)
+      toast.success('Account draft created for onboarding review.')
+      navigate(`/accounts/onboarding?draft=${draft.id}`)
     } catch (error) {
       applyApiErrors(error)
       toast.error(error instanceof Error ? error.message : 'Account could not be created')
@@ -211,7 +205,7 @@ export function CreateAccountDialog({ label = 'Create account' }: { label?: stri
               <p className="text-[10px] font-extrabold uppercase tracking-widest text-brand-blue">Account create flow</p>
               <Dialog.Title className="font-display text-2xl font-bold text-ink">Create account from SOW/charter</Dialog.Title>
               <Dialog.Description className="mt-1 text-sm text-ink-secondary">
-                Upload source documents to prefill the form. This step creates the account and initial engagement; KYC stays inside Account Overview.
+                Upload source documents to prefill the form. This step creates an onboarding draft; approval creates the official account and engagement.
               </Dialog.Description>
             </div>
             <Dialog.Close className="tk-icon-button" aria-label="Close account create flow">
@@ -299,9 +293,9 @@ export function CreateAccountDialog({ label = 'Create account' }: { label?: stri
               <div className="flex items-start gap-3">
                 <Sparkles className="mt-0.5 h-5 w-5 shrink-0 text-brand-blue" />
                 <div>
-                  <h3 className="text-sm font-semibold text-ink">KYC is completed after account creation</h3>
+                  <h3 className="text-sm font-semibold text-ink">Approval creates the official account</h3>
                   <p className="mt-1 text-sm leading-6 text-ink-secondary">
-                    SOW and charter uploads help fill account intake fields here. The full AI-assisted KYC review remains in the Account Overview KYC section.
+                    SOW and charter uploads help fill account intake fields here. Review and approve this draft from Onboarding before it becomes an active account.
                   </p>
                 </div>
               </div>
@@ -311,7 +305,7 @@ export function CreateAccountDialog({ label = 'Create account' }: { label?: stri
               <Dialog.Close type="button" className="tk-button-secondary">Cancel</Dialog.Close>
               <button type="submit" className="tk-button-primary" disabled={creating}>
                 {creating ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />}
-                Create account
+                Create draft
               </button>
             </div>
           </form>

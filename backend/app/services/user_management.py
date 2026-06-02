@@ -50,6 +50,7 @@ class UserManagementService:
 
         user = User(
             email=email,
+            primary_google_calendar_id=payload.primary_google_calendar_id or email,
             hashed_password=hash_password(payload.password),
             full_name=payload.full_name,
             role=payload.role,
@@ -110,6 +111,8 @@ class UserManagementService:
             existing_user = self.users.get_by_email(target_email)
             if existing_user is not None and existing_user.id != user.id:
                 raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="A user with this email already exists")
+            if not updates.get("primary_google_calendar_id") and (not user.primary_google_calendar_id or user.primary_google_calendar_id == user.email):
+                updates["primary_google_calendar_id"] = target_email
 
     @staticmethod
     def _apply_updates(user: User, updates: dict) -> None:
@@ -123,6 +126,9 @@ class UserManagementService:
             if field in updates:
                 value = updates[field]
                 setattr(user, field, value.strip() if isinstance(value, str) else value)
+        if "primary_google_calendar_id" in updates:
+            value = updates["primary_google_calendar_id"]
+            user.primary_google_calendar_id = value.strip() if isinstance(value, str) and value.strip() else None
         if "is_active" in updates and updates["is_active"] is not None:
             user.is_active = updates["is_active"]
 

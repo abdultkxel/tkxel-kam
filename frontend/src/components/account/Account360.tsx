@@ -51,7 +51,6 @@ export function Account360({ account }: { account: Account }) {
   const requestedTab = searchParams.get('tab')
   const [activeTab, setActiveTab] = useState(() => tabs.find(tab => tab.toLowerCase() === requestedTab?.toLowerCase()) ?? 'Overview')
   const setHealth = useAccountStore(state => state.setHealth)
-  const setStage = useAccountStore(state => state.setStage)
   const addNotification = useNotificationStore(state => state.addNotification)
   const addScoreSnapshot = useScoreStore(state => state.addSnapshot)
   const evaluateAccount = useAlertStore(state => state.evaluateAccount)
@@ -252,20 +251,31 @@ export function Account360({ account }: { account: Account }) {
     setSavingStage(true)
     const next: AccountStage = stagePrediction.predictedStage !== account.stage ? stagePrediction.predictedStage : account.stage === 'Expansion' ? 'Renewal' : 'Expansion'
     await new Promise(resolve => window.setTimeout(resolve, 450))
-    setStage(account.id, next)
-    const entry = emit.stageChanged(account.id, user.id, user.name, account.stage, next, `AI stage prediction reviewed: ${stagePrediction.basis}`, false, 'stage-v2.1')
-    evaluateAccount({ ...account, stage: next }, [entry, ...entries])
+    const entry = emitTimelineEvent({
+      accountId: account.id,
+      eventType: 'ai_event',
+      module: 'stage',
+      title: `AI stage recommendation reviewed: ${next}`,
+      description: `Recommendation reviewed without changing official stage. ${stagePrediction.basis}`,
+      performedBy: user.id,
+      performedByName: user.name,
+      metadata: { currentStage: account.stage, recommendedStage: next, calculatorVersion: 'stage-v2.1', mutationApplied: false },
+      isSensitive: false,
+      isSystemGenerated: true,
+      isImmutable: true,
+    })
+    evaluateAccount(account, [entry, ...entries])
     addNotification({
       userId: account.ownerId,
-      trigger: 'account_stage_changed',
-      sentence: `${account.name} moved to ${next}`,
+      trigger: 'account_stage_recommendation_reviewed',
+      sentence: `${account.name} stage recommendation reviewed`,
       accountId: account.id,
       accountName: account.name,
-      contentPreview: 'Stage criteria reviewed and updated.',
+      contentPreview: `AI recommended ${next}; no official stage change was applied.`,
       route: `/accounts/${account.id}`,
     })
     setSavingStage(false)
-    toast.success('Stage updated')
+    toast.success('Stage recommendation reviewed')
   }
 
   function handleAlertAction(action: string) {
@@ -498,7 +508,7 @@ export function Account360({ account }: { account: Account }) {
                 </div>
                 <button className="tk-button-primary shrink-0" disabled={savingStage} onClick={transitionStage}>
                   {savingStage ? <Loader2 className="h-4 w-4 animate-spin" /> : <ArrowRight className="h-4 w-4" />}
-                  Apply stage review
+                  Record AI review
                 </button>
               </div>
             </div>

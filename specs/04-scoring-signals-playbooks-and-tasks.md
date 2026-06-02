@@ -207,12 +207,12 @@ Make account health explainable and actionable by connecting metrics, weak signa
 
 ## Resolved Implementation Defaults
 
-- Default RAG thresholds are Green `75-100`, Amber `60-74`, and Red `0-59`. Existing legacy labels `healthy`, `warning`, and `critical` may be mapped to Green, Amber, and Red for compatibility.
+- Source-of-truth category RAG thresholds for 1-3 category scores are Green `>= 2`, Yellow/Amber `> 1.5 and < 2`, and Red `< 1.5`. Legacy 0-100 thresholds are compatibility-only for historical snapshots or explicitly normalized percentage metrics and must not be used for new source-of-truth category calculations unless an Admin-published normalization rule maps them.
 - Metric formulas must use a safe JSON/DSL expression format with allowlisted score inputs and operators only. Supported MVP operators are arithmetic `+`, `-`, `*`, `/`, comparison operators, `min`, `max`, `avg`, `sum`, `clamp`, and `coalesce`; arbitrary code execution/eval is forbidden.
 - Manual AM calculator submissions are score inputs, not direct authoritative overrides. A submission must include scope, account or engagement, calculator/metric mapping, selected values, submitter, timestamp, source/evidence when configured, and validation status.
 - Official score changes occur only when the scoring engine creates a snapshot from the active published metric version.
 - Signal statuses are `new`, `reviewed`, `accepted`, `dismissed`, `converted`, and `resolved`; dismissal requires a reason when configured and conversion requires a target type such as `task` or `playbook`.
-- Task statuses are `todo`, `in_progress`, `blocked`, `done`, and `skipped`; task priorities are `low`, `medium`, `high`, and `critical`.
+- Task statuses are `open`, `in_progress`, `blocked`, `done`, and `cancelled`; task priorities are `low`, `medium`, `high`, and `critical`. Existing legacy labels such as `todo` or `skipped` may only be retained through explicit migration/mapping, where `skipped` is treated as a cancellation reason rather than a canonical status.
 - Task completion requires outcome/evidence when the task source or template marks evidence as required.
 - Calendar dates are stored in UTC and rendered in the user's local timezone. The calendar API must require a date range and support lazy loading by range; recurring governance behavior remains owned by the governance module.
 - Bulk signal lifecycle updates are out of scope for the first implementation unless added in a later requirement.
@@ -220,11 +220,65 @@ Make account health explainable and actionable by connecting metrics, weak signa
 - Duplicate active signals are unique by account, optional engagement, rule, source record, and condition key; duplicates should be merged or suppressed with audit metadata.
 - If a task or signal owner is deactivated, the item remains visible to authorized users and must be reassigned before owner-only lifecycle updates can proceed.
 
+## Added From Technical Logic Document
+
+- The source-of-truth scoring framework contains these score categories:
+  - Relationship Score.
+  - Resource Health Score.
+  - Service Line Score.
+  - Contract Health Score.
+  - Account Risk Score.
+  - CSAT Score.
+- Delivery Score is referenced by the broader framework but is not specified. It must remain inactive/placeholder only until criteria, weights, formula, RAG thresholds, and triggers are explicitly supplied. Developers must not infer delivery scoring rules.
+- Score storage must persist raw metric score, metric weight, weighted score, final category score, RAG status, calculation date, scoring-version ID, source record context, and explainability data showing criteria, selected option, weight, and weighted result.
+- Scoring calculations may use only approved records and user-confirmed authoritative inputs. Draft KYC, draft onboarding, unreviewed Fathom output, unapproved CSAT, and unapproved AI suggestions must not affect official score snapshots.
+- Composite Account Health formula:
+  - `Composite Account Health = SUM(category score * category weight) / SUM(category weights)`.
+  - Category weights must be Admin-configurable.
+  - Percentage-based categories such as Service Line Score must use an Admin-published normalization rule before being combined with 1-3 or 1-5 categories; mixed-scale averaging is forbidden.
+- Relationship Score formula:
+  - `Relationship Score = SUM(metric score * metric weight)`.
+  - Weights: CEO 20%, KAM 30%, Delivery Leadership/PMO/Director 25%, Finance 5%, In-Person Meeting 20%.
+  - RAG: Green `>= 2`, Yellow/Amber `> 1.5 and < 2`, Red `< 1.5`.
+  - Product logic: Yellow/Red creates attention signals; CEO score `0` creates executive sponsor gap; KAM score `0` creates commercial relationship gap; Delivery score `0` creates delivery relationship gap; In-Person Meeting score `0` creates relationship-depth/visit action.
+- Resource Health Score formula:
+  - `Resource Health Score = SUM(metric score * metric weight)`.
+  - Weights: Number of Key Resources 50%, Key Resource Alignment 25%, Backup 25%.
+  - Number of Key Resources scoring: `3 = project has 1 key resource`, `2 = project has 2 key resources`, `0 = no key resource or more than 2 key resources`.
+  - RAG: Green `>= 2`, Yellow/Amber `> 1.5 and < 2`, Red `< 1.5`.
+  - Product logic: Yellow/Red creates attention signals; key resource score `0`, backup score `0`, or alignment score `1` should recommend stabilization actions.
+- Service Line Score formula:
+  - `Service Line Score = COUNT(Yes) / (COUNT(Yes) + COUNT(No)) * 100`.
+  - `N/A` services are excluded from numerator and denominator.
+  - Low service-line score creates whitespace/growth opportunity signals; many `No` values create adjacency review; strategically important `No` values can create opportunity recommendations; `Yes -> No` changes create adoption-decline timeline events/signals.
+- Contract Health Score formula:
+  - `Contract Health Score = average(Contract Length score, Notice Period score, Renewal Terms score)`.
+  - Contract Length scoring: `3 = 1 year or more`, `2 = 6 months`, `1 = 3 months`.
+  - Notice Period scoring: `3 = non-terminable`, `2 = 2 months`, `1 = 1 month`.
+  - Renewal Terms scoring: `3 = 5% pre-agreed hike plus auto renewal`, `2 = auto renewal`, `0 = no renewal`.
+  - RAG: Green `>= 2`, Yellow/Amber `> 1.5 and < 2`, Red `< 1.5`.
+- Account Risk Score formula:
+  - `Account Risk Score = SUM(metric score * metric weight)`, where higher score means lower risk and greater stability.
+  - Weights: Competitors 30%, Leadership Tenure 15%, Funding/Revenue 15%, Payment Behavior 15%, Roadmap Alignment 20%, Geopolitical 5%.
+  - The Technical Logic Document notes threshold gaps around `1.5-1.6` and `1.9-2.0`; Admin configuration must either preserve documented gaps intentionally or publish a finalized threshold policy before production scoring.
+- CSAT Score formula:
+  - `CSAT Score = SUM(category score * category weight)`.
+  - CSAT uses a 1-5 scale.
+  - Category weights: Delivery Excellence 30%, Communication 20%, Proactiveness 15%, Trust 20%, Value for Money 15%.
+  - CSAT below configured threshold creates risk signals; category values of `1` or `2` recommend improvement tasks; improved CSAT creates positive timeline events.
+- Deterministic signal examples must include SOW expiry, notice deadline, stale KYC, health score drop, dimension/category drop of at least `0.5`, red health, CSAT decline, opportunity stalled, governance overdue, escalation inactive beyond SLA, stakeholder coverage gap, payment overdue, and commercial risk.
+- Signal object fields must include type, account, optional engagement, severity, reason code, evidence/source records, created date, owner, age, confidence when extracted, recommended playbook, and lifecycle status.
+- Signal lifecycle must support `New -> Reviewed -> Accepted -> Converted -> Resolved` and `New -> Reviewed -> Dismissed`. Dismissal requires a reason where configured.
+- Attention Center default sort must prioritize severity, SLA age, renewal proximity, and due date so the page answers "what needs attention today?"
+- Playbook templates must include objective, triggering signal types, weak metric conditions, default activities, default owners, due-date logic, success criteria, skip rules, evidence requirements, version, and active/inactive state.
+- Calendar must include governance events, SOW end dates, renewal dates, notice deadlines, score-linked tasks, due dates, and personal `my items` visibility.
+- Task completion, playbook execution, and AI signal explanation must never directly improve health. Only authoritative source-data changes and scoring recalculation can improve health snapshots.
+
 ## Missing Requirements
 
 - Exact persisted signal rule condition schema fields still need implementation-level definition.
 - Exact seeded default metric catalog and playbook template catalog must be chosen during implementation.
-- Exact CSAT source payload shape depends on the approved integration spec and may start with manual/CSV-backed score inputs.
+- Exact third-party CSAT provider payload shape depends on the approved integration spec. The CSAT scoring formula is defined above and applies to manual/internal CSAT entries and future provider-mapped entries.
 
 ## Ambiguous Requirements
 
@@ -249,7 +303,7 @@ Make account health explainable and actionable by connecting metrics, weak signa
 - Timeline material score changes with before/after values.
 - Audit signal creation, lifecycle changes, dismissal reasons, conversion, and AI explanation requests.
 - Audit playbook template changes and execution.
-- Timeline task creation, completion, skipped status, and material outcome changes.
+- Timeline task creation, completion, cancellation, and material outcome changes.
 
 ## Test Scenarios
 
@@ -290,10 +344,11 @@ Make account health explainable and actionable by connecting metrics, weak signa
 - Playbook template list and explicit playbook execution are implemented and tested. Execution creates tasks only after user selection and stores the template version used.
 - Task list/create/update/evidence APIs are implemented with owner/account authorization, validation, task history, audit logging, source links, evidence, outcome/skip requirements, pagination, filtering, and sorting.
 - Authenticated frontend task creation and lifecycle changes now persist through backend APIs only; local task fallback remains only for unauthenticated/mock mode.
-- Task creation, signal-created tasks, task completion, and skipped tasks write database-backed timeline entries.
+- Task creation, signal-created tasks, task completion, and task cancellation write database-backed timeline entries.
 - Unified calendar API merges task due dates, SOW expiry, renewal dates, and notice deadlines with account/owner/date filters and pagination in feature tests. Governance-event merge support is implemented in the same calendar service.
 - Frontend API backing is implemented for Account 360 score recalculation/history, Admin Scoring Engine Builder, Tasks board/Attention surface, Playbook page, and related scoring/signal/task service calls. Feature tests cover the Tasks page backend load/error/update flow.
 - Loading, empty, and error states are implemented for the main API-backed scoring/task/playbook frontend surfaces; direct frontend regression coverage currently exists for the Tasks page load and error states.
+- Regression coverage is implemented for historical score snapshot immutability after published metric weight changes, and for task completion not directly improving account health.
 - Automated verification passed for this feature using:
   - `DATABASE_URL=sqlite:////tmp/kam_lifespan_test.db .venv/bin/pytest tests/test_scoring_signals_playbooks_tasks.py -q`
   - `npm test -- Tasks.test.tsx`
@@ -308,7 +363,7 @@ Make account health explainable and actionable by connecting metrics, weak signa
 - Signal-to-playbook conversion is implemented through the conversion API, but direct regression coverage should be added before marking that conversion path fully complete.
 - A real AI/LLM Gateway adapter is not implemented for signal explanations. Current AI explanation behavior is a local advisory adapter and does not mutate authoritative scores, signals, playbooks, tasks, or statuses.
 - Google Calendar and CSAT integrations are not implemented in this feature. Calendar currently merges internal governance/task/engagement dates; CSAT starts as manual/calculator-backed score input.
-- Direct automated tests are still needed for dismissal reason enforcement, inactive playbook execution rejection, engagement score recalculation endpoints, formula-change snapshot immutability, task completion not improving health automatically, source-linked task retention after signal resolution, deactivated owner reassignment handling, and calendar date-range lazy loading.
+- Direct automated tests are still needed for dismissal reason enforcement, inactive playbook execution rejection, engagement score recalculation endpoints, source-linked task retention after signal resolution, deactivated owner reassignment handling, and calendar date-range lazy loading.
 - Full backend-suite verification requires the configured local Postgres service at `127.0.0.1:5433` to be running. The feature-specific backend tests passed with a temporary SQLite lifespan database because the default local Postgres was unavailable during verification.
 - Frontend behavioral tests currently cover the Tasks page loading/error/update flow. Additional component tests should be added for Admin Scoring Engine Builder, Account 360 health recalculation/history, Playbook page, and calendar views.
 

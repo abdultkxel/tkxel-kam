@@ -8,6 +8,7 @@ export interface AdminUser {
   title?: string | null
   phone?: string | null
   avatar_initials: string
+  primary_google_calendar_id?: string | null
   is_active: boolean
   created_at: string
   updated_at: string
@@ -42,6 +43,50 @@ export interface PaginatedResponse<T> {
   page: number
   page_size: number
   pages: number
+}
+
+export interface AdminAuditLog {
+  id: string
+  module: string
+  action: string
+  entity_type: string
+  entity_id?: string | null
+  actor_id?: string | null
+  actor_name?: string | null
+  before_value?: Record<string, unknown> | null
+  after_value?: Record<string, unknown> | null
+  reason?: string | null
+  created_at: string
+}
+
+export interface AdminSystemHealth {
+  status: string
+  generated_at: string
+  checks: { key: string; status: string; detail: string }[]
+  metrics: Record<string, number>
+}
+
+export interface AdminJobLog {
+  id: string
+  job_type: string
+  mode: string
+  status: string
+  matched_count: number
+  affected_count: number
+  actor_name?: string | null
+  error_message?: string | null
+  started_at: string
+  finished_at?: string | null
+}
+
+export interface AdminErrorLog {
+  id: string
+  source: string
+  severity: string
+  message: string
+  status: string
+  actor_name?: string | null
+  created_at: string
 }
 
 export interface AllowedEmailDomainsSettings {
@@ -120,6 +165,7 @@ export interface CreateUserPayload {
   title?: string
   phone?: string
   avatar_initials?: string
+  primary_google_calendar_id?: string
   is_active: boolean
 }
 
@@ -130,6 +176,7 @@ export interface UpdateUserPayload {
   title?: string | null
   phone?: string | null
   avatar_initials?: string
+  primary_google_calendar_id?: string | null
   is_active?: boolean
 }
 
@@ -273,7 +320,27 @@ export function deleteCustomField(token: string, fieldId: string) {
   })
 }
 
-type QueryParams = UserListParams | RoleListParams | CustomFieldListParams
+export function getAdminAuditLogs(token: string, params: Record<string, string | number | undefined> = {}) {
+  return apiRequest<PaginatedResponse<AdminAuditLog>>(`/api/admin/audit-logs${queryString(params)}`, { token })
+}
+
+export function exportAdminAuditLogs(token: string, params: Record<string, string | number | undefined> = {}) {
+  return apiRequest<string>(`/api/admin/audit-logs/export${queryString(params)}`, { token })
+}
+
+export function getAdminSystemHealth(token: string) {
+  return apiRequest<AdminSystemHealth>('/api/admin/system-health', { token })
+}
+
+export function getAdminJobLogs(token: string, params: Record<string, string | number | undefined> = {}) {
+  return apiRequest<PaginatedResponse<AdminJobLog>>(`/api/admin/job-logs${queryString(params)}`, { token })
+}
+
+export function getAdminErrorLogs(token: string, params: Record<string, string | number | undefined> = {}) {
+  return apiRequest<PaginatedResponse<AdminErrorLog>>(`/api/admin/error-logs${queryString(params)}`, { token })
+}
+
+type QueryParams = UserListParams | RoleListParams | CustomFieldListParams | Record<string, string | number | boolean | undefined | null>
 
 function queryString(params: QueryParams) {
   const searchParams = new URLSearchParams()

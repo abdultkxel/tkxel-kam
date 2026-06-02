@@ -7,7 +7,6 @@ from app.dependencies import get_current_user, get_signals_service
 from app.models import User
 from app.schemas import (
     PlaybookExecutionRead,
-    RecommendedPlaybookRead,
     SignalAIExplanationRead,
     SignalConvertRequest,
     SignalEvaluationRead,
@@ -132,8 +131,3 @@ def signal_evidence(signal_id: str, current_user: Annotated[User, Depends(get_cu
 @router.post("/signals/{signal_id}/ai-explanation", response_model=SignalAIExplanationRead, summary="Generate advisory signal explanation", description="Returns advisory AI/LLM Gateway explanation text without mutating signal status or task lifecycle.")
 def signal_ai_explanation(signal_id: str, current_user: Annotated[User, Depends(get_current_user)], service: Annotated[SignalsService, Depends(get_signals_service)]) -> SignalAIExplanationRead:
     return service.ai_explanation(signal_id, current_user)
-
-
-@router.get("/signals/{signal_id}/recommended-playbooks", response_model=list[RecommendedPlaybookRead], summary="List recommended playbooks", description="Lists active playbook templates mapped to the signal type or weak metric reasons.")
-def recommended_playbooks(signal_id: str, current_user: Annotated[User, Depends(get_current_user)], service: Annotated[SignalsService, Depends(get_signals_service)]) -> list[RecommendedPlaybookRead]:
-    return service.recommended_playbooks(signal_id, current_user)

@@ -14,13 +14,18 @@ from app.routers import (
     account_planning,
     accounts,
     admin,
+    admin_security,
+    ai,
+    analytics,
     auth,
     content,
+    csat,
     custom_fields,
     dashboards,
     engagements,
     escalations,
     governance,
+    integrations,
     kyc,
     notifications,
     onboarding,
@@ -39,6 +44,7 @@ from app.services.seed import seed_default_data
 from app.services.notifications import NotificationsService
 from app.services.reports import ReportsService
 from app.services.timeline import TimelineService
+from app.services.integrations import IntegrationService
 
 logger = logging.getLogger(__name__)
 
@@ -50,10 +56,13 @@ async def lifespan(app: FastAPI):
         seed_default_data(db)
     retention_worker: asyncio.Task | None = None
     notifications_reporting_worker: asyncio.Task | None = None
+    integrations_worker: asyncio.Task | None = None
     if settings.timeline_retention_worker_enabled:
         retention_worker = asyncio.create_task(timeline_retention_worker_loop())
     if settings.notifications_reporting_worker_enabled:
         notifications_reporting_worker = asyncio.create_task(notifications_reporting_worker_loop())
+    if settings.integrations_worker_enabled:
+        integrations_worker = asyncio.create_task(integrations_worker_loop())
     try:
         yield
     finally:
@@ -65,6 +74,10 @@ async def lifespan(app: FastAPI):
             notifications_reporting_worker.cancel()
             with contextlib.suppress(asyncio.CancelledError):
                 await notifications_reporting_worker
+        if integrations_worker:
+            integrations_worker.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await integrations_worker
 
 
 async def timeline_retention_worker_loop() -> None:
@@ -98,6 +111,19 @@ async def notifications_reporting_worker_loop() -> None:
         except Exception:
             logger.exception("Notifications/reporting worker failed")
         await asyncio.sleep(settings.notifications_reporting_worker_interval_seconds)
+
+
+async def integrations_worker_loop() -> None:
+    await asyncio.sleep(settings.integrations_worker_initial_delay_seconds)
+    while True:
+        try:
+            with SessionLocal() as db:
+                synced = IntegrationService(db).scheduled_sync_due_connections()
+                if synced:
+                    logger.info("Integrations worker completed %s due sync(s)", synced)
+        except Exception:
+            logger.exception("Integrations worker failed")
+        await asyncio.sleep(settings.integrations_worker_interval_seconds)
 
 
 settings = get_settings()
@@ -144,6 +170,10 @@ openapi_tags = [
         "description": "Governance calendar, recurrence, agenda drafts, decisions, actions, AI brief, and integration sync APIs.",
     },
     {
+        "name": "Approved Integrations",
+        "description": "Approved Google Calendar, Fathom, CSAT, and AI/LLM Gateway integration configuration, sync, review, and audit APIs.",
+    },
+    {
         "name": "Playbooks, Activities, Tasks, and Calendar",
         "description": "Configurable playbooks, execution-generated activities, task/evidence management, and unified calendar projections.",
     },
@@ -178,6 +208,10 @@ openapi_tags = [
     {
         "name": "Account History and Timeline",
         "description": "Source-linked account timeline, notes, comments, retention policies, handover summaries, and AI Timeline Search.",
+    },
+    {
+        "name": "AI Assistance",
+        "description": "Source-backed advisory KAM AI search, briefs, forecasts, handoff summaries, and stage predictions.",
     },
     {
         "name": "Field Builder Runtime",
@@ -215,6 +249,7 @@ app.add_exception_handler(RequestValidationError, validation_exception_handler)
 app.include_router(auth.router)
 app.include_router(users.router)
 app.include_router(admin.router)
+app.include_router(admin_security.router)
 app.include_router(onboarding.router)
 app.include_router(accounts.router)
 app.include_router(engagements.router)
@@ -222,10 +257,15 @@ app.include_router(content.router)
 app.include_router(custom_fields.router)
 app.include_router(escalations.router)
 app.include_router(governance.router)
+app.include_router(integrations.router)
+app.include_router(csat.router)
+app.include_router(csat.integration_router)
 app.include_router(playbooks_tasks.router)
 app.include_router(stakeholders.router)
 app.include_router(opportunities.router)
 app.include_router(account_planning.router)
+app.include_router(ai.router)
+app.include_router(analytics.router)
 app.include_router(service_catalog.router)
 app.include_router(retention.router)
 app.include_router(scoring.router)

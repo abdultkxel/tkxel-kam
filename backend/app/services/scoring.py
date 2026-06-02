@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 from app.models import (
     Account,
     AccountHealthRollup,
+    CsatScore,
     Engagement,
     EngagementHealthSnapshot,
     Escalation,
@@ -51,7 +52,50 @@ from app.services.user_management import page_count
 logger = logging.getLogger(__name__)
 
 SCORING_MODULE = "scoring_engine"
-DEFAULT_METRIC_VERSION = "scoring-v1"
+DEFAULT_METRIC_VERSION = "technical-logic-scoring-v1"
+ACCOUNT_SCORING_CATEGORY_WEIGHTS = {
+    "relationship_score": 20,
+    "resource_score": 15,
+    "service_line_score": 15,
+    "contract_health_score": 20,
+    "account_risk_score": 15,
+    "csat_score": 15,
+}
+
+ACCOUNT_SCORING_METRIC_ALIASES = {
+    "relationship_score": {"relationship_score"},
+    "resource_score": {"resource_score", "resource_health"},
+    "service_line_score": {"service_line_score", "service_lines_score"},
+    "contract_health_score": {"contract_health_score", "contract_health"},
+    "account_risk_score": {"account_risk_score", "risk_score"},
+    "csat_score": {"csat_score", "customer_satisfaction"},
+}
+
+RELATIONSHIP_CRITERIA_WEIGHTS = {
+    "relationship_ceo": 20,
+    "relationship_kam": 30,
+    "relationship_delivery": 25,
+    "relationship_finance": 5,
+    "relationship_in_person": 20,
+}
+RESOURCE_CRITERIA_WEIGHTS = {
+    "resource_key_resources": 50,
+    "resource_alignment": 25,
+    "resource_backup": 25,
+}
+CONTRACT_CRITERIA_WEIGHTS = {
+    "contract_length": 40,
+    "contract_notice_period": 30,
+    "contract_renewal_terms": 30,
+}
+ACCOUNT_RISK_CRITERIA_WEIGHTS = {
+    "risk_competitors": 30,
+    "risk_leadership_tenure": 15,
+    "risk_funding_revenue": 15,
+    "risk_payment_behavior": 15,
+    "risk_roadmap_alignment": 20,
+    "risk_geopolitical": 5,
+}
 
 
 def field_error(field: str, message: str, status_code: int = status.HTTP_422_UNPROCESSABLE_ENTITY) -> HTTPException:
@@ -383,57 +427,22 @@ class ScoringService:
         manual_submission: ManualScoreSubmission | None = None,
     ) -> ScoreSnapshot:
         previous = self.repository.latest_score_snapshot(account_id=account.id, scope="account")
-        active_engagements, _ = self.engagements.list_for_account(account_id=account.id, page=1, page_size=1000)
-        delivery_scores = [item.delivery_health for item in active_engagements]
-        delivery = clamp_percent(sum(delivery_scores) / len(delivery_scores)) if delivery_scores else account.health_delivery
+        active_engagements, _ = self.engagements.list_for_account(account_id=account.id, status_filter="active", page=1, page_size=1000)
         open_escalations = self._open_escalation_count(account.id)
         open_opportunities = self._open_opportunity_count(account.id)
         stale_kyc = self._is_kyc_stale(account.id)
-        relationship = account.health_relationship
-        usage = account.health_usage
-        commercial = clamp_percent(account.health_commercial + min(open_opportunities * 2, 10) - open_escalations * 5)
         manual_values = manual_submission.values_json if manual_submission else {}
-        for key, value in manual_values.items():
-            if key in {"relationship", "usage", "delivery", "commercial"}:
-                numeric = self._manual_percent(value, key)
-                if key == "relationship":
-                    relationship = numeric
-                if key == "usage":
-                    usage = numeric
-                if key == "delivery":
-                    delivery = numeric
-                if key == "commercial":
-                    commercial = numeric
-        score_inputs = {
-            "health_relationship": relationship,
-            "relationship": relationship,
-            "health_usage": usage,
-            "usage": usage,
-            "usage_adoption": usage,
-            "health_delivery": delivery,
-            "delivery": delivery,
-            "health_commercial": commercial,
-            "commercial": commercial,
-            "open_escalations": open_escalations,
-            "open_opportunities": open_opportunities,
-            "stale_kyc": 1 if stale_kyc else 0,
-        }
         metric_definitions = self._published_metrics("account")
-        drivers = self._drivers_from_metrics(
-            metric_definitions,
-            score_inputs,
-            default_drivers=[
-                {"key": "relationship", "label": "Relationship health", "score": relationship, "weight": 25},
-                {"key": "usage", "label": "Usage/adoption health", "score": usage, "weight": 25},
-                {"key": "delivery", "label": "Delivery health", "score": delivery, "weight": 25},
-                {"key": "commercial", "label": "Commercial health", "score": commercial, "weight": 25},
-            ],
-        )
+        category_scores = self._technical_account_category_scores(account, active_engagements, manual_values, open_escalations, open_opportunities)
+        drivers = self._technical_account_drivers(category_scores, metric_definitions)
         thresholds = self._thresholds_from_metrics(metric_definitions)
         kyc_penalty = 10 if stale_kyc else 0
         overall = clamp_percent(self._weighted_overall(drivers) - kyc_penalty)
         rag_status = self._rag_status(overall, thresholds)
         reason_codes = self._reason_codes(drivers, thresholds=thresholds, stale_kyc=stale_kyc, open_escalations=open_escalations)
+        missing_categories = [key for key, item in category_scores.items() if item.get("missing")]
+        for key in missing_categories:
+            reason_codes.append({"code": f"{key}_missing", "label": f"{category_scores[key]['label']} source data is missing"})
         trend = overall - previous.overall if previous else 0
         snapshot = ScoreSnapshot(
             account_id=account.id,
@@ -449,10 +458,12 @@ class ScoringService:
             trend=trend,
             status="complete",
             source_context={
-                "sources": ["account_health_fields", "engagements", "kyc_snapshots", "opportunities", "escalations"],
+                "sources": ["technical_module_logic", "account_records", "engagements", "kyc_snapshots", "opportunities", "escalations", "csat_scores"],
                 "engagement_count": len(active_engagements),
                 "open_escalations": open_escalations,
                 "open_opportunities": open_opportunities,
+                "technical_logic_category_scores": category_scores,
+                "delivery_score_active": False,
                 "manual_submission_id": manual_submission.id if manual_submission else None,
                 "published_metrics": [{"id": metric.id, "slug": metric.slug, "version": metric.current_version} for metric in metric_definitions],
             },
@@ -461,17 +472,24 @@ class ScoringService:
         )
         self.repository.add_score_snapshot(snapshot)
         account.health_overall = overall
-        account.health_relationship = relationship
-        account.health_usage = usage
-        account.health_delivery = delivery
-        account.health_commercial = commercial
+        account.health_relationship = clamp_percent(category_scores["relationship_score"]["normalized_score"])
+        account.health_usage = clamp_percent(category_scores["service_line_score"]["normalized_score"])
+        account.health_commercial = clamp_percent((category_scores["contract_health_score"]["normalized_score"] + category_scores["account_risk_score"]["normalized_score"]) / 2)
         account.risk_status = self._legacy_risk_status(rag_status)
         self.db.add(
             AccountHealthRollup(
                 account_id=account.id,
                 overall=overall,
                 rag_status=rag_status,
-                contributions=[{"engagement_id": item.id, "name": item.name, "score": item.delivery_health} for item in active_engagements],
+                contributions=[
+                    {
+                        "engagement_id": item.id,
+                        "name": item.name,
+                        "delivery_score_active": False,
+                        "legacy_delivery_health": item.delivery_health,
+                    }
+                    for item in active_engagements
+                ],
                 metric_version=snapshot.metric_version,
             )
         )
@@ -560,6 +578,240 @@ class ScoringService:
         )
         return snapshot
 
+    def _technical_account_category_scores(
+        self,
+        account: Account,
+        engagements: list[Engagement],
+        manual_values: dict[str, Any],
+        open_escalations: int,
+        open_opportunities: int,
+    ) -> dict[str, dict[str, Any]]:
+        relationship_criteria = self._weighted_manual_criteria(manual_values, RELATIONSHIP_CRITERIA_WEIGHTS, 1, 3)
+        relationship = self._manual_scaled_value(manual_values, ["relationship_score", "relationship"], 1, 3)
+        if relationship is None:
+            relationship = relationship_criteria[0] if relationship_criteria else self._percent_to_scale(account.health_relationship, 1, 3)
+
+        resource_criteria = self._weighted_manual_criteria(manual_values, RESOURCE_CRITERIA_WEIGHTS, 1, 3)
+        resource = self._manual_scaled_value(manual_values, ["resource_score", "resource", "delivery"], 1, 3)
+        if resource is None:
+            legacy_delivery = self._average([item.delivery_health for item in engagements]) if engagements else account.health_delivery
+            resource = resource_criteria[0] if resource_criteria else self._percent_to_scale(legacy_delivery, 1, 3)
+
+        service_line = self._manual_scaled_value(manual_values, ["service_line_score", "service_lines_score", "usage"], 1, 3)
+        if service_line is None:
+            service_line = self._service_line_score(manual_values, engagements, account)
+
+        contract_criteria = self._weighted_manual_criteria(manual_values, CONTRACT_CRITERIA_WEIGHTS, 1, 3)
+        contract_health = self._manual_scaled_value(manual_values, ["contract_health_score", "contract_score"], 1, 3)
+        contract_missing = not engagements
+        if contract_health is None:
+            contract_health = contract_criteria[0] if contract_criteria else self._contract_health_score(engagements) if engagements else self._percent_to_scale(account.health_commercial, 1, 3)
+
+        account_risk_criteria = self._weighted_manual_criteria(manual_values, ACCOUNT_RISK_CRITERIA_WEIGHTS, 1, 3)
+        account_risk = self._manual_scaled_value(manual_values, ["account_risk_score", "risk_score", "commercial"], 1, 3)
+        if account_risk is None:
+            account_risk = account_risk_criteria[0] if account_risk_criteria else self._account_risk_score(account, open_escalations, open_opportunities)
+
+        latest_csat = self._latest_csat_score(account.id)
+        csat_missing = latest_csat is None
+        csat = self._manual_scaled_value(manual_values, ["csat_score"], 1, 5)
+        if csat is None:
+            csat = float(latest_csat.weighted_score or latest_csat.score) if latest_csat else 3.0
+
+        return {
+            "relationship_score": self._category("Relationship Score", relationship, "1-3", 1, 3, {"source": "technical_logic_relationship_criteria" if relationship_criteria else "manual_or_account_health", "criteria": relationship_criteria[1] if relationship_criteria else []}),
+            "resource_score": self._category("Resource Score", resource, "1-3", 1, 3, {"source": "technical_logic_resource_criteria" if resource_criteria else "manual_or_legacy_delivery", "criteria": resource_criteria[1] if resource_criteria else []}),
+            "service_line_score": self._category("Service Line Score", service_line, "1-3", 1, 3, {"source": "manual_service_line_statuses" if manual_values.get("service_line_statuses") else "manual_or_engagement_service_lines"}),
+            "contract_health_score": self._category("Contract Health Score", contract_health, "1-3", 1, 3, {"source": "technical_logic_contract_criteria" if contract_criteria else "manual_or_engagement_terms", "missing": contract_missing, "criteria": contract_criteria[1] if contract_criteria else []}),
+            "account_risk_score": self._category("Account Risk Score", account_risk, "1-3", 1, 3, {"source": "technical_logic_risk_criteria" if account_risk_criteria else "manual_or_risk_signals", "open_escalations": open_escalations, "open_opportunities": open_opportunities, "criteria": account_risk_criteria[1] if account_risk_criteria else []}),
+            "csat_score": self._category("CSAT Score", csat, "1-5", 1, 5, {"source": "manual_or_latest_csat", "missing": csat_missing, "csat_score_id": latest_csat.id if latest_csat else None}),
+        }
+
+    def _technical_account_drivers(self, category_scores: dict[str, dict[str, Any]], metrics: list[ScoringMetricDefinition] | None = None) -> list[dict[str, Any]]:
+        drivers: list[dict[str, Any]] = []
+        category_weights = self._category_weights(metrics or [])
+        for key, item in category_scores.items():
+            weight = category_weights[key]
+            normalized = clamp_percent(item["normalized_score"])
+            drivers.append(
+                {
+                    "key": key,
+                    "label": item["label"],
+                    "score": normalized,
+                    "raw_score": item["raw_score"],
+                    "scale": item["scale"],
+                    "weight": weight,
+                    "weighted_score": round(normalized * (weight / 100), 2),
+                    "rag_status": self._rag_status(normalized, {"red_max": 49, "amber_min": 50, "green_min": 75}),
+                    "source": item.get("source"),
+                    "missing": bool(item.get("missing")),
+                }
+            )
+        return self._normalize_driver_weights(drivers)
+
+    def _category_weights(self, metrics: list[ScoringMetricDefinition]) -> dict[str, int]:
+        weights = dict(ACCOUNT_SCORING_CATEGORY_WEIGHTS)
+        for category_key, aliases in ACCOUNT_SCORING_METRIC_ALIASES.items():
+            matched = [metric for metric in metrics if metric.slug in aliases]
+            if matched:
+                weights[category_key] = max(0, int(matched[-1].weight))
+        return weights
+
+    def _category(self, label: str, raw_score: float, scale: str, scale_min: int, scale_max: int, context: dict[str, Any]) -> dict[str, Any]:
+        raw = round(max(scale_min, min(scale_max, float(raw_score))), 2)
+        return {
+            "label": label,
+            "raw_score": raw,
+            "scale": scale,
+            "normalized_score": self._scale_to_percent(raw, scale_min, scale_max),
+            **context,
+        }
+
+    def _contract_health_score(self, engagements: list[Engagement]) -> float:
+        scores: list[float] = []
+        now = datetime.now(timezone.utc)
+        for engagement in engagements:
+            length_score = 2.0
+            if engagement.start_date and engagement.end_date:
+                start = self._aware_datetime(engagement.start_date)
+                end = self._aware_datetime(engagement.end_date)
+                months = max((end - start).days / 30.44, 0)
+                length_score = 3.0 if months >= 12 else 2.0 if months >= 6 else 1.0
+            notice_score = 3.0 if engagement.auto_renewal else 2.0
+            if engagement.notice_period_days is not None:
+                notice_score = 3.0 if engagement.notice_period_days >= 60 else 2.0 if engagement.notice_period_days >= 30 else 1.0
+            renewal_score = 2.0
+            if engagement.end_date:
+                days_to_end = (self._aware_datetime(engagement.end_date) - now).days
+                renewal_score = 3.0 if days_to_end > 90 else 2.0 if days_to_end > 30 else 1.0
+            scores.append(self._average([length_score, notice_score, renewal_score]))
+        return self._average(scores) if scores else 2.0
+
+    def _account_risk_score(self, account: Account, open_escalations: int, open_opportunities: int) -> float:
+        risk_status_score = 3.0 if account.risk_status == "healthy" else 2.0 if account.risk_status == "warning" else 1.0
+        commercial_score = self._percent_to_scale(account.health_commercial, 1, 3)
+        raw = self._average([risk_status_score, commercial_score])
+        if open_escalations >= 3:
+            raw = min(raw, 1.0)
+        elif open_escalations:
+            raw = min(raw, 2.0)
+        if open_opportunities:
+            raw = min(3.0, raw + min(open_opportunities * 0.1, 0.3))
+        return raw
+
+    def _service_line_score(self, manual_values: dict[str, Any], engagements: list[Engagement], account: Account) -> float:
+        statuses = manual_values.get("service_line_statuses")
+        if isinstance(statuses, dict):
+            evaluated = []
+            for service_line, value in statuses.items():
+                normalized = str(value).strip().lower()
+                if normalized in {"yes", "true", "active", "covered", "1"}:
+                    evaluated.append({"service_line": service_line, "status": "yes", "score": 3.0})
+                elif normalized in {"no", "false", "missing", "0"}:
+                    evaluated.append({"service_line": service_line, "status": "no", "score": 1.0})
+                elif normalized in {"na", "n/a", "not_applicable", "not applicable"}:
+                    continue
+            if evaluated:
+                return self._average([item["score"] for item in evaluated])
+        service_lines = {str(line).strip().lower() for engagement in engagements for line in (engagement.service_lines or []) if str(line).strip()}
+        if service_lines:
+            return 3 if len(service_lines) >= 3 else 2.5 if len(service_lines) == 2 else 2
+        return self._percent_to_scale(account.health_usage, 1, 3)
+
+    def _weighted_manual_criteria(self, values: dict[str, Any], criteria_weights: dict[str, int], scale_min: int, scale_max: int) -> tuple[float, list[dict[str, Any]]] | None:
+        weighted: list[tuple[float, int]] = []
+        criteria: list[dict[str, Any]] = []
+        for key, weight in criteria_weights.items():
+            if key not in values:
+                continue
+            score = self._criterion_score(values[key], scale_min, scale_max)
+            if score is None:
+                continue
+            weighted.append((score, weight))
+            criteria.append({"key": key, "score": score, "weight": weight})
+        total_weight = sum(weight for _, weight in weighted)
+        if total_weight <= 0:
+            return None
+        score = round(sum(score * weight for score, weight in weighted) / total_weight, 2)
+        return score, criteria
+
+    def _criterion_score(self, value: Any, scale_min: int, scale_max: int) -> float | None:
+        numeric = self._numeric_value(value)
+        if numeric is not None:
+            if numeric > scale_max and scale_max <= 5:
+                return self._percent_to_scale(numeric, scale_min, scale_max)
+            return max(scale_min, min(scale_max, numeric))
+        if isinstance(value, str):
+            normalized = value.strip().lower()
+            if normalized in {"yes", "true", "strong", "high", "green", "covered", "healthy"}:
+                return float(scale_max)
+            if normalized in {"partial", "medium", "amber", "watch", "warning"}:
+                return round((scale_min + scale_max) / 2, 2)
+            if normalized in {"no", "false", "weak", "low", "red", "missing", "critical"}:
+                return float(scale_min)
+            if normalized in {"na", "n/a", "not_applicable", "not applicable"}:
+                return None
+        return None
+
+    def _latest_csat_score(self, account_id: str) -> CsatScore | None:
+        return self.db.scalar(
+            select(CsatScore)
+            .where(CsatScore.account_id == account_id)
+            .order_by(CsatScore.source_recorded_at.desc(), CsatScore.created_at.desc())
+            .limit(1)
+        )
+
+    def _manual_scaled_value(self, values: dict[str, Any], keys: list[str], scale_min: int, scale_max: int) -> float | None:
+        for key in keys:
+            if key not in values:
+                continue
+            value = self._numeric_value(values[key])
+            if value is None:
+                continue
+            if value > scale_max and scale_max <= 5:
+                return self._percent_to_scale(value, scale_min, scale_max)
+            return max(scale_min, min(scale_max, value))
+        return None
+
+    def _manual_subscores(self, values: dict[str, Any], keys: list[str], scale_min: int, scale_max: int) -> list[float]:
+        scores: list[float] = []
+        for key in keys:
+            value = self._manual_scaled_value(values, [key], scale_min, scale_max)
+            if value is not None:
+                scores.append(value)
+        return scores
+
+    @staticmethod
+    def _numeric_value(value: Any) -> float | None:
+        if isinstance(value, dict):
+            value = value.get("value", value.get("score"))
+        if isinstance(value, bool):
+            return 3.0 if value else 1.0
+        if isinstance(value, (int, float)):
+            return float(value)
+        if isinstance(value, str) and value.strip():
+            try:
+                return float(value.strip())
+            except ValueError:
+                return None
+        return None
+
+    @staticmethod
+    def _percent_to_scale(value: float | int, scale_min: int, scale_max: int) -> float:
+        percent = max(0, min(100, float(value)))
+        return round(scale_min + (percent / 100) * (scale_max - scale_min), 2)
+
+    @staticmethod
+    def _scale_to_percent(value: float, scale_min: int, scale_max: int) -> int:
+        if scale_max <= scale_min:
+            return 0
+        return clamp_percent(((value - scale_min) / (scale_max - scale_min)) * 100)
+
+    @staticmethod
+    def _average(values: list[float | int]) -> float:
+        numeric = [float(value) for value in values]
+        return round(sum(numeric) / len(numeric), 2) if numeric else 0.0
+
     def _create_manual_submission(
         self,
         account_id: str,
@@ -571,7 +823,7 @@ class ScoringService:
         if payload is None:
             return None
         for key, value in payload.values.items():
-            self._manual_percent(value, key)
+            self._validate_manual_submission_value(value, key)
         submission = ManualScoreSubmission(
             account_id=account_id,
             engagement_id=engagement_id,
@@ -585,6 +837,13 @@ class ScoringService:
         )
         self.repository.add_manual_submission(submission)
         return submission
+
+    def _validate_manual_submission_value(self, value: Any, field: str) -> None:
+        numeric = self._numeric_value(value)
+        if numeric is None:
+            return
+        if numeric < 0 or numeric > 100:
+            raise field_error(field, f"{field} score must be from 0 to 100.")
 
     def _start_job(self, job_type: str, scope: str, trigger_source: str, current_user: User, *, account_id: str | None = None, engagement_id: str | None = None) -> ScoringJob:
         job = ScoringJob(
@@ -613,7 +872,7 @@ class ScoringService:
             return True
         if latest.freshness_status != "fresh":
             return True
-        threshold = datetime.now(timezone.utc) - timedelta(days=180)
+        threshold = datetime.now(timezone.utc) - timedelta(days=90)
         approved_at = latest.approved_at
         if approved_at.tzinfo is None:
             approved_at = approved_at.replace(tzinfo=timezone.utc)

@@ -219,16 +219,18 @@ def test_onboarding_draft_approval_creates_account_sources_and_engagement(client
     assert overview_response.status_code == 200
     overview = overview_response.json()
     assert overview["account"]["name"] == "Northwind Workspace"
+    assert overview["account"]["lifecycle_status"] == "Onboarding"
     assert overview["account"]["primary_owner"]["user_id"] == owner["id"]
     assert overview["engagements"]["total"] == 1
     assert overview["engagements"]["items"][0]["name"] == "Customer intelligence modernization"
+    assert overview["engagements"]["items"][0]["status"] == "draft"
     assert overview["attachments"]["total"] == 1
 
     rollup_response = client.get(f"/api/accounts/{account_id}/health/rollup", headers=headers)
     assert rollup_response.status_code == 200
     rollup = rollup_response.json()
-    assert rollup["metric_version"] == "engagement-health-rollup-adapter-v1"
-    assert rollup["contributions"][0]["name"] == "Customer intelligence modernization"
+    assert rollup["metric_version"] == "account-rollup-v1"
+    assert rollup["contributions"] == []
 
 
 def test_onboarding_validation_and_authorization_errors_are_enforced(client: TestClient) -> None:

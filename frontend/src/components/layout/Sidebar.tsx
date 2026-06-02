@@ -1,4 +1,4 @@
-import { Bell, BriefcaseBusiness, Building2, CalendarDays, ChevronLeft, FileText, Home, ListChecks, PlaySquare, Settings, ShieldAlert, UserRound } from 'lucide-react'
+import { Activity, BarChart3, Bell, BriefcaseBusiness, Building2, CalendarDays, ChevronLeft, FileText, Home, ListChecks, PlaySquare, Settings, ShieldAlert, UserRound } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import { NavLink } from 'react-router-dom'
 import { useRole } from '@/hooks/useRole'
@@ -14,6 +14,8 @@ export const sidebarLinks: { to: string; label: string; icon: LucideIcon; privil
   { to: '/governance', label: 'Governance', icon: CalendarDays },
   { to: '/escalations', label: 'Escalations', icon: ShieldAlert },
   { to: '/tasks', label: 'Tasks', icon: ListChecks },
+  { to: '/health-scores', label: 'Health Scores', icon: Activity },
+  { to: '/analytics', label: 'Analytics', icon: BarChart3, privileged: true },
   { to: '/reports', label: 'Reports', icon: FileText },
   { to: '/playbook', label: 'Playbook', icon: PlaySquare },
   { to: '/admin', label: 'Admin', icon: Settings, privileged: true },

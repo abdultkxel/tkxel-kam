@@ -9,7 +9,6 @@ from app.models import (
     AccountOwner,
     AccountOwnershipHistory,
     Engagement,
-    EngagementHealthSnapshot,
     OnboardingDraft,
     OnboardingDraftEngagement,
     SourceCitation,
@@ -185,7 +184,7 @@ class OnboardingService:
             company_url=draft.company_url,
             segment=draft.segment,
             region=draft.region,
-            lifecycle_status=draft.lifecycle_status,
+            lifecycle_status=self._official_lifecycle_for_draft(draft.lifecycle_status),
             risk_status="warning",
             commercial_value=draft.commercial_value,
             currency=draft.currency,
@@ -452,7 +451,7 @@ class OnboardingService:
         account.company_url = draft.company_url
         account.segment = draft.segment
         account.region = draft.region
-        account.lifecycle_status = draft.lifecycle_status
+        account.lifecycle_status = self._official_lifecycle_for_draft(draft.lifecycle_status)
         account.commercial_value = draft.commercial_value
         account.currency = draft.currency
         account.service_context = draft.service_context
@@ -751,7 +750,7 @@ class OnboardingService:
         engagement = Engagement(
             account_id=account.id,
             name=draft.name,
-            status="active",
+            status="draft",
             owner_id=owner.id,
             owner_name=owner.full_name,
             ops_lead_id=ops_lead.id if ops_lead else draft.ops_lead_id,
@@ -773,20 +772,6 @@ class OnboardingService:
             source_citation=draft.source_citation or account.source_citation,
         )
         self.engagements.save(engagement)
-        self.engagements.add_health_snapshot(
-            EngagementHealthSnapshot(
-                engagement_id=engagement.id,
-                account_id=account.id,
-                overall=engagement.delivery_health,
-                rag_status=self._rag_status(engagement.delivery_health),
-                drivers=self._health_drivers(engagement),
-                freshness_status="fresh",
-                is_dirty=False,
-                contribution=round(engagement.delivery_health / 100, 2),
-                created_by_id=current_user.id,
-                created_by_name=current_user.full_name,
-            )
-        )
         return engagement
 
     def _log_approval(self, account: Account, draft: OnboardingDraft, actor: User, engagements: list[Engagement]) -> None:
@@ -823,9 +808,10 @@ class OnboardingService:
             )
 
     def _notify_account_health_impacted_by_engagement_creation(self, account: Account, engagements: list[Engagement]) -> None:
-        if not engagements:
+        active_engagements = [engagement for engagement in engagements if engagement.status == "active"]
+        if not active_engagements:
             return
-        notify_account_health_impacted_by_engagement_change(self.engagements, account=account, engagement=engagements[-1])
+        notify_account_health_impacted_by_engagement_change(self.engagements, account=account, engagement=active_engagements[-1])
 
     @staticmethod
     def _source_citation_for_draft(draft: OnboardingDraft) -> str | None:
@@ -836,6 +822,10 @@ class OnboardingService:
                 citation = document.citations[0]
                 return f"{citation.label}: {citation.excerpt}"
         return None
+
+    @staticmethod
+    def _official_lifecycle_for_draft(lifecycle_status: str) -> str:
+        return "Onboarding" if lifecycle_status == "Draft" else lifecycle_status
 
     @staticmethod
     def _draft_audit_value(draft: OnboardingDraft) -> dict:

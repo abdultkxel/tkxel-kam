@@ -33,11 +33,11 @@ from app.services.user_management import page_count
 
 TASKS_MODULE = "playbooks_tasks_calendar"
 TASK_STATUS_TRANSITIONS = {
-    "todo": {"in_progress", "blocked", "done", "skipped"},
-    "in_progress": {"todo", "blocked", "done", "skipped"},
-    "blocked": {"todo", "in_progress", "done", "skipped"},
+    "open": {"in_progress", "blocked", "done", "cancelled"},
+    "in_progress": {"open", "blocked", "done", "cancelled"},
+    "blocked": {"open", "in_progress", "done", "cancelled"},
     "done": set(),
-    "skipped": set(),
+    "cancelled": set(),
 }
 
 
@@ -252,7 +252,7 @@ class TaskService:
             owner_id=owner.id if owner else None,
             owner_name=owner.full_name if owner else signal.owner_name,
             due_at=due_at or datetime.now(timezone.utc) + timedelta(days=7),
-            status="todo",
+            status="open",
             priority="critical" if signal.severity == "critical" else "high" if signal.severity == "warning" else "medium",
             notes=note,
             evidence_json=signal.evidence_json,
@@ -286,14 +286,14 @@ class TaskService:
         if next_status:
             self._apply_task_status(task, next_status, current_user, note=updates.get("notes"))
         self.audit.log(module=TASKS_MODULE, action="update", entity_type="task", entity_id=task.id, actor=current_user, before_value=before, after_value=self._task_snapshot(task))
-        if next_status in {"done", "skipped"}:
+        if next_status in {"done", "cancelled"}:
             self._add_task_timeline(
                 task,
                 account,
                 current_user,
-                event_type="task_completed" if next_status == "done" else "task_skipped",
-                title=f"Task {'completed' if next_status == 'done' else 'skipped'}: {task.title}",
-                description=task.outcome or task.skip_reason or task.notes or "",
+                event_type="task_completed" if next_status == "done" else "task_cancelled",
+                title=f"Task {'completed' if next_status == 'done' else 'cancelled'}: {task.title}",
+                description=task.outcome or task.skipped_reason or task.notes or "",
             )
         self.repository.commit()
         return TaskRead.model_validate(task)
@@ -356,8 +356,8 @@ class TaskService:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Task cannot transition from {previous} to {next_status}")
         if next_status == "done" and not task.outcome and not task.evidence_json:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Completed tasks require outcome or evidence")
-        if next_status == "skipped" and not task.skip_reason:
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Skipped tasks require a skip reason")
+        if next_status == "cancelled" and not task.skipped_reason:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Cancelled tasks require a cancellation reason")
         task.status = next_status
         if next_status == "done":
             task.completed_at = datetime.now(timezone.utc)
@@ -388,7 +388,7 @@ class TaskService:
             owner_id=owner.id if owner else None,
             owner_name=owner.full_name if owner else None,
             due_at=datetime.now(timezone.utc) + timedelta(days=offset_days),
-            status="todo",
+            status="open",
             priority=activity.get("priority", "medium"),
             notes=activity.get("notes"),
             evidence_json=activity.get("evidence", []),

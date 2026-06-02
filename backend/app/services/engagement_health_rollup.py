@@ -18,7 +18,7 @@ def notify_account_health_impacted_by_engagement_change(
     scoring engine owns account health rollup calculations.
     """
     engagements.flush()
-    active_engagements, _ = engagements.list_for_account(account_id=account.id, page=1, page_size=1000)
+    active_engagements, _ = engagements.list_for_account(account_id=account.id, status_filter="active", page=1, page_size=1000)
     rollup = AccountHealthRollup(
         account_id=account.id,
         overall=account.health_overall,

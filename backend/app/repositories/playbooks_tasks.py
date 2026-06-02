@@ -64,6 +64,9 @@ class PlaybooksTasksRepository:
             .options(selectinload(PlaybookTemplate.activities))
         )
 
+    def get_template_by_slug(self, slug: str) -> PlaybookTemplate | None:
+        return self.db.scalar(select(PlaybookTemplate).where(PlaybookTemplate.slug == slug))
+
     def save_template(self, template: PlaybookTemplate) -> PlaybookTemplate:
         self.db.add(template)
         self.db.flush()
@@ -257,6 +260,7 @@ class PlaybooksTasksRepository:
             conditions.append(
                 or_(
                     PlaybookTemplate.name.ilike(term),
+                    PlaybookTemplate.slug.ilike(term),
                     PlaybookTemplate.objective.ilike(term),
                     PlaybookTemplate.description.ilike(term),
                     PlaybookTemplate.activities.any(PlaybookTemplateActivity.title.ilike(term)),

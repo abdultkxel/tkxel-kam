@@ -53,6 +53,10 @@ export function AdminGovernancePanel() {
   async function submit(event: FormEvent) {
     event.preventDefault()
     if (!token || !user) return
+    if (!form.name.trim()) {
+      toast.error('Recurrence rule name is required')
+      return
+    }
     setSaving(true)
     try {
       const rule = await createRecurrenceRule(token, {
@@ -94,7 +98,7 @@ export function AdminGovernancePanel() {
           <p className="mt-2 text-sm text-ink-secondary">Configure recurring QBR, SteerCo, monthly review, or executive review schedules.</p>
         </div>
         <form onSubmit={submit} className="grid gap-3 border-b border-surface-border bg-surface-tertiary p-4 md:grid-cols-2 xl:grid-cols-[1fr_160px_150px_1fr_auto]">
-          <input className="tk-input" value={form.name} onChange={event => setForm({ ...form, name: event.target.value })} placeholder="Quarterly enterprise QBR" required />
+          <input className="tk-input" value={form.name} onChange={event => setForm({ ...form, name: event.target.value })} placeholder="Quarterly enterprise QBR" />
           <select className="tk-input" value={form.governance_type} onChange={event => setForm({ ...form, governance_type: event.target.value })}>
             <option>QBR</option>
             <option>SteerCo</option>
@@ -136,7 +140,7 @@ export function AdminGovernancePanel() {
       <div className="tk-card overflow-hidden">
         <div className="border-b border-surface-border p-5">
           <p className="text-[10px] font-extrabold uppercase tracking-widest text-brand-blue">Integrations</p>
-          <h2 className="text-base font-semibold text-ink">Calendar and Fathom</h2>
+          <h2 className="text-base font-semibold text-ink">Approved integrations</h2>
           <p className="mt-2 text-sm text-ink-secondary">Sync status appears here. Credentials are configured through backend environment or integration settings.</p>
         </div>
         <div className="divide-y divide-surface-border">

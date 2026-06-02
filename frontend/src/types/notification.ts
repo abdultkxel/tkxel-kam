@@ -3,6 +3,7 @@ export type NotificationTrigger =
   | 'timeline_comment'
   | 'escalation_assigned'
   | 'account_stage_changed'
+  | 'account_stage_recommendation_reviewed'
   | 'score_dropped_rag'
   | 'handover_requested'
   | 'sensitive_access_request'

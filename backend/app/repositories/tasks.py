@@ -125,7 +125,7 @@ class TasksRepository:
         if source_type:
             conditions.append(Task.source_type == source_type)
         if active_only:
-            conditions.append(Task.status.in_(("todo", "in_progress", "blocked")))
+            conditions.append(Task.status.in_(("open", "in_progress", "blocked")))
         if due_from:
             conditions.append(Task.due_at >= due_from)
         if due_to:

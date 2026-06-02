@@ -170,7 +170,15 @@ function EducationPanel({ account }: { account: Account }) {
 
   async function submit(event: FormEvent) {
     event.preventDefault()
-    if (!token || !selectedContentId || !recipientName.trim()) return
+    if (!token) return
+    if (!selectedContentId) {
+      toast.error('Select content before recording a share')
+      return
+    }
+    if (!recipientName.trim()) {
+      toast.error('Recipient name is required')
+      return
+    }
     try {
       const created = await createSentContent(token, account.id, {
         content_item_id: selectedContentId,
@@ -315,14 +323,14 @@ function EducationUploadDialog({
           <form onSubmit={onSubmit} className="mt-5 space-y-4">
             <label className="space-y-1">
               <span className="tk-label text-xs">Content <span className="text-brand-orange">*</span></span>
-              <select className="tk-input" value={selectedContentId} onChange={event => onSelectedContentIdChange(event.target.value)} required>
+              <select className="tk-input" value={selectedContentId} onChange={event => onSelectedContentIdChange(event.target.value)}>
                 {recommendations.map(item => <option key={item.content.id} value={item.content.id}>{item.content.title}</option>)}
               </select>
             </label>
             <div className="grid gap-3 sm:grid-cols-2">
               <label className="space-y-1">
                 <span className="tk-label text-xs">Recipient name</span>
-                <input className="tk-input" value={recipientName} onChange={event => onRecipientNameChange(event.target.value)} required />
+                <input className="tk-input" value={recipientName} onChange={event => onRecipientNameChange(event.target.value)} />
               </label>
               <label className="space-y-1">
                 <span className="tk-label text-xs">Recipient email</span>
@@ -421,7 +429,10 @@ function NotesPanel({ account, plans }: { account: Account; plans: RetentionPlan
   function submit(event: FormEvent) {
     event.preventDefault()
     const cleanBody = body.trim()
-    if (!cleanBody) return
+    if (!cleanBody) {
+      toast.error('Note body is required')
+      return
+    }
     setNotes(current => [
       {
         id: `note-${Date.now()}`,
@@ -534,7 +545,7 @@ function AddAccountNoteDialog({
             </label>
             <label className="space-y-1">
               <span className="tk-label text-xs">Note <span className="text-brand-orange">*</span></span>
-              <textarea className="tk-input min-h-[150px] resize-y" value={body} onChange={event => onBodyChange(event.target.value)} placeholder="Write the account note..." required />
+              <textarea className="tk-input min-h-[150px] resize-y" value={body} onChange={event => onBodyChange(event.target.value)} placeholder="Write the account note..." />
             </label>
             <div className="flex justify-end gap-2 border-t border-surface-border pt-4">
               <Dialog.Close type="button" className="tk-button-secondary">Cancel</Dialog.Close>

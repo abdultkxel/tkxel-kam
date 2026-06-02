@@ -543,10 +543,10 @@ export function ScoreCalculators({
 
   function skipTask(task: ScoreActivityTask) {
     updateTask(task.id, {
-      status: 'skipped',
-      skippedReason: task.evidenceNote?.trim() || task.skippedReason || 'Skipped during score review.',
+      status: 'cancelled',
+      skippedReason: task.evidenceNote?.trim() || task.skippedReason || 'Cancelled during score review.',
     })
-    toast.success('Score activity skipped')
+    toast.success('Score activity cancelled')
   }
 
   return (
@@ -782,7 +782,7 @@ function CriterionActivities({
       {expanded ? (
         <div className="divide-y divide-surface-border border-t border-surface-border px-3">
           {tasks.map(task => {
-            const locked = task.status === 'done' || task.status === 'skipped'
+            const locked = task.status === 'done' || task.status === 'cancelled'
 
             return (
               <div key={task.id} className="py-3 first:pt-0 last:pb-0">
@@ -804,22 +804,22 @@ function CriterionActivities({
                     </p>
                   </div>
                   <div className="flex shrink-0 flex-wrap gap-2">
-                    {task.status === 'todo' ? (
+                    {task.status === 'open' ? (
                       <button type="button" className="tk-button-secondary px-3" onClick={() => onStart(task)}>
                         <Play className="h-4 w-4" />
                         Start
                       </button>
                     ) : null}
-                    {task.status !== 'done' && task.status !== 'skipped' ? (
+                    {task.status !== 'done' && task.status !== 'cancelled' ? (
                       <button type="button" className="tk-button-primary px-3" onClick={() => onComplete(task)}>
                         <CheckCircle2 className="h-4 w-4" />
                         Complete
                       </button>
                     ) : null}
-                    {task.status !== 'done' && task.status !== 'skipped' ? (
+                    {task.status !== 'done' && task.status !== 'cancelled' ? (
                       <button type="button" className="tk-button-secondary px-3 text-brand-orange" onClick={() => onSkip(task)}>
                         <XCircle className="h-4 w-4" />
-                        Skip
+                        Cancel
                       </button>
                     ) : null}
                   </div>
@@ -828,7 +828,7 @@ function CriterionActivities({
                   <span className="text-xs font-semibold text-ink-secondary">Evidence note</span>
                   <textarea
                     className="tk-input min-h-[76px]"
-                    value={task.status === 'skipped' ? task.skippedReason ?? task.evidenceNote ?? '' : task.evidenceNote ?? ''}
+                    value={task.status === 'cancelled' ? task.skippedReason ?? task.evidenceNote ?? '' : task.evidenceNote ?? ''}
                     onChange={event => onEvidenceChange(task.id, event.target.value)}
                     disabled={locked}
                     placeholder="Add the client signal, document reference, or decision that supports this score."
@@ -837,8 +837,8 @@ function CriterionActivities({
                 {task.status === 'done' ? (
                   <p className="mt-2 text-xs font-medium text-rag-green">Completed evidence will be included in the next saved score event.</p>
                 ) : null}
-                {task.status === 'skipped' ? (
-                  <p className="mt-2 text-xs font-medium text-brand-orange">{task.skippedReason ?? 'Skipped activity retained for audit.'}</p>
+                {task.status === 'cancelled' ? (
+                  <p className="mt-2 text-xs font-medium text-brand-orange">{task.skippedReason ?? 'Cancelled activity retained for audit.'}</p>
                 ) : null}
               </div>
             )
@@ -852,7 +852,7 @@ function CriterionActivities({
 function statusClass(status: ScoreActivityTask['status']) {
   if (status === 'done') return 'border-rag-green/20 bg-rag-green/10 text-rag-green'
   if (status === 'in_progress') return 'border-blue-tint-20 bg-blue-tint-20 text-brand-blue'
-  if (status === 'skipped') return 'border-brand-orange/20 bg-brand-orange/10 text-brand-orange'
+  if (status === 'cancelled') return 'border-brand-orange/20 bg-brand-orange/10 text-brand-orange'
   return 'border-surface-border bg-surface-tertiary text-ink-secondary'
 }
 

@@ -1,6 +1,7 @@
 from datetime import datetime, timezone
 from urllib import error, request
 import json
+import logging
 
 from fastapi import HTTPException, status
 from sqlalchemy.orm import Session
@@ -56,8 +57,11 @@ from app.schemas import (
 from app.services.account_access import AccountAccessService, GLOBAL_EDIT_ROLES, GLOBAL_VIEW_ROLES
 from app.services.audit import AuditService
 from app.services.custom_fields import CustomFieldService
+from app.services.integrations import IntegrationService
 from app.services.timeline import TimelineService
 from app.services.user_management import page_count
+
+logger = logging.getLogger(__name__)
 
 
 class GovernanceService:
@@ -171,6 +175,7 @@ class GovernanceService:
         self.repository.save_event(event)
         self.custom_fields.save_record_values("governance_reviews", event.id, payload.custom_field_values, current_user, audit_module="governance_reviews")
         self._write_governance_timeline(event, current_user, "scheduled")
+        self._mirror_calendar_event(event, current_user)
         self.audit.log(module="governance_reviews", action="create", entity_type="governance_event", entity_id=event.id, actor=current_user, after_value=self._event_snapshot(event))
         self._update_next_governance(event.account)
         self.repository.commit()
@@ -199,6 +204,8 @@ class GovernanceService:
             setattr(event, field, value)
         if custom_values is not None:
             self.custom_fields.replace_record_values("governance_reviews", event.id, custom_values, current_user, audit_module="governance_reviews")
+        if not event.external_event_id and event.source == "manual":
+            self._mirror_calendar_event(event, current_user)
         self.audit.log(module="governance_reviews", action="update", entity_type="governance_event", entity_id=event.id, actor=current_user, before_value=before, after_value=self._event_snapshot(event))
         self._update_next_governance(event.account)
         self.repository.commit()
@@ -524,9 +531,6 @@ class GovernanceService:
             )
 
     def _fetch_provider_records(self, provider: str, connection: IntegrationConnection) -> list[dict]:
-        sample_records = (connection.settings_json or {}).get("sample_records")
-        if isinstance(sample_records, list):
-            return sample_records
         if provider == "google-calendar":
             token = (connection.credentials_json or {}).get("access_token")
             calendar_id = (connection.settings_json or {}).get("calendar_id", self.settings.google_calendar_default_calendar_id)
@@ -631,6 +635,14 @@ class GovernanceService:
         if provider in {"fathom", "fathom_enriched"}:
             return "fathom_enriched"
         return provider
+
+    def _mirror_calendar_event(self, event: GovernanceEvent, current_user: User) -> None:
+        if event.external_provider == "google_calendar":
+            return
+        try:
+            IntegrationService(self.repository.db).write_governance_event_to_calendar(event, current_user)
+        except Exception:
+            logger.exception("Google Calendar outbound write failed for governance event %s", event.id)
 
     def _get_event_or_404(self, event_id: str) -> GovernanceEvent:
         event = self.repository.get_event(event_id)

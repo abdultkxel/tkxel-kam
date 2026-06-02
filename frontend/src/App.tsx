@@ -4,10 +4,12 @@ import { AppShell } from '@/components/layout/AppShell'
 import { AccountDetail } from '@/pages/AccountDetail'
 import { Accounts } from '@/pages/Accounts'
 import { Admin } from '@/pages/Admin'
+import { Analytics } from '@/pages/Analytics'
 import { Dashboard } from '@/pages/Dashboard'
 import { Escalations } from '@/pages/Escalations'
 import { EngagementDetail } from '@/pages/EngagementDetail'
 import { Governance } from '@/pages/Governance'
+import { HealthScores } from '@/pages/HealthScores'
 import { Login } from '@/pages/Login'
 import { Notifications } from '@/pages/Notifications'
 import { Onboarding } from '@/pages/Onboarding'
@@ -38,8 +40,8 @@ export default function App() {
         <Route path="/escalations" element={<Escalations />} />
         <Route path="/tasks" element={<Tasks />} />
         <Route path="/governance" element={<Governance />} />
-        <Route path="/health-scores" element={<Navigate to="/accounts" replace />} />
-        <Route path="/analytics" element={<Navigate to="/dashboard" replace />} />
+        <Route path="/health-scores" element={<HealthScores />} />
+        <Route path="/analytics" element={<Analytics />} />
         <Route path="/reports" element={<Reports />} />
         <Route path="/playbook" element={<Playbook />} />
         <Route path="/admin" element={<Admin />} />

@@ -56,7 +56,7 @@ const task = {
   owner_id: 'usr-am',
   owner_name: 'Account Manager',
   due_at: '2026-06-05T12:00:00Z',
-  status: 'todo',
+  status: 'open',
   priority: 'high',
   notes: null,
   outcome: null,

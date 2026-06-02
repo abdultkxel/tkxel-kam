@@ -66,7 +66,7 @@ export function KYCIntakeFlow({ account }: { account: Account }) {
       title: 'Update KYC from new charter/SOW intake',
       description: 'AI agent created a new source-backed KYC draft. Review extracted fields, citations, missing items, and renewal terms before approval.',
       dueDate: addDays(new Date(), 2).toISOString(),
-      status: 'todo',
+      status: 'open',
       priority: 'high',
       workflowLane: 'due_soon',
       evidenceNote: `Created from AI intake draft ${draftId} using ${names.join(', ')}.`,

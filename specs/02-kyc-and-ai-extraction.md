@@ -26,7 +26,7 @@ Improve speed and quality of account intelligence while keeping human review as 
 
 - Trigger AI KYC from Account Overview, onboarding drafts, or selected charter/SOW documents.
 - Generate draft KYC from charters/SOWs, approved account and engagement records, prior snapshots, attachments, user notes, and approved research sources.
-- Approved AI research sources include Travoly/Trivoly, ZoomInfo, and CrunchBase through the AI/LLM Gateway; they are not standalone integration adapters.
+- Approved AI research sources include client website, LinkedIn, web search, Travoly/Trivoly, ZoomInfo, CrunchBase, RocketReach, news/blogs/posts/social media sources, Fathom-reviewed internal interviews, and future KNACK sources through the AI/LLM Gateway; they are not standalone integration adapters unless separately approved.
 - Display citations, confidence, conflicts, missing fields, and differences from previous approved snapshot.
 - Allow review, edit, enrich, approve, or reject draft content.
 - Store approved KYC snapshots as immutable versions.
@@ -59,7 +59,7 @@ Default thresholds:
 - Low confidence: below 70.
 - Medium confidence: 70-84.
 - High confidence: 85 and above.
-- Default stale threshold: 180 days after latest approved snapshot.
+- Default stale threshold: quarterly/90 days after latest approved snapshot unless Admin configuration overrides the freshness threshold.
 
 ## Non-Functional Requirements
 
@@ -194,9 +194,30 @@ API list endpoints must accept page/page_size and relevant search/filter/sort qu
 - Deleted/unavailable source files must not remove approved snapshot data.
 - Workstream refresh may be partial; completed workstreams should remain usable.
 
+## Added From Technical Logic Document
+
+- KYC checklist assignment must be triggered after approved account activation. The checklist owner defaults to the assigned AM unless Admin/KAM Head configuration assigns a different owner role.
+- KAM submits KYC for review; KAM Head or another RBAC-authorized approver approves or rejects. Approval authority must be resolved through RBAC and account access, not through frontend-only role checks.
+- Only approved KYC snapshots can affect metrics, deterministic signals, renewal posture, AI briefs, stage prediction, dashboards, reports, or official account intelligence. Draft AI suggestions and unapproved enrichment must remain advisory.
+- Approved KYC snapshots are immutable versioned records such as `v1.0`, `v1.1`, and later revisions. Corrections require a new draft and approval of a new snapshot version.
+- KYC completion formula:
+  - `Completion % = (count of populated required KYC fields / total configured required KYC fields) * 100`.
+  - Only approved or user-confirmed populated fields count toward completion.
+  - Draft AI suggestions, unresolved conflicts, and unacknowledged low-confidence values do not count toward completion.
+- Freshness must be evaluated from the latest approved snapshot approval date against the configured freshness threshold. The default threshold is quarterly unless Admin configuration changes it.
+- Stale KYC must create a visible account indicator and can create deterministic signals, dashboard warnings, and review reminder tasks according to notification/signal configuration.
+- Quarterly KYC review reminders must create tasks or notifications for the responsible owner and must be configurable by Admin/KAM Head.
+- Refresh AI Data must rerun all five named workstreams while preserving the previous approved snapshot and previous completed run output until the new run is complete or explicitly abandoned.
+- Workstream execution must independently track `pending`, `running`, `complete`, and `failed`; one failed workstream must not hide completed outputs from other workstreams.
+- Research-source coverage must distinguish internal approved records, source documents, prior snapshots, attachments, user notes, and external approved research sources. Source coverage should identify which required workstreams lacked enough source evidence.
+- Fathom meeting/interview material can enrich KYC only after the Fathom imported item has passed its required review/redaction workflow.
+- Gateway requests must include the RBAC-filtered requester context before retrieval. Restricted commercial, executive, or financial KYC fields must never be sent to or returned from AI for unauthorized users.
+- Gateway responses that lack citations, confidence, or sufficient evidence must be stored as missing/insufficient-data output rather than treated as authoritative facts.
+- Snapshot history must support comparing a draft to the previous approved snapshot and, where supported, comparing two approved snapshots for changed fields, stale fields, and newly missing fields.
+
 ## Missing Requirements
 
-- Per-source reliability policy and weighting for Travoly/Trivoly, ZoomInfo, and CrunchBase are not defined.
+- Per-source reliability policy and weighting for client website, LinkedIn, web search, Travoly/Trivoly, ZoomInfo, CrunchBase, RocketReach, news/social sources, Fathom-reviewed internal interviews, and future KNACK sources are not defined.
 - The PRD uses both "Travoly" and "Trivoly"; implementation should treat `Trivoly` as the canonical display value and `Travoly` as an alias until product confirms.
 - The real AI/LLM Gateway payload, authentication, timeout, retry, rate-limit, and cost-control policy are not defined.
 - File upload/storage for new charter/SOW documents is outside this spec unless source documents are already persisted by the account workspace.

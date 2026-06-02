@@ -22,7 +22,7 @@ export interface PlaybookTemplateActivity {
   updated_at: string
 }
 
-export type TaskStatus = 'todo' | 'in_progress' | 'done' | 'skipped' | 'blocked' | 'cancelled'
+export type TaskStatus = 'open' | 'in_progress' | 'done' | 'blocked' | 'cancelled'
 export type TaskPriority = 'low' | 'medium' | 'high' | 'urgent'
 
 export interface PlaybookTemplate {

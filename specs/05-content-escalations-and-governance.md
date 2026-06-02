@@ -123,7 +123,7 @@ Improve account governance and client engagement by linking content, escalation 
 - Closure requires resolution summary and evidence.
 - Major escalations require RCA.
 - Override closure requires authorized role and reason.
-- Default SLA targets follow common IT escalation practice unless overridden in Admin: critical = 4 hours, high = 1 business day, medium = 3 business days, low = 5 business days.
+- Default SLA targets follow the Technical Logic Document unless overridden in Admin: low = 5 days, medium = 2 days, high = 4 hours, critical = 1 hour.
 - Qualifying escalation activity resets inactivity timers when it is a status change, owner change, mitigation/recovery update, client communication update, evidence upload, closure, reopen, or explicit operations update.
 - Governance event type defaults: QBR, SteerCo, Monthly Review, Executive Review.
 - Governance event status defaults: draft, scheduled, completed, overdue, cancelled.
@@ -277,6 +277,29 @@ Improve account governance and client engagement by linking content, escalation 
 - Recurring governance generation must avoid duplicate events when a rule is edited or re-run.
 - Google Calendar/Fathom retries must not duplicate governance events, decisions, notes, or action items.
 
+## Added From Technical Logic Document
+
+- Client education/content recommendations must be driven by account stage, opportunity context, service gap/whitespace, weak metric, and active signal context.
+- Recommended content must remain advisory until a KAM manually confirms the content was shared. Confirmation must create sent-content history and, where configured, a timeline event.
+- Escalations are formal, human-created records. The system may recommend severity from rules, but the creating/updating user owns the final severity selection.
+- Escalation default lifecycle must support `Open -> In Progress -> Resolved -> Closed`. Additional statuses such as watchlist/reopened/cancelled can be configured, but the default lifecycle must remain compatible with the source document.
+- Escalation default SLA targets from the Technical Logic Document:
+  - Low: 5 days.
+  - Medium: 2 days.
+  - High: 4 hours.
+  - Critical: 1 hour.
+- Escalation SLA targets must be Admin-configurable by severity and must drive notifications, overdue state, Attention Center visibility, and KAM Head escalation.
+- Major or critical escalation closure must require RCA before closure. Closure must require resolution summary and evidence unless an authorized override captures reason, actor, and timestamp.
+- Escalations inactive beyond SLA must notify the KAM Head or configured escalation owner and create/update deterministic signals where configured.
+- Governance events may be scheduled manually or through Google Calendar. Google-created or synced records must be deduplicated and mapped to accounts before becoming authoritative.
+- Governance agenda drafts must be generated from health, active signals, opportunities, activities/tasks, escalations, recent timeline, and renewal context.
+- Fathom meeting notes, summaries, transcripts, and action items must enrich governance records only after review/redaction where configured.
+- Governance action items must become tasks when approved/confirmed, preserving source governance event, owner, due date, and action-item source context.
+- Missed governance cadence must create a governance-overdue signal and notification according to signal/notification configuration.
+- Governance completion should capture notes, decisions, action items, attendees, source citations, and any follow-up task links.
+- Governance cancellation/rescheduling must preserve historical decisions/action items and must not duplicate calendar or task records.
+- Sensitive Fathom transcript content must be redacted or restricted before timeline, KYC, handover, AI, or report use.
+
 ## Missing Requirements
 
 - Content taxonomy and required tags are not fully specified.
@@ -379,7 +402,7 @@ Improve account governance and client engagement by linking content, escalation 
 
 - Local content files are intentionally ignored by git via `backend/storage/`; metadata remains in database tables.
 - S3 migration is prepared through `CONTENT_STORAGE_BACKEND`, `S3_BUCKET_NAME`, and `S3_REGION`, but only the local adapter is implemented.
-- Default escalation SLA targets follow the spec assumption: critical = 4 hours, high = 1 business day, medium = 3 business days, low = 5 business days.
+- Default escalation SLA targets must follow the Technical Logic Document: low = 5 days, medium = 2 days, high = 4 hours, critical = 1 hour. Older assumptions are superseded by the Technical Logic Document.
 - Integration sync creates review-required governance events when account mapping confidence is weak or missing.
 - Sync deduplication uses provider/source record IDs and writes per-record sync logs for created, skipped, and duplicate records.
 - Verified test commands after implementation: `backend/.venv/bin/pytest backend/tests -q` passed with 30 tests, `npm test -- --run` passed with 25 tests, and `npm run build` passed with the existing Vite chunk-size warning.

@@ -871,7 +871,7 @@ function mapApiCalendarItem(item: CalendarItem): UnifiedCalendarItem {
   }
 
   if (item.kind === 'task' || item.kind === 'governance_action') {
-    const status = item.status === 'done' || item.status === 'completed' ? 'done' : item.status === 'skipped' ? 'skipped' : item.status === 'in_progress' ? 'in_progress' : 'todo'
+    const status = item.status === 'done' || item.status === 'completed' ? 'done' : item.status === 'cancelled' ? 'cancelled' : item.status === 'in_progress' ? 'in_progress' : 'open'
     const priority = item.priority === 'urgent' || item.priority === 'high' ? 'high' : item.priority === 'low' ? 'low' : 'medium'
     return {
       id: item.id,

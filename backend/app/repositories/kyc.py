@@ -34,7 +34,7 @@ class KycRepository:
         direction: str = "desc",
         page: int = 1,
         page_size: int = 10,
-        freshness_threshold_days: int = 180,
+        freshness_threshold_days: int = 90,
     ) -> tuple[list[KycDraft], int]:
         conditions = self._draft_conditions(
             account_id,

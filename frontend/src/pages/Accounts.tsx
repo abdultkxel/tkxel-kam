@@ -287,6 +287,7 @@ export function Accounts() {
           <span className="text-xs font-semibold uppercase tracking-wider text-ink-secondary">Stage</span>
           <select className="tk-input" value={stage} onChange={event => setFilter('stage', event.target.value)}>
             <option value="">All stages</option>
+            <option>Draft</option>
             <option>Onboarding</option>
             <option>Active</option>
             <option>Adoption</option>

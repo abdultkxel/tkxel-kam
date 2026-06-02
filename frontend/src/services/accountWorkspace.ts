@@ -514,7 +514,7 @@ function buildDraftPayload(payload: CreateDraftPayload) {
     account_name: payload.accountName,
     project_name: payload.projectName,
     company_url: normalizeUrl(payload.companyUrl),
-    lifecycle_status: 'Onboarding',
+    lifecycle_status: 'Draft',
     segment: 'Growth',
     region: 'Global',
     commercial_value: 0,
@@ -833,7 +833,7 @@ function toSegment(value: string): Account['segment'] {
 }
 
 function toStage(value: string): AccountStage {
-  const stages: AccountStage[] = ['Onboarding', 'Active', 'Adoption', 'Expansion', 'Expansion Focus', 'Renewal', 'Renewal Focus', 'At Risk', 'Dormant', 'Archived']
+  const stages: AccountStage[] = ['Draft', 'Onboarding', 'Active', 'Adoption', 'Expansion', 'Expansion Focus', 'Renewal', 'Renewal Focus', 'At Risk', 'Dormant', 'Archived']
   return stages.includes(value as AccountStage) ? (value as AccountStage) : 'Onboarding'
 }
 

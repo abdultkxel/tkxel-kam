@@ -262,25 +262,25 @@ def test_playbooks_tasks_authorization_and_validation(client: TestClient, db_ses
     viewer_create = client.post(
         "/api/tasks",
         headers=viewer_headers,
-        json={"account_id": "account-playbook", "owner_id": owner.id, "title": "No edit", "due_at": (datetime.now(timezone.utc) + timedelta(days=2)).isoformat(), "priority": "medium", "status": "todo"},
+        json={"account_id": "account-playbook", "owner_id": owner.id, "title": "No edit", "due_at": (datetime.now(timezone.utc) + timedelta(days=2)).isoformat(), "priority": "medium", "status": "open"},
     )
     assert viewer_create.status_code == 403
 
     bad_task = client.post(
         "/api/tasks",
         headers=headers,
-        json={"account_id": "account-playbook", "owner_id": owner.id, "title": "", "due_at": (datetime.now(timezone.utc) + timedelta(days=2)).isoformat(), "priority": "medium", "status": "todo"},
+        json={"account_id": "account-playbook", "owner_id": owner.id, "title": "", "due_at": (datetime.now(timezone.utc) + timedelta(days=2)).isoformat(), "priority": "medium", "status": "open"},
     )
     assert bad_task.status_code == 422
 
     task = client.post(
         "/api/tasks",
         headers=headers,
-        json={"account_id": "account-playbook", "owner_id": owner.id, "title": "Manual renewal follow-up", "due_at": (datetime.now(timezone.utc) + timedelta(days=2)).isoformat(), "priority": "medium", "status": "todo"},
+        json={"account_id": "account-playbook", "owner_id": owner.id, "title": "Manual renewal follow-up", "due_at": (datetime.now(timezone.utc) + timedelta(days=2)).isoformat(), "priority": "medium", "status": "open"},
     )
     assert task.status_code == 201
 
-    skipped_without_reason = client.patch(f"/api/tasks/{task.json()['id']}", headers=headers, json={"status": "skipped"})
+    skipped_without_reason = client.patch(f"/api/tasks/{task.json()['id']}", headers=headers, json={"status": "cancelled"})
     assert skipped_without_reason.status_code == 400
 
     bad_link = client.post(f"/api/tasks/{task.json()['id']}/evidence", headers=headers, data={"evidence_type": "link", "url": "ftp://bad.example"})

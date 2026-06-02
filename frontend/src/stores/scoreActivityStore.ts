@@ -4,7 +4,7 @@ import { accounts } from '@/data/mock'
 import { scoreActivityTemplates } from '@/data/scoreActivityTemplates'
 import { ScoreActivityTask } from '@/types/scoreActivity'
 
-const statusPattern: ScoreActivityTask['status'][] = ['todo', 'in_progress', 'done', 'todo', 'skipped', 'todo']
+const statusPattern: ScoreActivityTask['status'][] = ['open', 'in_progress', 'done', 'open', 'cancelled', 'open']
 const priorityPattern: ScoreActivityTask['priority'][] = ['high', 'medium', 'medium', 'low']
 
 function seedTasks(): ScoreActivityTask[] {
@@ -13,7 +13,7 @@ function seedTasks(): ScoreActivityTask[] {
   const primaryTasks = scoreActivityTemplates.map((template, index): ScoreActivityTask => {
     const status = statusPattern[index % statusPattern.length]
     const completed = status === 'done'
-    const skipped = status === 'skipped'
+    const skipped = status === 'cancelled'
 
     return {
       id: `sat-${primaryAccount.id}-${template.id}`,
@@ -50,7 +50,7 @@ function seedTasks(): ScoreActivityTask[] {
       title: template.title,
       description: template.description,
       dueDate: addDays(now, template.defaultDueOffsetDays + accountIndex * 4 - templateIndex).toISOString(),
-      status: templateIndex === 1 ? 'in_progress' : templateIndex === 3 ? 'done' : 'todo',
+      status: templateIndex === 1 ? 'in_progress' : templateIndex === 3 ? 'done' : 'open',
       priority: template.defaultPriority,
       evidenceNote: templateIndex === 3 ? `Evidence attached from ${account.name} review.` : undefined,
       completedAt: templateIndex === 3 ? subDays(now, accountIndex + 2).toISOString() : undefined,

@@ -29,6 +29,7 @@ from app.models import (
 from app.rbac import DEFAULT_ROLES
 from app.security import hash_password
 from app.services.email_domains import EmailDomainPolicyService
+from app.services.integrations import IntegrationService
 from app.services.notifications import NotificationsService
 from app.services.rbac import RbacService
 from app.services.users import initials_for_name, normalize_email
@@ -40,6 +41,7 @@ def seed_default_data(db: Session) -> User:
     RbacService(db).seed_defaults()
     super_admin = seed_super_admin(db)
     seed_allowed_email_domains(db, super_admin)
+    seed_approved_integrations(db, super_admin)
     seed_default_role_users(db)
     seed_kyc_configuration(db)
     seed_opportunity_reference_data(db)
@@ -56,6 +58,10 @@ def seed_allowed_email_domains(db: Session, super_admin: User) -> None:
     EmailDomainPolicyService(db).seed_allowed_domains(settings.allowed_email_domains, actor=super_admin)
 
 
+def seed_approved_integrations(db: Session, super_admin: User) -> None:
+    IntegrationService(db).seed_defaults(super_admin)
+
+
 def seed_notifications_dashboards_reporting(db: Session, super_admin: User) -> None:
     NotificationsService(db).seed_defaults(super_admin)
 
@@ -67,7 +73,8 @@ def seed_kyc_configuration(db: Session) -> KycConfiguration:
     required_field_keys = [field["key"] for field in FIELD_CATALOG if field.get("required", True)]
     if existing:
         existing.required_field_keys = required_field_keys
-        existing.freshness_threshold_days = existing.freshness_threshold_days or FRESHNESS_THRESHOLD_DAYS
+        if not existing.freshness_threshold_days or existing.freshness_threshold_days == 180:
+            existing.freshness_threshold_days = FRESHNESS_THRESHOLD_DAYS
         existing.low_confidence_threshold = existing.low_confidence_threshold or LOW_CONFIDENCE_THRESHOLD
         existing.research_sources = existing.research_sources or list(DEFAULT_RESEARCH_SOURCES)
         db.commit()
@@ -92,10 +99,14 @@ def seed_super_admin(db: Session) -> User:
     email = normalize_email(settings.super_admin_email)
     existing_user = db.scalar(select(User).where(User.email == email))
     if existing_user:
+        if not existing_user.primary_google_calendar_id:
+            existing_user.primary_google_calendar_id = existing_user.email
+            db.commit()
         return existing_user
 
     user = User(
         email=email,
+        primary_google_calendar_id=email,
         hashed_password=hash_password(settings.super_admin_password),
         full_name=settings.super_admin_full_name,
         role="super_admin",
@@ -118,12 +129,15 @@ def seed_default_role_users(db: Session) -> list[User]:
         email = normalize_email(f"{role.slug.replace('_', '.')}.user@{DEFAULT_ROLE_USER_EMAIL_DOMAIN}")
         existing_user = db.scalar(select(User).where(User.email == email))
         if existing_user:
+            if not existing_user.primary_google_calendar_id:
+                existing_user.primary_google_calendar_id = existing_user.email
             seeded_users.append(existing_user)
             continue
 
         full_name = role.name.replace(" / ", " ").replace("/", " ")
         user = User(
             email=email,
+            primary_google_calendar_id=email,
             hashed_password=hash_password(settings.seed_user_password),
             full_name=full_name,
             role=role.slug,
@@ -503,10 +517,17 @@ def seed_scoring_signals_playbooks(db: Session, super_admin: User) -> None:
         ("sow_expiry", "SOW Expiry Window", "sow_expiry", "warning", {"date_field": "engagement.end_date", "days_before": 45}),
         ("renewal_date", "Renewal Date Approaching", "renewal_date", "warning", {"date_field": "engagement.renewal_date", "days_before": 45}),
         ("notice_window", "Notice Window", "notice_window", "warning", {"date_field": "engagement.notice_deadline", "days_before": 30}),
-        ("stale_kyc", "Stale KYC", "stale_kyc", "warning", {"freshness_days": 180}),
+        ("stale_kyc", "Stale KYC", "stale_kyc", "warning", {"freshness_days": 90}),
         ("weak_metric", "Weak Health Metric", "weak_metric", "warning", {"rag_status": ["red", "amber"]}),
+        ("red_account_health", "Red Account Health", "red_account_health", "critical", {"rag_status": ["red"]}),
         ("stakeholder_gap", "Stakeholder Gap", "stakeholder_gap", "critical", {"missing": "primary_am"}),
         ("escalation_sla", "Escalation SLA Attention", "escalation_sla", "critical", {"status": "open_or_overdue"}),
+        ("csat_low", "Low CSAT", "csat_low", "warning", {"weighted_score_max": 3.0, "category_score_max": 2.5}),
+        ("csat_decline", "CSAT Decline", "csat_decline", "warning", {"decline_points_min": 0.5}),
+        ("opportunity_stalled", "Opportunity Stalled", "opportunity_stalled", "warning", {"stale_after_days": 30}),
+        ("governance_overdue", "Governance Overdue", "governance_overdue", "critical", {"scheduled_before": "now", "status_not_in": ["completed", "cancelled"]}),
+        ("score_dimension_drop", "Score Dimension Drop", "score_dimension_drop", "warning", {"drop_points_min": 10}),
+        ("payment_risk", "Payment or Commercial Risk", "payment_risk", "warning", {"keywords": ["late payment", "payment overdue", "overdue invoice", "invoice dispute", "budget cut"]}),
     )
     for slug, name, signal_type, severity, condition in rule_specs:
         rule = db.scalar(select(SignalRule).where(SignalRule.slug == slug))
@@ -561,6 +582,29 @@ def seed_scoring_signals_playbooks(db: Session, super_admin: User) -> None:
             ],
         ),
         (
+            "customer_sentiment_recovery",
+            "Customer Sentiment Recovery",
+            "Respond to CSAT decline, low category scores, or commercial sentiment risks.",
+            ["csat_low", "csat_decline", "payment_risk", "score_dimension_drop", "red_account_health"],
+            ["csat", "relationship", "commercial"],
+            [
+                {"title": "Review CSAT and account evidence", "description": "Validate score categories, trend, client feedback, and source citations.", "priority": "high", "due_offset_days": 1},
+                {"title": "Prepare sentiment recovery action plan", "description": "Create owner-backed recovery actions for weak categories and commercial blockers.", "priority": "high", "due_offset_days": 3},
+                {"title": "Schedule client follow-up", "description": "Confirm next client touchpoint to address satisfaction concerns.", "priority": "medium", "due_offset_days": 7},
+            ],
+        ),
+        (
+            "portfolio_motion_refresh",
+            "Portfolio Motion Refresh",
+            "Restart stalled opportunities and overdue governance motions.",
+            ["opportunity_stalled", "governance_overdue"],
+            ["growth", "governance"],
+            [
+                {"title": "Confirm stale motion owner", "description": "Validate opportunity or governance owner, blocker, and next step.", "priority": "high", "due_offset_days": 1},
+                {"title": "Update next action and timeline", "description": "Refresh client/internal next action, target date, and expected outcome.", "priority": "medium", "due_offset_days": 3},
+            ],
+        ),
+        (
             "stakeholder_map_refresh",
             "Stakeholder Map Refresh",
             "Repair missing ownership or stakeholder coverage gaps.",
@@ -573,18 +617,24 @@ def seed_scoring_signals_playbooks(db: Session, super_admin: User) -> None:
         ),
     )
     for _slug, name, objective, signal_types, weak_metrics, activities in playbook_specs:
-        template = db.scalar(select(PlaybookTemplate).where(PlaybookTemplate.name == name))
+        template = db.scalar(select(PlaybookTemplate).where(PlaybookTemplate.slug == _slug))
+        if template is None:
+            template = db.scalar(select(PlaybookTemplate).where(PlaybookTemplate.name == name))
         if template is None:
             template = PlaybookTemplate(
+                slug=_slug,
                 name=name,
                 objective=objective,
                 description=f"Seeded playbook for {name.lower()} signals.",
                 signal_types=signal_types,
                 weak_metrics=weak_metrics,
+                activities_json=activities,
                 default_owner_rule="account_primary_am",
                 due_date_rule={"basis": "execution_date", "offset_days": 7},
                 success_criteria=["Tasks completed with evidence", "Signal resolved or accepted with recovery plan"],
                 skip_rules=["Duplicate task already open", "Signal dismissed with reason"],
+                status="active",
+                current_version=1,
                 version=1,
                 is_active=True,
                 created_by_id=super_admin.id,
@@ -594,15 +644,19 @@ def seed_scoring_signals_playbooks(db: Session, super_admin: User) -> None:
             db.add(template)
             continue
         template.name = name
+        template.slug = template.slug or _slug
         template.objective = objective
         template.description = f"Seeded playbook for {name.lower()} signals."
         template.signal_types = signal_types
         template.weak_metrics = weak_metrics
+        template.activities_json = activities
         template.default_owner_rule = "account_primary_am"
         template.due_date_rule = {"basis": "execution_date", "offset_days": 7}
         template.success_criteria = ["Tasks completed with evidence", "Signal resolved or accepted with recovery plan"]
         template.skip_rules = ["Duplicate task already open", "Signal dismissed with reason"]
         template.is_active = True
+        template.status = "active"
+        template.current_version = max(template.current_version or 0, template.version or 1)
         template.updated_by_id = super_admin.id
         template.activities.clear()
         db.flush()

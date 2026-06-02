@@ -1,54 +1,13 @@
-import { Bar, BarChart, CartesianGrid, Line, LineChart, ResponsiveContainer, Scatter, ScatterChart, Tooltip, XAxis, YAxis } from 'recharts'
-import { BarChart3, Download, FileDown, Lock } from 'lucide-react'
-import { ReactNode, useMemo } from 'react'
+import { Bar, BarChart, CartesianGrid, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
+import { AlertTriangle, BarChart3, Download, FileDown, Loader2, Lock, Search } from 'lucide-react'
+import { ReactNode, useEffect, useMemo, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { EmptyState } from '@/components/ui/EmptyState'
 import { PageHeader } from '@/components/ui/PageHeader'
+import { useAuth } from '@/contexts/AuthContext'
 import { useRole } from '@/hooks/useRole'
-import { useAccountStore } from '@/stores/accountStore'
-import { useOpportunityStore } from '@/stores/opportunityStore'
-import { useTimelineStore } from '@/stores/timelineStore'
-import { Account } from '@/types/account'
-import { Opportunity } from '@/types/opportunity'
-import { TimelineEntry } from '@/types/timeline'
+import { AnalyticsPortfolio as AnalyticsPortfolioRead, getAccountChangeAlerts, getAnalyticsPortfolio, getKamPerformance, KamPerformance } from '@/services/analytics'
 import { formatCompactCurrency } from '@/utils/formatters'
-
-const healthTrend = [
-  { month: 'Jun', Onboarding: 66, Adoption: 70, Expansion: 80, Renewal: 64, Recovery: 52 },
-  { month: 'Jul', Onboarding: 68, Adoption: 72, Expansion: 81, Renewal: 65, Recovery: 54 },
-  { month: 'Aug', Onboarding: 69, Adoption: 74, Expansion: 83, Renewal: 67, Recovery: 53 },
-  { month: 'Sep', Onboarding: 70, Adoption: 73, Expansion: 84, Renewal: 66, Recovery: 55 },
-  { month: 'Oct', Onboarding: 72, Adoption: 76, Expansion: 85, Renewal: 68, Recovery: 57 },
-  { month: 'Nov', Onboarding: 71, Adoption: 77, Expansion: 86, Renewal: 69, Recovery: 58 },
-  { month: 'Dec', Onboarding: 73, Adoption: 78, Expansion: 87, Renewal: 70, Recovery: 60 },
-  { month: 'Jan', Onboarding: 74, Adoption: 79, Expansion: 86, Renewal: 71, Recovery: 59 },
-  { month: 'Feb', Onboarding: 75, Adoption: 80, Expansion: 88, Renewal: 72, Recovery: 61 },
-  { month: 'Mar', Onboarding: 76, Adoption: 79, Expansion: 89, Renewal: 70, Recovery: 62 },
-  { month: 'Apr', Onboarding: 77, Adoption: 81, Expansion: 90, Renewal: 73, Recovery: 63 },
-  { month: 'May', Onboarding: 78, Adoption: 82, Expansion: 91, Renewal: 74, Recovery: 64 },
-]
-
-const dimensionDrivers = [
-  { dimension: 'Relationship', changes: 18 },
-  { dimension: 'Usage', changes: 27 },
-  { dimension: 'Delivery', changes: 21 },
-  { dimension: 'Commercial', changes: 15 },
-]
-
-const escalationHeat = [
-  { segment: 'Strategic', escalations: 3 },
-  { segment: 'Enterprise', escalations: 6 },
-  { segment: 'Growth', escalations: 4 },
-  { segment: 'APAC', escalations: 5 },
-]
-
-const contentEffect = [
-  { content: 3, csat: 7.2 },
-  { content: 5, csat: 8.1 },
-  { content: 2, csat: 6.5 },
-  { content: 7, csat: 8.8 },
-  { content: 4, csat: 7.6 },
-]
 
 function exportCsv(filename: string, rows: Record<string, unknown>[]) {
   const headers = Object.keys(rows[0] ?? { value: '' })
@@ -70,16 +29,24 @@ function downloadSvg(chartId: string, filename: string) {
   URL.revokeObjectURL(link.href)
 }
 
+function seriesRows(portfolio: AnalyticsPortfolioRead | null, name: string) {
+  return portfolio?.series.find(series => series.name === name)?.rows ?? []
+}
+
+function metricValue(portfolio: AnalyticsPortfolioRead | null, label: string, fallback: string | number = 0) {
+  return portfolio?.metrics.find(metric => metric.label === label)?.value ?? fallback
+}
+
 function ChartActions({ chartId, rows }: { chartId: string; rows: Record<string, unknown>[] }) {
   return (
     <div className="flex flex-wrap gap-2">
-      <button className="tk-button-secondary" onClick={() => downloadSvg(chartId, `${chartId}.svg`)}>
+      <button className="tk-button-secondary" type="button" onClick={() => downloadSvg(chartId, `${chartId}.svg`)}>
         <Download className="h-4 w-4" />
         Download SVG
       </button>
-      <button className="tk-button-secondary" onClick={() => exportCsv(`${chartId}.csv`, rows)}>
+      <button className="tk-button-secondary" type="button" onClick={() => exportCsv(`${chartId}.csv`, rows)}>
         <FileDown className="h-4 w-4" />
-        Export data CSV
+        Export CSV
       </button>
     </div>
   )
@@ -102,19 +69,7 @@ function AnalyticsCard({ title, kicker, chartId, rows, children }: { title: stri
   )
 }
 
-function AnalyticsSnapshotCard({ title, kicker, children }: { title: string; kicker: string; children: ReactNode }) {
-  return (
-    <section className="tk-card p-5">
-      <div className="mb-4">
-        <p className="text-[10px] font-extrabold uppercase tracking-widest text-brand-blue">{kicker}</p>
-        <h3 className="text-base font-semibold text-ink">{title}</h3>
-      </div>
-      {children}
-    </section>
-  )
-}
-
-function AnalyticsMetric({ label, value, tone = 'default' }: { label: string; value: string | number; tone?: 'default' | 'warning' | 'success' }) {
+function AnalyticsMetric({ label, value, tone = 'default' }: { label: string; value: string | number; tone?: string }) {
   const toneClass = tone === 'warning' ? 'text-brand-orange' : tone === 'success' ? 'text-rag-green' : 'text-ink'
 
   return (
@@ -125,178 +80,104 @@ function AnalyticsMetric({ label, value, tone = 'default' }: { label: string; va
   )
 }
 
-function DashboardAnalytics({
-  accounts,
-  filteredAccounts,
-  opportunities,
-  entries,
-  kamRows,
-  params,
-  setFilter,
-}: {
-  accounts: Account[]
-  filteredAccounts: Account[]
-  opportunities: Opportunity[]
-  entries: TimelineEntry[]
-  kamRows: Record<string, unknown>[]
-  params: URLSearchParams
-  setFilter: (key: string, value: string) => void
-}) {
-  const accountIds = new Set(filteredAccounts.map(account => account.id))
-  const averageHealth = filteredAccounts.length
-    ? Math.round(filteredAccounts.reduce((sum, account) => sum + account.health.overall, 0) / filteredAccounts.length)
-    : 0
-  const openPipeline = opportunities
-    .filter(opportunity => accountIds.has(opportunity.accountId) && !['Won', 'Lost'].includes(opportunity.stage))
-    .reduce((sum, opportunity) => sum + opportunity.estimatedValue, 0)
-  const escalationCount = entries.filter(entry => accountIds.has(entry.accountId) && entry.module === 'escalation').length
-  const topKamRows = kamRows.slice(0, 4)
+function normalizeDate(value: string | null) {
+  return value ? new Date(`${value}T00:00:00`).toISOString() : undefined
+}
+
+function DashboardAnalytics({ portfolio, kamRows, alerts }: { portfolio: AnalyticsPortfolioRead; kamRows: KamPerformance[]; alerts: number }) {
+  const healthTrend = seriesRows(portfolio, 'health_trend')
+  const kamSeries = kamRows.map(row => ({ owner_name: row.owner_name, average_health: row.average_health, open_pipeline: row.open_pipeline, open_escalations: row.open_escalations }))
 
   return (
     <section id="analytics" className="mt-6 space-y-4">
-      <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-        <div>
-          <p className="text-[10px] font-extrabold uppercase tracking-widest text-brand-blue">Portfolio intelligence</p>
-          <h2 className="text-base font-semibold text-ink">Analytics</h2>
-          <p className="mt-1 max-w-3xl text-sm text-ink-secondary">
-            Leadership view of health movement, risk concentration, pipeline velocity, and KAM performance.
-          </p>
-        </div>
-        <div className="grid gap-2 sm:grid-cols-3">
-          <AnalyticsMetric label="Avg health" value={averageHealth} tone={averageHealth < 65 ? 'warning' : 'success'} />
-          <AnalyticsMetric label="Open pipeline" value={formatCompactCurrency(openPipeline)} />
-          <AnalyticsMetric label="Escalations" value={escalationCount} tone={escalationCount ? 'warning' : 'success'} />
-        </div>
+      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
+        {portfolio.metrics.map(metric => (
+          <AnalyticsMetric key={metric.label} label={metric.label} value={metric.label === 'Open pipeline' ? formatCompactCurrency(Number(metric.value || 0)) : metric.value} tone={metric.tone} />
+        ))}
+        <AnalyticsMetric label="Open alerts" value={alerts} tone={alerts ? 'warning' : 'success'} />
       </div>
-
-      <section className="tk-card grid gap-3 p-4 md:grid-cols-5">
-        <input className="tk-input" type="date" value={params.get('from') ?? ''} onChange={event => setFilter('from', event.target.value)} aria-label="Analytics from date" />
-        <input className="tk-input" type="date" value={params.get('to') ?? ''} onChange={event => setFilter('to', event.target.value)} aria-label="Analytics to date" />
-        <select className="tk-input" value={params.get('am') ?? ''} onChange={event => setFilter('am', event.target.value)} aria-label="Analytics AM filter">
-          <option value="">All AMs</option>
-          {[...new Map(accounts.map(account => [account.ownerId, account.ownerName])).entries()].map(([id, name]) => <option key={id} value={id}>{name}</option>)}
-        </select>
-        <select className="tk-input" value={params.get('segment') ?? ''} onChange={event => setFilter('segment', event.target.value)} aria-label="Analytics segment filter">
-          <option value="">All segments</option>
-          {[...new Set(accounts.flatMap(account => account.tags))].map(tag => <option key={tag}>{tag}</option>)}
-        </select>
-        <select className="tk-input" value={params.get('stage') ?? ''} onChange={event => setFilter('stage', event.target.value)} aria-label="Analytics stage filter">
-          <option value="">All stages</option>
-          {[...new Set(accounts.map(account => account.stage))].map(stage => <option key={stage}>{stage}</option>)}
-        </select>
-      </section>
-
-      <div className="grid gap-4 xl:grid-cols-[minmax(0,1.4fr)_minmax(360px,0.8fr)]">
-        <AnalyticsSnapshotCard title="Portfolio Health Trends" kicker="Health">
-          <div className="h-[300px] text-brand-blue">
-            <ResponsiveContainer width="100%" height="100%">
-              <LineChart data={healthTrend}>
-                <CartesianGrid stroke="currentColor" className="text-surface-border" vertical={false} />
-                <XAxis dataKey="month" tickLine={false} axisLine={false} tick={{ fill: 'currentColor' }} className="text-ink-secondary" />
-                <YAxis tickLine={false} axisLine={false} tick={{ fill: 'currentColor' }} className="text-ink-secondary" />
-                <Tooltip />
-                <Line type="monotone" dataKey="Onboarding" stroke="currentColor" className="text-brand-blue" strokeWidth={2} dot={false} />
-                <Line type="monotone" dataKey="Adoption" stroke="currentColor" className="text-rag-green" strokeWidth={2} dot={false} />
-                <Line type="monotone" dataKey="Expansion" stroke="currentColor" className="text-brand-blue-dark" strokeWidth={2} dot={false} />
-                <Line type="monotone" dataKey="Renewal" stroke="currentColor" className="text-brand-orange" strokeWidth={2} dot={false} />
-              </LineChart>
-            </ResponsiveContainer>
-          </div>
-        </AnalyticsSnapshotCard>
-
-        <AnalyticsSnapshotCard title="KAM Performance" kicker="Leadership">
-          <div className="space-y-3">
-            {topKamRows.map(row => {
-              const health = Number(row.health ?? 0)
-              const pipeline = Number(row.pipeline ?? 0)
-              return (
-                <div key={`${row.am}-${row.health}-${row.pipeline}`} className="rounded-lg bg-surface-secondary p-3">
-                  <div className="flex items-center justify-between gap-3">
-                    <p className="text-sm font-semibold text-ink">{String(row.am)}</p>
-                    <span className="text-xs font-semibold text-ink-secondary">{formatCompactCurrency(pipeline)}</span>
-                  </div>
-                  <div className="mt-2 h-2 rounded-full bg-surface-tertiary">
-                    <div className="h-2 rounded-full bg-brand-blue" style={{ width: `${Math.max(8, Math.min(100, health))}%` }} />
-                  </div>
-                  <p className="mt-2 text-xs text-ink-secondary">Health {health} | Escalations {String(row.escalations ?? 0)}</p>
-                </div>
-              )
-            })}
-          </div>
-        </AnalyticsSnapshotCard>
-      </div>
-
-      <div className="grid gap-4 lg:grid-cols-3">
-        <AnalyticsSnapshotCard title="Dimension Drivers" kicker="Score movement">
-          <div className="space-y-3">
-            {dimensionDrivers.map(driver => (
-              <div key={driver.dimension}>
-                <div className="mb-1 flex items-center justify-between gap-3 text-xs">
-                  <span className="font-semibold text-ink">{driver.dimension}</span>
-                  <span className="text-ink-secondary">{driver.changes}</span>
-                </div>
-                <div className="h-2 rounded-full bg-surface-tertiary">
-                  <div className="h-2 rounded-full bg-brand-orange" style={{ width: `${driver.changes / 28 * 100}%` }} />
-                </div>
-              </div>
-            ))}
-          </div>
-        </AnalyticsSnapshotCard>
-
-        <AnalyticsSnapshotCard title="Escalation Intelligence" kicker="Risk">
-          <div className="h-[180px] text-brand-blue-dark">
-            <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={escalationHeat}>
-                <XAxis dataKey="segment" tickLine={false} axisLine={false} tick={{ fill: 'currentColor' }} className="text-ink-secondary" />
-                <YAxis tickLine={false} axisLine={false} tick={{ fill: 'currentColor' }} className="text-ink-secondary" />
-                <Tooltip />
-                <Bar dataKey="escalations" fill="currentColor" className="text-brand-blue-dark" radius={[8, 8, 0, 0]} />
-              </BarChart>
-            </ResponsiveContainer>
-          </div>
-        </AnalyticsSnapshotCard>
-
-        <AnalyticsSnapshotCard title="Content Effectiveness" kicker="Education">
-          <div className="h-[180px] text-brand-blue">
-            <ResponsiveContainer width="100%" height="100%">
-              <ScatterChart>
-                <XAxis dataKey="content" name="Content" tickLine={false} axisLine={false} tick={{ fill: 'currentColor' }} className="text-ink-secondary" />
-                <YAxis dataKey="csat" name="CSAT" tickLine={false} axisLine={false} tick={{ fill: 'currentColor' }} className="text-ink-secondary" />
-                <Tooltip />
-                <Scatter data={contentEffect} fill="currentColor" className="text-brand-blue" />
-              </ScatterChart>
-            </ResponsiveContainer>
-          </div>
-        </AnalyticsSnapshotCard>
+      <div className="grid gap-4 xl:grid-cols-[minmax(0,1.3fr)_minmax(320px,0.7fr)]">
+        <AnalyticsCard title="Portfolio Health Trend" kicker="Persisted scores" chartId="dashboard-health-trend" rows={healthTrend}>
+          <ResponsiveContainer width="100%" height="100%">
+            <LineChart data={healthTrend}>
+              <CartesianGrid stroke="currentColor" className="text-surface-border" vertical={false} />
+              <XAxis dataKey="month" tickLine={false} axisLine={false} tick={{ fill: 'currentColor' }} className="text-ink-secondary" />
+              <YAxis tickLine={false} axisLine={false} tick={{ fill: 'currentColor' }} className="text-ink-secondary" />
+              <Tooltip />
+              <Line type="monotone" dataKey="average_health" stroke="currentColor" className="text-brand-blue" strokeWidth={2} dot={false} />
+            </LineChart>
+          </ResponsiveContainer>
+        </AnalyticsCard>
+        <AnalyticsCard title="KAM Performance" kicker="Owners" chartId="dashboard-kam-performance" rows={kamSeries}>
+          <ResponsiveContainer width="100%" height="100%">
+            <BarChart data={kamSeries}>
+              <XAxis dataKey="owner_name" tickLine={false} axisLine={false} tick={{ fill: 'currentColor' }} className="text-ink-secondary" />
+              <YAxis tickLine={false} axisLine={false} tick={{ fill: 'currentColor' }} className="text-ink-secondary" />
+              <Tooltip />
+              <Bar dataKey="average_health" fill="currentColor" className="text-rag-green" radius={[6, 6, 0, 0]} />
+              <Bar dataKey="open_escalations" fill="currentColor" className="text-brand-orange" radius={[6, 6, 0, 0]} />
+            </BarChart>
+          </ResponsiveContainer>
+        </AnalyticsCard>
       </div>
     </section>
   )
 }
 
 export function PortfolioAnalytics({ embedded = false }: { embedded?: boolean }) {
+  const { token } = useAuth()
   const user = useRole()
-  const accounts = useAccountStore(state => state.accounts)
-  const opportunities = useOpportunityStore(state => state.opportunities)
-  const entries = useTimelineStore(state => state.entries)
   const [params, setParams] = useSearchParams()
+  const [portfolio, setPortfolio] = useState<AnalyticsPortfolioRead | null>(null)
+  const [kamRows, setKamRows] = useState<KamPerformance[]>([])
+  const [alertCount, setAlertCount] = useState(0)
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState('')
+
+  const filters = useMemo(() => ({
+    search: params.get('search') ?? undefined,
+    am_id: params.get('am_id') ?? undefined,
+    segment: params.get('segment') ?? undefined,
+    region: params.get('region') ?? undefined,
+    lifecycle_status: params.get('lifecycle_status') ?? undefined,
+    risk: params.get('risk') ?? undefined,
+    date_from: normalizeDate(params.get('date_from')),
+    date_to: normalizeDate(params.get('date_to')),
+  }), [params])
+
+  useEffect(() => {
+    if (!token) return
+    let active = true
+    setLoading(true)
+    setError('')
+    Promise.all([
+      getAnalyticsPortfolio(token, filters),
+      getKamPerformance(token, { page: 1, page_size: 50 }),
+      getAccountChangeAlerts(token, { page: 1, page_size: 1, refresh: true, status: 'open' }),
+    ])
+      .then(([portfolioResult, kamResult, alertResult]) => {
+        if (!active) return
+        setPortfolio(portfolioResult)
+        setKamRows(kamResult.items)
+        setAlertCount(alertResult.total)
+      })
+      .catch(err => {
+        if (active) setError(err instanceof Error ? err.message : 'Analytics could not be loaded')
+      })
+      .finally(() => {
+        if (active) setLoading(false)
+      })
+    return () => {
+      active = false
+    }
+  }, [filters, token])
+
   function setFilter(key: string, value: string) {
     const next = new URLSearchParams(params)
     if (value) next.set(key, value)
     else next.delete(key)
     setParams(next, { replace: true })
   }
-
-  const filteredAccounts = useMemo(() => {
-    const am = params.get('am') ?? ''
-    const segment = params.get('segment') ?? ''
-    const stage = params.get('stage') ?? ''
-    return accounts.filter(account => {
-      if (am && account.ownerId !== am) return false
-      if (segment && !account.tags.includes(segment)) return false
-      if (stage && account.stage !== stage) return false
-      return true
-    })
-  }, [accounts, params])
 
   if (user.role === 'am' || user.role === 'account_manager') {
     const restricted = (
@@ -313,143 +194,138 @@ export function PortfolioAnalytics({ embedded = false }: { embedded?: boolean })
     )
   }
 
-  const kamRows = filteredAccounts.map(account => ({
-    am: account.ownerName,
-    accounts: 1,
-    health: account.health.overall,
-    escalations: entries.filter(entry => entry.accountId === account.id && entry.module === 'escalation').length,
-    pipeline: opportunities.filter(opportunity => opportunity.accountId === account.id && !['Won', 'Lost'].includes(opportunity.stage)).reduce((sum, opportunity) => sum + opportunity.estimatedValue, 0),
-  }))
-
-  if (embedded) {
-    return (
-      <DashboardAnalytics
-        accounts={accounts}
-        filteredAccounts={filteredAccounts}
-        opportunities={opportunities}
-        entries={entries}
-        kamRows={kamRows}
-        params={params}
-        setFilter={setFilter}
-      />
-    )
+  if (embedded && portfolio && !loading && !error) {
+    return <DashboardAnalytics portfolio={portfolio} kamRows={kamRows} alerts={alertCount} />
   }
 
+  const healthTrend = seriesRows(portfolio, 'health_trend')
+  const dimensionRows = seriesRows(portfolio, 'dimension_drivers')
+  const escalationRows = seriesRows(portfolio, 'escalation_intelligence')
+  const kamSeries = kamRows.map(row => ({
+    owner_name: row.owner_name,
+    account_count: row.account_count,
+    average_health: row.average_health,
+    overdue_action_rate: row.overdue_action_rate,
+    governance_cadence_rate: row.governance_cadence_rate,
+    renewal_readiness: row.renewal_readiness,
+    open_pipeline: row.open_pipeline,
+    open_escalations: row.open_escalations,
+  }))
+
   return (
-    <div className={embedded ? 'mt-6 space-y-4' : 'space-y-4'}>
-      {embedded ? (
-        <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-          <div>
-            <p className="text-[10px] font-extrabold uppercase tracking-widest text-brand-blue">Portfolio intelligence</p>
-            <h2 className="text-base font-semibold text-ink">Analytics</h2>
-            <p className="mt-1 max-w-3xl text-sm text-ink-secondary">
-              Health trends, escalation patterns, opportunity movement, content impact, and KAM performance.
-            </p>
-          </div>
-          <BarChart3 className="h-6 w-6 shrink-0 text-brand-blue" />
-        </div>
-      ) : (
+    <div className="space-y-5">
+      {!embedded ? (
         <PageHeader
           eyebrow="Portfolio intelligence"
           title="Analytics"
-          description="Health trends, escalation intelligence, opportunity movement, content effectiveness, and KAM performance."
+          description="Health movement, risk concentration, account-change alerts, pipeline visibility, and KAM performance from persisted account data."
           actions={<BarChart3 className="h-6 w-6 text-brand-blue" />}
         />
-      )}
+      ) : null}
 
-      <section className="tk-card grid gap-3 p-4 md:grid-cols-5">
-        <input className="tk-input" type="date" value={params.get('from') ?? ''} onChange={event => setFilter('from', event.target.value)} aria-label="From date" />
-        <input className="tk-input" type="date" value={params.get('to') ?? ''} onChange={event => setFilter('to', event.target.value)} aria-label="To date" />
-        <select className="tk-input" value={params.get('am') ?? ''} onChange={event => setFilter('am', event.target.value)}>
-          <option value="">All AMs</option>
-          {[...new Map(accounts.map(account => [account.ownerId, account.ownerName])).entries()].map(([id, name]) => <option key={id} value={id}>{name}</option>)}
-        </select>
-        <select className="tk-input" value={params.get('segment') ?? ''} onChange={event => setFilter('segment', event.target.value)}>
-          <option value="">All segments</option>
-          {[...new Set(accounts.flatMap(account => account.tags))].map(tag => <option key={tag}>{tag}</option>)}
-        </select>
-        <select className="tk-input" value={params.get('stage') ?? ''} onChange={event => setFilter('stage', event.target.value)}>
-          <option value="">All stages</option>
-          {[...new Set(accounts.map(account => account.stage))].map(stage => <option key={stage}>{stage}</option>)}
-        </select>
+      <section className="tk-card p-4">
+        <div className="grid gap-3 md:grid-cols-[1.2fr_repeat(5,minmax(0,1fr))]">
+          <label className="relative block">
+            <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-ink-tertiary" />
+            <input className="tk-input pl-9" value={params.get('search') ?? ''} onChange={event => setFilter('search', event.target.value)} placeholder="Search accounts" />
+          </label>
+          <input className="tk-input" type="date" value={params.get('date_from') ?? ''} onChange={event => setFilter('date_from', event.target.value)} aria-label="From date" />
+          <input className="tk-input" type="date" value={params.get('date_to') ?? ''} onChange={event => setFilter('date_to', event.target.value)} aria-label="To date" />
+          <input className="tk-input" value={params.get('region') ?? ''} onChange={event => setFilter('region', event.target.value)} placeholder="Region" />
+          <select className="tk-input" value={params.get('risk') ?? ''} onChange={event => setFilter('risk', event.target.value)}>
+            <option value="">All risks</option>
+            <option value="healthy">Healthy</option>
+            <option value="warning">Warning</option>
+            <option value="critical">Critical</option>
+          </select>
+          <input className="tk-input" value={params.get('lifecycle_status') ?? ''} onChange={event => setFilter('lifecycle_status', event.target.value)} placeholder="Lifecycle" />
+        </div>
       </section>
 
-      <div className="space-y-4">
-        <AnalyticsCard title="Portfolio Health Trends" kicker="Section 1" chartId="portfolio-health-trends" rows={healthTrend}>
-          <ResponsiveContainer width="100%" height="100%">
-            <LineChart data={healthTrend}>
-              <CartesianGrid stroke="currentColor" className="text-surface-border" vertical={false} />
-              <XAxis dataKey="month" tickLine={false} axisLine={false} tick={{ fill: 'currentColor' }} className="text-ink-secondary" />
-              <YAxis tickLine={false} axisLine={false} tick={{ fill: 'currentColor' }} className="text-ink-secondary" />
-              <Tooltip />
-              <Line type="monotone" dataKey="Onboarding" stroke="currentColor" className="text-brand-blue" strokeWidth={2} dot={false} />
-              <Line type="monotone" dataKey="Adoption" stroke="currentColor" className="text-rag-green" strokeWidth={2} dot={false} />
-              <Line type="monotone" dataKey="Expansion" stroke="currentColor" className="text-brand-blue-dark" strokeWidth={2} dot={false} />
-              <Line type="monotone" dataKey="Renewal" stroke="currentColor" className="text-brand-orange" strokeWidth={2} dot={false} />
-            </LineChart>
-          </ResponsiveContainer>
-        </AnalyticsCard>
+      {loading ? <div className="tk-card flex items-center gap-2 p-5 text-sm text-ink-secondary"><Loader2 className="h-4 w-4 animate-spin" />Loading portfolio analytics</div> : null}
+      {error ? <div className="rounded-md border border-rag-red/20 bg-rag-red/10 px-3 py-2 text-sm font-medium text-rag-red">{error}</div> : null}
+      {!loading && !error && !portfolio ? <EmptyState icon={BarChart3} heading="No analytics yet" body="Analytics will appear after account and scoring data is available." /> : null}
 
-        <div className="grid gap-4 xl:grid-cols-2">
-          <AnalyticsCard title="Dimension Breakdown" kicker="Health drivers" chartId="dimension-breakdown" rows={dimensionDrivers}>
-            <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={dimensionDrivers}>
-                <XAxis dataKey="dimension" tickLine={false} axisLine={false} tick={{ fill: 'currentColor' }} className="text-ink-secondary" />
-                <YAxis tickLine={false} axisLine={false} tick={{ fill: 'currentColor' }} className="text-ink-secondary" />
-                <Tooltip />
-                <Bar dataKey="changes" fill="currentColor" className="text-brand-orange" radius={[8, 8, 0, 0]} />
-              </BarChart>
-            </ResponsiveContainer>
-          </AnalyticsCard>
+      {portfolio ? (
+        <>
+          <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-6">
+            {portfolio.metrics.map(metric => (
+              <AnalyticsMetric key={metric.label} label={metric.label} value={metric.label === 'Open pipeline' ? formatCompactCurrency(Number(metric.value || 0)) : metric.value} tone={metric.tone} />
+            ))}
+            <AnalyticsMetric label="Open alerts" value={alertCount} tone={alertCount ? 'warning' : 'success'} />
+          </div>
 
-          <AnalyticsCard title="Escalation Intelligence" kicker="Section 2" chartId="escalation-intelligence" rows={escalationHeat}>
-            <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={escalationHeat}>
-                <XAxis dataKey="segment" tickLine={false} axisLine={false} tick={{ fill: 'currentColor' }} className="text-ink-secondary" />
-                <YAxis tickLine={false} axisLine={false} tick={{ fill: 'currentColor' }} className="text-ink-secondary" />
-                <Tooltip />
-                <Bar dataKey="escalations" fill="currentColor" className="text-brand-blue-dark" radius={[8, 8, 0, 0]} />
-              </BarChart>
-            </ResponsiveContainer>
-          </AnalyticsCard>
-        </div>
+          {Number(metricValue(portfolio, 'Authorized accounts', 0)) === 0 ? (
+            <section className="tk-card">
+              <EmptyState icon={BarChart3} heading="No matching accounts" body="Adjust filters to include accounts in your authorized scope." />
+            </section>
+          ) : (
+            <div className="space-y-4">
+              <AnalyticsCard title="Portfolio Health Trend" kicker="Persisted scores" chartId="portfolio-health-trends" rows={healthTrend}>
+                <ResponsiveContainer width="100%" height="100%">
+                  <LineChart data={healthTrend}>
+                    <CartesianGrid stroke="currentColor" className="text-surface-border" vertical={false} />
+                    <XAxis dataKey="month" tickLine={false} axisLine={false} tick={{ fill: 'currentColor' }} className="text-ink-secondary" />
+                    <YAxis tickLine={false} axisLine={false} tick={{ fill: 'currentColor' }} className="text-ink-secondary" />
+                    <Tooltip />
+                    <Line type="monotone" dataKey="average_health" stroke="currentColor" className="text-brand-blue" strokeWidth={2} dot={false} />
+                  </LineChart>
+                </ResponsiveContainer>
+              </AnalyticsCard>
 
-        <div className="grid gap-4 xl:grid-cols-2">
-          <AnalyticsCard title="Opportunity Intelligence" kicker="Section 3" chartId="opportunity-intelligence" rows={kamRows}>
-            <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={kamRows}>
-                <XAxis dataKey="am" tickLine={false} axisLine={false} tick={{ fill: 'currentColor' }} className="text-ink-secondary" />
-                <YAxis tickLine={false} axisLine={false} tick={{ fill: 'currentColor' }} tickFormatter={formatCompactCurrency} className="text-ink-secondary" />
-                <Tooltip formatter={(value: number) => formatCompactCurrency(value)} />
-                <Bar dataKey="pipeline" fill="currentColor" className="text-brand-blue" radius={[8, 8, 0, 0]} />
-              </BarChart>
-            </ResponsiveContainer>
-          </AnalyticsCard>
+              <div className="grid gap-4 xl:grid-cols-2">
+                <AnalyticsCard title="Dimension Drivers" kicker="Health drivers" chartId="dimension-breakdown" rows={dimensionRows}>
+                  <ResponsiveContainer width="100%" height="100%">
+                    <BarChart data={dimensionRows}>
+                      <XAxis dataKey="dimension" tickLine={false} axisLine={false} tick={{ fill: 'currentColor' }} className="text-ink-secondary" />
+                      <YAxis tickLine={false} axisLine={false} tick={{ fill: 'currentColor' }} className="text-ink-secondary" />
+                      <Tooltip />
+                      <Bar dataKey="average" fill="currentColor" className="text-brand-blue" radius={[8, 8, 0, 0]} />
+                      <Bar dataKey="at_risk_count" fill="currentColor" className="text-brand-orange" radius={[8, 8, 0, 0]} />
+                    </BarChart>
+                  </ResponsiveContainer>
+                </AnalyticsCard>
 
-          <AnalyticsCard title="Content Effectiveness" kicker="Section 4" chartId="content-effectiveness" rows={contentEffect}>
-            <ResponsiveContainer width="100%" height="100%">
-              <ScatterChart>
-                <XAxis dataKey="content" name="content sent" tickLine={false} axisLine={false} tick={{ fill: 'currentColor' }} className="text-ink-secondary" />
-                <YAxis dataKey="csat" name="CSAT" tickLine={false} axisLine={false} tick={{ fill: 'currentColor' }} className="text-ink-secondary" />
-                <Tooltip />
-                <Scatter data={contentEffect} fill="currentColor" className="text-brand-blue" />
-              </ScatterChart>
-            </ResponsiveContainer>
-          </AnalyticsCard>
-        </div>
+                <AnalyticsCard title="Escalation Intelligence" kicker="Open escalations" chartId="escalation-intelligence" rows={escalationRows}>
+                  <ResponsiveContainer width="100%" height="100%">
+                    <BarChart data={escalationRows}>
+                      <XAxis dataKey="segment" tickLine={false} axisLine={false} tick={{ fill: 'currentColor' }} className="text-ink-secondary" />
+                      <YAxis tickLine={false} axisLine={false} tick={{ fill: 'currentColor' }} className="text-ink-secondary" />
+                      <Tooltip />
+                      <Bar dataKey="escalations" fill="currentColor" className="text-brand-orange" radius={[8, 8, 0, 0]} />
+                    </BarChart>
+                  </ResponsiveContainer>
+                </AnalyticsCard>
+              </div>
 
-        <AnalyticsCard title="KAM Performance" kicker="Section 5" chartId="kam-performance" rows={kamRows}>
-          <ResponsiveContainer width="100%" height="100%">
-            <BarChart data={kamRows}>
-              <XAxis dataKey="am" tickLine={false} axisLine={false} tick={{ fill: 'currentColor' }} className="text-ink-secondary" />
-              <YAxis tickLine={false} axisLine={false} tick={{ fill: 'currentColor' }} className="text-ink-secondary" />
-              <Tooltip />
-              <Bar dataKey="health" fill="currentColor" className="text-rag-green" radius={[8, 8, 0, 0]} />
-              <Bar dataKey="escalations" fill="currentColor" className="text-brand-orange" radius={[8, 8, 0, 0]} />
-            </BarChart>
-          </ResponsiveContainer>
-        </AnalyticsCard>
-      </div>
+              <AnalyticsCard title="KAM Performance" kicker="Owners" chartId="kam-performance" rows={kamSeries}>
+                <ResponsiveContainer width="100%" height="100%">
+                  <BarChart data={kamSeries}>
+                    <XAxis dataKey="owner_name" tickLine={false} axisLine={false} tick={{ fill: 'currentColor' }} className="text-ink-secondary" />
+                    <YAxis tickLine={false} axisLine={false} tick={{ fill: 'currentColor' }} className="text-ink-secondary" />
+                    <Tooltip />
+                    <Bar dataKey="average_health" fill="currentColor" className="text-rag-green" radius={[8, 8, 0, 0]} />
+                    <Bar dataKey="open_escalations" fill="currentColor" className="text-brand-orange" radius={[8, 8, 0, 0]} />
+                  </BarChart>
+                </ResponsiveContainer>
+              </AnalyticsCard>
+            </div>
+          )}
+
+          <section className="tk-card p-5">
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <p className="text-[10px] font-extrabold uppercase tracking-widest text-brand-blue">Alerts</p>
+                <h2 className="text-base font-semibold text-ink">Account-Change Alerts</h2>
+              </div>
+              <AlertTriangle className="h-5 w-5 text-brand-orange" />
+            </div>
+            <p className="mt-3 text-sm text-ink-secondary">
+              {alertCount ? `${alertCount} open persisted alert${alertCount === 1 ? '' : 's'} need owner review.` : 'No open account-change alerts in this view.'}
+            </p>
+          </section>
+        </>
+      ) : null}
     </div>
   )
 }

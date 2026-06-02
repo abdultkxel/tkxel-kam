@@ -3,7 +3,7 @@ from typing import Annotated, Literal
 
 from fastapi import APIRouter, Body, Depends, Query, status
 
-from app.dependencies import get_current_user, get_governance_service
+from app.dependencies import get_current_user, get_governance_service, get_integration_service
 from app.models import User
 from app.schemas import (
     GovernanceAIBriefRead,
@@ -35,6 +35,7 @@ from app.schemas import (
     MessageResponse,
 )
 from app.services.governance import GovernanceService
+from app.services.integrations import IntegrationService
 
 Direction = Literal["asc", "desc"]
 GovernanceSort = Literal["event_date", "scheduled_at", "status", "updated_at", "created_at"]
@@ -171,10 +172,10 @@ def delete_recurrence_rule(rule_id: str, current_user: Annotated[User, Depends(g
     return service.delete_recurrence_rule(rule_id, current_user)
 
 
-@router.get("/admin/integrations", response_model=list[IntegrationConnectionRead], summary="List integration connections", description="Lists Google Calendar and Fathom connection status with provider/status/error/last-sync filters.")
+@router.get("/admin/integrations", response_model=list[IntegrationConnectionRead], summary="List integration connections", description="Lists approved integration connection status with provider/status/error/last-sync filters.")
 def list_integrations(
     current_user: Annotated[User, Depends(get_current_user)],
-    service: Annotated[GovernanceService, Depends(get_governance_service)],
+    service: Annotated[IntegrationService, Depends(get_integration_service)],
     provider: str | None = None,
     status_filter: Annotated[str | None, Query(alias="status")] = None,
     error_state: Literal["with_errors", "without_errors"] | None = None,
@@ -184,16 +185,27 @@ def list_integrations(
     return service.list_integrations(current_user, provider=provider, status_filter=status_filter, error_state=error_state, last_synced_from=last_synced_from, last_synced_to=last_synced_to)
 
 
-@router.patch("/admin/integrations/{provider}", response_model=IntegrationConnectionRead, summary="Update integration connection", description="Updates Google Calendar or Fathom credentials/settings. Credentials are stored as configured JSON for this local setup.")
-def update_integration(provider: IntegrationProvider, payload: IntegrationConnectionUpdateRequest, current_user: Annotated[User, Depends(get_current_user)], service: Annotated[GovernanceService, Depends(get_governance_service)]) -> IntegrationConnectionRead:
+@router.patch("/admin/integrations/{provider}", response_model=IntegrationConnectionRead, summary="Update integration connection", description="Updates approved provider credentials/settings. Secret values are masked in responses.")
+def update_integration(provider: IntegrationProvider, payload: IntegrationConnectionUpdateRequest, current_user: Annotated[User, Depends(get_current_user)], service: Annotated[IntegrationService, Depends(get_integration_service)]) -> IntegrationConnectionRead:
     return service.update_integration(provider, payload, current_user)
 
 
-@router.post("/admin/integrations/{provider}/sync", response_model=IntegrationSyncResponse, summary="Sync integration", description="Runs Google Calendar or Fathom sync. Requires credentials; logs configuration-required or error state when credentials/API access are missing.")
-def sync_integration(provider: IntegrationProvider, current_user: Annotated[User, Depends(get_current_user)], service: Annotated[GovernanceService, Depends(get_governance_service)]) -> IntegrationSyncResponse:
+@router.post("/admin/integrations/{provider}/sync", response_model=IntegrationSyncResponse, summary="Sync integration", description="Runs an approved provider sync. Requires credentials where applicable and logs configuration-required or error states.")
+def sync_integration(provider: IntegrationProvider, current_user: Annotated[User, Depends(get_current_user)], service: Annotated[IntegrationService, Depends(get_integration_service)]) -> IntegrationSyncResponse:
     return service.sync_integration(provider, current_user)
 
 
-@router.get("/admin/integrations/sync-logs", response_model=IntegrationSyncLogPageRead, summary="List integration sync logs", description="Paginated integration sync log with provider and status filters.")
-def list_sync_logs(current_user: Annotated[User, Depends(get_current_user)], service: Annotated[GovernanceService, Depends(get_governance_service)], provider: str | None = None, status_filter: Annotated[str | None, Query(alias="status")] = None, page: int = 1, page_size: int = 10) -> IntegrationSyncLogPageRead:
-    return service.list_sync_logs(current_user, provider=provider, status_filter=status_filter, page=page, page_size=page_size)
+@router.get("/admin/integrations/sync-logs", response_model=IntegrationSyncLogPageRead, summary="List integration sync logs", description="Paginated integration sync log with provider, status, severity, search, and date filters.")
+def list_sync_logs(
+    current_user: Annotated[User, Depends(get_current_user)],
+    service: Annotated[IntegrationService, Depends(get_integration_service)],
+    provider: str | None = None,
+    status_filter: Annotated[str | None, Query(alias="status")] = None,
+    severity: str | None = None,
+    date_from: datetime | None = None,
+    date_to: datetime | None = None,
+    search: str | None = None,
+    page: int = 1,
+    page_size: int = 10,
+) -> IntegrationSyncLogPageRead:
+    return service.list_logs(current_user, provider=provider, status_filter=status_filter, severity=severity, date_from=date_from, date_to=date_to, search=search, page=page, page_size=page_size)

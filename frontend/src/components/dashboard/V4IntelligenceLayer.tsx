@@ -1,4 +1,4 @@
-import { BarChart3, Bot, FileSearch, Mic2, Sparkles, TrendingUp } from 'lucide-react'
+import { BarChart3, Bot, FileSearch, FileText, Sparkles, TrendingUp } from 'lucide-react'
 import { Account } from '@/types/account'
 import { Opportunity } from '@/types/opportunity'
 import { ScoreActivityTask } from '@/types/scoreActivity'
@@ -14,14 +14,14 @@ type Props = {
 }
 
 const prompts = [
-  { label: 'Voice brief', icon: Mic2, query: 'Prepare a spoken QBR brief for my highest-risk account' },
+  { label: 'QBR brief', icon: FileText, query: 'Prepare a QBR brief for my highest-risk account' },
   { label: 'Document search', icon: FileSearch, query: 'Find renewal clauses and notice deadlines in attached SOW documents' },
   { label: 'Forecast chart', icon: BarChart3, query: 'Forecast portfolio ARR and health for the next 6 months' },
 ]
 
 export function V4IntelligenceLayer({ accounts, opportunities, tasks, signals }: Props) {
   const openAI = useUIStore(state => state.openAI)
-  const openTasks = tasks.filter(task => !['done', 'skipped'].includes(task.status))
+  const openTasks = tasks.filter(task => !['done', 'cancelled'].includes(task.status))
   const openSignals = signals.filter(signal => !['resolved', 'dismissed'].includes(signal.status))
   const attentionLoad = new Map<string, number>()
   openTasks.forEach(task => attentionLoad.set(task.accountName, (attentionLoad.get(task.accountName) ?? 0) + 1))
@@ -46,7 +46,7 @@ export function V4IntelligenceLayer({ accounts, opportunities, tasks, signals }:
           </div>
 
           <p className="mt-4 max-w-3xl text-sm leading-6 text-ink-secondary">
-            Ask, search, narrate, and chart account movement from one source-backed cockpit. The experience stays grounded in KYC, SOWs, timeline events, tasks, and governance records.
+            Ask, search, summarize, and chart account movement from one source-backed cockpit. The experience stays grounded in KYC, SOWs, timeline events, tasks, and governance records.
           </p>
 
           <div className="mt-5 grid gap-3 md:grid-cols-3">

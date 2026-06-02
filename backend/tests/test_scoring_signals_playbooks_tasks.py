@@ -9,7 +9,7 @@ from sqlalchemy.pool import StaticPool
 
 from app.database import Base, get_db
 from app.main import app
-from app.models import Account, AccountOwner, Engagement, Task, TimelineEntry
+from app.models import Account, AccountOwner, AiGatewayRun, CsatScore, Engagement, GovernanceEvent, Opportunity, OpportunityType, ScoreSnapshot, ScoringMetricDefinition, Task, TimelineEntry
 from app.services.seed import seed_default_data
 
 
@@ -221,7 +221,9 @@ def test_account_scoring_signal_lifecycle_conversion_and_authorization(client: T
     score = score_response.json()
     assert score["overall"] < 60
     assert score["rag_status"] == "red"
-    assert any(driver["key"] == "relationship_health" and driver["weight"] > 40 for driver in score["drivers"])
+    assert any(driver["key"] == "relationship_score" and driver["weight"] == 20 for driver in score["drivers"])
+    assert not any(driver["key"] == "delivery" for driver in score["drivers"])
+    assert score["latest_snapshot"]["source_context"]["delivery_score_active"] is False
     assert score["latest_snapshot"]["source_context"]["manual_submission_id"]
     assert score["latest_snapshot"]["source_context"]["published_metrics"]
 
@@ -261,11 +263,223 @@ def test_account_scoring_signal_lifecycle_conversion_and_authorization(client: T
     assert denied.status_code == 403
 
 
+def test_score_snapshots_preserve_metric_weight_after_published_config_change(client: TestClient, db_session: Session) -> None:
+    admin_headers = auth_headers(client)
+    owner = seeded_user(client, admin_headers, "account_manager")
+    account_id = create_account_with_engagement(db_session, owner, account_id="snapshot-immutability-account")
+    owner_headers = auth_headers(client, owner["email"], "User@12345")
+
+    created_metric = client.post(
+        "/api/admin/metrics",
+        headers=admin_headers,
+        json={
+            "slug": "relationship_score",
+            "name": "Relationship Score",
+            "scope": "account",
+            "weight": 40,
+            "thresholds": {"red_max": 49, "amber_min": 50, "green_min": 75},
+            "formula": {"op": "field", "field": "health_relationship"},
+        },
+    )
+    assert created_metric.status_code == 201
+    metric_id = created_metric.json()["id"]
+    assert client.post(f"/api/admin/metrics/{metric_id}/publish", headers=admin_headers).status_code == 200
+
+    first_score = client.post(
+        f"/api/accounts/{account_id}/scores/recalculate",
+        headers=owner_headers,
+        json={"trigger_source": "initial_weight"},
+    )
+    assert first_score.status_code == 200
+    first_snapshot_id = first_score.json()["latest_snapshot"]["id"]
+    first_driver = next(driver for driver in first_score.json()["drivers"] if driver["key"] == "relationship_score")
+    assert first_driver["weight"] == pytest.approx(33.33)
+
+    updated_metric = client.patch(f"/api/admin/metrics/{metric_id}", headers=admin_headers, json={"weight": 80})
+    assert updated_metric.status_code == 200
+    assert client.post(f"/api/admin/metrics/{metric_id}/publish", headers=admin_headers).status_code == 200
+
+    second_score = client.post(
+        f"/api/accounts/{account_id}/scores/recalculate",
+        headers=owner_headers,
+        json={"trigger_source": "updated_weight"},
+    )
+    assert second_score.status_code == 200
+    second_driver = next(driver for driver in second_score.json()["drivers"] if driver["key"] == "relationship_score")
+    assert second_driver["weight"] == pytest.approx(50)
+
+    stored_first_snapshot = db_session.get(ScoreSnapshot, first_snapshot_id)
+    assert stored_first_snapshot is not None
+    stored_first_driver = next(driver for driver in stored_first_snapshot.drivers if driver["key"] == "relationship_score")
+    assert stored_first_driver["weight"] == pytest.approx(first_driver["weight"])
+    assert db_session.get(ScoringMetricDefinition, metric_id).current_version == 2
+
+
+def test_expanded_signal_triggers_and_server_backed_ai_assistance(client: TestClient, db_session: Session) -> None:
+    admin_headers = auth_headers(client)
+    owner = seeded_user(client, admin_headers, "account_manager")
+    account_id = create_account_with_engagement(db_session, owner, account_id="p1-core-account")
+    account = db_session.get(Account, account_id)
+    assert account is not None
+    account.commercial_summary = "Payment overdue and procurement blocked until invoice dispute is resolved."
+    opportunity_type = db_session.scalar(select(OpportunityType).order_by(OpportunityType.name).limit(1))
+    assert opportunity_type is not None
+    now = datetime.now(timezone.utc)
+    db_session.add(
+        Opportunity(
+            account_id=account_id,
+            type_id=opportunity_type.id,
+            owner_id=owner["id"],
+            owner_name=owner["full_name"],
+            owner_email=owner["email"],
+            name="Stalled expansion package",
+            service_line="Customer Success",
+            value=150000,
+            currency="USD",
+            stage="Qualified",
+            next_step="Waiting on sponsor feedback.",
+            target_date=now - timedelta(days=5),
+            created_by_id=owner["id"],
+            created_by_name=owner["full_name"],
+            updated_by_id=owner["id"],
+            updated_by_name=owner["full_name"],
+            updated_at=now - timedelta(days=45),
+        )
+    )
+    db_session.add(
+        GovernanceEvent(
+            account_id=account_id,
+            owner_id=owner["id"],
+            owner_name=owner["full_name"],
+            governance_type="QBR",
+            source="manual",
+            deduplication_key=f"governance-overdue-{account_id}",
+            scheduled_at=now - timedelta(days=2),
+            status="scheduled",
+            attendees=[],
+            created_by_id=owner["id"],
+            created_by_name=owner["full_name"],
+        )
+    )
+    db_session.add_all(
+        [
+            CsatScore(
+                account_id=account_id,
+                score=4.4,
+                normalized_score=85,
+                category_scores_json={"delivery_excellence": 4.4, "communication": 4.4},
+                category_weights_json={"delivery_excellence": 50, "communication": 50},
+                weighted_score=4.4,
+                source_label="manual",
+                source_id=f"csat-prev-{account_id}",
+                source_recorded_at=now - timedelta(days=20),
+                score_impact_json={},
+                trend_json={},
+                created_by_name=owner["full_name"],
+            ),
+            CsatScore(
+                account_id=account_id,
+                score=2.2,
+                normalized_score=30,
+                category_scores_json={"delivery_excellence": 2.2, "communication": 2.0},
+                category_weights_json={"delivery_excellence": 50, "communication": 50},
+                weighted_score=2.1,
+                source_label="manual",
+                source_id=f"csat-latest-{account_id}",
+                source_recorded_at=now - timedelta(days=1),
+                score_impact_json={},
+                trend_json={},
+                created_by_name=owner["full_name"],
+            ),
+        ]
+    )
+    db_session.add_all(
+        [
+            ScoreSnapshot(
+                account_id=account_id,
+                scope="account",
+                overall=82,
+                rag_status="green",
+                drivers=[{"key": "relationship_score", "label": "Relationship Score", "score": 90, "weight": 20}],
+                reason_codes=[],
+                metric_version="test",
+                freshness_status="fresh",
+                trend=0,
+                status="complete",
+                source_context={},
+                calculated_by_name=owner["full_name"],
+                calculated_at=now - timedelta(days=7),
+            ),
+            ScoreSnapshot(
+                account_id=account_id,
+                scope="account",
+                overall=66,
+                rag_status="amber",
+                drivers=[{"key": "relationship_score", "label": "Relationship Score", "score": 68, "weight": 20}],
+                reason_codes=[{"code": "watch_relationship_score", "label": "Relationship Score is in amber range"}],
+                metric_version="test",
+                freshness_status="fresh",
+                trend=-16,
+                status="complete",
+                source_context={},
+                calculated_by_name=owner["full_name"],
+                calculated_at=now,
+            ),
+        ]
+    )
+    db_session.add(
+        TimelineEntry(
+            account_id=account_id,
+            event_type="manual_note",
+            module="manual",
+            title="Sponsor risk note",
+            description="Sponsor requested executive attention on renewal risk and payment blockers.",
+            performed_by=owner["id"],
+            performed_by_name=owner["full_name"],
+            is_sensitive=False,
+        )
+    )
+    db_session.commit()
+    owner_headers = auth_headers(client, owner["email"], "User@12345")
+
+    evaluation = client.post("/api/signals/evaluate", headers=owner_headers, json={"account_id": account_id, "trigger_source": "p1_core_test"})
+    assert evaluation.status_code == 200
+    signal_types = {item["signal_type"] for item in evaluation.json()["signals"]}
+    assert {"csat_low", "csat_decline", "opportunity_stalled", "governance_overdue", "score_dimension_drop", "payment_risk"}.issubset(signal_types)
+
+    ai_search = client.post("/api/ai/search", headers=owner_headers, json={"account_id": account_id, "query": "renewal payment risk", "scopes": ["timeline", "opportunities"], "limit": 5})
+    assert ai_search.status_code == 200
+    assert ai_search.json()["source_entries"]
+    assert ai_search.json()["run_id"]
+
+    brief = client.post(f"/api/accounts/{account_id}/ai/brief", headers=owner_headers)
+    assert brief.status_code == 200
+    assert brief.json()["citations"]
+
+    stage = client.post(f"/api/accounts/{account_id}/ai/stage-prediction", headers=owner_headers)
+    assert stage.status_code == 200
+    assert stage.json()["advisory_only"] is True
+
+    forecast = client.post("/api/ai/forecast", headers=owner_headers, json={"account_id": account_id, "months": 6})
+    assert forecast.status_code == 200
+    assert len(forecast.json()["points"]) == 6
+
+    handoff = client.post(f"/api/accounts/{account_id}/ai/handoff", headers=owner_headers, json={"focus": "payment risk"})
+    assert handoff.status_code == 200
+    assert "Health and risks" in handoff.json()["sections"]
+
+    ai_runs = list(db_session.scalars(select(AiGatewayRun).where(AiGatewayRun.account_id == account_id)))
+    assert {run.request_type for run in ai_runs}.issuperset({"kam_ai_search", "account_brief", "stage_prediction", "portfolio_forecast", "handoff_brief"})
+
+
 def test_playbook_execution_tasks_calendar_and_completion_validation(client: TestClient, db_session: Session) -> None:
     admin_headers = auth_headers(client)
     owner = seeded_user(client, admin_headers, "account_manager")
     account_id = create_account_with_engagement(db_session, owner, account_id="task-account")
     owner_headers = auth_headers(client, owner["email"], "User@12345")
+    account = db_session.get(Account, account_id)
+    assert account is not None
+    health_before_task_completion = account.health_overall
 
     templates = client.get("/api/admin/playbook-templates", headers=owner_headers, params={"status": "active", "page": 1, "page_size": 10})
     assert templates.status_code == 200
@@ -293,6 +507,8 @@ def test_playbook_execution_tasks_calendar_and_completion_validation(client: Tes
     assert completed.status_code == 200
     assert completed.json()["status"] == "done"
     assert completed.json()["completed_at"]
+    db_session.refresh(account)
+    assert account.health_overall == health_before_task_completion
 
     manual_task = client.post(
         "/api/tasks",
@@ -308,12 +524,12 @@ def test_playbook_execution_tasks_calendar_and_completion_validation(client: Tes
     )
     assert manual_task.status_code == 201
 
-    invalid_skip = client.patch(f"/api/tasks/{manual_task.json()['id']}", headers=owner_headers, json={"status": "skipped"})
+    invalid_skip = client.patch(f"/api/tasks/{manual_task.json()['id']}", headers=owner_headers, json={"status": "cancelled"})
     assert invalid_skip.status_code == 400
 
-    skipped = client.patch(f"/api/tasks/{manual_task.json()['id']}", headers=owner_headers, json={"status": "skipped", "skip_reason": "Duplicate renewal task."})
+    skipped = client.patch(f"/api/tasks/{manual_task.json()['id']}", headers=owner_headers, json={"status": "cancelled", "skip_reason": "Duplicate renewal task."})
     assert skipped.status_code == 200
-    assert skipped.json()["status"] == "skipped"
+    assert skipped.json()["status"] == "cancelled"
 
     calendar = client.get("/api/calendar/items", headers=owner_headers, params={"account_id": account_id, "page": 1, "page_size": 20})
     assert calendar.status_code == 200
@@ -324,4 +540,4 @@ def test_playbook_execution_tasks_calendar_and_completion_validation(client: Tes
     assert db_session.scalar(select(Task).where(Task.account_id == account_id)) is not None
     assert db_session.scalar(select(TimelineEntry).where(TimelineEntry.account_id == account_id, TimelineEntry.event_type == "playbook_executed")) is not None
     assert db_session.scalar(select(TimelineEntry).where(TimelineEntry.account_id == account_id, TimelineEntry.event_type == "task_created")) is not None
-    assert db_session.scalar(select(TimelineEntry).where(TimelineEntry.account_id == account_id, TimelineEntry.event_type == "task_skipped")) is not None
+    assert db_session.scalar(select(TimelineEntry).where(TimelineEntry.account_id == account_id, TimelineEntry.event_type == "task_cancelled")) is not None

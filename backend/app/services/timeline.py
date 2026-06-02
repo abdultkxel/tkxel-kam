@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import secrets
 import textwrap
 from datetime import datetime, timedelta, timezone
@@ -62,6 +63,7 @@ from app.services.account_access import AccountAccessService
 from app.services.audit import AuditService
 from app.services.user_management import page_count
 
+logger = logging.getLogger(__name__)
 
 TIMELINE_MODULE = "account_timeline"
 HANDOVER_MODULE = "handover_summary"
@@ -620,6 +622,22 @@ class TimelineService:
             redactions={"restricted_sources_omitted": "not_disclosed"},
         )
         self.repository.add_ai_search_audit(audit)
+        try:
+            from app.services.integrations import IntegrationService
+
+            IntegrationService(self.db).log_ai_gateway_run(
+                request_type="timeline_ai_search",
+                status_value="complete",
+                actor=current_user,
+                account_id=account_id,
+                permission_scope={"module": AI_MODULE, "account_id": account_id, "scopes": payload.scopes},
+                source_context=[{"type": "timeline_entry", "id": item.id} for item in scored] + [{"type": "source_document", "id": item.id} for item in document_results],
+                response_labels=["AI-assisted", "Advisory"],
+                affected_records=[{"type": "timeline_ai_search_audit", "id": audit.id}],
+                commit=False,
+            )
+        except Exception:
+            logger.exception("Failed to write AI Gateway run for timeline AI search account=%s", account_id)
         self.audit.log(module=AI_MODULE, action="timeline_ai_search", entity_type="timeline_ai_search", entity_id=audit.id, actor=current_user, after_value={"intent": intent, "source_count": len(scored), "document_count": len(document_results)})
         self.repository.commit()
         return TimelineAiSearchResponse(

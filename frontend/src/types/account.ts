@@ -1,4 +1,5 @@
 export type AccountStage =
+  | 'Draft'
   | 'Onboarding'
   | 'Active'
   | 'Adoption'

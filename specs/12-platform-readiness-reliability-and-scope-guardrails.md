@@ -183,3 +183,27 @@ Keep the platform scalable, secure, observable, accessible, and aligned to MVP s
 - MVP out-of-scope actions are blocked or absent.
 - Architecture decisions do not prevent future tenant isolation.
 - Accessibility, auditability, and logging expectations are explicit and testable.
+
+## Added From Technical Logic Document
+
+- Recommended developer data model fields for business entities:
+  - `tenant_id` or `organization_id`/configuration scope where tenant readiness is required.
+  - `account_id` where the record is account-scoped.
+  - `engagement_id` where the record is engagement-scoped.
+  - `status`.
+  - `owner_id`.
+  - `source_type` and `source_id`.
+  - `confidence` where records are extracted, inferred, AI-assisted, or imported.
+  - `created_by`, `created_at`, `updated_by`, `updated_at`.
+  - `approved_by`, `approved_at` where records become authoritative only after approval.
+  - `archived_at` or equivalent lifecycle field where archival is supported.
+- MVP priority guardrails must preserve core workflows when AI, Calendar, Fathom, CSAT provider, email delivery, or other integrations fail. Manual entry, upload/link evidence, and review workflows must remain available.
+- Approved integrations must be constrained to the approved adapter list. Unsupported external systems can only appear as manual evidence, upload/link source, CSV/manual import, or future scoped integration work.
+- Background workers and scheduled jobs must log start/end/status/failure reason, correlation ID, source module, affected records, retry state, and safe error summary.
+- System health must cover at least API availability, database availability, background worker state, integration sync health, email/notification queue health, AI Gateway health, and recent critical job failures.
+- Error severity taxonomy must distinguish security/privacy risk, data integrity risk, customer-impacting workflow failure, integration failure, AI failure, and non-blocking UI/reporting issue.
+- AI and integration outage states must show manual fallback and must not imply official records were updated when an automated workflow failed.
+- Accessibility expectations must include keyboard navigation, focus states, semantic labels, field-level validation errors, color contrast, and no hidden critical action behind hover-only UI.
+- Single-tenant mode must hide tenant-management screens while still storing enough scope metadata to support future migration.
+- Cross-tenant or cross-scope references must be rejected in tenant-enabled tests and should fail validation before persistence.
+- Developer acceptance checklist for every module must include: database persistence, RBAC, field security where sensitive, validation, search/filter/sort, pagination, loading/empty/error states, audit/timeline logging, automated tests, and graceful degradation for AI/integration failures.

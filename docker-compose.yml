@@ -44,6 +44,10 @@ services:
       MAIL_FROM_NAME: ${MAIL_FROM_NAME:-KAM Intelligence Platform}
       MAIL_SEND_DURING_TESTS: ${MAIL_SEND_DURING_TESTS:-false}
       FRONTEND_APP_URL: ${FRONTEND_APP_URL:-http://127.0.0.1:5173}
+      FATHOM_API_KEY: ${FATHOM_API_KEY:-}
+      FATHOM_BASE_URL: ${FATHOM_BASE_URL:-https://api.fathom.ai}
+      FATHOM_RECORDINGS_PATH: ${FATHOM_RECORDINGS_PATH:-/external/v1/meetings/}
+      FATHOM_WEBHOOK_SECRET: ${FATHOM_WEBHOOK_SECRET:-}
     ports:
       - "${BACKEND_HOST_PORT:-8001}:8001"
     volumes:

@@ -1,6 +1,6 @@
 export type ScoreCalculatorId = 'relationship' | 'contract' | 'resource' | 'csat' | 'risk'
 
-export type ScoreActivityStatus = 'todo' | 'in_progress' | 'blocked' | 'done' | 'skipped'
+export type ScoreActivityStatus = 'open' | 'in_progress' | 'blocked' | 'done' | 'cancelled'
 
 export type ScoreActivityPriority = 'low' | 'medium' | 'high' | 'critical'
 

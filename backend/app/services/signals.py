@@ -5,7 +5,7 @@ from fastapi import HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.models import Account, AccountOwner, Engagement, Escalation, KycSnapshot, ScoreSnapshot, Signal, SignalEvent, SignalRule, User
+from app.models import Account, AccountOwner, CsatScore, Engagement, Escalation, GovernanceEvent, KycConfiguration, KycSnapshot, Opportunity, ScoreSnapshot, Signal, SignalEvent, SignalRule, User
 from app.repositories.accounts import AccountRepository
 from app.repositories.audit import AuditRepository
 from app.repositories.rbac import RbacRepository
@@ -204,6 +204,11 @@ class SignalsService:
             generated.extend(self._account_signal_seeds(account, rules))
             generated.extend(self._engagement_signal_seeds(account, engagement_id, rules))
             generated.extend(self._escalation_signal_seeds(account, rules))
+            generated.extend(self._csat_signal_seeds(account, rules))
+            generated.extend(self._opportunity_signal_seeds(account, rules))
+            generated.extend(self._governance_signal_seeds(account, rules))
+            generated.extend(self._score_drop_signal_seeds(account, rules))
+            generated.extend(self._payment_risk_signal_seeds(account, rules))
             active_keys = set()
             for seed in generated:
                 active_keys.add(seed.condition_key)
@@ -284,7 +289,7 @@ class SignalsService:
                     description=signal.detail,
                     owner_id=payload.owner_id or signal.owner_id or current_user.id,
                     due_at=due_at,
-                    status="todo",
+                    status="open",
                     priority=self._task_priority_for_signal(signal),
                     notes=payload.note,
                     source_type="signal",
@@ -327,6 +332,23 @@ class SignalsService:
             f"The rule fired because {', '.join(item.get('label', item.get('code', 'a configured condition')) for item in signal.reason_codes) or 'configured evidence matched'}. "
             "AI output is advisory only; the signal status remains controlled by reviewers."
         )
+        try:
+            from app.services.integrations import IntegrationService
+
+            IntegrationService(self.db).log_ai_gateway_run(
+                request_type="signal_explanation",
+                status_value="complete",
+                actor=current_user,
+                account_id=signal.account_id,
+                engagement_id=signal.engagement_id,
+                permission_scope={"module": SIGNALS_MODULE, "account_id": signal.account_id, "actor_role": current_user.role},
+                source_context=[{"type": "signal", "id": signal.id}, {"type": "signal_rule", "id": signal.rule_id}],
+                response_labels=["AI-assisted", "Advisory"],
+                affected_records=[{"type": "signal", "id": signal.id}],
+                commit=False,
+            )
+        except Exception:
+            logger.exception("Failed to write AI Gateway run for signal explanation %s", signal.id)
         self.audit.log(module=SIGNALS_MODULE, action="ai_explanation", entity_type="signal", entity_id=signal.id, actor=current_user, after_value={"provider": "ai_llm_gateway_local_adapter", "advisory_only": True})
         self.repository.commit()
         return SignalAIExplanationRead(signal_id=signal.id, provider="ai_llm_gateway_local_adapter", advisory_only=True, explanation=explanation, citations=signal.citations_json)
@@ -373,6 +395,29 @@ class SignalsService:
                     confidence=100,
                     condition_key=f"{account.id}:stale_kyc",
                     due_at=datetime.now(timezone.utc) + timedelta(days=3),
+                )
+            )
+        if latest_score and latest_score.rag_status == "red":
+            seeds.append(
+                SignalSeed(
+                    account_id=account.id,
+                    engagement_id=None,
+                    rule=rules.get("red_account_health"),
+                    signal_type="red_account_health",
+                    severity="critical",
+                    owner_id=owner.user_id if owner else None,
+                    owner_name=owner.user_name if owner else None,
+                    title=f"{account.name} is in red health",
+                    detail="Latest account score is red and requires recovery ownership.",
+                    reason_codes=latest_score.reason_codes or [{"code": "red_account_health", "label": "Latest account score is red"}],
+                    evidence=[{"type": "score_snapshot", "label": "Latest health score", "value": latest_score.overall, "rag_status": latest_score.rag_status}],
+                    citations=[],
+                    source_record_type="score_snapshot",
+                    source_record_id=latest_score.id,
+                    source_record_route=f"/accounts/{account.id}?tab=health",
+                    confidence=100,
+                    condition_key=f"{account.id}:red_account_health",
+                    due_at=datetime.now(timezone.utc) + timedelta(days=1),
                 )
             )
         if (latest_score and latest_score.rag_status in {"red", "amber"}) or account.health_overall < 75:
@@ -427,7 +472,7 @@ class SignalsService:
     def _engagement_signal_seeds(self, account: Account, engagement_id: str | None, rules: dict[str, SignalRule]) -> list["SignalSeed"]:
         now = datetime.now(timezone.utc)
         seeds: list[SignalSeed] = []
-        engagements = [item for item in account.engagements if item.archived_at is None and (engagement_id is None or item.id == engagement_id)]
+        engagements = [item for item in account.engagements if item.archived_at is None and item.status == "active" and (engagement_id is None or item.id == engagement_id)]
         primary_owner = self._primary_owner(account)
         for engagement in engagements:
             owner_id = engagement.owner_id or (primary_owner.user_id if primary_owner else None)
@@ -546,6 +591,229 @@ class SignalsService:
                     )
                 )
         return seeds
+
+    def _csat_signal_seeds(self, account: Account, rules: dict[str, SignalRule]) -> list["SignalSeed"]:
+        owner = self._primary_owner(account)
+        scores = list(
+            self.db.scalars(
+                select(CsatScore)
+                .where(CsatScore.account_id == account.id)
+                .order_by(CsatScore.source_recorded_at.desc(), CsatScore.created_at.desc())
+                .limit(2)
+            )
+        )
+        if not scores:
+            return []
+        latest = scores[0]
+        seeds: list[SignalSeed] = []
+        low_categories = [
+            {"category": key, "score": value}
+            for key, value in (latest.category_scores_json or {}).items()
+            if isinstance(value, (int, float)) and float(value) <= 2.5
+        ]
+        if float(latest.weighted_score or latest.score) <= 3.0 or low_categories:
+            severity = "critical" if float(latest.weighted_score or latest.score) <= 2.5 or any(float(item["score"]) <= 2 for item in low_categories) else "warning"
+            seeds.append(
+                SignalSeed(
+                    account_id=account.id,
+                    engagement_id=latest.engagement_id,
+                    rule=rules.get("csat_low"),
+                    signal_type="csat_low",
+                    severity=severity,
+                    owner_id=owner.user_id if owner else None,
+                    owner_name=owner.user_name if owner else None,
+                    title=f"{account.name} CSAT needs attention",
+                    detail="Latest CSAT score or category score is below the healthy threshold.",
+                    reason_codes=[{"code": "csat_low", "label": "Latest CSAT score is low"}] + [{"code": f"csat_low_{item['category']}", "label": f"{item['category']} scored {item['score']}"} for item in low_categories],
+                    evidence=[{"type": "csat_score", "label": "Latest CSAT", "value": latest.weighted_score or latest.score, "normalized_score": latest.normalized_score, "low_categories": low_categories}],
+                    citations=[],
+                    source_record_type="csat_score",
+                    source_record_id=latest.id,
+                    source_record_route=f"/accounts/{account.id}?tab=health",
+                    confidence=95,
+                    condition_key=f"{account.id}:csat_low:{latest.id}",
+                    due_at=datetime.now(timezone.utc) + timedelta(days=3),
+                )
+            )
+        if len(scores) > 1:
+            previous = scores[1]
+            decline = float(previous.weighted_score or previous.score) - float(latest.weighted_score or latest.score)
+            if decline >= 0.5:
+                seeds.append(
+                    SignalSeed(
+                        account_id=account.id,
+                        engagement_id=latest.engagement_id,
+                        rule=rules.get("csat_decline"),
+                        signal_type="csat_decline",
+                        severity="critical" if decline >= 1.0 else "warning",
+                        owner_id=owner.user_id if owner else None,
+                        owner_name=owner.user_name if owner else None,
+                        title=f"{account.name} CSAT declined",
+                        detail=f"Latest CSAT declined by {round(decline, 2)} point(s) compared with the previous score.",
+                        reason_codes=[{"code": "csat_decline", "label": f"CSAT declined by {round(decline, 2)}"}],
+                        evidence=[{"type": "csat_score", "label": "CSAT trend", "previous": previous.weighted_score or previous.score, "latest": latest.weighted_score or latest.score}],
+                        citations=[],
+                        source_record_type="csat_score",
+                        source_record_id=latest.id,
+                        source_record_route=f"/accounts/{account.id}?tab=health",
+                        confidence=95,
+                        condition_key=f"{account.id}:csat_decline:{latest.id}",
+                        due_at=datetime.now(timezone.utc) + timedelta(days=3),
+                    )
+                )
+        return seeds
+
+    def _opportunity_signal_seeds(self, account: Account, rules: dict[str, SignalRule]) -> list["SignalSeed"]:
+        owner = self._primary_owner(account)
+        now = datetime.now(timezone.utc)
+        stale_cutoff = now - timedelta(days=30)
+        opportunities = list(
+            self.db.scalars(
+                select(Opportunity).where(
+                    Opportunity.account_id == account.id,
+                    Opportunity.archived_at.is_(None),
+                    Opportunity.stage.notin_(("Won", "Lost")),
+                    Opportunity.updated_at <= stale_cutoff,
+                )
+            )
+        )
+        seeds = []
+        for opportunity in opportunities:
+            target_at = opportunity.target_date if opportunity.target_date.tzinfo else opportunity.target_date.replace(tzinfo=timezone.utc)
+            overdue = target_at < now
+            seeds.append(
+                SignalSeed(
+                    account_id=account.id,
+                    engagement_id=opportunity.engagement_id,
+                    rule=rules.get("opportunity_stalled"),
+                    signal_type="opportunity_stalled",
+                    severity="critical" if overdue else "warning",
+                    owner_id=opportunity.owner_id or (owner.user_id if owner else None),
+                    owner_name=opportunity.owner_name or (owner.user_name if owner else None),
+                    title=f"Opportunity stalled: {opportunity.name}",
+                    detail="Open opportunity has not been updated in 30 days or is past its target date.",
+                    reason_codes=[{"code": "opportunity_stalled", "label": "Open opportunity has stale next-step activity"}],
+                    evidence=[{"type": "opportunity", "label": opportunity.name, "stage": opportunity.stage, "updated_at": opportunity.updated_at.isoformat(), "target_date": target_at.isoformat()}],
+                    citations=[],
+                    source_record_type="opportunity",
+                    source_record_id=opportunity.id,
+                    source_record_route="/opportunities",
+                    confidence=90,
+                    condition_key=f"{account.id}:opportunity_stalled:{opportunity.id}",
+                    due_at=now + timedelta(days=2),
+                )
+            )
+        return seeds
+
+    def _governance_signal_seeds(self, account: Account, rules: dict[str, SignalRule]) -> list["SignalSeed"]:
+        now = datetime.now(timezone.utc)
+        owner = self._primary_owner(account)
+        events = list(
+            self.db.scalars(
+                select(GovernanceEvent).where(
+                    GovernanceEvent.account_id == account.id,
+                    GovernanceEvent.status.notin_(("completed", "cancelled")),
+                    GovernanceEvent.scheduled_at < now,
+                )
+            )
+        )
+        seeds = []
+        for event in events:
+            scheduled_at = event.scheduled_at if event.scheduled_at.tzinfo else event.scheduled_at.replace(tzinfo=timezone.utc)
+            seeds.append(
+                SignalSeed(
+                    account_id=account.id,
+                    engagement_id=event.engagement_id,
+                    rule=rules.get("governance_overdue"),
+                    signal_type="governance_overdue",
+                    severity="critical",
+                    owner_id=event.owner_id or (owner.user_id if owner else None),
+                    owner_name=event.owner_name or (owner.user_name if owner else None),
+                    title=f"Governance overdue: {event.governance_type}",
+                    detail="Scheduled governance review is overdue and not completed.",
+                    reason_codes=[{"code": "governance_overdue", "label": "Governance review is overdue"}],
+                    evidence=[{"type": "governance_event", "label": event.governance_type, "scheduled_at": scheduled_at.isoformat(), "status": event.status}],
+                    citations=[],
+                    source_record_type="governance_event",
+                    source_record_id=event.id,
+                    source_record_route=f"/governance?event={event.id}",
+                    confidence=100,
+                    condition_key=f"{account.id}:governance_overdue:{event.id}",
+                    due_at=now + timedelta(days=1),
+                )
+            )
+        return seeds
+
+    def _score_drop_signal_seeds(self, account: Account, rules: dict[str, SignalRule]) -> list["SignalSeed"]:
+        owner = self._primary_owner(account)
+        scores = self._latest_scores(account.id, limit=2)
+        if len(scores) < 2:
+            return []
+        latest, previous = scores[0], scores[1]
+        previous_drivers = {driver.get("key"): driver for driver in previous.drivers or []}
+        drops = []
+        for driver in latest.drivers or []:
+            key = driver.get("key")
+            previous_driver = previous_drivers.get(key)
+            if not previous_driver:
+                continue
+            drop = float(previous_driver.get("score") or 0) - float(driver.get("score") or 0)
+            if drop >= 10:
+                drops.append({"key": key, "label": driver.get("label", key), "previous": previous_driver.get("score"), "latest": driver.get("score"), "drop": round(drop, 2)})
+        overall_drop = previous.overall - latest.overall
+        if overall_drop < 10 and not drops:
+            return []
+        return [
+            SignalSeed(
+                account_id=account.id,
+                engagement_id=None,
+                rule=rules.get("score_dimension_drop"),
+                signal_type="score_dimension_drop",
+                severity="critical" if overall_drop >= 15 or any(float(item["drop"]) >= 20 for item in drops) else "warning",
+                owner_id=owner.user_id if owner else None,
+                owner_name=owner.user_name if owner else None,
+                title=f"{account.name} score declined",
+                detail="Latest account score or a score dimension dropped materially compared with the previous snapshot.",
+                reason_codes=[{"code": "score_dimension_drop", "label": "Score dimension dropped by at least 10 points"}],
+                evidence=[{"type": "score_snapshot", "label": "Score drop", "overall_drop": overall_drop, "dimension_drops": drops}],
+                citations=[],
+                source_record_type="score_snapshot",
+                source_record_id=latest.id,
+                source_record_route=f"/accounts/{account.id}?tab=health",
+                confidence=95,
+                condition_key=f"{account.id}:score_dimension_drop:{latest.id}",
+                due_at=datetime.now(timezone.utc) + timedelta(days=2),
+            )
+        ]
+
+    def _payment_risk_signal_seeds(self, account: Account, rules: dict[str, SignalRule]) -> list["SignalSeed"]:
+        text = " ".join(filter(None, [account.commercial_summary, account.initial_notes, account.service_context])).lower()
+        keywords = ("late payment", "payment overdue", "overdue invoice", "invoice dispute", "payment risk", "budget cut", "procurement blocked")
+        if not any(keyword in text for keyword in keywords):
+            return []
+        owner = self._primary_owner(account)
+        return [
+            SignalSeed(
+                account_id=account.id,
+                engagement_id=None,
+                rule=rules.get("payment_risk"),
+                signal_type="payment_risk",
+                severity="warning",
+                owner_id=owner.user_id if owner else None,
+                owner_name=owner.user_name if owner else None,
+                title=f"{account.name} commercial payment risk",
+                detail="Commercial notes include payment, invoice, procurement, or budget risk language.",
+                reason_codes=[{"code": "payment_risk", "label": "Commercial context indicates payment risk"}],
+                evidence=[{"type": "account", "label": "Commercial context", "value": account.commercial_summary or account.initial_notes or account.service_context}],
+                citations=[],
+                source_record_type="account",
+                source_record_id=account.id,
+                source_record_route=f"/accounts/{account.id}",
+                confidence=75,
+                condition_key=f"{account.id}:payment_risk",
+                due_at=datetime.now(timezone.utc) + timedelta(days=5),
+            )
+        ]
 
     def _upsert_signal(self, seed: "SignalSeed", current_user: User, trigger_source: str) -> tuple[Signal, bool]:
         existing = self.repository.find_signal(
@@ -668,12 +936,24 @@ class SignalsService:
     def _latest_score(self, account_id: str) -> ScoreSnapshot | None:
         return self.db.scalar(select(ScoreSnapshot).where(ScoreSnapshot.account_id == account_id, ScoreSnapshot.scope == "account").order_by(ScoreSnapshot.calculated_at.desc()).limit(1))
 
+    def _latest_scores(self, account_id: str, *, limit: int) -> list[ScoreSnapshot]:
+        return list(
+            self.db.scalars(
+                select(ScoreSnapshot)
+                .where(ScoreSnapshot.account_id == account_id, ScoreSnapshot.scope == "account")
+                .order_by(ScoreSnapshot.calculated_at.desc(), ScoreSnapshot.created_at.desc())
+                .limit(limit)
+            )
+        )
+
     def _is_kyc_stale(self, account_id: str) -> bool:
         latest = self.db.scalar(select(KycSnapshot).where(KycSnapshot.account_id == account_id).order_by(KycSnapshot.approved_at.desc()).limit(1))
         if latest is None or latest.freshness_status != "fresh":
             return True
         approved_at = latest.approved_at if latest.approved_at.tzinfo else latest.approved_at.replace(tzinfo=timezone.utc)
-        return approved_at < datetime.now(timezone.utc) - timedelta(days=180)
+        config = self.db.scalar(select(KycConfiguration).where(KycConfiguration.name == "default"))
+        threshold_days = config.freshness_threshold_days if config else 90
+        return approved_at < datetime.now(timezone.utc) - timedelta(days=threshold_days)
 
     def _primary_owner(self, account: Account) -> AccountOwner | None:
         for owner in account.owners:

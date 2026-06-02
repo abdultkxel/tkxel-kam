@@ -69,6 +69,9 @@ DEFAULT_TRIGGER_CONFIGS = (
     ("timeline_comment", "Timeline comment", "A comment was added to a watched timeline item.", "in_app", "daily", False),
     ("governance_reminder", "Governance reminder", "A governance review or decision needs attention.", "in_app", "weekly", False),
     ("sla_escalation", "SLA escalation", "An item breached an inactivity SLA.", "in_app_email", "daily", True),
+    ("integration_failure", "Integration failure", "An approved integration has repeated failures or needs administrator attention.", "in_app", "daily", True),
+    ("account_change_alert", "Account-change alert", "A proactive analytics alert needs owner review.", "in_app_email", "daily", True),
+    ("ai_stage_change_confirmed", "AI stage change confirmed", "A human confirmed an AI-assisted account stage change.", "in_app", "daily", False),
 )
 
 DEFAULT_SLA_RULES = (
@@ -78,7 +81,7 @@ DEFAULT_SLA_RULES = (
     ("Formal escalation inactivity", "escalation", "critical", None, 240, ["escalation_update", "closure"], "kam_head"),
 )
 
-TERMINAL_TASK_STATUSES = {"done", "skipped", "cancelled"}
+TERMINAL_TASK_STATUSES = {"done", "cancelled"}
 TERMINAL_SIGNAL_STATUSES = {"dismissed", "converted", "resolved"}
 TERMINAL_ESCALATION_STATUSES = {"mitigated", "resolved", "closed", "cancelled"}
 

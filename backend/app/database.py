@@ -3,7 +3,7 @@ from collections.abc import Generator
 from datetime import datetime, timezone
 from typing import Any
 
-from sqlalchemy import create_engine, inspect, text
+from sqlalchemy import create_engine, inspect, select, text
 from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
 from sqlalchemy.schema import CreateColumn, CreateIndex
 
@@ -218,10 +218,13 @@ _TABLE_BACKFILL_DEFAULTS: dict[str, dict[str, Any]] = {
         "description": "",
         "signal_types": [],
         "weak_metrics": [],
+        "activities_json": [],
         "default_owner_rule": "account_primary_am",
         "due_date_rule": {},
         "success_criteria": [],
         "skip_rules": [],
+        "status": "active",
+        "current_version": 1,
         "version": 1,
         "is_active": True,
         "created_at": lambda: datetime.now(timezone.utc),
@@ -253,7 +256,7 @@ _TABLE_BACKFILL_DEFAULTS: dict[str, dict[str, Any]] = {
     "tasks": {
         "source_type": "manual",
         "due_at": lambda: datetime.now(timezone.utc),
-        "status": "todo",
+        "status": "open",
         "priority": "medium",
         "owner_name": "System",
         "success_criteria": [],
@@ -552,6 +555,76 @@ _TABLE_BACKFILL_DEFAULTS: dict[str, dict[str, Any]] = {
         "started_at": lambda: datetime.now(timezone.utc),
         "created_at": lambda: datetime.now(timezone.utc),
     },
+    "integration_connections": {
+        "enabled": False,
+        "status": "configuration_required",
+        "auth_type": "api_key",
+        "settings_json": {},
+        "scopes": [],
+        "failure_count": 0,
+        "created_at": lambda: datetime.now(timezone.utc),
+        "updated_at": lambda: datetime.now(timezone.utc),
+    },
+    "integration_sync_runs": {
+        "trigger_type": "manual",
+        "status": "running",
+        "retry_count": 0,
+        "created_count": 0,
+        "updated_count": 0,
+        "skipped_count": 0,
+        "error_count": 0,
+        "metadata_json": {},
+        "started_at": lambda: datetime.now(timezone.utc),
+    },
+    "integration_mapping_rules": {
+        "source_field": "title",
+        "priority": 100,
+        "is_active": True,
+        "created_at": lambda: datetime.now(timezone.utc),
+        "updated_at": lambda: datetime.now(timezone.utc),
+    },
+    "integration_imported_items": {
+        "mapping_status": "unmapped",
+        "review_status": "pending",
+        "review_required": True,
+        "sanitized_payload_json": {},
+        "created_at": lambda: datetime.now(timezone.utc),
+        "updated_at": lambda: datetime.now(timezone.utc),
+    },
+    "fathom_task_suggestions": {
+        "status": "pending",
+        "created_at": lambda: datetime.now(timezone.utc),
+        "updated_at": lambda: datetime.now(timezone.utc),
+    },
+    "csat_scores": {
+        "score": 0,
+        "scale_min": 1,
+        "scale_max": 5,
+        "normalized_score": 0,
+        "category_scores_json": {},
+        "category_weights_json": {},
+        "weighted_score": 0,
+        "source_label": "manual",
+        "source_id": "manual",
+        "source_recorded_at": lambda: datetime.now(timezone.utc),
+        "freshness_status": "fresh",
+        "score_impact_json": {},
+        "trend_json": {},
+        "created_by_name": "System",
+        "created_at": lambda: datetime.now(timezone.utc),
+        "updated_at": lambda: datetime.now(timezone.utc),
+    },
+    "ai_gateway_runs": {
+        "request_type": "gateway_health_check",
+        "status": "complete",
+        "permission_scope_json": {},
+        "source_context_json": [],
+        "research_sources_json": [],
+        "response_labels_json": [],
+        "usage_json": {},
+        "affected_records_json": [],
+        "created_at": lambda: datetime.now(timezone.utc),
+    },
 }
 _JSON_BACKFILL_COLUMNS = {
     "service_lines",
@@ -620,6 +693,21 @@ _JSON_BACKFILL_COLUMNS = {
     "layout_json",
     "storage_metadata_json",
     "permission_scope_json",
+    "settings_json",
+    "scopes",
+    "metadata_json",
+    "sanitized_payload_json",
+    "score_impact_json",
+    "trend_json",
+    "permission_scope_json",
+    "source_context_json",
+    "research_sources_json",
+    "response_labels_json",
+    "usage_json",
+    "affected_records_json",
+    "category_scores_json",
+    "category_weights_json",
+    "metadata_json",
 }
 _LEGACY_TABLE_BACKFILL_DEFAULTS: dict[str, dict[str, Any]] = {
     "engagements": {
@@ -682,31 +770,54 @@ def sync_playbooks_tasks_schema() -> None:
         return
 
     columns = {column["name"]: column for column in inspector.get_columns("playbook_templates")}
-    owner_rule_column = columns.get("default_owner_rule")
-    if owner_rule_column is None or "json" not in str(owner_rule_column.get("type", "")).lower():
-        return
-
     with engine.begin() as connection:
-        connection.execute(
-            text(
-                """
-                ALTER TABLE playbook_templates
-                ALTER COLUMN default_owner_rule DROP DEFAULT,
-                ALTER COLUMN default_owner_rule TYPE VARCHAR(80)
-                USING CASE
-                    WHEN default_owner_rule IS NULL THEN 'account_primary_am'
-                    WHEN jsonb_typeof(default_owner_rule::jsonb) = 'string' THEN trim(both '"' from default_owner_rule::text)
-                    WHEN default_owner_rule::jsonb ? 'default' THEN
-                        CASE
-                            WHEN default_owner_rule::jsonb ->> 'default' = 'primary_am' THEN 'account_primary_am'
-                            ELSE default_owner_rule::jsonb ->> 'default'
-                        END
-                    ELSE 'account_primary_am'
-                END,
-                ALTER COLUMN default_owner_rule SET DEFAULT 'account_primary_am'
-                """
+        if "slug" in columns:
+            connection.execute(
+                text(
+                    """
+                    UPDATE playbook_templates
+                    SET slug = lower(regexp_replace(coalesce(nullif(name, ''), 'playbook-template'), '[^a-zA-Z0-9]+', '-', 'g')) || '-' || left(id, 8)
+                    WHERE slug IS NULL OR slug = ''
+                    """
+                )
             )
-        )
+            connection.execute(text("ALTER TABLE playbook_templates ALTER COLUMN slug SET NOT NULL"))
+            connection.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS ux_playbook_templates_slug ON playbook_templates(slug)"))
+        if "activities_json" in columns:
+            connection.execute(text("UPDATE playbook_templates SET activities_json = '[]'::jsonb WHERE activities_json IS NULL"))
+            connection.execute(text("ALTER TABLE playbook_templates ALTER COLUMN activities_json SET DEFAULT '[]'::jsonb"))
+            connection.execute(text("ALTER TABLE playbook_templates ALTER COLUMN activities_json SET NOT NULL"))
+        if "status" in columns:
+            connection.execute(text("UPDATE playbook_templates SET status = CASE WHEN is_active THEN 'active' ELSE 'inactive' END WHERE status IS NULL OR status = ''"))
+            connection.execute(text("ALTER TABLE playbook_templates ALTER COLUMN status SET DEFAULT 'active'"))
+            connection.execute(text("ALTER TABLE playbook_templates ALTER COLUMN status SET NOT NULL"))
+        if "current_version" in columns:
+            connection.execute(text("UPDATE playbook_templates SET current_version = coalesce(nullif(version, 0), 1) WHERE current_version IS NULL OR current_version = 0"))
+            connection.execute(text("ALTER TABLE playbook_templates ALTER COLUMN current_version SET DEFAULT 1"))
+            connection.execute(text("ALTER TABLE playbook_templates ALTER COLUMN current_version SET NOT NULL"))
+
+        owner_rule_column = columns.get("default_owner_rule")
+        if owner_rule_column is not None and "json" in str(owner_rule_column.get("type", "")).lower():
+            connection.execute(
+                text(
+                    """
+                    ALTER TABLE playbook_templates
+                    ALTER COLUMN default_owner_rule DROP DEFAULT,
+                    ALTER COLUMN default_owner_rule TYPE VARCHAR(80)
+                    USING CASE
+                        WHEN default_owner_rule IS NULL THEN 'account_primary_am'
+                        WHEN jsonb_typeof(default_owner_rule::jsonb) = 'string' THEN trim(both '"' from default_owner_rule::text)
+                        WHEN default_owner_rule::jsonb ? 'default' THEN
+                            CASE
+                                WHEN default_owner_rule::jsonb ->> 'default' = 'primary_am' THEN 'account_primary_am'
+                                ELSE default_owner_rule::jsonb ->> 'default'
+                            END
+                        ELSE 'account_primary_am'
+                    END,
+                    ALTER COLUMN default_owner_rule SET DEFAULT 'account_primary_am'
+                    """
+                )
+            )
 
 
 def sync_legacy_governance_schema() -> None:
@@ -782,9 +893,20 @@ def sync_legacy_governance_schema() -> None:
 
 def apply_additive_migrations() -> None:
     from app.models import (
+        AccessLog,
+        AiGatewayRun,
         AccountHealthRollup,
+        AccountChangeAlert,
+        CsatScore,
         Engagement,
         EngagementHealthSnapshot,
+        FathomTaskSuggestion,
+        FieldPermission,
+        ConfigurationChange,
+        IntegrationConnection,
+        IntegrationImportedItem,
+        IntegrationMappingRule,
+        IntegrationSyncRun,
         ManualScoreSubmission,
         PlaybookExecution,
         PlaybookTemplate,
@@ -837,13 +959,18 @@ def apply_additive_migrations() -> None:
         ReportSchedule,
         ReportRun,
         ScheduledWorkerRun,
+        User,
     )
 
     migrate_missing_columns(
         [
+            User.__table__,
+            FieldPermission.__table__,
+            ConfigurationChange.__table__,
             Engagement.__table__,
             EngagementHealthSnapshot.__table__,
             AccountHealthRollup.__table__,
+            AccountChangeAlert.__table__,
             TimelineEntry.__table__,
             ScoringMetricDefinition.__table__,
             ScoringMetricVersion.__table__,
@@ -896,8 +1023,63 @@ def apply_additive_migrations() -> None:
             ReportSchedule.__table__,
             ReportRun.__table__,
             ScheduledWorkerRun.__table__,
+            AccessLog.__table__,
+            IntegrationConnection.__table__,
+            IntegrationSyncRun.__table__,
+            IntegrationMappingRule.__table__,
+            IntegrationImportedItem.__table__,
+            FathomTaskSuggestion.__table__,
+            CsatScore.__table__,
+            AiGatewayRun.__table__,
         ]
     )
+    backfill_user_primary_calendar_ids()
+    normalize_task_statuses()
+    encrypt_existing_integration_credentials()
+
+
+def backfill_user_primary_calendar_ids() -> None:
+    with engine.begin() as connection:
+        inspector = inspect(connection)
+        if not inspector.has_table("users"):
+            return
+        columns = {column["name"] for column in inspector.get_columns("users")}
+        if "primary_google_calendar_id" not in columns:
+            return
+        if connection.dialect.name == "postgresql":
+            connection.execute(text("UPDATE users SET primary_google_calendar_id = email WHERE primary_google_calendar_id IS NULL OR primary_google_calendar_id = ''"))
+        else:
+            connection.execute(text("UPDATE users SET primary_google_calendar_id = email WHERE primary_google_calendar_id IS NULL OR primary_google_calendar_id = ''"))
+
+
+def normalize_task_statuses() -> None:
+    with engine.begin() as connection:
+        inspector = inspect(connection)
+        if not inspector.has_table("tasks"):
+            return
+        columns = {column["name"] for column in inspector.get_columns("tasks")}
+        if "status" not in columns:
+            return
+        connection.execute(text("UPDATE tasks SET status = 'open' WHERE status = 'todo'"))
+        connection.execute(text("UPDATE tasks SET status = 'cancelled' WHERE status = 'skipped'"))
+
+
+def encrypt_existing_integration_credentials() -> None:
+    from app.models import IntegrationConnection
+    from app.services.secret_encryption import encrypt_credentials
+
+    db = SessionLocal()
+    try:
+        changed = False
+        for connection in db.scalars(select(IntegrationConnection)).all():
+            encrypted = encrypt_credentials(connection.credentials_json)
+            if encrypted != connection.credentials_json:
+                connection.credentials_json = encrypted
+                changed = True
+        if changed:
+            db.commit()
+    finally:
+        db.close()
 
 
 def migrate_missing_columns(tables: list) -> None:

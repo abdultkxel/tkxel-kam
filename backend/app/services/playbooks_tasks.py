@@ -1,5 +1,6 @@
-from datetime import datetime, timedelta, timezone
 import logging
+import re
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from fastapi import HTTPException, UploadFile, status
@@ -92,16 +93,23 @@ class PlaybooksTasksService:
 
     def create_template(self, payload: PlaybookTemplateCreateRequest, current_user: User) -> PlaybookTemplateRead:
         self._require_configure(current_user)
+        slug = payload.slug or self._slug_from_name(payload.name)
+        if self.repository.get_template_by_slug(slug):
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Playbook template slug already exists")
         template = PlaybookTemplate(
+            slug=slug,
             name=payload.name,
             objective=payload.objective,
             description=payload.description,
             signal_types=payload.signal_types,
             weak_metrics=payload.weak_metrics,
+            activities_json=[item.model_dump() for item in payload.activities],
             default_owner_rule=payload.default_owner_rule,
             due_date_rule=payload.due_date_rule,
             success_criteria=payload.success_criteria,
             skip_rules=payload.skip_rules,
+            status="active" if payload.is_active else "draft",
+            current_version=1,
             is_active=payload.is_active,
             created_by_id=current_user.id,
             updated_by_id=current_user.id,
@@ -120,14 +128,20 @@ class PlaybooksTasksService:
         updates = payload.model_dump(exclude_unset=True)
         custom_values = updates.pop("custom_field_values", None)
         activities = updates.pop("activities", None)
+        if "slug" in updates and updates["slug"] != template.slug and self.repository.get_template_by_slug(updates["slug"]):
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Playbook template slug already exists")
         for field, value in updates.items():
             setattr(template, field, value)
         if activities is not None:
             if not activities:
                 raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="At least one activity is required")
             self.repository.replace_template_activities(template, [self._activity_model(item) for item in activities])
-        if any(field in updates for field in {"name", "objective", "description", "signal_types", "weak_metrics", "default_owner_rule", "due_date_rule", "success_criteria", "skip_rules"}) or activities is not None:
+            template.activities_json = [item.model_dump() for item in activities]
+        if any(field in updates for field in {"slug", "name", "objective", "description", "signal_types", "weak_metrics", "default_owner_rule", "due_date_rule", "success_criteria", "skip_rules"}) or activities is not None:
             template.version += 1
+            template.current_version = template.version
+        if "is_active" in updates:
+            template.status = "active" if template.is_active else "draft"
         template.updated_by_id = current_user.id
         if custom_values is not None:
             self.custom_fields.replace_record_values(MODULE, template.id, custom_values, current_user, audit_module=MODULE)
@@ -234,7 +248,7 @@ class PlaybooksTasksService:
                 owner_id=owner.id,
                 owner_name=owner.full_name,
                 due_at=now + timedelta(days=activity.due_offset_days),
-                status="todo",
+                status="open",
                 priority=activity.priority,
                 success_criteria=activity.success_criteria or template.success_criteria,
                 requires_evidence=activity.requires_evidence,
@@ -340,15 +354,15 @@ class PlaybooksTasksService:
                 raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Completion requires evidence or an outcome")
             task.completed_at = task.completed_at or datetime.now(timezone.utc)
             task.completed_by_id = current_user.id
-        if updates.get("status") == "skipped" and not (updates.get("skipped_reason") or task.skipped_reason):
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Skipped tasks require a reason")
+        if updates.get("status") == "cancelled" and not (updates.get("skipped_reason") or task.skipped_reason):
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Cancelled tasks require a cancellation reason")
         for field, value in updates.items():
             setattr(task, field, value)
         task.updated_by_id = current_user.id
         if custom_values is not None:
             self.custom_fields.replace_record_values(MODULE, task.id, custom_values, current_user, audit_module=MODULE)
-        if task.status in {"done", "skipped"}:
-            action = "task_completed" if task.status == "done" else "task_skipped"
+        if task.status in {"done", "cancelled"}:
+            action = "task_completed" if task.status == "done" else "task_cancelled"
             self._write_timeline(task.account_id, task.engagement_id, current_user, action, f"Task {task.status}: {task.title}", task.outcome or task.skipped_reason or task.notes or "Task status changed.", task.id, "task", before=before, after=self._task_snapshot(task))
         self.audit.log(module=MODULE, action="update_task", entity_type="task", entity_id=task.id, actor=current_user, before_value=before, after_value=self._task_snapshot(task))
         self.repository.commit()
@@ -543,6 +557,11 @@ class PlaybooksTasksService:
 
     def _task_read(self, task: Task) -> TaskRead:
         return TaskRead.model_validate(task).model_copy(update={"custom_field_values": self.custom_fields.record_values(MODULE, task.id)})
+
+    @staticmethod
+    def _slug_from_name(name: str) -> str:
+        slug = re.sub(r"[^a-z0-9]+", "_", name.strip().lower()).strip("_")
+        return slug or "playbook_template"
 
     def _execution_read(self, execution: PlaybookExecution) -> PlaybookExecutionRead:
         return PlaybookExecutionRead.model_validate(execution).model_copy(update={"tasks": [self._task_read(task) for task in execution.tasks]})

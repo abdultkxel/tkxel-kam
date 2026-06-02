@@ -14,6 +14,7 @@ export function Profile() {
   const [title, setTitle] = useState(user?.title ?? '')
   const [phone, setPhone] = useState(user?.phone ?? '')
   const [avatarInitials, setAvatarInitials] = useState(user?.avatarInitials ?? '')
+  const [primaryGoogleCalendarId, setPrimaryGoogleCalendarId] = useState(user?.primaryGoogleCalendarId ?? '')
   const [currentPassword, setCurrentPassword] = useState('')
   const [newPassword, setNewPassword] = useState('')
   const [profileFieldErrors, setProfileFieldErrors] = useState<FieldErrors>({})
@@ -28,6 +29,7 @@ export function Profile() {
     setTitle(user?.title ?? '')
     setPhone(user?.phone ?? '')
     setAvatarInitials(user?.avatarInitials ?? '')
+    setPrimaryGoogleCalendarId(user?.primaryGoogleCalendarId ?? '')
   }, [user])
 
   function clearProfileField(field: string) {
@@ -44,10 +46,10 @@ export function Profile() {
     setProfileFieldErrors({})
     setSavingProfile(true)
     try {
-      await updateProfile({ name, title, phone, avatarInitials })
+      await updateProfile({ name, title, phone, avatarInitials, primaryGoogleCalendarId })
       toast.success('Profile updated')
     } catch (err) {
-      const nextFieldErrors = apiFieldErrors(err, { full_name: 'name', avatar_initials: 'avatarInitials' })
+      const nextFieldErrors = apiFieldErrors(err, { full_name: 'name', avatar_initials: 'avatarInitials', primary_google_calendar_id: 'primaryGoogleCalendarId' })
       setProfileFieldErrors(nextFieldErrors)
       if (err instanceof ApiError && !hasFieldErrors(nextFieldErrors)) {
         setProfileError(err.message)
@@ -170,6 +172,20 @@ export function Profile() {
                 maxLength={8}
               />
               <FieldError id="profile-avatar-error" message={profileFieldErrors.avatarInitials} />
+            </label>
+            <label className="block md:col-span-2">
+              <span className="tk-label">Primary Google Calendar ID</span>
+              <input
+                className={cn('tk-input mt-2', profileFieldErrors.primaryGoogleCalendarId && 'border-rag-red focus:border-rag-red focus:ring-rag-red/20')}
+                value={primaryGoogleCalendarId}
+                onChange={event => {
+                  setPrimaryGoogleCalendarId(event.target.value)
+                  clearProfileField('primaryGoogleCalendarId')
+                }}
+                aria-invalid={Boolean(profileFieldErrors.primaryGoogleCalendarId)}
+                aria-describedby={profileFieldErrors.primaryGoogleCalendarId ? 'profile-primary-calendar-error' : undefined}
+              />
+              <FieldError id="profile-primary-calendar-error" message={profileFieldErrors.primaryGoogleCalendarId} />
             </label>
             <label className="block">
               <span className="tk-label">Role</span>

@@ -32,7 +32,7 @@ Replace fragmented onboarding and account context with a governed, source-backed
 - Support manual entry and CSV/manual-import fallback when charter/SOW source quality is unclear.
 - Allow KAM Head/Admin review, edit, approve, reject, and link-to-existing account decisions.
 - Create official account workspace only after approval.
-- Maintain account lifecycle statuses: Onboarding, Active, At Risk, Renewal Focus, Expansion Focus, Dormant, Archived.
+- Maintain account lifecycle statuses: Draft, Onboarding, Active, At Risk, Renewal Focus, Expansion Focus, Dormant, Archived.
 - Assign one active primary AM and optional matrix owners.
 - Preserve ownership history and rationale.
 - Maintain multiple engagements per account and multiple charters/SOWs per engagement.
@@ -184,6 +184,26 @@ Replace fragmented onboarding and account context with a governed, source-backed
 - Removing an owner never removes ownership history.
 - Engagement events appear in both Account Timeline and Engagement 360.
 - Formula changes do not mutate historical health snapshots.
+
+## Added From Technical Logic Document
+
+- Every newly created account must start with `Draft` status by default, including manually created accounts, document-generated accounts, CSV/imported drafts, and AI-extracted account candidates.
+- Draft accounts, draft engagements, and draft extracted SOW terms must not affect account health, engagement health, signals, renewal posture, stage prediction, dashboards, executive reporting, or official Account Overview totals until approved.
+- Onboarding source upload must support DOCX, PDF, CSV, and Excel file inputs where file handling is enabled; unsupported file types must return field-level validation errors and must not create partial draft records.
+- AI extraction must group extracted information by account and engagement/SOW before draft creation so one source package can produce one account candidate with one or more engagement candidates.
+- Duplicate account detection must run before creating an official account. When a probable match exists, the user must receive a confirmation flow to link the engagement/SOW to the existing account instead of creating a duplicate.
+- Engagement/SOW records created from approved onboarding or source upload must remain draft until extracted terms are reviewed and approved. Approved engagement terms become official source records for renewal, notice-window, scoring, tasks, and timeline workflows.
+- Ownership must support primary AM plus supporting owners: Ops Lead, Delivery Lead, Finance Partner, Executive Sponsor, and supporting AMs. Ownership assignment and reassignment must capture rationale, source, actor, timestamp, previous owner, new owner, and timeline event.
+- KYC checklist activation must happen after account onboarding approval. The checklist must be configurable and assigned to the responsible AM or configured owner.
+- Source-generated account or engagement fields must store source reference, source type, confidence, and extraction run context. Low-confidence or conflicting generated values require human review before approval.
+- Renewal calculations must use source SOW terms:
+  - `Days to Expiry = SOW End Date - Today`.
+  - `Notice Deadline = Renewal Date` when an explicit renewal/notice date exists; otherwise `Notice Deadline = SOW End Date - Notice Period`.
+  - Default renewal attention windows should support 120/90/60 day checkpoints and must be configurable globally and, where needed, by account/engagement.
+- Missed notice deadline without a renewal plan must create a high/critical renewal risk signal, mark the related account and engagement at risk where configured, and send notification/email through the notification policy.
+- Approval of onboarding must activate the official account workspace and make the account eligible for dashboards, KYC checklist, engagement health, renewal tracking, signals, and timeline.
+- Reviewers must be able to approve, edit-and-approve, reject with notes, or request changes with comments. Request-changes comments must remain visible in the draft review history.
+- Concurrent draft approval attempts for the same matched account must be serialized or rejected with a clear conflict message to prevent duplicate official records.
 
 ## Missing Requirements
 

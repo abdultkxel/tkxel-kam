@@ -127,11 +127,13 @@ export interface GovernanceRecurrenceRule {
 
 export interface IntegrationConnection {
   id: string
-  provider: 'google-calendar' | 'fathom'
+  provider: 'google_calendar' | 'fathom' | 'csat' | 'ai_llm_gateway'
+  name?: string | null
   enabled: boolean
   status: string
   auth_type: string
   settings_json: Record<string, unknown>
+  credential_status?: Record<string, unknown>
   scopes: string[]
   last_synced_at?: string | null
   last_error?: string | null

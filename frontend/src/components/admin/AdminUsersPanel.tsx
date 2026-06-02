@@ -18,6 +18,7 @@ interface UserFormState {
   title: string
   phone: string
   avatarInitials: string
+  primaryGoogleCalendarId: string
   isActive: boolean
 }
 
@@ -29,6 +30,7 @@ const emptyForm: UserFormState = {
   title: '',
   phone: '',
   avatarInitials: '',
+  primaryGoogleCalendarId: '',
   isActive: true,
 }
 
@@ -50,6 +52,7 @@ function formFromUser(user: AdminUser): UserFormState {
     title: user.title ?? '',
     phone: user.phone ?? '',
     avatarInitials: user.avatar_initials,
+    primaryGoogleCalendarId: user.primary_google_calendar_id ?? user.email,
     isActive: user.is_active,
   }
 }
@@ -165,6 +168,7 @@ export function AdminUsersPanel() {
           title: form.title || null,
           phone: form.phone || null,
           avatar_initials: form.avatarInitials || initialsForName(form.fullName),
+          primary_google_calendar_id: form.primaryGoogleCalendarId || null,
           is_active: form.isActive,
         })
         await loadUsers()
@@ -178,6 +182,7 @@ export function AdminUsersPanel() {
           title: form.title || undefined,
           phone: form.phone || undefined,
           avatar_initials: form.avatarInitials || undefined,
+          primary_google_calendar_id: form.primaryGoogleCalendarId || undefined,
           is_active: form.isActive,
         })
         setPage(1)
@@ -186,7 +191,7 @@ export function AdminUsersPanel() {
       }
       setDialogOpen(false)
     } catch (err) {
-      const nextErrors = apiFieldErrors(err, { full_name: 'fullName', avatar_initials: 'avatarInitials', is_active: 'isActive' })
+      const nextErrors = apiFieldErrors(err, { full_name: 'fullName', avatar_initials: 'avatarInitials', primary_google_calendar_id: 'primaryGoogleCalendarId', is_active: 'isActive' })
       setFieldErrors(nextErrors)
       if (err instanceof ApiError && !hasFieldErrors(nextErrors)) setFormError(err.message)
       if (!(err instanceof ApiError)) setFormError('Unable to save user')
@@ -479,6 +484,11 @@ function UserFormDialog({ open, title, form, roles, fieldErrors, formError, isEd
               <span className="tk-label">Avatar initials</span>
               <input className={fieldClass(fieldErrors.avatarInitials)} value={form.avatarInitials} onChange={event => onFieldChange('avatarInitials', event.target.value)} aria-invalid={Boolean(fieldErrors.avatarInitials)} maxLength={8} />
               <FieldError id="admin-user-avatar-error" message={fieldErrors.avatarInitials} />
+            </label>
+            <label className="block md:col-span-2">
+              <span className="tk-label">Primary Google Calendar ID</span>
+              <input className={fieldClass(fieldErrors.primaryGoogleCalendarId)} value={form.primaryGoogleCalendarId} onChange={event => onFieldChange('primaryGoogleCalendarId', event.target.value)} aria-invalid={Boolean(fieldErrors.primaryGoogleCalendarId)} />
+              <FieldError id="admin-user-primary-calendar-error" message={fieldErrors.primaryGoogleCalendarId} />
             </label>
             <label className="flex min-h-[44px] items-center gap-2 pt-6 text-sm font-semibold text-ink">
               <input type="checkbox" checked={form.isActive} onChange={event => onFieldChange('isActive', event.target.checked)} className="h-4 w-4 rounded border-surface-border text-brand-blue" />

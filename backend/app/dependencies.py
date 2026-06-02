@@ -12,12 +12,17 @@ from app.security import decode_access_token
 from app.services.auth import AuthService
 from app.services.accounts import AccountService
 from app.services.account_planning import AccountPlanningService
+from app.services.admin_security import AdminSecurityService
+from app.services.analytics import AnalyticsService
+from app.services.ai_assistance import AiAssistanceService
 from app.services.content import ContentService
+from app.services.csat import CsatService
 from app.services.custom_fields import CustomFieldService
 from app.services.email_domains import EmailDomainPolicyService
 from app.services.engagements import EngagementService
 from app.services.escalations import EscalationService
 from app.services.governance import GovernanceService
+from app.services.integrations import IntegrationService
 from app.services.kyc import KycService
 from app.services.dashboards import DashboardsService
 from app.services.notifications import NotificationsService
@@ -113,6 +118,14 @@ def get_governance_service(db: Annotated[Session, Depends(get_db)]) -> Governanc
     return GovernanceService(db)
 
 
+def get_integration_service(db: Annotated[Session, Depends(get_db)]) -> IntegrationService:
+    return IntegrationService(db)
+
+
+def get_csat_service(db: Annotated[Session, Depends(get_db)]) -> CsatService:
+    return CsatService(db)
+
+
 def get_playbooks_tasks_service(db: Annotated[Session, Depends(get_db)]) -> PlaybooksTasksService:
     return PlaybooksTasksService(db)
 
@@ -135,6 +148,10 @@ def get_opportunity_service(db: Annotated[Session, Depends(get_db)]) -> Opportun
 
 def get_account_planning_service(db: Annotated[Session, Depends(get_db)]) -> AccountPlanningService:
     return AccountPlanningService(db)
+
+
+def get_ai_assistance_service(db: Annotated[Session, Depends(get_db)]) -> AiAssistanceService:
+    return AiAssistanceService(db)
 
 
 def get_service_catalog_service(db: Annotated[Session, Depends(get_db)]) -> ServiceCatalogService:
@@ -171,6 +188,14 @@ def get_dashboards_service(db: Annotated[Session, Depends(get_db)]) -> Dashboard
 
 def get_reports_service(db: Annotated[Session, Depends(get_db)]) -> ReportsService:
     return ReportsService(db)
+
+
+def get_analytics_service(db: Annotated[Session, Depends(get_db)]) -> AnalyticsService:
+    return AnalyticsService(db)
+
+
+def get_admin_security_service(db: Annotated[Session, Depends(get_db)]) -> AdminSecurityService:
+    return AdminSecurityService(db)
 
 
 def require_permission(module: str, action: str):

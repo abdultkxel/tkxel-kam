@@ -334,7 +334,7 @@ export const retentionPlans: RetentionPlan[] = [
     successCriteria: ['Confirm regional owners', 'Reset sponsor cadence', 'Close notice-window decision before deadline'],
     actions: [
       { id: 'act-1', title: 'Confirm commercial owner', ownerName: 'Sarah Mitchell', dueDate: addDays(now, 5).toISOString(), status: 'in_progress' },
-      { id: 'act-2', title: 'Run sponsor reset call', ownerName: 'Ali Khan', dueDate: addDays(now, 9).toISOString(), status: 'todo' },
+      { id: 'act-2', title: 'Run sponsor reset call', ownerName: 'Ali Khan', dueDate: addDays(now, 9).toISOString(), status: 'open' },
     ],
   },
 ]

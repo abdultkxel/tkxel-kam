@@ -323,6 +323,22 @@ Preserve institutional memory across account activity and ownership changes whil
 - Handover summaries cite source records and preserve context across ownership changes.
 - Performance targets for timeline loading are achievable through pagination.
 
+## Added From Technical Logic Document
+
+- Automatic timeline events must be created for account setup, Charter/SOW upload, AI extraction, KYC draft creation, KYC approval, KYC version creation, score changes, stage/status changes, signal lifecycle events, task/activity creation and completion, opportunities, content shared, escalations, governance events, approvals, executive decisions, integration events, and AI usage.
+- Manual timeline events must capture event type, event date, owner/actor, description, mentions, attachments/source links, sensitivity level, account context, optional engagement context, and audit metadata.
+- Sensitive entries must be filtered at the backend/data layer before response serialization. Hidden restricted entries must not reveal counts, titles, or hints to unauthorized users.
+- Critical timeline event deletion must create a tombstone entry instead of silent removal. Tombstones must retain enough metadata to prove the event existed, who removed/restricted it, when, and why, without leaking restricted content.
+- Timeline comments and annotations must be editable/deletable only by authorized users. Edits and deletes require audit history and must not change the source timeline event's immutable business payload.
+- AI Timeline Search must support structured intents, semantic/text fallback, account context, source citations, confidence, redaction metadata, and handoff to the global KAM AI panel.
+- AI Timeline Search must apply RBAC before retrieval and must not expose restricted source records, hidden-record counts, or citation payloads that the user cannot access.
+- Handover summaries must include source sets, citations, redactions, owner/change context, account health, active risks/signals, KYC freshness, renewal posture, governance context, escalations, open opportunities, open tasks, and critical recent timeline events where the user is authorized.
+- Handover export formats must include PDF and internal share link. Internal share links must re-check RBAC at view time and must apply redactions based on the viewer, not only the creator.
+- Handover generated during ownership transfer must preserve source context and should be required when the configured ownership-change workflow marks handover as mandatory.
+- Retention must support both Admin/RBAC-triggered manual run and local scheduled worker execution. Simulation/test mode must show impacted entries without changing data.
+- Retention actions must not hard-delete critical events without tombstone/audit behavior. Archive, restrict, and delete outcomes must preserve traceability.
+- Duplicate external integration events with the same provider/source identifier must dedupe while allowing changed payloads to create update events when the provider record materially changes.
+
 ## Implementation Status
 
 ### Completed Items

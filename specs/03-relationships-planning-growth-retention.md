@@ -237,11 +237,41 @@ Protect retention and grow strategic accounts by making relationships, whitespac
 - Retention plans must remain visible for historical cycles after renewal completion.
 - Task completion from retention plan does not automatically improve health unless source data changes.
 
+## Added From Technical Logic Document
+
+- Stakeholder records must include, at minimum, seniority, stakeholder type, influence, decision authority, last interaction date, relationship linkage, account/engagement context, and sensitivity flags where applicable.
+- Missing executive sponsor, missing commercial owner, missing delivery relationship, and single-threaded relationship coverage must be eligible to create deterministic stakeholder coverage gap signals.
+- Relationship data must feed the Relationship Score category in the scoring engine. Sensitive contacts, executive notes, political context, and restricted relationship graph edges must respect RBAC and field-level security.
+- Service adoption calculation:
+  - `Service Adoption % = (Currently Provided Services / Applicable Services) * 100`.
+  - Services marked `N/A` are excluded from both numerator and denominator.
+- Whitespace calculation:
+  - `Whitespace % = (Applicable but Not Used Services / Applicable Services) * 100`.
+  - Services must distinguish `Yes`, `No`, and `N/A` states so whitespace does not overstate unavailable service lines.
+- Whitespace Opportunity Score must be a weighted value of applicable unused services using configurable criteria including strategic fit, estimated ARR, client priority, relationship access, and delivery readiness.
+- Growth/retention plan classification:
+  - Green or Amber health with high whitespace should recommend a Growth Play.
+  - Red health or high renewal risk should recommend a Retention/Stabilization Play.
+  - Accounts with both material whitespace and material risk should recommend a Hybrid Plan.
+- Opportunity stage flow must support `Identified -> Qualified -> Proposed -> Negotiation -> Won/Lost`. Admin-configured stages can extend this flow, but the default flow must remain available.
+- Weighted forecast calculation:
+  - `Weighted Forecast = Estimated Opportunity Value * Probability %`.
+  - Probability should come from the stage configuration unless manually overridden with reason and permission.
+- Stalled opportunity signal:
+  - If an opportunity has no stage movement, next-step update, or qualifying activity for the configured threshold, create a stalled opportunity signal.
+  - The default threshold should support 90 days and must be configurable.
+- Approved SOW terms must generate a renewal timeline with SOW end date, renewal date, notice deadline, exposure, owner, confidence, and source citation.
+- Approved SOW terms must create renewal tasks and calendar reminders through the task/calendar module after the configured workflow trigger. User-confirmed retention recommendations create tasks only after explicit confirmation.
+- If account or engagement health weakens near renewal, the platform must generate or escalate renewal-risk signals and surface the risk in Account Overview, Engagement 360, dashboards, notifications, and reports.
+- Retention plans must include actions, owners, due dates, success criteria, governance cadence, milestones, source context, and history. Governance cadence changes must be timeline/audit visible.
+- Completing a retention task or milestone must not directly improve health. Health improves only when authoritative source records, scores, CSAT, renewal terms, escalations, or other scoring inputs change.
+- Service catalog changes must not silently rewrite historical whitespace recommendations, converted opportunities, or score snapshots. New recommendations should use the active catalog version and preserve historical source context.
+
 ## Missing Requirements
 
 - Exact stakeholder score scales are not specified.
 - Account plan required fields and review cadence are not specified.
-- Service catalog taxonomy and adjacency scoring formula are not specified.
+- Service catalog taxonomy is not specified. Whitespace Opportunity Score criteria are defined by the Technical Logic Document, but exact weights for strategic fit, estimated ARR, client priority, relationship access, and delivery readiness must still be configured.
 - Opportunity stage names and allowed transitions are not specified.
 - Whether opportunity win/loss outcome reason is required for every terminal stage or only configured stages is not specified.
 - Renewal risk formula and confidence scale are not specified.

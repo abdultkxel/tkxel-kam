@@ -256,7 +256,7 @@ class RetentionService:
                     owner_id=owner.id,
                     owner_name=owner.full_name,
                     due_at=payload.due_at,
-                    status="todo",
+                    status="open",
                     priority="high" if recommendation.severity in {"high", "critical"} else "medium",
                     success_criteria=["Recommendation reviewed", "Next client/internal action completed"],
                     requires_evidence=False,

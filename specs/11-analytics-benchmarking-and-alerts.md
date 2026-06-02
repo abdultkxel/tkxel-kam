@@ -170,3 +170,17 @@ Give KAM Heads and leadership measurable portfolio intelligence to identify heal
 - Analytics and benchmarks are filterable, permission-aware, and based on correct historical data.
 - Proactive alerts identify meaningful changes and provide source evidence.
 - Drilldowns and alerts support search, filters, sort, pagination, and audit.
+
+## Added From Technical Logic Document
+
+- Analytics and portfolio intelligence must use approved records and immutable snapshots where available, especially for KYC, scoring, CSAT, renewal, opportunities, governance, escalations, and timeline-derived trends.
+- Benchmarking must support cohort filters such as segment, industry, region, account size, service mix, AM/KAM, lifecycle status, and date range while suppressing or flagging cohorts too small to be meaningful.
+- Portfolio analytics must distinguish operational deterministic signals from analytics/account-change alerts. Alerts may recommend signal creation only when configured; they must not silently create operational signals.
+- Account-change alerts must include reason code, source evidence, affected metric/category, previous value, new value, change magnitude, created date, owner, status, and recommended action.
+- Historical analytics must use the score snapshot version and formula version that was active at the time of calculation. Later scoring configuration changes must not rewrite historical analytics.
+- KAM performance analytics must be based on clearly configured metrics such as portfolio health movement, overdue action rate, governance cadence, renewal readiness, retention outcomes, growth/opportunity progress, and SLA responsiveness.
+- Content effectiveness calculations require explicit formula configuration before they can become official KPIs; until configured, content analytics should remain descriptive only.
+- Analytics drilldowns must preserve RBAC and field-level security. Restricted metrics should be redacted or excluded without revealing hidden-record counts.
+- Stage prediction and forecast outputs from AI Assistance may appear in analytics only after explicit human confirmation for that destination. Directional AI forecasts must remain labeled as directional and non-authoritative.
+- Proactive benchmark/account-change alerts must support status lifecycle, deduplication/grouping, source evidence, owner assignment, audit, and optional notification routing.
+- Analytics query metadata for sensitive dashboards must be logged where policy requires, including actor, filters/cohort, timestamp, and redaction state.

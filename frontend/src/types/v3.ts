@@ -157,7 +157,7 @@ export interface RetentionPlan {
   ownerName: string
   status: 'draft' | 'active' | 'complete'
   successCriteria: string[]
-  actions: { id: string; title: string; ownerName: string; dueDate: string; status: 'todo' | 'in_progress' | 'done' }[]
+  actions: { id: string; title: string; ownerName: string; dueDate: string; status: 'open' | 'in_progress' | 'done' }[]
 }
 
 export interface EducationContent {

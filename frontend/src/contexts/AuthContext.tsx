@@ -12,6 +12,7 @@ export interface ApiUser {
   title?: string | null
   phone?: string | null
   avatar_initials: string
+  primary_google_calendar_id?: string | null
   is_active: boolean
   created_at: string
   updated_at: string
@@ -38,7 +39,7 @@ interface AuthContextValue {
   logout: () => Promise<void>
   requestPasswordReset: (email: string) => Promise<ForgotPasswordResponse>
   resetPassword: (token: string, newPassword: string) => Promise<void>
-  updateProfile: (payload: Partial<Pick<User, 'name' | 'title' | 'phone' | 'avatarInitials'>>) => Promise<User>
+  updateProfile: (payload: Partial<Pick<User, 'name' | 'title' | 'phone' | 'avatarInitials' | 'primaryGoogleCalendarId'>>) => Promise<User>
   changePassword: (currentPassword: string, newPassword: string) => Promise<void>
   refreshProfile: () => Promise<void>
 }
@@ -54,6 +55,7 @@ function mapApiUser(user: ApiUser): User {
     title: user.title,
     phone: user.phone,
     avatarInitials: user.avatar_initials,
+    primaryGoogleCalendarId: user.primary_google_calendar_id,
   }
 }
 
@@ -143,7 +145,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [])
 
   const updateProfile = useCallback(
-    async (payload: Partial<Pick<User, 'name' | 'title' | 'phone' | 'avatarInitials'>>) => {
+    async (payload: Partial<Pick<User, 'name' | 'title' | 'phone' | 'avatarInitials' | 'primaryGoogleCalendarId'>>) => {
       if (!token) throw new Error('You must be logged in to update your profile')
       const profile = await apiRequest<ApiUser>('/api/users/me', {
         method: 'PATCH',
@@ -153,6 +155,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           title: payload.title,
           phone: payload.phone,
           avatar_initials: payload.avatarInitials,
+          primary_google_calendar_id: payload.primaryGoogleCalendarId,
         }),
       })
       const mappedUser = mapApiUser(profile)

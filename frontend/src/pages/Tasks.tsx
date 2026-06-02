@@ -78,7 +78,7 @@ export function Tasks() {
   }, [token])
 
   const metrics = useMemo(() => {
-    const open = tasks.filter(task => !['done', 'skipped', 'cancelled'].includes(task.status)).length
+    const open = tasks.filter(task => !['done', 'cancelled'].includes(task.status)).length
     const done = tasks.filter(task => task.status === 'done').length
     const blocked = tasks.filter(task => task.status === 'blocked').length
     const evidence = tasks.reduce((sum, task) => sum + task.evidence.length, 0)
@@ -155,11 +155,10 @@ export function Tasks() {
             <span className="tk-label text-xs">Status</span>
             <select className="tk-input" value={status} onChange={event => { setStatus(event.target.value); setPage(1) }}>
               <option value="">Any status</option>
-              <option value="todo">Todo</option>
+              <option value="open">Open</option>
               <option value="in_progress">In progress</option>
               <option value="blocked">Blocked</option>
               <option value="done">Done</option>
-              <option value="skipped">Skipped</option>
               <option value="cancelled">Cancelled</option>
             </select>
           </label>
@@ -251,8 +250,8 @@ export function Tasks() {
 function TaskCard({ task, token, readOnly, onStatus, onUpdated }: { task: PlaybookTask; token: string | null; readOnly: boolean; onStatus: (task: PlaybookTask, status: TaskStatus, patch?: Partial<PlaybookTask>) => Promise<void>; onUpdated: (task: PlaybookTask) => void }) {
   const [notes, setNotes] = useState(task.notes ?? '')
   const [outcome, setOutcome] = useState(task.outcome ?? '')
-  const locked = readOnly || ['done', 'skipped', 'cancelled'].includes(task.status)
-  const overdue = new Date(task.due_at) < new Date() && !['done', 'skipped', 'cancelled'].includes(task.status)
+  const locked = readOnly || ['done', 'cancelled'].includes(task.status)
+  const overdue = new Date(task.due_at) < new Date() && !['done', 'cancelled'].includes(task.status)
 
   async function saveNotes() {
     if (!token || readOnly) return
@@ -303,21 +302,21 @@ function TaskCard({ task, token, readOnly, onStatus, onUpdated }: { task: Playbo
             <Save className="h-4 w-4" />
             Save notes
           </button>
-          {task.status === 'todo' ? (
+          {task.status === 'open' ? (
             <button className="tk-button-secondary" onClick={() => onStatus(task, 'in_progress')} disabled={readOnly}>
               <ClipboardCheck className="h-4 w-4" />
               Start
             </button>
           ) : null}
-          {!['done', 'skipped', 'cancelled'].includes(task.status) ? (
+          {!['done', 'cancelled'].includes(task.status) ? (
             <>
               <button className="tk-button-primary" onClick={() => onStatus(task, 'done', { outcome: outcome || task.outcome || 'Completed with evidence review.' })} disabled={readOnly}>
                 <CheckCircle2 className="h-4 w-4" />
                 Complete
               </button>
-              <button className="tk-button-secondary text-brand-orange" onClick={() => onStatus(task, 'skipped', { skipped_reason: notes || 'Skipped from task review.' })} disabled={readOnly}>
+              <button className="tk-button-secondary text-brand-orange" onClick={() => onStatus(task, 'cancelled', { skipped_reason: notes || 'Cancelled from task review.' })} disabled={readOnly}>
                 <XCircle className="h-4 w-4" />
-                Skip
+                Cancel
               </button>
             </>
           ) : null}
@@ -396,7 +395,7 @@ function CreateTaskDialog({ token, accounts, currentUserId, readOnly, customFiel
     description: '',
     due_at: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10),
     priority: 'medium' as TaskPriority,
-    status: 'todo' as TaskStatus,
+    status: 'open' as TaskStatus,
     notes: '',
   })
 
@@ -541,7 +540,7 @@ function dueRange(due: DueFilter) {
 function statusClass(status: TaskStatus) {
   if (status === 'done') return 'border-rag-green/20 bg-rag-green/10 text-rag-green'
   if (status === 'in_progress') return 'border-blue-tint-20 bg-blue-tint-20 text-brand-blue'
-  if (status === 'blocked' || status === 'skipped') return 'border-brand-orange/20 bg-brand-orange/10 text-brand-orange'
+  if (status === 'blocked') return 'border-brand-orange/20 bg-brand-orange/10 text-brand-orange'
   if (status === 'cancelled') return 'border-surface-border bg-surface-tertiary text-ink-secondary'
   return 'border-surface-border bg-surface-tertiary text-ink-secondary'
 }

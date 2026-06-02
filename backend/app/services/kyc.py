@@ -1,3 +1,4 @@
+import logging
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
@@ -37,10 +38,12 @@ from app.services.kyc_gateway import DeterministicKycGatewayAdapter, KycGatewayA
 from app.services.timeline import TimelineService
 from app.services.user_management import page_count
 
+logger = logging.getLogger(__name__)
+
 AI_DISCLAIMER = "AI-assisted output generated from recorded platform data. Verify before use in client communication."
 DEFAULT_RESEARCH_SOURCES = ["Trivoly", "ZoomInfo", "CrunchBase"]
 LOW_CONFIDENCE_THRESHOLD = 70
-FRESHNESS_THRESHOLD_DAYS = 180
+FRESHNESS_THRESHOLD_DAYS = 90
 
 WORKSTREAMS: tuple[dict[str, str | int], ...] = (
     {"key": "market_research", "title": "Market Research", "sort_order": 1},
@@ -971,6 +974,24 @@ class KycService:
         return citations
 
     def _log_agent_run(self, account: Account, run: KycAgentRun, current_user: User, action: str) -> None:
+        try:
+            from app.services.integrations import IntegrationService
+
+            IntegrationService(self.kyc.db).log_ai_gateway_run(
+                request_type="kyc_extraction" if "extraction" in action else "kyc_agent_run",
+                status_value=run.status,
+                actor=current_user,
+                account_id=account.id,
+                permission_scope={"module": "kyc", "account_id": account.id, "actor_role": current_user.role},
+                source_context=[{"type": "source_document", "id": document_id} for document_id in run.source_document_ids],
+                research_sources=list(run.research_sources),
+                response_labels=["AI-assisted", "Advisory"],
+                error_message=run.error_message,
+                affected_records=[{"type": "kyc_agent_run", "id": run.id}],
+                commit=False,
+            )
+        except Exception:
+            logger.exception("Failed to write AI Gateway run for KYC agent run %s", run.id)
         self.audit.log(
             module="kyc",
             action=action,
@@ -1154,11 +1175,30 @@ class KycService:
         masked = dict(output)
         for key in sensitive_keys & set(masked):
             value = masked[key]
+            self.audit.log_access(
+                module="kyc",
+                entity_type="kyc_workstream_output",
+                entity_id=None,
+                actor=current_user,
+                decision="masked",
+                field_key=key,
+                reason="Sensitive KYC field hidden by RBAC.",
+            )
             masked[key] = {**value, "value": "Restricted KYC field"} if isinstance(value, dict) else "Restricted KYC field"
         return masked
 
     def _field_value_for_user(self, field: dict[str, Any], current_user: User) -> str | None:
         if field.get("is_sensitive") and not self._can_view_sensitive(current_user):
+            self.audit.log_access(
+                module="kyc",
+                entity_type="kyc_field",
+                entity_id=str(field.get("id") or field.get("key") or ""),
+                actor=current_user,
+                decision="masked",
+                field_key=str(field.get("key") or ""),
+                reason="Sensitive KYC field hidden by RBAC.",
+                metadata_json={"label": field.get("label"), "workstream_key": field.get("workstream_key")},
+            )
             return "Restricted KYC field"
         return field.get("value")
 

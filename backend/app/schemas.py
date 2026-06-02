@@ -18,7 +18,7 @@ from app.validation import (
 )
 
 UserRole = str
-LifecycleStatus = Literal["Onboarding", "Active", "At Risk", "Renewal Focus", "Expansion Focus", "Dormant", "Archived"]
+LifecycleStatus = Literal["Draft", "Onboarding", "Active", "At Risk", "Renewal Focus", "Expansion Focus", "Dormant", "Archived"]
 RiskStatus = Literal["healthy", "warning", "critical"]
 DraftStatus = Literal["ready_for_review", "approved", "rejected", "linked"]
 ExtractionStatus = Literal["queued", "running", "completed", "failed", "needs_review", "parsed"]
@@ -51,10 +51,10 @@ GovernanceGeneratedOutputType = Literal["agenda_draft", "governance_brief"]
 GovernanceGenerationMethod = Literal["deterministic", "ai_agent"]
 GovernanceCadence = Literal["weekly", "monthly", "quarterly", "yearly"]
 GovernanceEndPolicy = Literal["never", "after_occurrences", "on_date"]
-IntegrationProvider = Literal["google-calendar", "fathom"]
+IntegrationProvider = Literal["google_calendar", "google-calendar", "fathom", "csat", "ai_llm_gateway"]
 IntegrationStatus = Literal["configuration_required", "connected", "syncing", "error", "disabled"]
 PlaybookOwnerRule = Literal["account_primary_am", "task_creator", "ops_lead", "template_owner"]
-TaskStatus = Literal["todo", "in_progress", "done", "skipped", "blocked", "cancelled"]
+TaskStatus = Literal["open", "in_progress", "done", "blocked", "cancelled", "todo", "skipped"]
 TaskPriority = Literal["low", "medium", "high", "urgent", "critical"]
 TaskEvidenceType = Literal["note", "link", "file"]
 StakeholderRole = str
@@ -76,6 +76,18 @@ SignalStatus = Literal["new", "reviewed", "accepted", "dismissed", "converted", 
 SignalConvertTarget = Literal["task", "playbook"]
 
 SELECT_FIELD_TYPES = {"single_select", "multi_select"}
+CSAT_CATEGORY_KEYS = {
+    "delivery_excellence": "Delivery Excellence",
+    "communication": "Communication",
+    "proactiveness": "Proactiveness",
+    "trust": "Trust",
+    "value_for_money": "Value for Money",
+}
+
+
+def normalize_task_status(value: str) -> str:
+    aliases = {"todo": "open", "skipped": "cancelled"}
+    return aliases.get(str(value), str(value))
 
 
 def validate_short_text(value: str, field_label: str, max_length: int = 180) -> str:
@@ -124,6 +136,39 @@ def validate_string_list(value: list[str], field_label: str, max_items: int = 30
     return items
 
 
+def validate_csat_category_scores(value: dict[str, float]) -> dict[str, float]:
+    if not value:
+        return {}
+    unknown = sorted(set(value) - set(CSAT_CATEGORY_KEYS))
+    if unknown:
+        raise ValueError(f"Unsupported CSAT category key(s): {', '.join(unknown)}.")
+    missing = sorted(set(CSAT_CATEGORY_KEYS) - set(value))
+    if missing:
+        raise ValueError(f"CSAT category score(s) missing: {', '.join(missing)}.")
+    normalized: dict[str, float] = {}
+    for key in CSAT_CATEGORY_KEYS:
+        score = float(value[key])
+        if score < 1 or score > 5:
+            raise ValueError(f"{CSAT_CATEGORY_KEYS[key]} must be between 1 and 5.")
+        normalized[key] = round(score, 2)
+    return normalized
+
+
+def validate_csat_category_weights(value: dict[str, float]) -> dict[str, float]:
+    if not value:
+        return {}
+    unknown = sorted(set(value) - set(CSAT_CATEGORY_KEYS))
+    if unknown:
+        raise ValueError(f"Unsupported CSAT category weight key(s): {', '.join(unknown)}.")
+    normalized = {key: round(float(value[key]), 2) for key in value}
+    if any(weight < 0 for weight in normalized.values()):
+        raise ValueError("CSAT category weights must be zero or greater.")
+    total = round(sum(normalized.values()), 2)
+    if total <= 0:
+        raise ValueError("CSAT category weights must total more than zero.")
+    return normalized
+
+
 def validate_research_source_list(value: list[str], field_label: str = "Research sources", max_items: int = 10) -> list[str]:
     if len(value) > max_items:
         raise ValueError(f"{field_label} can include at most {max_items} items.")
@@ -168,6 +213,15 @@ def validate_custom_field_options(value: list[str]) -> list[str]:
     return options
 
 
+def validate_google_calendar_id(value: str | None, field_label: str = "Google Calendar ID") -> str | None:
+    text = optional_text(value, field_label, max_length=255)
+    if text is None:
+        return None
+    if any(marker in text for marker in (" ", "://", "/", "\\", "?", "#")):
+        raise ValueError(f"{field_label} must be a valid Google Calendar ID.")
+    return text
+
+
 class UserRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -178,6 +232,7 @@ class UserRead(BaseModel):
     title: str | None = None
     phone: str | None = None
     avatar_initials: str
+    primary_google_calendar_id: str | None = None
     is_active: bool
     created_at: datetime
     updated_at: datetime
@@ -488,6 +543,7 @@ class UserCreateRequest(BaseModel):
     title: str | None = None
     phone: str | None = None
     avatar_initials: str | None = None
+    primary_google_calendar_id: str | None = None
     is_active: bool = True
 
     @field_validator("password")
@@ -520,6 +576,11 @@ class UserCreateRequest(BaseModel):
     def avatar_initials_are_valid(cls, value: str | None) -> str | None:
         return validate_avatar_initials(value)
 
+    @field_validator("primary_google_calendar_id")
+    @classmethod
+    def primary_google_calendar_id_is_valid(cls, value: str | None) -> str | None:
+        return validate_google_calendar_id(value, "Primary Google Calendar ID")
+
 
 class UserUpdateRequest(BaseModel):
     email: EmailStr | None = Field(default=None, description="Updated user email address.")
@@ -528,6 +589,7 @@ class UserUpdateRequest(BaseModel):
     title: str | None = None
     phone: str | None = None
     avatar_initials: str | None = None
+    primary_google_calendar_id: str | None = None
     is_active: bool | None = None
 
     @field_validator("full_name")
@@ -554,6 +616,11 @@ class UserUpdateRequest(BaseModel):
     @classmethod
     def avatar_initials_are_valid(cls, value: str | None) -> str | None:
         return validate_avatar_initials(value)
+
+    @field_validator("primary_google_calendar_id")
+    @classmethod
+    def primary_google_calendar_id_is_valid(cls, value: str | None) -> str | None:
+        return validate_google_calendar_id(value, "Primary Google Calendar ID")
 
 
 class LoginRequest(BaseModel):
@@ -685,6 +752,7 @@ class ProfileUpdateRequest(BaseModel):
     title: str | None = Field(default=None, description="Job title or platform responsibility.")
     phone: str | None = Field(default=None, description="Optional phone number.")
     avatar_initials: str | None = Field(default=None, description="One to eight alphanumeric initials shown in the UI.")
+    primary_google_calendar_id: str | None = Field(default=None, description="Google Calendar ID used for outbound KAM calendar writes.")
 
     @field_validator("full_name")
     @classmethod
@@ -705,6 +773,11 @@ class ProfileUpdateRequest(BaseModel):
     @classmethod
     def avatar_initials_are_valid(cls, value: str | None) -> str | None:
         return validate_avatar_initials(value)
+
+    @field_validator("primary_google_calendar_id")
+    @classmethod
+    def primary_google_calendar_id_is_valid(cls, value: str | None) -> str | None:
+        return validate_google_calendar_id(value, "Primary Google Calendar ID")
 
 
 class HealthScoreRead(BaseModel):
@@ -1307,7 +1380,7 @@ class OnboardingDraftCreateRequest(BaseModel):
     account_name: str
     project_name: str | None = None
     company_url: str | None = None
-    lifecycle_status: LifecycleStatus = "Onboarding"
+    lifecycle_status: LifecycleStatus = "Draft"
     segment: str = "Growth"
     region: str | None = None
     service_context: str | None = None
@@ -2254,6 +2327,228 @@ class TimelineAiSearchResponse(BaseModel):
     document_results: list[TimelineAiDocumentResultRead] = Field(default_factory=list)
     audit_id: str
     can_try_in_kam_ai: bool = True
+
+
+class AiAssistanceSearchRequest(BaseModel):
+    query: str
+    account_id: str | None = None
+    scopes: list[str] = Field(default_factory=lambda: ["timeline", "opportunities", "governance", "kyc", "signals"])
+    document_search: bool = False
+    limit: int = 10
+
+    @field_validator("query")
+    @classmethod
+    def ai_query_is_valid(cls, value: str) -> str:
+        return optional_text(value, "AI search query", max_length=500, min_length=2) or value
+
+    @field_validator("scopes")
+    @classmethod
+    def ai_scopes_are_valid(cls, value: list[str]) -> list[str]:
+        return validate_string_list(value, "AI search scopes", max_items=10)
+
+    @field_validator("limit")
+    @classmethod
+    def ai_limit_is_valid(cls, value: int) -> int:
+        return validate_positive_int(value, "AI search limit", max_value=50)
+
+
+class AiAssistanceSourceRead(BaseModel):
+    id: str
+    account_id: str
+    account_name: str
+    source_type: str
+    title: str
+    excerpt: str
+    source_route: str | None = None
+    event_at: datetime | None = None
+    relevance: float = 1
+
+
+class AiAssistanceSearchResponse(BaseModel):
+    query: str
+    answer: str
+    query_intent: str
+    confidence: Literal["high", "medium", "low"]
+    disclaimer: str
+    source_entries: list[AiAssistanceSourceRead] = Field(default_factory=list)
+    document_results: list[TimelineAiDocumentResultRead] = Field(default_factory=list)
+    run_id: str | None = None
+
+
+class AiAccountBriefResponse(BaseModel):
+    account_id: str
+    title: str
+    summary: str
+    highlights: list[str] = Field(default_factory=list)
+    risks: list[str] = Field(default_factory=list)
+    next_actions: list[str] = Field(default_factory=list)
+    citations: list[dict[str, Any]] = Field(default_factory=list)
+    confidence: Literal["high", "medium", "low"]
+    disclaimer: str
+    run_id: str | None = None
+
+
+class AiStagePredictionResponse(BaseModel):
+    account_id: str
+    current_stage: str
+    predicted_stage: str
+    confidence: int
+    factors: list[dict[str, Any]] = Field(default_factory=list)
+    recommended_actions: list[str] = Field(default_factory=list)
+    citations: list[dict[str, Any]] = Field(default_factory=list)
+    advisory_only: bool = True
+    disclaimer: str
+    run_id: str | None = None
+
+
+class AiForecastRequest(BaseModel):
+    account_id: str | None = None
+    months: int = 6
+
+    @field_validator("months")
+    @classmethod
+    def forecast_months_are_valid(cls, value: int) -> int:
+        return validate_positive_int(value, "Forecast months", max_value=12)
+
+
+class AiForecastPointRead(BaseModel):
+    month: str
+    commercial_value: float
+    health: int
+    open_opportunities: int
+
+
+class AiForecastResponse(BaseModel):
+    title: str
+    summary: str
+    points: list[AiForecastPointRead]
+    highlights: list[str] = Field(default_factory=list)
+    citations: list[dict[str, Any]] = Field(default_factory=list)
+    disclaimer: str
+    run_id: str | None = None
+
+
+class AiHandoffRequest(BaseModel):
+    include_sensitive: bool = False
+    focus: str | None = None
+
+    @field_validator("focus")
+    @classmethod
+    def handoff_focus_is_valid(cls, value: str | None) -> str | None:
+        return optional_text(value, "Handoff focus", max_length=240)
+
+
+class AiHandoffResponse(BaseModel):
+    account_id: str
+    title: str
+    sections: dict[str, list[str]] = Field(default_factory=dict)
+    citations: list[dict[str, Any]] = Field(default_factory=list)
+    disclaimer: str
+    run_id: str | None = None
+
+
+class AiQueryHistoryRead(BaseModel):
+    id: str
+    request_type: str
+    query: str | None = None
+    answer: str | None = None
+    account_id: str | None = None
+    account_name: str | None = None
+    confidence: str | None = None
+    status: str
+    created_at: datetime
+    source_count: int = 0
+    run_id: str
+
+
+class AiQueryHistoryPageRead(BaseModel):
+    items: list[AiQueryHistoryRead]
+    total: int
+    page: int
+    page_size: int
+    pages: int
+
+
+class AiVocabularyTermRead(BaseModel):
+    id: str
+    term: str
+    replacement: str | None = None
+    description: str | None = None
+    is_active: bool = True
+    updated_at: datetime | None = None
+
+
+class AiVocabularyTermRequest(BaseModel):
+    term: str
+    replacement: str | None = None
+    description: str | None = None
+    is_active: bool = True
+
+    @field_validator("term")
+    @classmethod
+    def term_is_valid(cls, value: str) -> str:
+        return validate_short_text(value, "AI vocabulary term", 120)
+
+    @field_validator("replacement", "description")
+    @classmethod
+    def optional_term_text_is_valid(cls, value: str | None) -> str | None:
+        return validate_optional_long_text(value, "AI vocabulary text", 500)
+
+
+class AiSearchFieldsRead(BaseModel):
+    fields: list[str] = Field(default_factory=list)
+    updated_at: datetime | None = None
+
+
+class AiSearchFieldsUpdateRequest(BaseModel):
+    fields: list[str]
+
+    @field_validator("fields")
+    @classmethod
+    def fields_are_valid(cls, value: list[str]) -> list[str]:
+        return validate_string_list(value, "AI search fields", max_items=40)
+
+
+class AiBriefPageRead(BaseModel):
+    items: list[AiAccountBriefResponse]
+    total: int
+    page: int
+    page_size: int
+    pages: int
+
+
+class AiBriefFeedbackRequest(BaseModel):
+    rating: Literal["helpful", "not_helpful", "neutral"]
+    comment: str | None = None
+
+    @field_validator("comment")
+    @classmethod
+    def feedback_comment_is_valid(cls, value: str | None) -> str | None:
+        return validate_optional_long_text(value, "Feedback comment", 1000)
+
+
+class AiTimelineNoteRequest(BaseModel):
+    title: str | None = None
+    description: str | None = None
+
+    @field_validator("title")
+    @classmethod
+    def note_title_is_valid(cls, value: str | None) -> str | None:
+        return validate_optional_long_text(value, "Timeline note title", 220)
+
+    @field_validator("description")
+    @classmethod
+    def note_description_is_valid(cls, value: str | None) -> str | None:
+        return validate_optional_long_text(value, "Timeline note description", 4000)
+
+
+class AiStageChangeRead(BaseModel):
+    account_id: str
+    previous_stage: str
+    new_stage: str
+    prediction_run_id: str | None = None
+    timeline_entry_id: str | None = None
+    changed_at: datetime
 
 
 class EngagementHealthRead(BaseModel):
@@ -4675,6 +4970,7 @@ class PlaybookTemplateRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: str
+    slug: str
     name: str
     objective: str
     description: str | None = None
@@ -4703,6 +4999,7 @@ class PlaybookTemplatePageRead(BaseModel):
 
 
 class PlaybookTemplateCreateRequest(BaseModel):
+    slug: str | None = None
     name: str
     objective: str
     description: str | None = None
@@ -4720,6 +5017,11 @@ class PlaybookTemplateCreateRequest(BaseModel):
     @classmethod
     def name_is_valid(cls, value: str) -> str:
         return validate_short_text(value, "Playbook name", 180)
+
+    @field_validator("slug")
+    @classmethod
+    def slug_is_valid(cls, value: str | None) -> str | None:
+        return validate_slug(value, "Playbook slug") if value is not None else None
 
     @field_validator("objective")
     @classmethod
@@ -4753,6 +5055,7 @@ class PlaybookTemplateCreateRequest(BaseModel):
 
 
 class PlaybookTemplateUpdateRequest(BaseModel):
+    slug: str | None = None
     name: str | None = None
     objective: str | None = None
     description: str | None = None
@@ -4770,6 +5073,11 @@ class PlaybookTemplateUpdateRequest(BaseModel):
     @classmethod
     def name_is_valid(cls, value: str | None) -> str | None:
         return validate_short_text(value, "Playbook name", 180) if value is not None else None
+
+    @field_validator("slug")
+    @classmethod
+    def slug_is_valid(cls, value: str | None) -> str | None:
+        return validate_slug(value, "Playbook slug") if value is not None else None
 
     @field_validator("objective")
     @classmethod
@@ -4900,7 +5208,7 @@ class TaskCreateRequest(BaseModel):
     description: str | None = None
     owner_id: str
     due_at: datetime
-    status: TaskStatus = "todo"
+    status: TaskStatus = "open"
     priority: TaskPriority = "medium"
     notes: str | None = None
     outcome: str | None = None
@@ -4915,6 +5223,11 @@ class TaskCreateRequest(BaseModel):
     @classmethod
     def title_is_valid(cls, value: str) -> str:
         return validate_short_text(value, "Task title", 220)
+
+    @field_validator("status")
+    @classmethod
+    def status_is_valid(cls, value: str) -> str:
+        return normalize_task_status(value)
 
     @field_validator("description", "notes", "outcome")
     @classmethod
@@ -4957,6 +5270,11 @@ class TaskUpdateRequest(BaseModel):
     @classmethod
     def title_is_valid(cls, value: str | None) -> str | None:
         return validate_short_text(value, "Task title", 220) if value is not None else None
+
+    @field_validator("status")
+    @classmethod
+    def status_is_valid(cls, value: str | None) -> str | None:
+        return normalize_task_status(value) if value is not None else None
 
     @field_validator("description", "notes", "outcome", "skipped_reason")
     @classmethod
@@ -5013,11 +5331,18 @@ class IntegrationConnectionRead(BaseModel):
 
     id: str
     provider: str
+    name: str | None = None
     enabled: bool
     status: str
     auth_type: str
     settings_json: dict = Field(default_factory=dict)
+    credential_status: dict[str, Any] = Field(default_factory=dict)
     scopes: list[str] = Field(default_factory=list)
+    token_expires_at: datetime | None = None
+    last_tested_at: datetime | None = None
+    last_test_status: str | None = None
+    failure_count: int = 0
+    next_retry_at: datetime | None = None
     last_synced_at: datetime | None = None
     last_error: str | None = None
     created_at: datetime
@@ -5068,6 +5393,680 @@ class IntegrationSyncResponse(BaseModel):
     skipped: int = 0
     errors: int = 0
     message: str
+
+
+class IntegrationSyncRunRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    provider: str
+    trigger_type: str
+    status: str
+    actor_id: str | None = None
+    actor_name: str | None = None
+    retry_count: int
+    created_count: int
+    updated_count: int
+    skipped_count: int
+    error_count: int
+    failure_type: str | None = None
+    message: str | None = None
+    started_at: datetime
+    finished_at: datetime | None = None
+    metadata_json: dict = Field(default_factory=dict)
+
+
+class IntegrationSyncRunPageRead(BaseModel):
+    items: list[IntegrationSyncRunRead]
+    total: int
+    page: int
+    page_size: int
+    pages: int
+
+
+class IntegrationMappingRuleRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    provider: str
+    name: str
+    pattern: str
+    source_field: str
+    target_account_id: str | None = None
+    target_engagement_id: str | None = None
+    target_event_type: str | None = None
+    priority: int
+    is_active: bool
+    created_at: datetime
+    updated_at: datetime
+
+
+class IntegrationMappingRulePageRead(BaseModel):
+    items: list[IntegrationMappingRuleRead]
+    total: int
+    page: int
+    page_size: int
+    pages: int
+
+
+class IntegrationMappingRuleRequest(BaseModel):
+    name: str
+    pattern: str
+    source_field: str = "title"
+    target_account_id: str | None = None
+    target_engagement_id: str | None = None
+    target_event_type: str | None = None
+    priority: int = 100
+    is_active: bool = True
+
+    @field_validator("name")
+    @classmethod
+    def mapping_name_is_valid(cls, value: str) -> str:
+        return validate_short_text(value, "Mapping rule name", 180)
+
+    @field_validator("pattern", "source_field", "target_event_type")
+    @classmethod
+    def mapping_text_is_valid(cls, value: str | None) -> str | None:
+        return optional_text(value, "Mapping rule field", max_length=255) if value is not None else None
+
+    @field_validator("priority")
+    @classmethod
+    def priority_is_valid(cls, value: int) -> int:
+        if value < 1 or value > 1000:
+            raise ValueError("Priority must be between 1 and 1000.")
+        return value
+
+
+class IntegrationImportedItemRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    provider: str
+    external_id: str
+    title: str
+    description: str | None = None
+    source_link: str | None = None
+    occurred_at: datetime | None = None
+    source_timestamp: datetime | None = None
+    account_id: str | None = None
+    engagement_id: str | None = None
+    mapping_status: str
+    review_status: str
+    review_required: bool
+    deduplication_key: str | None = None
+    sanitized_payload_json: dict = Field(default_factory=dict)
+    result_record_type: str | None = None
+    result_record_id: str | None = None
+    reviewed_by_id: str | None = None
+    reviewed_by_name: str | None = None
+    reviewed_at: datetime | None = None
+    created_at: datetime
+    updated_at: datetime
+
+
+class IntegrationImportedItemPageRead(BaseModel):
+    items: list[IntegrationImportedItemRead]
+    total: int
+    page: int
+    page_size: int
+    pages: int
+
+
+class IntegrationItemMapRequest(BaseModel):
+    account_id: str
+    engagement_id: str | None = None
+    target_event_type: str | None = None
+
+    @field_validator("target_event_type")
+    @classmethod
+    def target_event_type_is_valid(cls, value: str | None) -> str | None:
+        return optional_text(value, "Event type", max_length=80)
+
+
+class IntegrationItemReviewRequest(BaseModel):
+    account_id: str | None = None
+    engagement_id: str | None = None
+    notes: str | None = None
+
+    @field_validator("notes")
+    @classmethod
+    def notes_are_valid(cls, value: str | None) -> str | None:
+        return validate_optional_long_text(value, "Review notes", 2000)
+
+
+class FathomRedactRequest(BaseModel):
+    redacted_description: str
+
+    @field_validator("redacted_description")
+    @classmethod
+    def redacted_description_is_valid(cls, value: str) -> str:
+        return validate_short_text(value, "Redacted description", 4000)
+
+
+class FathomTaskSuggestionRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    imported_item_id: str
+    account_id: str | None = None
+    engagement_id: str | None = None
+    title: str
+    description: str | None = None
+    suggested_due_at: datetime | None = None
+    status: str
+    reviewer_id: str | None = None
+    reviewer_name: str | None = None
+    reviewed_at: datetime | None = None
+    created_task_id: str | None = None
+    created_at: datetime
+    updated_at: datetime
+
+
+class FathomTaskSuggestionPageRead(BaseModel):
+    items: list[FathomTaskSuggestionRead]
+    total: int
+    page: int
+    page_size: int
+    pages: int
+
+
+class SecurityAlertSettingsRead(BaseModel):
+    administration_email: EmailStr
+    updated_by_id: str | None = None
+    updated_by_name: str | None = None
+    updated_at: datetime | None = None
+
+
+class SecurityAlertSettingsUpdateRequest(BaseModel):
+    administration_email: EmailStr
+
+
+class CsatScoreRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    account_id: str
+    engagement_id: str | None = None
+    customer_name: str | None = None
+    customer_email: str | None = None
+    score: float
+    scale_min: int
+    scale_max: int
+    normalized_score: int
+    category_scores_json: dict[str, float] = Field(default_factory=dict)
+    category_weights_json: dict[str, float] = Field(default_factory=dict)
+    weighted_score: float = 0
+    feedback: str | None = None
+    source_label: str
+    source_id: str
+    source_link: str | None = None
+    source_recorded_at: datetime
+    freshness_status: str
+    score_impact_json: dict = Field(default_factory=dict)
+    trend_json: dict = Field(default_factory=dict)
+    timeline_entry_id: str | None = None
+    scoring_snapshot_id: str | None = None
+    created_by_id: str | None = None
+    created_by_name: str
+    updated_by_id: str | None = None
+    created_at: datetime
+    updated_at: datetime
+
+
+class CsatScorePageRead(BaseModel):
+    items: list[CsatScoreRead]
+    total: int
+    page: int
+    page_size: int
+    pages: int
+
+
+class CsatScoreCreateRequest(BaseModel):
+    account_id: str
+    engagement_id: str | None = None
+    customer_name: str | None = None
+    customer_email: EmailStr | None = None
+    score: float | None = None
+    scale_min: int = 1
+    scale_max: int = 5
+    category_scores_json: dict[str, float] = Field(default_factory=dict)
+    category_weights_json: dict[str, float] = Field(default_factory=dict)
+    feedback: str | None = None
+    source_label: str = "manual"
+    source_id: str | None = None
+    source_link: str | None = None
+    source_recorded_at: datetime | None = None
+
+    @field_validator("customer_name")
+    @classmethod
+    def customer_name_is_valid(cls, value: str | None) -> str | None:
+        return optional_text(value, "Customer name", max_length=180)
+
+    @field_validator("feedback")
+    @classmethod
+    def feedback_is_valid(cls, value: str | None) -> str | None:
+        return validate_optional_long_text(value, "CSAT feedback", 4000)
+
+    @field_validator("source_label", "source_id")
+    @classmethod
+    def source_text_is_valid(cls, value: str | None) -> str | None:
+        return optional_text(value, "CSAT source", max_length=255) if value is not None else None
+
+    @field_validator("source_link")
+    @classmethod
+    def source_link_is_valid(cls, value: str | None) -> str | None:
+        return validate_http_url(value, "Source link")
+
+    @field_validator("category_scores_json")
+    @classmethod
+    def category_scores_are_valid(cls, value: dict[str, float]) -> dict[str, float]:
+        return validate_csat_category_scores(value)
+
+    @field_validator("category_weights_json")
+    @classmethod
+    def category_weights_are_valid(cls, value: dict[str, float]) -> dict[str, float]:
+        return validate_csat_category_weights(value)
+
+    @model_validator(mode="after")
+    def score_is_in_scale(self) -> "CsatScoreCreateRequest":
+        if self.scale_min >= self.scale_max:
+            raise ValueError("CSAT score scale minimum must be less than maximum.")
+        if self.score is None and not self.category_scores_json:
+            raise ValueError("CSAT category scores are required.")
+        if self.score is not None and (self.score < self.scale_min or self.score > self.scale_max):
+            raise ValueError("CSAT score must be within the configured score scale.")
+        return self
+
+
+class CsatScoreUpdateRequest(BaseModel):
+    engagement_id: str | None = None
+    customer_name: str | None = None
+    customer_email: EmailStr | None = None
+    score: float | None = None
+    scale_min: int | None = None
+    scale_max: int | None = None
+    category_scores_json: dict[str, float] | None = None
+    category_weights_json: dict[str, float] | None = None
+    feedback: str | None = None
+    source_label: str | None = None
+    source_id: str | None = None
+    source_link: str | None = None
+    source_recorded_at: datetime | None = None
+
+    @field_validator("customer_name")
+    @classmethod
+    def customer_name_is_valid(cls, value: str | None) -> str | None:
+        return optional_text(value, "Customer name", max_length=180)
+
+    @field_validator("feedback")
+    @classmethod
+    def feedback_is_valid(cls, value: str | None) -> str | None:
+        return validate_optional_long_text(value, "CSAT feedback", 4000)
+
+    @field_validator("source_label", "source_id")
+    @classmethod
+    def source_text_is_valid(cls, value: str | None) -> str | None:
+        return optional_text(value, "CSAT source", max_length=255) if value is not None else None
+
+    @field_validator("source_link")
+    @classmethod
+    def source_link_is_valid(cls, value: str | None) -> str | None:
+        return validate_http_url(value, "Source link")
+
+    @field_validator("category_scores_json")
+    @classmethod
+    def category_scores_are_valid(cls, value: dict[str, float] | None) -> dict[str, float] | None:
+        return validate_csat_category_scores(value) if value is not None else None
+
+    @field_validator("category_weights_json")
+    @classmethod
+    def category_weights_are_valid(cls, value: dict[str, float] | None) -> dict[str, float] | None:
+        return validate_csat_category_weights(value) if value is not None else None
+
+
+class AiGatewayRunRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    request_type: str
+    status: str
+    actor_id: str | None = None
+    actor_name: str | None = None
+    account_id: str | None = None
+    engagement_id: str | None = None
+    permission_scope_json: dict = Field(default_factory=dict)
+    source_context_json: list = Field(default_factory=list)
+    research_sources_json: list = Field(default_factory=list)
+    response_labels_json: list = Field(default_factory=list)
+    prompt_json: dict = Field(default_factory=dict)
+    response_json: dict = Field(default_factory=dict)
+    feedback_json: dict = Field(default_factory=dict)
+    latency_ms: int | None = None
+    usage_json: dict = Field(default_factory=dict)
+    error_message: str | None = None
+    affected_records_json: list = Field(default_factory=list)
+    created_at: datetime
+
+
+class AiGatewayRunPageRead(BaseModel):
+    items: list[AiGatewayRunRead]
+    total: int
+    page: int
+    page_size: int
+    pages: int
+
+
+class AnalyticsMetricRead(BaseModel):
+    label: str
+    value: int | float | str
+    tone: str = "default"
+
+
+class AnalyticsSeriesRead(BaseModel):
+    name: str
+    rows: list[dict[str, Any]] = Field(default_factory=list)
+
+
+class AnalyticsPortfolioRead(BaseModel):
+    generated_at: datetime
+    filters: dict[str, Any] = Field(default_factory=dict)
+    metrics: list[AnalyticsMetricRead] = Field(default_factory=list)
+    series: list[AnalyticsSeriesRead] = Field(default_factory=list)
+    drilldowns: dict[str, list[dict[str, Any]]] = Field(default_factory=dict)
+    redactions: dict[str, Any] = Field(default_factory=dict)
+
+
+class AnalyticsBenchmarkRead(BaseModel):
+    cohort: str
+    account_count: int
+    average_health: int
+    average_pipeline: float
+    risk_distribution: dict[str, int] = Field(default_factory=dict)
+    suppressed: bool = False
+    reason: str | None = None
+
+
+class AnalyticsBenchmarkPageRead(BaseModel):
+    items: list[AnalyticsBenchmarkRead]
+    total: int
+    page: int
+    page_size: int
+    pages: int
+
+
+class KamPerformanceRead(BaseModel):
+    owner_id: str | None = None
+    owner_name: str
+    account_count: int
+    average_health: int
+    overdue_action_rate: float
+    governance_cadence_rate: float
+    renewal_readiness: int
+    open_pipeline: float
+    open_escalations: int
+
+
+class KamPerformancePageRead(BaseModel):
+    items: list[KamPerformanceRead]
+    total: int
+    page: int
+    page_size: int
+    pages: int
+
+
+class AccountChangeAlertRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    account_id: str
+    alert_type: str
+    reason_code: str
+    affected_metric: str
+    previous_value_json: dict | None = None
+    new_value_json: dict | None = None
+    change_magnitude: float | None = None
+    severity: str
+    status: str
+    owner_id: str | None = None
+    owner_name: str | None = None
+    recommended_action: str
+    source_evidence_json: list = Field(default_factory=list)
+    deduplication_key: str
+    created_by_id: str | None = None
+    updated_by_id: str | None = None
+    resolved_at: datetime | None = None
+    created_at: datetime
+    updated_at: datetime
+
+
+class AccountChangeAlertPageRead(BaseModel):
+    items: list[AccountChangeAlertRead]
+    total: int
+    page: int
+    page_size: int
+    pages: int
+
+
+class AccountChangeAlertUpdateRequest(BaseModel):
+    status: Literal["open", "acknowledged", "dismissed", "resolved"]
+    reason: str | None = None
+
+    @field_validator("reason")
+    @classmethod
+    def alert_reason_is_valid(cls, value: str | None) -> str | None:
+        return validate_optional_long_text(value, "Alert status reason", 1000)
+
+
+class AuditLogRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    module: str
+    action: str
+    entity_type: str
+    entity_id: str
+    actor_id: str
+    actor_name: str
+    before_value: dict | None = None
+    after_value: dict | None = None
+    reason: str | None = None
+    created_at: datetime
+
+
+class AuditLogPageRead(BaseModel):
+    items: list[AuditLogRead]
+    total: int
+    page: int
+    page_size: int
+    pages: int
+
+
+class AccessLogRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    module: str
+    entity_type: str
+    entity_id: str | None = None
+    account_id: str | None = None
+    field_key: str | None = None
+    actor_id: str
+    actor_name: str
+    decision: str
+    reason: str | None = None
+    metadata_json: dict = Field(default_factory=dict)
+    created_at: datetime
+
+
+class AccessLogPageRead(BaseModel):
+    items: list[AccessLogRead]
+    total: int
+    page: int
+    page_size: int
+    pages: int
+
+
+class FieldPermissionRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    module: str
+    field_key: str
+    role: str
+    can_view: bool
+    can_edit: bool
+    redaction_strategy: str
+    condition_json: dict = Field(default_factory=dict)
+    created_by_id: str | None = None
+    updated_by_id: str | None = None
+    created_at: datetime
+    updated_at: datetime
+
+
+class FieldPermissionPageRead(BaseModel):
+    items: list[FieldPermissionRead]
+    total: int
+    page: int
+    page_size: int
+    pages: int
+
+
+class FieldPermissionRequest(BaseModel):
+    module: str
+    field_key: str
+    role: str
+    can_view: bool = True
+    can_edit: bool = False
+    redaction_strategy: Literal["mask", "hide", "hash"] = "mask"
+    condition_json: dict[str, Any] = Field(default_factory=dict)
+
+    @field_validator("module")
+    @classmethod
+    def field_permission_module_is_valid(cls, value: str) -> str:
+        return validate_module_slug(value)
+
+    @field_validator("field_key")
+    @classmethod
+    def field_permission_key_is_valid(cls, value: str) -> str:
+        return validate_slug(value, "Field key")
+
+    @field_validator("role")
+    @classmethod
+    def field_permission_role_is_valid(cls, value: str) -> str:
+        return validate_slug(value, "Role")
+
+
+class ConfigurationChangeRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    module: str
+    change_type: str
+    entity_type: str
+    entity_id: str | None = None
+    title: str
+    description: str | None = None
+    status: str
+    payload_json: dict = Field(default_factory=dict)
+    validation_json: dict = Field(default_factory=dict)
+    created_by_id: str | None = None
+    created_by_name: str
+    published_by_id: str | None = None
+    published_by_name: str | None = None
+    rolled_back_by_id: str | None = None
+    rolled_back_by_name: str | None = None
+    published_at: datetime | None = None
+    rolled_back_at: datetime | None = None
+    created_at: datetime
+    updated_at: datetime
+
+
+class ConfigurationChangePageRead(BaseModel):
+    items: list[ConfigurationChangeRead]
+    total: int
+    page: int
+    page_size: int
+    pages: int
+
+
+class ConfigurationChangeCreateRequest(BaseModel):
+    module: str
+    change_type: str
+    entity_type: str
+    entity_id: str | None = None
+    title: str
+    description: str | None = None
+    payload_json: dict[str, Any] = Field(default_factory=dict)
+
+    @field_validator("module")
+    @classmethod
+    def config_module_is_valid(cls, value: str) -> str:
+        return validate_module_slug(value)
+
+    @field_validator("change_type", "entity_type")
+    @classmethod
+    def config_type_is_valid(cls, value: str) -> str:
+        return validate_slug(value, "Configuration change type")
+
+    @field_validator("title")
+    @classmethod
+    def config_title_is_valid(cls, value: str) -> str:
+        return validate_short_text(value, "Configuration change title", 220)
+
+    @field_validator("description")
+    @classmethod
+    def config_description_is_valid(cls, value: str | None) -> str | None:
+        return validate_optional_long_text(value, "Configuration change description", 2000)
+
+
+class SystemHealthRead(BaseModel):
+    status: Literal["healthy", "degraded", "error"]
+    generated_at: datetime
+    checks: list[dict[str, Any]] = Field(default_factory=list)
+    metrics: dict[str, Any] = Field(default_factory=dict)
+
+
+class JobLogRead(BaseModel):
+    id: str
+    job_type: str
+    mode: str
+    status: str
+    matched_count: int = 0
+    affected_count: int = 0
+    actor_id: str | None = None
+    actor_name: str | None = None
+    error_message: str | None = None
+    metadata_json: dict = Field(default_factory=dict)
+    started_at: datetime | None = None
+    finished_at: datetime | None = None
+    created_at: datetime
+
+
+class JobLogPageRead(BaseModel):
+    items: list[JobLogRead]
+    total: int
+    page: int
+    page_size: int
+    pages: int
+
+
+class ErrorLogRead(BaseModel):
+    id: str
+    source: str
+    severity: str
+    message: str
+    status: str
+    actor_name: str | None = None
+    metadata_json: dict = Field(default_factory=dict)
+    created_at: datetime
+
+
+class ErrorLogPageRead(BaseModel):
+    items: list[ErrorLogRead]
+    total: int
+    page: int
+    page_size: int
+    pages: int
 
 
 class MetricValidationRead(BaseModel):

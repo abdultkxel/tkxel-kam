@@ -79,7 +79,7 @@ class AccountService:
             leadership_sponsor=leadership_sponsor,
             missing_am=missing_am,
             missing_current_kyc=missing_current_kyc,
-            kyc_freshness_threshold_days=kyc_configuration.freshness_threshold_days if kyc_configuration else 180,
+            kyc_freshness_threshold_days=kyc_configuration.freshness_threshold_days if kyc_configuration else 90,
             missing_engagements=missing_engagements,
             missing_next_governance=missing_next_governance,
             sort=sort,
@@ -480,7 +480,7 @@ class AccountService:
         if not account.kyc_snapshots:
             return False
         configuration = self.kyc.get_configuration()
-        threshold_days = configuration.freshness_threshold_days if configuration else 180
+        threshold_days = configuration.freshness_threshold_days if configuration else 90
         latest = max(account.kyc_snapshots, key=lambda snapshot: snapshot.approved_at)
         approved_at = latest.approved_at.replace(tzinfo=timezone.utc) if latest.approved_at.tzinfo is None else latest.approved_at.astimezone(timezone.utc)
         return datetime.now(timezone.utc) < approved_at + timedelta(days=threshold_days)

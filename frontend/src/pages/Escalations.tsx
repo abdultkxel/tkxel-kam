@@ -146,7 +146,7 @@ export function Escalations() {
             {accounts.map(account => <option key={account.id} value={account.id}>{account.name}</option>)}
           </select>
           <label className="space-y-1">
-            <input className="tk-input" value={form.summary} onChange={event => setForm({ ...form, summary: event.target.value })} placeholder="Escalation summary" required />
+            <input className="tk-input" value={form.summary} onChange={event => setForm({ ...form, summary: event.target.value })} placeholder="Escalation summary" aria-invalid={Boolean(fieldErrors.summary)} aria-describedby="escalation-summary-error" />
             <FieldError id="escalation-summary-error" message={fieldErrors.summary} />
           </label>
           <select className="tk-input" value={form.severity} onChange={event => setForm({ ...form, severity: event.target.value })}>
@@ -165,7 +165,7 @@ export function Escalations() {
             Create
           </button>
           <label className="space-y-1 lg:col-span-5">
-            <textarea className="tk-input min-h-[86px]" value={form.impact} onChange={event => setForm({ ...form, impact: event.target.value })} placeholder="Business/client impact" required />
+            <textarea className="tk-input min-h-[86px]" value={form.impact} onChange={event => setForm({ ...form, impact: event.target.value })} placeholder="Business/client impact" aria-invalid={Boolean(fieldErrors.impact)} aria-describedby="escalation-impact-error" />
             <FieldError id="escalation-impact-error" message={fieldErrors.impact} />
           </label>
           <div className="lg:col-span-5">

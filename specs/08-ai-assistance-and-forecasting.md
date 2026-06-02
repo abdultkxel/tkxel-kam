@@ -227,3 +227,23 @@ Accelerate insight discovery and account preparation while keeping AI advisory, 
 - AI output never becomes authoritative without explicit human workflow.
 - Search, brief, forecast, and summary surfaces handle loading, empty, and error states.
 - AI audit logs are sufficient for Admin review.
+
+## Added From Technical Logic Document
+
+- All AI outputs must be clearly labeled as AI-assisted and include confidence, limitations, citations, insufficient-data indicators where applicable, and a non-dismissible disclaimer.
+- AI retrieval must apply RBAC, account access, field-level security, and sensitivity filtering before any context reaches the AI/LLM Gateway.
+- AI must not write official records, approve records, change account stage, create signals, create escalations, execute playbooks, or mutate tasks without an explicit human workflow and authorization.
+- AI failures must not block core manual workflows. Each AI surface must provide retry/manual fallback or clear insufficient-data state.
+- Global KAM AI panel must include persistent launcher, account context selector, scope toggles for Timeline, Opportunities, Governance, Notes, KYC, and Documents, suggested prompts, per-account query history, and structured answer cards.
+- AI answer cards must include detected intent, confidence, disclaimer, citations/source routes, limitation notes, and redaction/insufficient-data messaging when context is missing or restricted.
+- Query history must be stored per account/user where enabled and must be deletable or governed by retention policy.
+- AI Timeline Search must support structured intent recognition plus semantic/text fallback, result ranking, citations, redaction metadata, and "Try in KAM AI" handoff with query/account context.
+- AI Account Briefs must be generated from approved KYC, approved engagement/SOW records, current health, active signals, opportunities, governance context, escalations, recent timeline, and authorized notes/documents.
+- Saving an edited AI brief to timeline must preserve original AI draft, human-edited version, editor, timestamp, citations, and disclaimer context.
+- Stage Prediction inputs must include KYC confidence/completeness, approved SOW/renewal terms, recent timeline from the last 90 days, pipeline/stage distribution, current health/RAG, funding context, and active risks/signals.
+- Stage Prediction output must include predicted stage, confidence, basis, factors/evidence, influences, gaps, and recommended actions.
+- Stage Prediction can only initiate a standard human stage-change workflow; it must never directly change the official account stage.
+- Forecast charts must be directional and must not auto-populate official records, dashboards, exports, executive reports, or financial reporting unless an authorized user explicitly confirms the output for that destination.
+- Forecast chart inputs must include six-month ARR projection inputs, health trend, remaining modeled pipeline, approved commercial/SOW context, opportunity stage distribution, active risk/signals, and recent timeline context.
+- Forecast outputs must show baseline, projection, assumptions, missing/low-confidence gaps, cited inputs, and disclaimer.
+- AI Task Summary must use only the authenticated user's assigned/authorized account data and must refresh independently from the rest of AM Home.

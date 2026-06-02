@@ -24,7 +24,7 @@ class AccountRepository:
         leadership_sponsor: str | None = None,
         missing_am: bool | None = None,
         missing_current_kyc: bool | None = None,
-        kyc_freshness_threshold_days: int = 180,
+        kyc_freshness_threshold_days: int = 90,
         missing_engagements: bool | None = None,
         missing_next_governance: bool | None = None,
         sort: str = "name",

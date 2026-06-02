@@ -319,6 +319,23 @@ Surface what needs attention today for every role while enabling leadership visi
 - Reports and digests never leak restricted fields.
 - Lists and embedded tables support expected filters, sorting, search, and pagination.
 
+## Added From Technical Logic Document
+
+- Notification trigger catalog must include: new account assigned, KYC due, KYC overdue, stale KYC, account health red, dimension/category score drop threshold, critical signal, renewal window entered, notice deadline missed, escalation created/updated/inactive, governance missed/overdue, opportunity stalled, CSAT received, mention/comment, and scheduled digest.
+- SLA inactivity timers must support configurable qualifying activity definitions. Timers must reset only after qualifying activity and reset events must be auditable.
+- SLA escalation must notify the configured owner chain, including KAM Head escalation where configured, and must suppress duplicates for the same source item/recipient/SLA window.
+- Notification channels must include in-app and email. Optional SMS/Slack channels remain disabled unless explicitly enabled as approved future integrations.
+- Email notifications must contain sanitized/minimal context and require authenticated in-app access for restricted details.
+- Mandatory notifications such as critical escalation, missed notice deadline, and security/admin alerts may override user preferences according to Admin policy.
+- Notification source links must re-check account/module/field permissions at click time and must return forbidden/not found without leaking restricted source details.
+- Executive digests must use permission-scoped sections and redaction metadata. Digest redactions must not reveal hidden-record counts.
+- AM Home dashboard must prioritize "what needs attention today" using assigned accounts, active/overdue tasks, stale KYC, governance cadence, renewal windows, critical signals, escalations, opportunities, and SLA state.
+- KAM Head portfolio dashboard must include health distribution, high-risk accounts, stale KYC, escalations, renewal focus, AM workload, overdue actions, governance cadence, and SLA compliance.
+- Leadership dashboard must include strategic health, retention outlook, growth, revenue risk, major escalations, executive summaries, and decision queue views without operational edit controls.
+- Report builder must respect RBAC and field-level security at preview, export, schedule creation, and scheduled delivery time.
+- Large exports must be bounded or queued with clear status/error reporting. Export jobs must log selected fields, filters, recipient access, redactions, and delivery status.
+- Dashboard/reporting widgets must handle partial module failures without blocking the entire dashboard; failed widgets should show local error state and preserve other successful widgets.
+
 ## Implementation Status
 
 ### Completed Items

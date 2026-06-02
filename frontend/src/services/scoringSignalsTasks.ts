@@ -123,7 +123,7 @@ export interface TaskRead {
   owner_id?: string | null
   owner_name?: string | null
   due_at: string
-  status: 'todo' | 'in_progress' | 'blocked' | 'done' | 'skipped'
+  status: 'open' | 'in_progress' | 'blocked' | 'done' | 'cancelled'
   priority: 'low' | 'medium' | 'high' | 'critical'
   notes?: string | null
   evidence_json: Record<string, unknown>[]

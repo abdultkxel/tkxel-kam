@@ -29,3 +29,29 @@ class AuditService:
             after_value=after_value,
             reason=reason,
         )
+
+    def log_access(
+        self,
+        *,
+        module: str,
+        entity_type: str,
+        entity_id: str | None,
+        actor: User,
+        decision: str,
+        account_id: str | None = None,
+        field_key: str | None = None,
+        reason: str | None = None,
+        metadata_json: dict | None = None,
+    ) -> None:
+        self.repository.add_access(
+            module=module,
+            entity_type=entity_type,
+            entity_id=entity_id,
+            account_id=account_id,
+            field_key=field_key,
+            actor_id=actor.id,
+            actor_name=actor.full_name,
+            decision=decision,
+            reason=reason,
+            metadata_json=metadata_json,
+        )

@@ -171,6 +171,11 @@ EMAIL_TEMPLATES: dict[str, dict[str, str]] = {
         "text": "Hi {recipient_name},\n\nYour report export is ready.\n\nOpen in platform: {source_url}\n\n{support_note}",
         "html": "<p>Hi {recipient_name},</p><p>Your report export is ready.</p><p><a href=\"{source_url}\">Open report</a></p><p>{support_note}</p>",
     },
+    "integration_failure_alert": {
+        "subject": "{priority_label}: {title}",
+        "text": "Hi {recipient_name},\n\n{title}\n\n{body}\n\nReview integration settings: {source_url}\n\n{support_note}",
+        "html": "<p>Hi {recipient_name},</p><h2>{title}</h2><p>{body}</p><p><a href=\"{source_url}\">Review integration settings</a></p><p>{support_note}</p>",
+    },
     "mention": {
         "subject": "You were mentioned in {app_name}",
         "text": "Hi {recipient_name},\n\nYou were mentioned: {body}\n\nOpen in platform: {source_url}\n\n{support_note}",

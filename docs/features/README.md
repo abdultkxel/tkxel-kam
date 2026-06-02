@@ -12,6 +12,8 @@ docs/features/_feature-template.md
 
 - [Governance & Reviews](governance-reviews.md)
 - [Growth & Opportunity Management](growth-opportunity-management.md)
+- [Approved Integrations](approved-integrations.md)
+- [Approved Integrations Coverage Report](approved-integrations-coverage-report.md)
 - [Mailtrap Email Delivery](mailtrap-email-delivery.md)
 - [Notifications, Dashboards, And Reporting](notifications-dashboards-reporting.md)
 - [Relationships Planning Growth And Retention](relationships-planning-growth-retention.md)

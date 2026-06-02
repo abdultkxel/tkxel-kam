@@ -42,7 +42,7 @@ class DashboardRepository:
         )
 
     def list_open_tasks(self, *, account_ids: list[str] | None = None, owner_id: str | None = None, limit: int = 100) -> list[Task]:
-        conditions = [Task.status.in_(["todo", "in_progress", "blocked"])]
+        conditions = [Task.status.in_(["open", "in_progress", "blocked"])]
         if account_ids is not None:
             conditions.append(Task.account_id.in_(account_ids) if account_ids else False)
         if owner_id:

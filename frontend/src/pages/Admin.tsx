@@ -1,13 +1,13 @@
 import * as Switch from '@radix-ui/react-switch'
-import { BellRing, Download, PlugZap, Plus, Save, ShieldCheck, SlidersHorizontal } from 'lucide-react'
+import { BellRing, PlugZap, Plus, Save, ShieldCheck, SlidersHorizontal } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import { nanoid } from 'nanoid'
 import { FormEvent, useEffect, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { toast } from 'sonner'
 import { AllowedEmailDomainsPanel } from '@/components/admin/AllowedEmailDomainsPanel'
-import { AdminCustomizationPanel } from '@/components/admin/AdminCustomizationPanel'
 import { AdminContentPanel } from '@/components/admin/AdminContentPanel'
+import { AdminAuditPanel } from '@/components/admin/AdminAuditPanel'
 import { AdminFieldBuilderPanel } from '@/components/admin/AdminFieldBuilderPanel'
 import { AdminGovernancePanel } from '@/components/admin/AdminGovernancePanel'
 import { AdminNotificationsReportingPanel } from '@/components/admin/AdminNotificationsReportingPanel'
@@ -52,7 +52,6 @@ const adminSections = [
   { id: 'planning', label: 'Planning' },
   { id: 'fields', label: 'Field builder' },
   { id: 'scoring', label: 'Scoring' },
-  { id: 'customization', label: 'Customization' },
   { id: 'alerts', label: 'Alert rules' },
   { id: 'timeline', label: 'Timeline' },
   { id: 'integrations', label: 'Integrations' },
@@ -62,12 +61,15 @@ const adminSections = [
   { id: 'retention', label: 'Retention' },
   { id: 'audit', label: 'Audit log' },
 ]
+const defaultAdminSection = 'users'
+const adminSectionIds = new Set(adminSections.map(section => section.id))
 
 const labels: Record<NotificationTrigger, string> = {
   timeline_mention: 'Timeline mention',
   timeline_comment: 'Timeline comment',
   escalation_assigned: 'Escalation assigned',
   account_stage_changed: 'Account stage changed',
+  account_stage_recommendation_reviewed: 'Account stage recommendation reviewed',
   score_dropped_rag: 'Score dropped RAG',
   handover_requested: 'Handover requested',
   sensitive_access_request: 'Sensitive access request',
@@ -105,7 +107,7 @@ export function Admin() {
   const [eventType, setEventType] = useState<TimelineEventType>('manual_note')
   const [module, setModule] = useState<TimelineModule>('manual')
   const activeSection = searchParams.get('section') ?? ''
-  const highlightedSection = activeSection || 'users'
+  const highlightedSection = activeSection && adminSectionIds.has(activeSection) ? activeSection : defaultAdminSection
   const activeTimelineTypes = configs.filter(config => config.active).length
   const connectedIntegrations = integrations.filter(config => config.status === 'connected').length
   const activeAlertRules = alertRules.filter(rule => rule.active).length
@@ -155,6 +157,13 @@ export function Admin() {
       active = false
     }
   }, [fallbackConfigs, token])
+
+  useEffect(() => {
+    if (!activeSection || adminSectionIds.has(activeSection)) return
+    const next = new URLSearchParams(searchParams)
+    next.set('section', defaultAdminSection)
+    setSearchParams(next, { replace: true })
+  }, [activeSection, searchParams, setSearchParams])
 
   function chooseSection(id: string) {
     const next = new URLSearchParams(searchParams)
@@ -295,11 +304,6 @@ export function Admin() {
               <ScoringEngineBuilder />
             </div>
           ) : null}
-          {highlightedSection === 'customization' ? (
-            <div id="customization" className="scroll-mt-24">
-              <AdminCustomizationPanel />
-            </div>
-          ) : null}
           {highlightedSection === 'alerts' ? (
             <div id="alerts" className="scroll-mt-24">
               <AlertRulesPanel />
@@ -417,17 +421,7 @@ export function Admin() {
             </div>
           ) : null}
           {highlightedSection === 'audit' ? (
-          <section id="audit" className="tk-card scroll-mt-24 p-5">
-            <h3 className="text-base font-semibold text-ink">Audit Log</h3>
-            <div className="mt-3 rounded-lg border border-surface-border p-3 text-sm text-ink-secondary">Timeline config reviewed by Admin.</div>
-            <div className="mt-2 rounded-lg border border-surface-border p-3 text-sm text-ink-secondary">Sensitive entry access filter enabled.</div>
-            <div className="mt-3 flex gap-2">
-              <button className="tk-button-secondary">
-                <Download className="h-4 w-4" />
-                CSV
-              </button>
-            </div>
-          </section>
+            <AdminAuditPanel />
           ) : null}
         </aside>
       </div>

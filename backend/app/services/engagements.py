@@ -45,7 +45,7 @@ def datetime_value(value: datetime | None) -> str | None:
 SOW_TERM_FIELDS = {"auto_renewal", "currency", "end_date", "service_lines", "source_links", "start_date", "value"}
 RENEWAL_DATE_FIELDS = {"notice_deadline", "notice_period_days", "renewal_date"}
 HEALTH_FIELDS = {"delivery_health", "health_status", "renewal_risk"}
-ACCOUNT_HEALTH_IMPACT_FIELDS = {"delivery_health", "health_status"}
+ACCOUNT_HEALTH_IMPACT_FIELDS = {"delivery_health", "health_status", "status"}
 
 
 class EngagementService:
@@ -205,7 +205,7 @@ class EngagementService:
         self._set_notice_deadline(engagement)
         after = self._engagement_audit_value(engagement)
         changed_fields = self._important_field_changes(before, after)
-        if "delivery_health" in changed_fields:
+        if "delivery_health" in changed_fields or ("status" in changed_fields and engagement.status == "active"):
             self._add_health_snapshot(engagement, current_user, is_dirty=False)
         if ACCOUNT_HEALTH_IMPACT_FIELDS.intersection(changed_fields):
             self._notify_account_health_impacted_by_engagement_change(account, engagement, current_user)

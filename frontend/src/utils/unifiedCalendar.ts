@@ -59,7 +59,7 @@ export function buildUnifiedCalendarItems(
       source: event,
     })),
     ...scoreTasks
-      .filter(task => task.status !== 'skipped')
+      .filter(task => task.status !== 'cancelled')
       .map((task): UnifiedCalendarItem => ({
         id: task.id,
         kind: 'score_activity',

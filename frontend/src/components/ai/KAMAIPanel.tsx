@@ -3,7 +3,9 @@ import * as Dialog from '@radix-ui/react-dialog'
 import { ArrowRight, BarChart3, Check, ChevronDown, FileSearch, History, Loader2, Search, Sparkles, X } from 'lucide-react'
 import { FormEvent, useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
+import { useAuth } from '@/contexts/AuthContext'
 import { useRole } from '@/hooks/useRole'
+import { runKamAiSearch } from '@/services/aiAssistance'
 import { AISearchResult, AISearchScope, AISearchState, runAISearch } from '@/services/aiSearch'
 import { searchDocumentChunks, SemanticDocumentChunk } from '@/services/semanticDocumentSearch'
 import { useAccountStore } from '@/stores/accountStore'
@@ -63,6 +65,7 @@ export function KAMAIPanel() {
   const [sourceControlsOpen, setSourceControlsOpen] = useState(false)
   const [historyOpen, setHistoryOpen] = useState(false)
   const user = useRole()
+  const { token } = useAuth()
   const bookKey = `assigned-book-${user.id}`
   const queryRuns = useAIStore(state => state.queryRuns[bookKey] ?? EMPTY_QUERY_RUNS)
   const addQueryRun = useAIStore(state => state.addQueryRun)
@@ -112,7 +115,15 @@ export function KAMAIPanel() {
       const forecast = shouldRenderForecast(trimmed) ? buildAssignedBookForecastResult(targetAccounts, targetOpportunities) : null
       const answer = forecast
         ? buildForecastAISearchResult(forecast, targetTimeline)
-        : await runAssignedBookAISearch(trimmed, targetAccounts, scopes, user, { timeline: timelineEntries, opportunities, accounts })
+        : await runBackendOrLocalAISearch({
+            token,
+            query: trimmed,
+            targetAccounts,
+            scopes,
+            searchDocuments,
+            user,
+            state: { timeline: timelineEntries, opportunities, accounts },
+          })
       const documentMatches = searchDocuments
         ? targetAccounts.flatMap(account =>
             searchDocumentChunks({
@@ -313,6 +324,39 @@ export function KAMAIPanel() {
       </Dialog.Portal>
     </Dialog.Root>
   )
+}
+
+async function runBackendOrLocalAISearch({
+  token,
+  query,
+  targetAccounts,
+  scopes,
+  searchDocuments,
+  user,
+  state,
+}: {
+  token: string | null
+  query: string
+  targetAccounts: Account[]
+  scopes: AISearchScope[]
+  searchDocuments: boolean
+  user: { id: string; role: UserRole }
+  state: AISearchState
+}) {
+  if (token) {
+    try {
+      return await runKamAiSearch(token, {
+        query,
+        accountId: targetAccounts.length === 1 ? targetAccounts[0].id : undefined,
+        scopes,
+        documentSearch: searchDocuments,
+        limit: 10,
+      })
+    } catch {
+      // Fall back to the local deterministic search so the panel remains usable during local backend restarts.
+    }
+  }
+  return runAssignedBookAISearch(query, targetAccounts, scopes, user, state)
 }
 
 function KAMAILoading() {

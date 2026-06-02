@@ -15,6 +15,7 @@ class Settings:
             "postgresql+psycopg://kam_app:kam_app_password@127.0.0.1:5433/kam_intelligence",
         )
         self.jwt_secret_key = os.getenv("JWT_SECRET_KEY", "replace-this-local-development-secret")
+        self.integration_credential_encryption_key = os.getenv("INTEGRATION_CREDENTIAL_ENCRYPTION_KEY", "")
         self.jwt_algorithm = os.getenv("JWT_ALGORITHM", "HS256")
         self.access_token_expire_minutes = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "1440"))
         self.reset_token_expire_minutes = int(os.getenv("RESET_TOKEN_EXPIRE_MINUTES", "30"))
@@ -51,8 +52,8 @@ class Settings:
         self.mail_enabled = os.getenv("MAIL_ENABLED", "false").lower() == "true"
         self.mail_send_during_tests = os.getenv("MAIL_SEND_DURING_TESTS", "false").lower() == "true"
         self.fathom_api_key = os.getenv("FATHOM_API_KEY", "")
-        self.fathom_base_url = os.getenv("FATHOM_BASE_URL", "https://api.fathom.video")
-        self.fathom_recordings_path = os.getenv("FATHOM_RECORDINGS_PATH", "/recordings")
+        self.fathom_base_url = os.getenv("FATHOM_BASE_URL", "https://api.fathom.ai")
+        self.fathom_recordings_path = os.getenv("FATHOM_RECORDINGS_PATH", "/external/v1/meetings/")
         self.fathom_webhook_secret = os.getenv("FATHOM_WEBHOOK_SECRET", "")
         self.timeline_retention_worker_enabled = os.getenv("TIMELINE_RETENTION_WORKER_ENABLED", "true").lower() == "true"
         self.timeline_retention_worker_initial_delay_seconds = int(os.getenv("TIMELINE_RETENTION_WORKER_INITIAL_DELAY_SECONDS", "60"))
@@ -60,6 +61,9 @@ class Settings:
         self.notifications_reporting_worker_enabled = os.getenv("NOTIFICATIONS_REPORTING_WORKER_ENABLED", "true").lower() == "true"
         self.notifications_reporting_worker_initial_delay_seconds = int(os.getenv("NOTIFICATIONS_REPORTING_WORKER_INITIAL_DELAY_SECONDS", "30"))
         self.notifications_reporting_worker_interval_seconds = int(os.getenv("NOTIFICATIONS_REPORTING_WORKER_INTERVAL_SECONDS", "300"))
+        self.integrations_worker_enabled = os.getenv("INTEGRATIONS_WORKER_ENABLED", "true").lower() == "true"
+        self.integrations_worker_initial_delay_seconds = int(os.getenv("INTEGRATIONS_WORKER_INITIAL_DELAY_SECONDS", "45"))
+        self.integrations_worker_interval_seconds = int(os.getenv("INTEGRATIONS_WORKER_INTERVAL_SECONDS", "300"))
 
 
 @lru_cache
