@@ -133,7 +133,7 @@ export interface SignalRecord {
   accountName: string
   engagementId?: string
   engagementName?: string
-  type: 'sow_expiry' | 'notice_window' | 'stale_kyc' | 'weak_metric' | 'stakeholder_gap' | 'escalation_sla'
+  type: 'sow_expiry' | 'notice_window' | 'renewal_date' | 'stale_kyc' | 'weak_metric' | 'stakeholder_gap' | 'escalation_sla'
   severity: SignalSeverity
   status: SignalStatus
   ownerId: string

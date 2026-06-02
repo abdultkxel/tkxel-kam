@@ -192,21 +192,44 @@ Make account health explainable and actionable by connecting metrics, weak signa
 - Completing tasks does not automatically improve health.
 - Existing executed playbooks retain original template version.
 
+## PRD and Frontend Review Additions
+
+- Account and Engagement scores must both be first-class scoring outputs; Engagement scores roll up into Account Health according to the active published metric configuration.
+- Seeded deterministic signal rule types must include SOW expiry, renewal date, notice-period deadline, stale KYC, weak metric, stakeholder gap, and escalation SLA signals.
+- Attention Center must answer "what needs attention today" and include SLA reminders, ownership, SOW expiry, renewal windows, notice-window tasks, signal lifecycle state, and recommended playbooks.
+- Playbook templates must capture objective, applicable signal types, weak metrics, activities, default owner rule, due-date rule, success criteria, skip rules, version, and active/inactive state.
+- Playbook recommendations must not create tasks until an AM selects and executes a template; execution must retain the template version used.
+- Ops Lead updates on assigned operational tasks must be captured in task history and account timeline where configured.
+- Unified calendar must merge governance events, score activities, renewal dates, SOW end dates, notice deadlines, and task due dates with filters for governance, score activities, renewal items, account, engagement, owner, and my items.
+- Optional AI explanations must use the approved AI/LLM Gateway only; AI output is advisory, source-backed, clearly labeled, and must not create authoritative scores, signals, playbooks, tasks, or lifecycle changes.
+- External integrations in this feature are limited to approved PRD integrations: Google Calendar for calendar context, CSAT for score input, and AI/LLM Gateway for advisory explanation. Any other source must be manual entry, uploaded/linked evidence, CSV/manual input, or future scope.
+- Frontend implementation must preserve and API-back the existing Account 360 Health tab, score calculator/history panels, Admin Scoring Engine Builder, Tasks lane board/Attention surface, Governance calendar toggles, and Playbook page. The existing Playbook content page should remain available while operational playbook template management is added.
+
+## Resolved Implementation Defaults
+
+- Default RAG thresholds are Green `75-100`, Amber `60-74`, and Red `0-59`. Existing legacy labels `healthy`, `warning`, and `critical` may be mapped to Green, Amber, and Red for compatibility.
+- Metric formulas must use a safe JSON/DSL expression format with allowlisted score inputs and operators only. Supported MVP operators are arithmetic `+`, `-`, `*`, `/`, comparison operators, `min`, `max`, `avg`, `sum`, `clamp`, and `coalesce`; arbitrary code execution/eval is forbidden.
+- Manual AM calculator submissions are score inputs, not direct authoritative overrides. A submission must include scope, account or engagement, calculator/metric mapping, selected values, submitter, timestamp, source/evidence when configured, and validation status.
+- Official score changes occur only when the scoring engine creates a snapshot from the active published metric version.
+- Signal statuses are `new`, `reviewed`, `accepted`, `dismissed`, `converted`, and `resolved`; dismissal requires a reason when configured and conversion requires a target type such as `task` or `playbook`.
+- Task statuses are `todo`, `in_progress`, `blocked`, `done`, and `skipped`; task priorities are `low`, `medium`, `high`, and `critical`.
+- Task completion requires outcome/evidence when the task source or template marks evidence as required.
+- Calendar dates are stored in UTC and rendered in the user's local timezone. The calendar API must require a date range and support lazy loading by range; recurring governance behavior remains owned by the governance module.
+- Bulk signal lifecycle updates are out of scope for the first implementation unless added in a later requirement.
+- Recalculation during metric publish must avoid rewriting existing snapshots: publish creates a new version, impacted records are recalculated or marked dirty, and historical snapshots keep their original version payload.
+- Duplicate active signals are unique by account, optional engagement, rule, source record, and condition key; duplicates should be merged or suppressed with audit metadata.
+- If a task or signal owner is deactivated, the item remains visible to authorized users and must be reassigned before owner-only lifecycle updates can proceed.
+
 ## Missing Requirements
 
-- Metric formula syntax and supported operators are not specified.
-- Manual score submission/calculator schema is not specified.
-- RAG threshold defaults are not specified.
-- Signal rule configuration model is not specified.
-- Task statuses and priority values are not fully enumerated.
-- Calendar recurrence behavior is not specified.
+- Exact persisted signal rule condition schema fields still need implementation-level definition.
+- Exact seeded default metric catalog and playbook template catalog must be chosen during implementation.
+- Exact CSAT source payload shape depends on the approved integration spec and may start with manual/CSV-backed score inputs.
 
 ## Ambiguous Requirements
 
-- "AM submits account scores" appears in workflow, but metric engine also calculates scores from data; manual score input boundaries need clarification.
-- Whether score-triggered improvement actions are tasks, playbook recommendations, or both is not fully specified.
-- Whether bulk signal lifecycle updates are allowed is not specified.
-- Which evidence is mandatory for task completion is configuration-dependent and undefined.
+- Whether score-triggered improvement actions should be displayed as direct task suggestions, playbook recommendations, or both is partially resolved as both: weak metrics recommend playbooks and may also expose approved activity suggestions, but tasks are created only after user selection.
+- Which task sources require evidence remains template/configuration-driven.
 
 ## Conflicting Requirements
 
@@ -250,3 +273,49 @@ Make account health explainable and actionable by connecting metrics, weak signa
 - Signals are deterministic and lifecycle-managed.
 - Playbooks require user selection.
 - Tasks and calendar items are searchable, filterable, sortable, paginated, and permission-aware.
+
+## Implementation Status
+
+### Completed Items
+
+- Database models, relationships, migration, and additive table initialization are implemented for scoring metric definitions/versions, manual score submissions, score snapshots, scoring jobs, signal rules/events, signals, playbook templates/versions/executions, tasks, task evidence, task history, account health rollups, and engagement health snapshots.
+- Backend repository and service layers are implemented for scoring, signals/attention, playbooks, tasks, evidence, and unified calendar workflows.
+- RBAC is implemented for scoring, signals/attention, and playbooks/tasks/calendar modules. Feature tests cover admin configuration denial for non-admin users and account-level authorization denial for unauthorized recalculation.
+- Metric definition list/create/update/validate/publish/version-history APIs are implemented with formula safety validation, threshold validation, audit logging, search/filter/sort, and pagination.
+- Published account metric definitions are used during account scoring for active weights, thresholds, formula-derived drivers, source context, RAG status, reason codes, snapshots, trend, freshness, audit, and account timeline entries.
+- Account score recalculation supports manual calculator submissions as score inputs, persists snapshots, records jobs, updates rollups, and can trigger deterministic signal evaluation.
+- Deterministic seeded signal types are implemented for stale KYC, weak metric, stakeholder gap, SOW expiry, renewal date, notice window, and escalation SLA.
+- Signal list, Attention Center, signal evidence, advisory AI explanation, reviewed lifecycle update, signal-to-task conversion, and recommended playbooks are implemented with account authorization checks and pagination/filter/sort support where applicable.
+- Admin signal-rule list/create/update APIs are implemented with RBAC, validation, audit logging, version increments on evaluation-impacting changes, and pagination.
+- Playbook template list and explicit playbook execution are implemented and tested. Execution creates tasks only after user selection and stores the template version used.
+- Task list/create/update/evidence APIs are implemented with owner/account authorization, validation, task history, audit logging, source links, evidence, outcome/skip requirements, pagination, filtering, and sorting.
+- Authenticated frontend task creation and lifecycle changes now persist through backend APIs only; local task fallback remains only for unauthenticated/mock mode.
+- Task creation, signal-created tasks, task completion, and skipped tasks write database-backed timeline entries.
+- Unified calendar API merges task due dates, SOW expiry, renewal dates, and notice deadlines with account/owner/date filters and pagination in feature tests. Governance-event merge support is implemented in the same calendar service.
+- Frontend API backing is implemented for Account 360 score recalculation/history, Admin Scoring Engine Builder, Tasks board/Attention surface, Playbook page, and related scoring/signal/task service calls. Feature tests cover the Tasks page backend load/error/update flow.
+- Loading, empty, and error states are implemented for the main API-backed scoring/task/playbook frontend surfaces; direct frontend regression coverage currently exists for the Tasks page load and error states.
+- Automated verification passed for this feature using:
+  - `DATABASE_URL=sqlite:////tmp/kam_lifespan_test.db .venv/bin/pytest tests/test_scoring_signals_playbooks_tasks.py -q`
+  - `npm test -- Tasks.test.tsx`
+  - `npm run build`
+
+### Remaining Items
+
+- A real background scheduler/worker for recurring scheduled recalculation is not implemented. The current implementation supports manual/event/scheduled job records and synchronous local execution through the scoring job API.
+- Engagement score APIs and persisted engagement score snapshots are implemented, but direct endpoint regression coverage should be added before marking the engagement scoring flow fully complete.
+- Playbook template create/update APIs are implemented, but direct regression coverage should be added before marking template authoring fully complete.
+- Signal rule CRUD is implemented, but the persisted `condition_json` schema is still MVP-level. The evaluator currently handles the seeded deterministic rule families rather than a fully generic condition engine for arbitrary admin-authored rule JSON.
+- Signal-to-playbook conversion is implemented through the conversion API, but direct regression coverage should be added before marking that conversion path fully complete.
+- A real AI/LLM Gateway adapter is not implemented for signal explanations. Current AI explanation behavior is a local advisory adapter and does not mutate authoritative scores, signals, playbooks, tasks, or statuses.
+- Google Calendar and CSAT integrations are not implemented in this feature. Calendar currently merges internal governance/task/engagement dates; CSAT starts as manual/calculator-backed score input.
+- Direct automated tests are still needed for dismissal reason enforcement, inactive playbook execution rejection, engagement score recalculation endpoints, formula-change snapshot immutability, task completion not improving health automatically, source-linked task retention after signal resolution, deactivated owner reassignment handling, and calendar date-range lazy loading.
+- Full backend-suite verification requires the configured local Postgres service at `127.0.0.1:5433` to be running. The feature-specific backend tests passed with a temporary SQLite lifespan database because the default local Postgres was unavailable during verification.
+- Frontend behavioral tests currently cover the Tasks page loading/error/update flow. Additional component tests should be added for Admin Scoring Engine Builder, Account 360 health recalculation/history, Playbook page, and calendar views.
+
+### Technical Notes
+
+- Health changes are authoritative only when a scoring snapshot is created by the scoring engine. Task completion, playbook execution, and AI explanations do not directly improve health scores.
+- Historical score snapshots are stored independently from later metric configuration changes. Published metric versions are referenced in snapshot context and must not be rewritten retroactively.
+- Approved signal generation remains deterministic; AI output is advisory and source-backed.
+- Field Builder does not currently affect scoring metrics, signal rules, playbook templates, tasks, or calendar items. Existing Field Builder runtime modules remain unaffected. If custom fields are later required for this feature, module registrations and custom field value persistence must be added explicitly.
+- The frontend build passes with the existing Vite large-chunk warning; no feature-specific build failure remains.

@@ -20,6 +20,8 @@ from app.routers import (
     onboarding,
     opportunities,
     playbooks_tasks,
+    scoring,
+    signals,
     stakeholders,
     users,
 )
@@ -90,6 +92,14 @@ openapi_tags = [
         "description": "Opportunity CRUD, pipeline board/list tracking, stage movement, local action items, timeline history, and opportunity type taxonomy APIs.",
     },
     {
+        "name": "Scoring Engine",
+        "description": "Configurable metric definitions, formula validation, score jobs, account/engagement score snapshots, and health recalculation APIs.",
+    },
+    {
+        "name": "Signals and Attention Center",
+        "description": "Deterministic signal evaluation, evidence, lifecycle status updates, advisory explanations, recommendations, and attention-center APIs.",
+    },
+    {
         "name": "KYC and AI Extraction",
         "description": "AI-assisted KYC drafts, review/approval, immutable snapshots, freshness, and agent workstream APIs.",
     },
@@ -131,6 +141,8 @@ app.include_router(governance.router)
 app.include_router(playbooks_tasks.router)
 app.include_router(stakeholders.router)
 app.include_router(opportunities.router)
+app.include_router(scoring.router)
+app.include_router(signals.router)
 app.include_router(kyc.config_router)
 app.include_router(kyc.router)
 

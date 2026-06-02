@@ -205,6 +205,9 @@ class Account(Base):
     kyc_drafts: Mapped[list["KycDraft"]] = relationship(back_populates="account", cascade="all, delete-orphan")
     kyc_snapshots: Mapped[list["KycSnapshot"]] = relationship(back_populates="account", cascade="all, delete-orphan")
     kyc_agent_runs: Mapped[list["KycAgentRun"]] = relationship(back_populates="account", cascade="all, delete-orphan")
+    score_snapshots: Mapped[list["ScoreSnapshot"]] = relationship(back_populates="account", cascade="all, delete-orphan")
+    signals: Mapped[list["Signal"]] = relationship(back_populates="account", cascade="all, delete-orphan")
+    tasks: Mapped[list["Task"]] = relationship(back_populates="account", cascade="all, delete-orphan")
 
 
 class AccountOwner(Base):
@@ -540,6 +543,9 @@ class Engagement(Base):
     stakeholders: Mapped[list["Stakeholder"]] = relationship(back_populates="engagement")
     governance_events: Mapped[list["GovernanceEvent"]] = relationship(back_populates="engagement")
     opportunities: Mapped[list["Opportunity"]] = relationship(back_populates="engagement")
+    score_snapshots: Mapped[list["ScoreSnapshot"]] = relationship(back_populates="engagement")
+    signals: Mapped[list["Signal"]] = relationship(back_populates="engagement")
+    tasks: Mapped[list["Task"]] = relationship(back_populates="engagement")
 
     @property
     def source_document_ids(self) -> list[str]:
@@ -854,6 +860,190 @@ class AccountHealthRollup(Base):
     contributions: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
     metric_version: Mapped[str] = mapped_column(String(40), nullable=False, default="account-rollup-v1")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utc_now)
+
+
+class ScoringMetricDefinition(Base):
+    __tablename__ = "scoring_metric_definitions"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid4()))
+    slug: Mapped[str] = mapped_column(String(120), unique=True, index=True, nullable=False)
+    name: Mapped[str] = mapped_column(String(180), index=True, nullable=False)
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    scope: Mapped[str] = mapped_column(String(40), index=True, nullable=False, default="account")
+    weight: Mapped[int] = mapped_column(Integer, nullable=False, default=20)
+    thresholds: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    formula: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    freshness_rule: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    owner_role: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    source: Mapped[str] = mapped_column(String(80), nullable=False, default="manual")
+    effective_date: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    status: Mapped[str] = mapped_column(String(40), index=True, nullable=False, default="draft")
+    is_active: Mapped[bool] = mapped_column(Boolean, index=True, nullable=False, default=True)
+    current_version: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    created_by_id: Mapped[str | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    updated_by_id: Mapped[str | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utc_now, onupdate=utc_now)
+
+    versions: Mapped[list["ScoringMetricVersion"]] = relationship(back_populates="metric", cascade="all, delete-orphan")
+
+
+class ScoringMetricVersion(Base):
+    __tablename__ = "scoring_metric_versions"
+    __table_args__ = (UniqueConstraint("metric_id", "version", name="uq_scoring_metric_versions_metric_version"),)
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid4()))
+    metric_id: Mapped[str] = mapped_column(ForeignKey("scoring_metric_definitions.id", ondelete="CASCADE"), index=True, nullable=False)
+    version: Mapped[int] = mapped_column(Integer, nullable=False)
+    config_json: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    published_by_id: Mapped[str | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    published_by_name: Mapped[str] = mapped_column(String(160), nullable=False)
+    published_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True, nullable=False, default=utc_now)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utc_now)
+
+    metric: Mapped[ScoringMetricDefinition] = relationship(back_populates="versions")
+
+
+class ManualScoreSubmission(Base):
+    __tablename__ = "manual_score_submissions"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid4()))
+    account_id: Mapped[str] = mapped_column(ForeignKey("accounts.id", ondelete="CASCADE"), index=True, nullable=False)
+    engagement_id: Mapped[str | None] = mapped_column(ForeignKey("engagements.id", ondelete="SET NULL"), index=True, nullable=True)
+    scope: Mapped[str] = mapped_column(String(40), index=True, nullable=False, default="account")
+    calculator_id: Mapped[str] = mapped_column(String(80), index=True, nullable=False)
+    values_json: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    evidence_json: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    validation_status: Mapped[str] = mapped_column(String(40), index=True, nullable=False, default="validated")
+    submitted_by_id: Mapped[str | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    submitted_by_name: Mapped[str] = mapped_column(String(160), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utc_now)
+
+
+class ScoreSnapshot(Base):
+    __tablename__ = "score_snapshots"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid4()))
+    account_id: Mapped[str] = mapped_column(ForeignKey("accounts.id", ondelete="CASCADE"), index=True, nullable=False)
+    engagement_id: Mapped[str | None] = mapped_column(ForeignKey("engagements.id", ondelete="SET NULL"), index=True, nullable=True)
+    job_id: Mapped[str | None] = mapped_column(ForeignKey("scoring_jobs.id", ondelete="SET NULL"), index=True, nullable=True)
+    scope: Mapped[str] = mapped_column(String(40), index=True, nullable=False, default="account")
+    overall: Mapped[int] = mapped_column(Integer, nullable=False)
+    rag_status: Mapped[str] = mapped_column(String(40), index=True, nullable=False)
+    drivers: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    reason_codes: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    metric_version: Mapped[str] = mapped_column(String(80), nullable=False, default="scoring-v1")
+    freshness_status: Mapped[str] = mapped_column(String(40), index=True, nullable=False, default="fresh")
+    is_dirty: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    trend: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    status: Mapped[str] = mapped_column(String(40), index=True, nullable=False, default="complete")
+    source_context: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    calculated_by_id: Mapped[str | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    calculated_by_name: Mapped[str | None] = mapped_column(String(160), nullable=True)
+    calculated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True, nullable=False, default=utc_now)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utc_now)
+
+    account: Mapped[Account] = relationship(back_populates="score_snapshots")
+    engagement: Mapped[Engagement | None] = relationship(back_populates="score_snapshots")
+    job: Mapped["ScoringJob | None"] = relationship(back_populates="snapshots")
+
+
+class ScoringJob(Base):
+    __tablename__ = "scoring_jobs"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid4()))
+    job_type: Mapped[str] = mapped_column(String(40), index=True, nullable=False, default="manual")
+    scope: Mapped[str] = mapped_column(String(40), index=True, nullable=False, default="account")
+    account_id: Mapped[str | None] = mapped_column(ForeignKey("accounts.id", ondelete="CASCADE"), index=True, nullable=True)
+    engagement_id: Mapped[str | None] = mapped_column(ForeignKey("engagements.id", ondelete="SET NULL"), index=True, nullable=True)
+    status: Mapped[str] = mapped_column(String(40), index=True, nullable=False, default="queued")
+    trigger_source: Mapped[str] = mapped_column(String(120), index=True, nullable=False, default="manual")
+    error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    result_json: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    created_by_id: Mapped[str | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    created_by_name: Mapped[str | None] = mapped_column(String(160), nullable=True)
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utc_now, onupdate=utc_now)
+
+    snapshots: Mapped[list[ScoreSnapshot]] = relationship(back_populates="job")
+
+
+class SignalRule(Base):
+    __tablename__ = "signal_rules"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid4()))
+    slug: Mapped[str] = mapped_column(String(120), unique=True, index=True, nullable=False)
+    name: Mapped[str] = mapped_column(String(180), index=True, nullable=False)
+    signal_type: Mapped[str] = mapped_column(String(80), index=True, nullable=False)
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    severity: Mapped[str] = mapped_column(String(40), index=True, nullable=False, default="warning")
+    condition_json: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    owner_rule_json: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    sla_rule_json: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    is_active: Mapped[bool] = mapped_column(Boolean, index=True, nullable=False, default=True)
+    current_version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    created_by_id: Mapped[str | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    updated_by_id: Mapped[str | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utc_now, onupdate=utc_now)
+
+    signals: Mapped[list["Signal"]] = relationship(back_populates="rule")
+
+
+class Signal(Base):
+    __tablename__ = "signals"
+    __table_args__ = (
+        UniqueConstraint("account_id", "engagement_id", "rule_id", "source_record_id", "condition_key", name="uq_signals_rule_source_condition"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid4()))
+    account_id: Mapped[str] = mapped_column(ForeignKey("accounts.id", ondelete="CASCADE"), index=True, nullable=False)
+    engagement_id: Mapped[str | None] = mapped_column(ForeignKey("engagements.id", ondelete="SET NULL"), index=True, nullable=True)
+    rule_id: Mapped[str | None] = mapped_column(ForeignKey("signal_rules.id", ondelete="SET NULL"), index=True, nullable=True)
+    signal_type: Mapped[str] = mapped_column(String(80), index=True, nullable=False)
+    severity: Mapped[str] = mapped_column(String(40), index=True, nullable=False)
+    status: Mapped[str] = mapped_column(String(40), index=True, nullable=False, default="new")
+    owner_id: Mapped[str | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), index=True, nullable=True)
+    owner_name: Mapped[str | None] = mapped_column(String(160), nullable=True)
+    title: Mapped[str] = mapped_column(String(220), index=True, nullable=False)
+    detail: Mapped[str] = mapped_column(Text, nullable=False)
+    reason_codes: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    evidence_json: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    citations_json: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    source_record_type: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    source_record_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    source_record_route: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    confidence: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    condition_key: Mapped[str | None] = mapped_column(String(160), nullable=True)
+    due_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), index=True, nullable=True)
+    resolved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    dismissed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utc_now, onupdate=utc_now)
+
+    account: Mapped[Account] = relationship(back_populates="signals")
+    engagement: Mapped[Engagement | None] = relationship(back_populates="signals")
+    rule: Mapped[SignalRule | None] = relationship(back_populates="signals")
+    events: Mapped[list["SignalEvent"]] = relationship(back_populates="signal", cascade="all, delete-orphan")
+
+
+class SignalEvent(Base):
+    __tablename__ = "signal_events"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid4()))
+    signal_id: Mapped[str] = mapped_column(ForeignKey("signals.id", ondelete="CASCADE"), index=True, nullable=False)
+    event_type: Mapped[str] = mapped_column(String(80), index=True, nullable=False)
+    previous_status: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    new_status: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    actor_id: Mapped[str | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    actor_name: Mapped[str | None] = mapped_column(String(160), nullable=True)
+    reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    metadata_json: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utc_now)
+
+    signal: Mapped[Signal] = relationship(back_populates="events")
 
 
 class TimelineEntry(Base):

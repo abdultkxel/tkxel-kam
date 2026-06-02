@@ -57,6 +57,134 @@ _TABLE_BACKFILL_DEFAULTS: dict[str, dict[str, Any]] = {
         "is_immutable": True,
         "created_at": lambda: datetime.now(timezone.utc),
     },
+    "scoring_metric_definitions": {
+        "weight": 20,
+        "thresholds": {},
+        "formula": {},
+        "freshness_rule": {},
+        "source": "manual",
+        "status": "draft",
+        "is_active": True,
+        "current_version": 0,
+        "created_at": lambda: datetime.now(timezone.utc),
+        "updated_at": lambda: datetime.now(timezone.utc),
+    },
+    "scoring_metric_versions": {
+        "config_json": {},
+        "published_by_name": "System",
+        "published_at": lambda: datetime.now(timezone.utc),
+        "created_at": lambda: datetime.now(timezone.utc),
+    },
+    "manual_score_submissions": {
+        "scope": "account",
+        "values_json": {},
+        "evidence_json": [],
+        "validation_status": "validated",
+        "submitted_by_name": "System",
+        "created_at": lambda: datetime.now(timezone.utc),
+    },
+    "score_snapshots": {
+        "scope": "account",
+        "overall": 0,
+        "rag_status": "amber",
+        "drivers": [],
+        "reason_codes": [],
+        "metric_version": "scoring-v1",
+        "freshness_status": "fresh",
+        "is_dirty": False,
+        "trend": 0,
+        "status": "complete",
+        "source_context": {},
+        "calculated_at": lambda: datetime.now(timezone.utc),
+        "created_at": lambda: datetime.now(timezone.utc),
+    },
+    "scoring_jobs": {
+        "job_type": "manual",
+        "scope": "account",
+        "status": "queued",
+        "trigger_source": "manual",
+        "result_json": {},
+        "created_at": lambda: datetime.now(timezone.utc),
+        "updated_at": lambda: datetime.now(timezone.utc),
+    },
+    "signal_rules": {
+        "severity": "warning",
+        "condition_json": {},
+        "owner_rule_json": {},
+        "sla_rule_json": {},
+        "is_active": True,
+        "current_version": 1,
+        "created_at": lambda: datetime.now(timezone.utc),
+        "updated_at": lambda: datetime.now(timezone.utc),
+    },
+    "signals": {
+        "severity": "warning",
+        "status": "new",
+        "detail": "",
+        "reason_codes": [],
+        "evidence_json": [],
+        "citations_json": [],
+        "created_at": lambda: datetime.now(timezone.utc),
+        "updated_at": lambda: datetime.now(timezone.utc),
+    },
+    "signal_events": {
+        "event_type": "status_change",
+        "metadata_json": {},
+        "created_at": lambda: datetime.now(timezone.utc),
+    },
+    "playbook_templates": {
+        "objective": "",
+        "description": "",
+        "signal_types": [],
+        "weak_metrics": [],
+        "default_owner_rule": "account_primary_am",
+        "due_date_rule": {},
+        "success_criteria": [],
+        "skip_rules": [],
+        "version": 1,
+        "is_active": True,
+        "created_at": lambda: datetime.now(timezone.utc),
+        "updated_at": lambda: datetime.now(timezone.utc),
+    },
+    "playbook_template_activities": {
+        "title": "Playbook activity",
+        "owner_rule": "account_primary_am",
+        "due_offset_days": 7,
+        "priority": "medium",
+        "success_criteria": [],
+        "skip_allowed": True,
+        "requires_evidence": False,
+        "sort_order": 0,
+        "created_at": lambda: datetime.now(timezone.utc),
+        "updated_at": lambda: datetime.now(timezone.utc),
+    },
+    "playbook_executions": {
+        "template_name_snapshot": "Playbook",
+        "template_version_snapshot": 1,
+        "status": "active",
+        "skipped_activity_ids": [],
+        "skip_reasons": {},
+        "template_snapshot": {},
+        "created_by_name": "System",
+        "created_at": lambda: datetime.now(timezone.utc),
+        "updated_at": lambda: datetime.now(timezone.utc),
+    },
+    "tasks": {
+        "source_type": "manual",
+        "due_at": lambda: datetime.now(timezone.utc),
+        "status": "todo",
+        "priority": "medium",
+        "owner_name": "System",
+        "success_criteria": [],
+        "requires_evidence": False,
+        "created_at": lambda: datetime.now(timezone.utc),
+        "updated_at": lambda: datetime.now(timezone.utc),
+    },
+    "task_evidence": {
+        "evidence_type": "note",
+        "created_by_name": "System",
+        "created_at": lambda: datetime.now(timezone.utc),
+    },
     "stakeholders": {
         "role": "operational_poc",
         "influence": "medium",
@@ -87,7 +215,37 @@ _TABLE_BACKFILL_DEFAULTS: dict[str, dict[str, Any]] = {
         "updated_at": lambda: datetime.now(timezone.utc),
     },
 }
-_JSON_BACKFILL_COLUMNS = {"service_lines", "source_links", "risks", "drivers", "contributions", "evidence"}
+_JSON_BACKFILL_COLUMNS = {
+    "service_lines",
+    "source_links",
+    "risks",
+    "drivers",
+    "contributions",
+    "thresholds",
+    "formula",
+    "freshness_rule",
+    "config_json",
+    "values_json",
+    "evidence_json",
+    "reason_codes",
+    "source_context",
+    "result_json",
+    "condition_json",
+    "owner_rule_json",
+    "sla_rule_json",
+    "metadata_json",
+    "signal_types",
+    "weak_metrics",
+    "activities_json",
+    "due_date_rule",
+    "success_criteria",
+    "skip_rules",
+    "skipped_activity_ids",
+    "skip_reasons",
+    "template_snapshot",
+    "citations_json",
+    "evidence",
+}
 _LEGACY_TABLE_BACKFILL_DEFAULTS: dict[str, dict[str, Any]] = {
     "engagements": {
         "source_document_links": [],
@@ -135,7 +293,45 @@ def init_db() -> None:
 
     Base.metadata.create_all(bind=engine)
     apply_additive_migrations()
+    sync_playbooks_tasks_schema()
     sync_legacy_governance_schema()
+
+
+def sync_playbooks_tasks_schema() -> None:
+    """Convert older local playbook/task columns that auto-migration cannot type-change."""
+    if engine.dialect.name != "postgresql":
+        return
+
+    inspector = inspect(engine)
+    if not inspector.has_table("playbook_templates"):
+        return
+
+    columns = {column["name"]: column for column in inspector.get_columns("playbook_templates")}
+    owner_rule_column = columns.get("default_owner_rule")
+    if owner_rule_column is None or "json" not in str(owner_rule_column.get("type", "")).lower():
+        return
+
+    with engine.begin() as connection:
+        connection.execute(
+            text(
+                """
+                ALTER TABLE playbook_templates
+                ALTER COLUMN default_owner_rule DROP DEFAULT,
+                ALTER COLUMN default_owner_rule TYPE VARCHAR(80)
+                USING CASE
+                    WHEN default_owner_rule IS NULL THEN 'account_primary_am'
+                    WHEN jsonb_typeof(default_owner_rule::jsonb) = 'string' THEN trim(both '"' from default_owner_rule::text)
+                    WHEN default_owner_rule::jsonb ? 'default' THEN
+                        CASE
+                            WHEN default_owner_rule::jsonb ->> 'default' = 'primary_am' THEN 'account_primary_am'
+                            ELSE default_owner_rule::jsonb ->> 'default'
+                        END
+                    ELSE 'account_primary_am'
+                END,
+                ALTER COLUMN default_owner_rule SET DEFAULT 'account_primary_am'
+                """
+            )
+        )
 
 
 def sync_legacy_governance_schema() -> None:
@@ -214,6 +410,19 @@ def apply_additive_migrations() -> None:
         AccountHealthRollup,
         Engagement,
         EngagementHealthSnapshot,
+        ManualScoreSubmission,
+        PlaybookExecution,
+        PlaybookTemplate,
+        PlaybookTemplateActivity,
+        ScoreSnapshot,
+        ScoringJob,
+        ScoringMetricDefinition,
+        ScoringMetricVersion,
+        Signal,
+        SignalEvent,
+        SignalRule,
+        Task,
+        TaskEvidence,
         Stakeholder,
         StakeholderCoverageGap,
         StakeholderInteraction,
@@ -226,6 +435,19 @@ def apply_additive_migrations() -> None:
             EngagementHealthSnapshot.__table__,
             AccountHealthRollup.__table__,
             TimelineEntry.__table__,
+            ScoringMetricDefinition.__table__,
+            ScoringMetricVersion.__table__,
+            ManualScoreSubmission.__table__,
+            ScoreSnapshot.__table__,
+            ScoringJob.__table__,
+            SignalRule.__table__,
+            Signal.__table__,
+            SignalEvent.__table__,
+            PlaybookTemplate.__table__,
+            PlaybookTemplateActivity.__table__,
+            PlaybookExecution.__table__,
+            Task.__table__,
+            TaskEvidence.__table__,
             Stakeholder.__table__,
             StakeholderInteraction.__table__,
             StakeholderCoverageGap.__table__,

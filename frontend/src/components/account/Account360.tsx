@@ -19,7 +19,9 @@ import { EmptyState } from '@/components/ui/EmptyState'
 import { TimelineFeed } from '@/components/timeline/TimelineFeed'
 import { HandoverSummary } from '@/components/timeline/HandoverSummary'
 import { AddOpportunityDialog, OpportunityDetailDialog, type OwnerOption } from '@/pages/Opportunities'
+import { useAuth } from '@/contexts/AuthContext'
 import { useRole } from '@/hooks/useRole'
+import { recalculateAccountScore, ScoreRead } from '@/services/scoringSignalsTasks'
 import { useAccountStore } from '@/stores/accountStore'
 import { useAlertStore } from '@/stores/alertStore'
 import { useGovernanceStore } from '@/stores/governanceStore'
@@ -39,6 +41,7 @@ import { formatCompactCurrency, formatCurrency, formatDate, formatRelative } fro
 const tabs = ['Overview', 'Engagements', 'Stakeholders', 'KYC', 'Health', 'Stage', 'Opportunities', 'Education', 'Escalation', 'Governance', 'Notes', 'Timeline', 'Documents']
 
 export function Account360({ account }: { account: Account }) {
+  const { token } = useAuth()
   const user = useRole()
   const [searchParams, setSearchParams] = useSearchParams()
   const [handoverOpen, setHandoverOpen] = useState(false)
@@ -124,6 +127,17 @@ export function Account360({ account }: { account: Account }) {
     return Array.from(options.values()).sort((a, b) => a.name.localeCompare(b.name))
   }, [account.ownerEmail, account.ownerId, account.ownerName, user.email, user.id, user.name])
 
+  function healthFromScore(score: ScoreRead) {
+    const scoreByKey = Object.fromEntries(score.drivers.map(driver => [driver.key, driver.score]))
+    return {
+      overall: score.overall,
+      relationship: Number(scoreByKey.relationship ?? account.health.relationship),
+      usage: Number(scoreByKey.usage ?? account.health.usage),
+      delivery: Number(scoreByKey.delivery ?? account.health.delivery),
+      commercial: Number(scoreByKey.commercial ?? account.health.commercial),
+    }
+  }
+
   useEffect(() => {
     setActiveAccountId(account.id)
   }, [account.id, setActiveAccountId])
@@ -144,80 +158,93 @@ export function Account360({ account }: { account: Account }) {
   async function recalcHealth() {
     setSavingHealth(true)
     const before = { ...account.health, scoringVersion: 'v1.3' }
-    const after = {
-      overall: Math.min(100, account.health.overall + 3),
-      relationship: Math.min(100, account.health.relationship + 2),
-      usage: Math.min(100, account.health.usage + 4),
-      delivery: account.health.delivery,
-      commercial: Math.min(100, account.health.commercial + 2),
-      scoringVersion: 'v1.3',
+    try {
+      if (!token) throw new Error('You must be logged in to recalculate health')
+      const score = await recalculateAccountScore(token, account.id, { trigger_source: 'account_health_tab', include_signal_evaluation: true })
+      const after = { ...healthFromScore(score), scoringVersion: score.metric_version }
+      setHealth(account.id, after)
+      const entry = emit.scoreChanged(account.id, user.id, user.name, before, after, score.metric_version)
+      addScoreSnapshot({
+        id: score.latest_snapshot?.id ?? `score-${nanoid(8)}`,
+        accountId: account.id,
+        timestamp: score.latest_snapshot?.calculated_at ?? entry.timestamp,
+        overall: after.overall,
+        dimensions: {
+          relationship: after.relationship,
+          usage: after.usage,
+          delivery: after.delivery,
+          commercial: after.commercial,
+        },
+        calculatorVersion: score.metric_version,
+        changedBy: user.id,
+        changedByName: score.latest_snapshot?.calculated_by_name ?? user.name,
+        triggerEntryId: entry.id,
+      })
+      evaluateAccount({ ...account, health: after }, [entry, ...entries])
+      toast.success('Health score recalculated')
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Health score recalculation failed')
+    } finally {
+      setSavingHealth(false)
     }
-    await new Promise(resolve => window.setTimeout(resolve, 450))
-    setHealth(account.id, after)
-    const entry = emit.scoreChanged(account.id, user.id, user.name, before, after, 'v1.3')
-    addScoreSnapshot({
-      id: `score-${nanoid(8)}`,
-      accountId: account.id,
-      timestamp: entry.timestamp,
-      overall: after.overall,
-      dimensions: {
-        relationship: after.relationship,
-        usage: after.usage,
-        delivery: after.delivery,
-        commercial: after.commercial,
-      },
-      calculatorVersion: 'v1.3',
-      changedBy: user.id,
-      changedByName: user.name,
-      triggerEntryId: entry.id,
-    })
-    evaluateAccount({ ...account, health: after }, [entry, ...entries])
-    setSavingHealth(false)
-    toast.success('Health score recalculated')
   }
 
   async function applyCalculatorScores(summary: ScoreCalculatorSummary) {
     setSavingHealth(true)
     const before = { ...account.health, scoringVersion: 'v1.3' }
-    const after = summary.platformHealth
-    const afterValue = {
-      ...after,
-      scoringVersion: 'v1.3',
-      calculatorBreakdown: {
-        relationship: summary.relationship,
-        contract: summary.contract,
-        resource: summary.resource,
-        csat: summary.csat,
-        risk: summary.risk,
-        overallLegacyScore: summary.overallLegacyScore,
-        legacyOverall: summary.legacyOverall,
-        serviceCoverage: summary.serviceCoverage,
-        selectedServiceLines: summary.selectedServiceLines,
-        activityEvidence: summary.activityEvidence,
-      },
+    try {
+      if (!token) throw new Error('You must be logged in to save calculator scores')
+      const score = await recalculateAccountScore(token, account.id, {
+        trigger_source: 'score_calculator',
+        include_signal_evaluation: true,
+        manual_submission: {
+          calculator_id: 'account_health',
+          values: summary.platformHealth,
+          evidence: summary.activityEvidence,
+        },
+      })
+      const after = healthFromScore(score)
+      const afterValue = {
+        ...after,
+        scoringVersion: score.metric_version,
+        calculatorBreakdown: {
+          relationship: summary.relationship,
+          contract: summary.contract,
+          resource: summary.resource,
+          csat: summary.csat,
+          risk: summary.risk,
+          overallLegacyScore: summary.overallLegacyScore,
+          legacyOverall: summary.legacyOverall,
+          serviceCoverage: summary.serviceCoverage,
+          selectedServiceLines: summary.selectedServiceLines,
+          activityEvidence: summary.activityEvidence,
+        },
+      }
+      setHealth(account.id, after)
+      const entry = emit.scoreChanged(account.id, user.id, user.name, before, afterValue, score.metric_version)
+      addScoreSnapshot({
+        id: score.latest_snapshot?.id ?? `score-${nanoid(8)}`,
+        accountId: account.id,
+        timestamp: score.latest_snapshot?.calculated_at ?? entry.timestamp,
+        overall: after.overall,
+        dimensions: {
+          relationship: after.relationship,
+          usage: after.usage,
+          delivery: after.delivery,
+          commercial: after.commercial,
+        },
+        calculatorVersion: score.metric_version,
+        changedBy: user.id,
+        changedByName: score.latest_snapshot?.calculated_by_name ?? user.name,
+        triggerEntryId: entry.id,
+      })
+      evaluateAccount({ ...account, health: after }, [entry, ...entries])
+      toast.success('Calculator scores saved')
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Calculator scores could not be saved')
+    } finally {
+      setSavingHealth(false)
     }
-    await new Promise(resolve => window.setTimeout(resolve, 450))
-    setHealth(account.id, after)
-    const entry = emit.scoreChanged(account.id, user.id, user.name, before, afterValue, 'v1.3')
-    addScoreSnapshot({
-      id: `score-${nanoid(8)}`,
-      accountId: account.id,
-      timestamp: entry.timestamp,
-      overall: after.overall,
-      dimensions: {
-        relationship: after.relationship,
-        usage: after.usage,
-        delivery: after.delivery,
-        commercial: after.commercial,
-      },
-      calculatorVersion: 'v1.3',
-      changedBy: user.id,
-      changedByName: user.name,
-      triggerEntryId: entry.id,
-    })
-    evaluateAccount({ ...account, health: after }, [entry, ...entries])
-    setSavingHealth(false)
-    toast.success('Calculator scores saved')
   }
 
   async function transitionStage() {

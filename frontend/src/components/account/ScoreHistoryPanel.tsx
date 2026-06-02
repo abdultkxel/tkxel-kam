@@ -1,6 +1,8 @@
 import { GitCompare, LineChart } from 'lucide-react'
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
+import { useAuth } from '@/contexts/AuthContext'
+import { listScoreSnapshots } from '@/services/scoringSignalsTasks'
 import { useScoreStore } from '@/stores/scoreStore'
 import { ScoreSnapshot } from '@/types/account'
 import { cn } from '@/utils/cn'
@@ -12,14 +14,53 @@ function rowDelta(a: number, b: number) {
 }
 
 export function ScoreHistoryPanel({ accountId }: { accountId: string }) {
+  const { token } = useAuth()
   const snapshots = useScoreStore(state => state.snapshots)
+  const [remoteSnapshots, setRemoteSnapshots] = useState<ScoreSnapshot[]>([])
+  const [loading, setLoading] = useState(Boolean(token))
+  const [error, setError] = useState('')
   const accountSnapshots = useMemo(
-    () => snapshots.filter(snapshot => snapshot.accountId === accountId).sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()),
-    [accountId, snapshots],
+    () => (remoteSnapshots.length ? remoteSnapshots : snapshots.filter(snapshot => snapshot.accountId === accountId)).sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()),
+    [accountId, remoteSnapshots, snapshots],
   )
   const [selected, setSelected] = useState<string[]>([])
   const compare = selected.map(id => accountSnapshots.find(snapshot => snapshot.id === id)).filter(Boolean) as ScoreSnapshot[]
   const oldestFirst = [...accountSnapshots].reverse()
+
+  useEffect(() => {
+    if (!token) {
+      setLoading(false)
+      return
+    }
+    setLoading(true)
+    setError('')
+    listScoreSnapshots(token, accountId, { page: 1, page_size: 25, scope: 'account' })
+      .then(page => {
+        setRemoteSnapshots(
+          page.items.map(snapshot => {
+            const dimensions = Object.fromEntries(snapshot.drivers.map(driver => [driver.key, driver.score]))
+            return {
+              id: snapshot.id,
+              accountId: snapshot.account_id,
+              timestamp: snapshot.calculated_at,
+              overall: snapshot.overall,
+              dimensions: {
+                relationship: Number(dimensions.relationship ?? snapshot.overall),
+                usage: Number(dimensions.usage ?? snapshot.overall),
+                delivery: Number(dimensions.delivery ?? snapshot.overall),
+                commercial: Number(dimensions.commercial ?? snapshot.overall),
+              },
+              calculatorVersion: snapshot.metric_version,
+              changedBy: snapshot.calculated_by_name ?? 'system',
+              changedByName: snapshot.calculated_by_name ?? 'System',
+              triggerEntryId: snapshot.id,
+            }
+          }),
+        )
+      })
+      .catch(err => setError(err instanceof Error ? err.message : 'Unable to load score snapshots'))
+      .finally(() => setLoading(false))
+  }, [accountId, token])
 
   function toggle(id: string) {
     setSelected(current => (current.includes(id) ? current.filter(item => item !== id) : [...current.slice(-1), id]))
@@ -38,7 +79,11 @@ export function ScoreHistoryPanel({ accountId }: { accountId: string }) {
         </div>
       </div>
 
-      <div className="mb-5 rounded-lg border border-surface-border p-4">
+      {loading ? <div className="rounded-lg border border-surface-border bg-surface-tertiary p-4 text-sm text-ink-secondary">Loading score snapshot history...</div> : null}
+      {error ? <div className="rounded-lg border border-rag-red/20 bg-rag-red/10 p-4 text-sm text-rag-red">{error}</div> : null}
+      {!loading && !error && !accountSnapshots.length ? <div className="rounded-lg border border-dashed border-surface-border bg-surface-tertiary p-4 text-sm text-ink-secondary">No score snapshots have been recorded yet.</div> : null}
+
+      {accountSnapshots.length ? <div className="mb-5 rounded-lg border border-surface-border p-4">
         <div className="flex h-28 items-end gap-3">
           {oldestFirst.map((snapshot, index) => {
             const previous = oldestFirst[index - 1]
@@ -58,7 +103,7 @@ export function ScoreHistoryPanel({ accountId }: { accountId: string }) {
             )
           })}
         </div>
-      </div>
+      </div> : null}
 
       <div className="space-y-3">
         {accountSnapshots.map(snapshot => (

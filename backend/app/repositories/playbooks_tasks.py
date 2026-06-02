@@ -123,7 +123,7 @@ class PlaybooksTasksRepository:
             current_user_id=current_user_id,
         )
         total = self.db.scalar(select(func.count(Task.id)).where(*conditions)) or 0
-        priority_order = {"urgent": 0, "high": 1, "medium": 2, "low": 3}
+        priority_order = {"critical": 0, "urgent": 0, "high": 1, "medium": 2, "low": 3}
         order_column = {
             "due_at": Task.due_at,
             "status": Task.status,

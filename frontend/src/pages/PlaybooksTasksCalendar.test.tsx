@@ -163,7 +163,7 @@ describe('playbooks, tasks, and calendar UI', () => {
             account_name: account.name,
             owner_id: 'usr-admin',
             owner_name: 'Admin User',
-            date: '2026-05-20T00:00:00Z',
+            date: '2026-06-20T00:00:00Z',
             status: 'todo',
             priority: 'high',
             source_route: '/tasks',

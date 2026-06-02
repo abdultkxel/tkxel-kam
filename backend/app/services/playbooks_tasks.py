@@ -243,7 +243,7 @@ class PlaybooksTasksService:
             )
             self.repository.save_task(task)
             generated_count += 1
-        self._write_timeline(account.id, engagement.id if engagement else None, current_user, "playbook_execution", f"Playbook executed: {template.name}", f"{generated_count} task(s) generated from template version {template.version}.", execution.id, "playbook_execution")
+        self._write_timeline(account.id, engagement.id if engagement else None, current_user, "playbook_executed", f"Playbook executed: {template.name}", f"{generated_count} task(s) generated from template version {template.version}.", execution.id, "playbook_execution")
         self.audit.log(module=MODULE, action="execute_playbook", entity_type="playbook_execution", entity_id=execution.id, actor=current_user, after_value=self._execution_snapshot(execution))
         self.repository.commit()
         persisted = self.repository.get_execution(execution.id) or execution
@@ -618,7 +618,7 @@ class PlaybooksTasksService:
         return self.timeline.add_account_event(
             account_id=account_id,
             engagement_id=engagement_id,
-            event_type="playbook_task_event",
+            event_type=action,
             module=MODULE,
             title=title,
             description=description,

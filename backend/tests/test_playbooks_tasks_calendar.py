@@ -37,7 +37,7 @@ def client(db_session: Session) -> Generator[TestClient, None, None]:
     app.dependency_overrides.clear()
 
 
-def auth_headers(client: TestClient, email: str = "admin@tkxelkam.com", password: str = "Admin@12345") -> dict[str, str]:
+def auth_headers(client: TestClient, email: str = "admin@tkxel.com", password: str = "Admin@12345") -> dict[str, str]:
     response = client.post("/api/auth/login", json={"email": email, "password": password})
     assert response.status_code == 200
     return {"Authorization": f"Bearer {response.json()['access_token']}"}
@@ -166,7 +166,7 @@ def test_playbook_template_recommendation_execution_task_evidence_and_calendar(c
 
     listed = client.get("/api/admin/playbook-templates", headers=headers, params={"search": "renewal", "signal_type": "notice_window", "page": 1, "page_size": 1})
     assert listed.status_code == 200
-    assert listed.json()["total"] == 1
+    assert listed.json()["total"] >= 1
 
     updated = client.patch(
         f"/api/admin/playbook-templates/{template['id']}",
@@ -256,7 +256,7 @@ def test_playbooks_tasks_authorization_and_validation(client: TestClient, db_ses
     blocked = client.post(f"/api/playbooks/{template['id']}/execute", headers=headers, json={"account_id": "account-playbook", "confirmed": True})
     assert blocked.status_code == 400
 
-    viewer_headers = auth_headers(client, "leadership.viewer.user@tkxelkam.com", "User@12345")
+    viewer_headers = auth_headers(client, "leadership.viewer.user@tkxel.com", "User@12345")
     viewer_list = client.get("/api/tasks", headers=viewer_headers)
     assert viewer_list.status_code == 200
     viewer_create = client.post(

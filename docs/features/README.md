@@ -12,6 +12,7 @@ docs/features/_feature-template.md
 
 - [Governance & Reviews](governance-reviews.md)
 - [Growth & Opportunity Management](growth-opportunity-management.md)
+- [Scoring, Signals, Playbooks, and Tasks](scoring-signals-playbooks-and-tasks.md)
 
 ## Handoff Notes
 

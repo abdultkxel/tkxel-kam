@@ -897,7 +897,7 @@ function buildCalendarItems(
     date: new Date(signal.dueAt ?? addDays(new Date(), 1)),
     kind: 'signal',
     status: signal.status,
-    route: `/accounts/${signal.accountId}?tab=${signal.type === 'sow_expiry' || signal.type === 'notice_window' ? 'engagements' : 'health'}`,
+    route: `/accounts/${signal.accountId}?tab=${signal.type === 'sow_expiry' || signal.type === 'notice_window' || signal.type === 'renewal_date' ? 'engagements' : 'health'}`,
   }))
 
   return [...governanceItems, ...taskItems, ...opportunityItems, ...signalItems].filter(item => !accountFilter || item.accountId === accountFilter)
@@ -926,6 +926,7 @@ function signalTypeLabel(type: SignalRecord['type']) {
   const labels: Record<SignalRecord['type'], string> = {
     sow_expiry: 'Renewal',
     notice_window: 'Notice window',
+    renewal_date: 'Renewal date',
     stale_kyc: 'KYC',
     weak_metric: 'Health metric',
     stakeholder_gap: 'Stakeholder gap',

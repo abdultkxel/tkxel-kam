@@ -23,6 +23,8 @@ from app.services.opportunities import OpportunityService
 from app.services.playbooks_tasks import PlaybooksTasksService
 from app.services.profile import ProfileService
 from app.services.rbac import RbacService
+from app.services.scoring import ScoringService
+from app.services.signals import SignalsService
 from app.services.stakeholder_gap_service import StakeholderGapService
 from app.services.stakeholders import StakeholderService
 from app.services.user_management import UserManagementService
@@ -121,6 +123,14 @@ def get_opportunity_service(db: Annotated[Session, Depends(get_db)]) -> Opportun
 
 def get_kyc_service(db: Annotated[Session, Depends(get_db)]) -> KycService:
     return KycService(db)
+
+
+def get_scoring_service(db: Annotated[Session, Depends(get_db)]) -> ScoringService:
+    return ScoringService(db)
+
+
+def get_signals_service(db: Annotated[Session, Depends(get_db)]) -> SignalsService:
+    return SignalsService(db)
 
 
 def require_permission(module: str, action: str):

@@ -1,7 +1,7 @@
 from datetime import datetime
 from typing import Annotated, Literal
 
-from fastapi import APIRouter, Depends, File, Form, Query, UploadFile, status
+from fastapi import APIRouter, Depends, Query, Request, UploadFile, status
 
 from app.dependencies import get_current_user, get_playbooks_tasks_service
 from app.models import User
@@ -112,14 +112,28 @@ def update_task(task_id: str, payload: TaskUpdateRequest, current_user: Annotate
 @router.post("/tasks/{task_id}/evidence", response_model=TaskEvidenceRead, status_code=status.HTTP_201_CREATED, summary="Add task evidence", description="Adds note, link, or file evidence to a task using the existing storage adapter and writes audit/timeline history.")
 async def add_task_evidence(
     task_id: str,
+    request: Request,
     current_user: Annotated[User, Depends(get_current_user)],
     service: Annotated[PlaybooksTasksService, Depends(get_playbooks_tasks_service)],
-    evidence_type: Annotated[Literal["note", "link", "file"], Form()],
-    title: Annotated[str | None, Form()] = None,
-    body: Annotated[str | None, Form()] = None,
-    url: Annotated[str | None, Form()] = None,
-    file: Annotated[UploadFile | None, File()] = None,
 ) -> TaskEvidenceRead:
+    content_type = request.headers.get("content-type", "")
+    if "multipart/form-data" in content_type or "application/x-www-form-urlencoded" in content_type:
+        form = await request.form()
+        evidence_type = str(form.get("evidence_type") or "note")
+        title = str(form.get("title")) if form.get("title") else None
+        body = str(form.get("body") or form.get("note")) if form.get("body") or form.get("note") else None
+        url = str(form.get("url")) if form.get("url") else None
+        maybe_file = form.get("file")
+        file = maybe_file if hasattr(maybe_file, "filename") else None
+    else:
+        payload = await request.json()
+        evidence_type = str(payload.get("evidence_type") or "note")
+        title = payload.get("title")
+        body = payload.get("body") or payload.get("note")
+        url = payload.get("url")
+        file = None
+    if evidence_type == "url":
+        evidence_type = "link"
     return await service.add_task_evidence(task_id, current_user, evidence_type=evidence_type, title=title, body=body, url=url, file=file)
 
 

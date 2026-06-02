@@ -54,7 +54,7 @@ IntegrationProvider = Literal["google-calendar", "fathom"]
 IntegrationStatus = Literal["configuration_required", "connected", "syncing", "error", "disabled"]
 PlaybookOwnerRule = Literal["account_primary_am", "task_creator", "ops_lead", "template_owner"]
 TaskStatus = Literal["todo", "in_progress", "done", "skipped", "blocked", "cancelled"]
-TaskPriority = Literal["low", "medium", "high", "urgent"]
+TaskPriority = Literal["low", "medium", "high", "urgent", "critical"]
 TaskEvidenceType = Literal["note", "link", "file"]
 StakeholderRole = Literal[
     "executive_sponsor",
@@ -71,6 +71,15 @@ StakeholderPoliticalRisk = Literal["unknown", "low", "medium", "high"]
 StakeholderStatus = Literal["active", "inactive", "left_company", "do_not_contact"]
 OpportunityStage = Literal["Identified", "Qualified", "Proposal Sent", "Negotiation", "Won", "Lost"]
 OpportunityActionItemStatus = Literal["open", "in_progress", "completed", "cancelled"]
+ScoringScope = Literal["account", "engagement", "portfolio"]
+MetricStatus = Literal["draft", "published", "inactive"]
+ScoreRagStatus = Literal["red", "amber", "green", "unknown"]
+ScoreSnapshotStatus = Literal["complete", "incomplete", "failed"]
+ScoringJobType = Literal["manual", "scheduled", "event"]
+ScoringJobStatus = Literal["queued", "running", "complete", "failed"]
+SignalSeverity = Literal["info", "warning", "critical"]
+SignalStatus = Literal["new", "reviewed", "accepted", "dismissed", "converted", "resolved"]
+SignalConvertTarget = Literal["task", "playbook"]
 
 SELECT_FIELD_TYPES = {"single_select", "multi_select"}
 
@@ -3515,7 +3524,7 @@ class PlaybookExecutionRequest(BaseModel):
     source_signal_id: str | None = None
     source_signal_type: str | None = None
     source_metric: str | None = None
-    confirmed: bool = False
+    confirmed: bool = True
     skipped_activity_ids: list[str] = Field(default_factory=list)
     skip_reasons: dict[str, str] = Field(default_factory=dict)
 
@@ -3569,7 +3578,7 @@ class TaskRead(BaseModel):
     outcome: str | None = None
     success_criteria: list[str] = Field(default_factory=list)
     requires_evidence: bool
-    skipped_reason: str | None = None
+    skipped_reason: str | None = Field(default=None, validation_alias=AliasChoices("skipped_reason", "skip_reason"))
     completed_at: datetime | None = None
     completed_by_id: str | None = None
     created_by_id: str | None = None
@@ -3655,6 +3664,8 @@ class TaskCreateRequest(BaseModel):
 
 
 class TaskUpdateRequest(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
     title: str | None = None
     description: str | None = None
     owner_id: str | None = None
@@ -3663,7 +3674,7 @@ class TaskUpdateRequest(BaseModel):
     priority: TaskPriority | None = None
     notes: str | None = None
     outcome: str | None = None
-    skipped_reason: str | None = None
+    skipped_reason: str | None = Field(default=None, validation_alias=AliasChoices("skipped_reason", "skip_reason"))
     success_criteria: list[str] | None = None
     requires_evidence: bool | None = None
     custom_field_values: dict[str, Any] | None = Field(default=None, description="Full replacement Field Builder values keyed by field_key.")
@@ -3783,3 +3794,423 @@ class IntegrationSyncResponse(BaseModel):
     skipped: int = 0
     errors: int = 0
     message: str
+
+
+class MetricValidationRead(BaseModel):
+    valid: bool
+    errors: list[str] = Field(default_factory=list)
+    warnings: list[str] = Field(default_factory=list)
+
+
+class ScoringMetricBase(BaseModel):
+    slug: str
+    name: str
+    description: str | None = None
+    scope: Literal["account", "engagement"] = "account"
+    weight: int = Field(ge=0, le=100)
+    thresholds: dict[str, Any] = Field(default_factory=dict)
+    formula: dict[str, Any] = Field(default_factory=dict)
+    freshness_rule: dict[str, Any] = Field(default_factory=dict)
+    owner_role: str | None = None
+    source: str = "manual"
+    effective_date: datetime | None = None
+    status: MetricStatus = "draft"
+    is_active: bool = True
+
+    @field_validator("slug")
+    @classmethod
+    def slug_is_valid(cls, value: str) -> str:
+        return validate_slug(value, "Metric slug")
+
+    @field_validator("name")
+    @classmethod
+    def name_is_valid(cls, value: str) -> str:
+        return validate_short_text(value, "Metric name", 180)
+
+    @field_validator("description")
+    @classmethod
+    def description_is_valid(cls, value: str | None) -> str | None:
+        return validate_optional_long_text(value, "Metric description", 2000)
+
+    @field_validator("owner_role", "source")
+    @classmethod
+    def short_value_is_valid(cls, value: str | None) -> str | None:
+        return validate_short_text(value, "Metric value", 120) if value is not None else None
+
+
+class ScoringMetricCreateRequest(ScoringMetricBase):
+    pass
+
+
+class ScoringMetricUpdateRequest(BaseModel):
+    name: str | None = None
+    description: str | None = None
+    scope: Literal["account", "engagement"] | None = None
+    weight: int | None = Field(default=None, ge=0, le=100)
+    thresholds: dict[str, Any] | None = None
+    formula: dict[str, Any] | None = None
+    freshness_rule: dict[str, Any] | None = None
+    owner_role: str | None = None
+    source: str | None = None
+    effective_date: datetime | None = None
+    status: MetricStatus | None = None
+    is_active: bool | None = None
+
+    @field_validator("name")
+    @classmethod
+    def name_is_valid(cls, value: str | None) -> str | None:
+        return validate_short_text(value, "Metric name", 180) if value is not None else None
+
+    @field_validator("description")
+    @classmethod
+    def description_is_valid(cls, value: str | None) -> str | None:
+        return validate_optional_long_text(value, "Metric description", 2000)
+
+    @field_validator("owner_role", "source")
+    @classmethod
+    def short_value_is_valid(cls, value: str | None) -> str | None:
+        return validate_short_text(value, "Metric value", 120) if value is not None else None
+
+
+class ScoringMetricRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    slug: str
+    name: str
+    description: str | None = None
+    scope: str
+    weight: int
+    thresholds: dict = Field(default_factory=dict)
+    formula: dict = Field(default_factory=dict)
+    freshness_rule: dict = Field(default_factory=dict)
+    owner_role: str | None = None
+    source: str
+    effective_date: datetime | None = None
+    status: str
+    is_active: bool
+    current_version: int
+    created_by_id: str | None = None
+    updated_by_id: str | None = None
+    created_at: datetime
+    updated_at: datetime
+
+
+class ScoringMetricPageRead(BaseModel):
+    items: list[ScoringMetricRead]
+    total: int
+    page: int
+    page_size: int
+    pages: int
+
+
+class ScoringMetricVersionRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    metric_id: str
+    version: int
+    config_json: dict = Field(default_factory=dict)
+    published_by_id: str | None = None
+    published_by_name: str
+    published_at: datetime
+    created_at: datetime
+
+
+class ScoringMetricVersionPageRead(BaseModel):
+    items: list[ScoringMetricVersionRead]
+    total: int
+    page: int
+    page_size: int
+    pages: int
+
+
+class ManualScoreSubmissionRequest(BaseModel):
+    calculator_id: str
+    values: dict[str, Any] = Field(default_factory=dict)
+    evidence: list[dict[str, Any]] = Field(default_factory=list)
+
+    @field_validator("calculator_id")
+    @classmethod
+    def calculator_id_is_valid(cls, value: str) -> str:
+        return validate_slug(value, "Calculator")
+
+    @field_validator("evidence")
+    @classmethod
+    def evidence_is_valid(cls, value: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        if len(value) > 25:
+            raise ValueError("Evidence can include at most 25 items.")
+        return value
+
+
+class ScoreRecalculateRequest(BaseModel):
+    trigger_source: str = "manual"
+    include_signal_evaluation: bool = True
+    manual_submission: ManualScoreSubmissionRequest | None = None
+
+    @field_validator("trigger_source")
+    @classmethod
+    def trigger_source_is_valid(cls, value: str) -> str:
+        return validate_short_text(value, "Trigger source", 120)
+
+
+class ScoreSnapshotRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    account_id: str
+    engagement_id: str | None = None
+    job_id: str | None = None
+    scope: str
+    overall: int
+    rag_status: str
+    drivers: list = Field(default_factory=list)
+    reason_codes: list = Field(default_factory=list)
+    metric_version: str
+    freshness_status: str
+    is_dirty: bool
+    trend: int
+    status: str
+    source_context: dict = Field(default_factory=dict)
+    calculated_by_id: str | None = None
+    calculated_by_name: str | None = None
+    calculated_at: datetime
+    created_at: datetime
+
+
+class ScoreSnapshotPageRead(BaseModel):
+    items: list[ScoreSnapshotRead]
+    total: int
+    page: int
+    page_size: int
+    pages: int
+
+
+class ScoreRead(BaseModel):
+    account_id: str
+    engagement_id: str | None = None
+    scope: str
+    overall: int
+    rag_status: str
+    drivers: list = Field(default_factory=list)
+    reason_codes: list = Field(default_factory=list)
+    metric_version: str
+    freshness_status: str
+    is_dirty: bool
+    trend: int
+    status: str
+    latest_snapshot: ScoreSnapshotRead | None = None
+
+
+class ScoringJobCreateRequest(BaseModel):
+    job_type: ScoringJobType = "manual"
+    scope: ScoringScope = "account"
+    account_id: str | None = None
+    engagement_id: str | None = None
+    trigger_source: str = "manual"
+
+    @field_validator("trigger_source")
+    @classmethod
+    def trigger_source_is_valid(cls, value: str) -> str:
+        return validate_short_text(value, "Trigger source", 120)
+
+
+class ScoringJobRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    job_type: str
+    scope: str
+    account_id: str | None = None
+    engagement_id: str | None = None
+    status: str
+    trigger_source: str
+    error_message: str | None = None
+    result_json: dict = Field(default_factory=dict)
+    created_by_id: str | None = None
+    created_by_name: str | None = None
+    started_at: datetime | None = None
+    completed_at: datetime | None = None
+    created_at: datetime
+    updated_at: datetime
+
+
+class SignalRuleBase(BaseModel):
+    slug: str
+    name: str
+    signal_type: str
+    description: str | None = None
+    severity: SignalSeverity = "warning"
+    condition_json: dict[str, Any] = Field(default_factory=dict)
+    owner_rule_json: dict[str, Any] = Field(default_factory=dict)
+    sla_rule_json: dict[str, Any] = Field(default_factory=dict)
+    is_active: bool = True
+
+    @field_validator("slug")
+    @classmethod
+    def slug_is_valid(cls, value: str) -> str:
+        return validate_slug(value, "Signal rule slug")
+
+    @field_validator("name")
+    @classmethod
+    def name_is_valid(cls, value: str) -> str:
+        return validate_short_text(value, "Signal rule name", 180)
+
+    @field_validator("signal_type")
+    @classmethod
+    def signal_type_is_valid(cls, value: str) -> str:
+        return validate_slug(value, "Signal type")
+
+    @field_validator("description")
+    @classmethod
+    def description_is_valid(cls, value: str | None) -> str | None:
+        return validate_optional_long_text(value, "Signal rule description", 2000)
+
+
+class SignalRuleCreateRequest(SignalRuleBase):
+    pass
+
+
+class SignalRuleUpdateRequest(BaseModel):
+    name: str | None = None
+    signal_type: str | None = None
+    description: str | None = None
+    severity: SignalSeverity | None = None
+    condition_json: dict[str, Any] | None = None
+    owner_rule_json: dict[str, Any] | None = None
+    sla_rule_json: dict[str, Any] | None = None
+    is_active: bool | None = None
+
+    @field_validator("name")
+    @classmethod
+    def name_is_valid(cls, value: str | None) -> str | None:
+        return validate_short_text(value, "Signal rule name", 180) if value is not None else None
+
+    @field_validator("signal_type")
+    @classmethod
+    def signal_type_is_valid(cls, value: str | None) -> str | None:
+        return validate_slug(value, "Signal type") if value is not None else None
+
+    @field_validator("description")
+    @classmethod
+    def description_is_valid(cls, value: str | None) -> str | None:
+        return validate_optional_long_text(value, "Signal rule description", 2000)
+
+
+class SignalRuleRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    slug: str
+    name: str
+    signal_type: str
+    description: str | None = None
+    severity: str
+    condition_json: dict = Field(default_factory=dict)
+    owner_rule_json: dict = Field(default_factory=dict)
+    sla_rule_json: dict = Field(default_factory=dict)
+    is_active: bool
+    current_version: int
+    created_at: datetime
+    updated_at: datetime
+
+
+class SignalRulePageRead(BaseModel):
+    items: list[SignalRuleRead]
+    total: int
+    page: int
+    page_size: int
+    pages: int
+
+
+class SignalRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    account_id: str
+    engagement_id: str | None = None
+    rule_id: str | None = None
+    signal_type: str
+    severity: str
+    status: str
+    owner_id: str | None = None
+    owner_name: str | None = None
+    title: str
+    detail: str
+    reason_codes: list = Field(default_factory=list)
+    evidence_json: list = Field(default_factory=list)
+    citations_json: list = Field(default_factory=list)
+    source_record_type: str | None = None
+    source_record_id: str | None = None
+    source_record_route: str | None = None
+    confidence: int | None = None
+    condition_key: str | None = None
+    due_at: datetime | None = None
+    resolved_at: datetime | None = None
+    dismissed_at: datetime | None = None
+    created_at: datetime
+    updated_at: datetime
+
+
+class SignalPageRead(BaseModel):
+    items: list[SignalRead]
+    total: int
+    page: int
+    page_size: int
+    pages: int
+
+
+class SignalEvaluationRequest(BaseModel):
+    account_id: str | None = None
+    engagement_id: str | None = None
+    trigger_source: str = "manual"
+
+    @field_validator("trigger_source")
+    @classmethod
+    def trigger_source_is_valid(cls, value: str) -> str:
+        return validate_short_text(value, "Trigger source", 120)
+
+
+class SignalEvaluationRead(BaseModel):
+    evaluated_accounts: int
+    created: int
+    updated: int
+    resolved: int
+    signals: list[SignalRead] = Field(default_factory=list)
+
+
+class SignalStatusUpdateRequest(BaseModel):
+    status: SignalStatus
+    reason: str | None = None
+
+    @field_validator("reason")
+    @classmethod
+    def reason_is_valid(cls, value: str | None) -> str | None:
+        return validate_optional_long_text(value, "Signal reason", 2000)
+
+
+class SignalConvertRequest(BaseModel):
+    target_type: SignalConvertTarget = "task"
+    playbook_template_id: str | None = None
+    owner_id: str | None = None
+    due_at: datetime | None = None
+    note: str | None = None
+
+    @field_validator("note")
+    @classmethod
+    def note_is_valid(cls, value: str | None) -> str | None:
+        return validate_optional_long_text(value, "Conversion note", 2000)
+
+
+class SignalEvidenceRead(BaseModel):
+    signal_id: str
+    evidence: list[dict[str, Any]] = Field(default_factory=list)
+    citations: list[dict[str, Any]] = Field(default_factory=list)
+
+
+class SignalAIExplanationRead(BaseModel):
+    signal_id: str
+    provider: str
+    advisory_only: bool = True
+    explanation: str
+    citations: list[dict[str, Any]] = Field(default_factory=list)
