@@ -25,6 +25,7 @@ from app.schemas import (
 from app.services.account_access import AccountAccessService, GLOBAL_EDIT_ROLES
 from app.services.audit import AuditService
 from app.services.stakeholder_gap_service import StakeholderGapService
+from app.services.stakeholder_config import StakeholderConfigService
 from app.services.timeline import TimelineService
 from app.services.user_management import page_count
 
@@ -50,6 +51,7 @@ class StakeholderService:
         self.audit = AuditService(AuditRepository(db))
         self.timeline = TimelineService(TimelineRepository(db))
         self.gaps = StakeholderGapService(db)
+        self.config = StakeholderConfigService(db)
 
     def list_for_account(
         self,
@@ -95,6 +97,7 @@ class StakeholderService:
             self._ensure_engagement_belongs_to_account(payload.engagement_id, account_id)
         if payload.reports_to_stakeholder_id:
             self._get_report_target_or_404(payload.reports_to_stakeholder_id, account_id)
+        self.config.require_active_role(payload.role)
 
         stakeholder = Stakeholder(
             account_id=account_id,
@@ -155,17 +158,23 @@ class StakeholderService:
         has_unmapped = False
 
         for stakeholder in stakeholders:
-            parent_id = stakeholder.reports_to_stakeholder_id if stakeholder.reports_to_stakeholder_id in stakeholder_ids else None
+            stakeholder_redacted = stakeholder.is_sensitive and not self._can_view_sensitive_fields(current_user, account)
+            parent = self.repository.get(stakeholder.reports_to_stakeholder_id) if stakeholder.reports_to_stakeholder_id else None
+            parent_redacted = bool(parent and parent.is_sensitive and not self._can_view_sensitive_fields(current_user, account))
+            parent_id = stakeholder.reports_to_stakeholder_id if stakeholder.reports_to_stakeholder_id in stakeholder_ids and not stakeholder_redacted and not parent_redacted else None
             if parent_id is None:
-                parent_id = UNMAPPED_STAKEHOLDERS_NODE_ID
-                has_unmapped = True
-                edges.append(
-                    StakeholderOrgChartEdgeRead(
-                        source=UNMAPPED_STAKEHOLDERS_NODE_ID,
-                        target=stakeholder.id,
-                        relationship_type="unmapped",
+                if stakeholder_redacted:
+                    parent_id = None
+                else:
+                    parent_id = UNMAPPED_STAKEHOLDERS_NODE_ID
+                    has_unmapped = True
+                    edges.append(
+                        StakeholderOrgChartEdgeRead(
+                            source=UNMAPPED_STAKEHOLDERS_NODE_ID,
+                            target=stakeholder.id,
+                            relationship_type="unmapped",
+                        )
                     )
-                )
             else:
                 edges.append(
                     StakeholderOrgChartEdgeRead(
@@ -287,6 +296,8 @@ class StakeholderService:
             self._ensure_engagement_belongs_to_account(updates["engagement_id"], stakeholder.account_id)
         if "reports_to_stakeholder_id" in updates and updates["reports_to_stakeholder_id"]:
             self._ensure_valid_reports_to(stakeholder, updates["reports_to_stakeholder_id"])
+        if "role" in updates and updates["role"]:
+            self.config.require_active_role(updates["role"])
         for field, value in updates.items():
             if field == "email" and value is not None:
                 value = str(value)

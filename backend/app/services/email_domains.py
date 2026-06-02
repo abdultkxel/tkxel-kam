@@ -16,7 +16,7 @@ from app.services.audit import AuditService
 from app.services.users import normalize_email
 
 ALLOWED_EMAIL_DOMAINS_KEY = "allowed_email_domains"
-DEFAULT_ALLOWED_EMAIL_DOMAINS = ("tkxel.com", "tkxel.io", "camp1.tkxel.com")
+DEFAULT_ALLOWED_EMAIL_DOMAINS = ("tkxel.com", "tkxel.io", "camp1.tkxel.com", "camp1.tkxel.io")
 DOMAIN_LABEL_PATTERN = re.compile(r"^[a-z0-9-]+$")
 
 logger = logging.getLogger(__name__)

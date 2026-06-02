@@ -10,12 +10,17 @@ from app.models import (
     KycConfiguration,
     Opportunity,
     OpportunityStageDefinition,
+    OpportunityStageTransition,
     OpportunityType,
     PlaybookTemplate,
     PlaybookTemplateActivity,
     ScoringMetricDefinition,
     ScoringMetricVersion,
+    ServiceAdjacencyRule,
+    ServiceCatalogItem,
     SignalRule,
+    StakeholderGapRule,
+    StakeholderRoleConfig,
     User,
     utc_now,
 )
@@ -35,6 +40,7 @@ def seed_default_data(db: Session) -> User:
     seed_default_role_users(db)
     seed_kyc_configuration(db)
     seed_opportunity_reference_data(db)
+    seed_relationship_planning_reference_data(db)
     seed_scoring_signals_playbooks(db, super_admin)
     seed_demo_opportunities(db)
     return super_admin
@@ -127,25 +133,31 @@ def seed_default_role_users(db: Session) -> list[User]:
 
 def seed_opportunity_reference_data(db: Session) -> None:
     stages = (
-        ("identified", "Identified", False),
-        ("qualified", "Qualified", False),
-        ("proposal_sent", "Proposal Sent", False),
-        ("negotiation", "Negotiation", False),
-        ("won", "Won", True),
-        ("lost", "Lost", True),
+        ("identified", "Identified", False, False),
+        ("qualified", "Qualified", False, False),
+        ("proposal_sent", "Proposal Sent", False, False),
+        ("negotiation", "Negotiation", False, False),
+        ("won", "Won", True, True),
+        ("lost", "Lost", True, True),
     )
-    for index, (slug, name, is_terminal) in enumerate(stages, start=1):
+    for index, (slug, name, is_terminal, requires_outcome_reason) in enumerate(stages, start=1):
         existing_stage = db.scalar(select(OpportunityStageDefinition).where(OpportunityStageDefinition.slug == slug))
         if existing_stage:
             existing_stage.name = name
             existing_stage.is_terminal = is_terminal
+            existing_stage.requires_outcome_reason = requires_outcome_reason
             existing_stage.is_active = True
             existing_stage.display_order = index
             continue
-        db.add(OpportunityStageDefinition(slug=slug, name=name, is_terminal=is_terminal, display_order=index))
+        db.add(OpportunityStageDefinition(slug=slug, name=name, is_terminal=is_terminal, requires_outcome_reason=requires_outcome_reason, display_order=index))
 
     types = (
+        ("cross_sell", "Cross-sell", "Adjacent service or new service line opportunity."),
+        ("upsell", "Upsell", "Expansion inside an existing service, scope, or commercial footprint."),
+        ("renewal", "Renewal", "Commercial renewal opportunity tied to active SOW or notice window."),
         ("expansion", "Expansion", "New scope, team, region, or service-line expansion."),
+        ("rescue_recovery", "Rescue/Recovery", "Recovery, stabilization, or retention rescue opportunity."),
+        ("other", "Other", "Other growth, retention, or commercial opportunity."),
         ("analytics", "Analytics", "Data, reporting, BI, or decision intelligence opportunity."),
         ("automation", "Automation", "Workflow, operations, QA, or delivery automation opportunity."),
         ("retention_recovery", "Retention Recovery", "Opportunity tied to retention, recovery, or renewal stabilization."),
@@ -160,6 +172,155 @@ def seed_opportunity_reference_data(db: Session) -> None:
             existing_type.display_order = index
             continue
         db.add(OpportunityType(slug=slug, name=name, description=description, display_order=index))
+
+    transitions = (
+        ("Identified", "Qualified", False),
+        ("Identified", "Won", True),
+        ("Identified", "Lost", True),
+        ("Qualified", "Proposal Sent", False),
+        ("Proposal Sent", "Negotiation", False),
+        ("Negotiation", "Won", True),
+        ("Negotiation", "Lost", True),
+        ("Proposal Sent", "Lost", True),
+        ("Qualified", "Lost", True),
+    )
+    for from_stage, to_stage, requires_reason in transitions:
+        existing = db.scalar(
+            select(OpportunityStageTransition).where(
+                OpportunityStageTransition.from_stage == from_stage,
+                OpportunityStageTransition.to_stage == to_stage,
+            )
+        )
+        if existing:
+            existing.is_active = True
+            existing.requires_reason = requires_reason
+            continue
+        db.add(OpportunityStageTransition(from_stage=from_stage, to_stage=to_stage, is_active=True, requires_reason=requires_reason))
+
+    db.commit()
+
+
+def seed_relationship_planning_reference_data(db: Session) -> None:
+    role_specs = (
+        ("executive_sponsor", "Executive Sponsor", "Senior sponsor with executive influence."),
+        ("economic_buyer", "Economic Buyer", "Client stakeholder with budget or procurement influence."),
+        ("technical_decision_maker", "Technical Decision Maker", "Technical approver or architecture decision maker."),
+        ("operational_poc", "Operational POC", "Day-to-day client operating contact."),
+        ("commercial_owner", "Commercial Owner", "Commercial, procurement, or contract owner."),
+        ("influencer", "Influencer", "Influencer, champion, or internal advocate."),
+    )
+    for index, (slug, name, description) in enumerate(role_specs, start=1):
+        role = db.scalar(select(StakeholderRoleConfig).where(StakeholderRoleConfig.slug == slug))
+        if role is None:
+            db.add(StakeholderRoleConfig(slug=slug, name=name, description=description, is_active=True, display_order=index))
+            continue
+        role.name = name
+        role.description = description
+        role.is_active = True
+        role.display_order = index
+
+    gap_rules = (
+        (
+            "no_active_executive_sponsor",
+            "No active executive sponsor",
+            "The account does not have an active stakeholder with the executive sponsor role.",
+            "critical",
+            {"type": "missing_role", "role": "executive_sponsor"},
+        ),
+        (
+            "no_commercial_owner_or_economic_buyer",
+            "No active commercial owner or economic buyer",
+            "The account does not have active commercial ownership coverage through a commercial owner or economic buyer.",
+            "critical",
+            {"type": "missing_any_role", "roles": ["commercial_owner", "economic_buyer"]},
+        ),
+        (
+            "only_one_active_stakeholder",
+            "Only one active stakeholder",
+            "The account has a single active stakeholder, which creates relationship concentration risk.",
+            "warning",
+            {"type": "max_active_stakeholders", "count": 1},
+        ),
+        (
+            "no_high_or_critical_influence_stakeholder",
+            "No high or critical influence stakeholder",
+            "The account does not have an active stakeholder marked with high or critical influence.",
+            "warning",
+            {"type": "missing_any_influence", "influences": ["high", "critical"]},
+        ),
+        (
+            "active_high_political_risk_stakeholder",
+            "Active stakeholder has high political risk",
+            "One or more active stakeholders are marked with high political risk.",
+            "critical",
+            {"type": "political_risk_present", "risk": "high"},
+        ),
+        (
+            "no_recent_stakeholder_interaction",
+            "No stakeholder interaction in the last 90 days",
+            "No interaction has been logged for an active stakeholder within the last 90 days.",
+            "warning",
+            {"type": "stale_interaction", "days": 90},
+        ),
+    )
+    for index, (rule_key, title, description, severity, condition) in enumerate(gap_rules, start=1):
+        rule = db.scalar(select(StakeholderGapRule).where(StakeholderGapRule.rule_key == rule_key))
+        if rule is None:
+            db.add(StakeholderGapRule(rule_key=rule_key, title=title, description=description, severity=severity, condition_json=condition, is_active=True, display_order=index))
+            continue
+        rule.title = title
+        rule.description = description
+        rule.severity = severity
+        rule.condition_json = condition
+        rule.is_active = True
+        rule.display_order = index
+
+    service_specs = (
+        ("product_engineering", "Product Engineering", "Engineering", ["web", "mobile", "platform"]),
+        ("cloud_devops", "Cloud & DevOps", "Engineering", ["cloud", "sre", "infra"]),
+        ("data_analytics", "Data Analytics", "Data", ["bi", "warehouse", "analytics"]),
+        ("automation_qa", "Automation & QA", "Quality", ["qa", "automation", "testing"]),
+        ("customer_success_ops", "Customer Success Ops", "Customer", ["retention", "ops", "enablement"]),
+    )
+    services: dict[str, ServiceCatalogItem] = {}
+    for index, (slug, name, category, tags) in enumerate(service_specs, start=1):
+        service = db.scalar(select(ServiceCatalogItem).where(ServiceCatalogItem.slug == slug))
+        if service is None:
+            service = ServiceCatalogItem(slug=slug, name=name, category=category, tags=tags, is_active=True, display_order=index)
+            db.add(service)
+        else:
+            service.name = name
+            service.category = category
+            service.tags = tags
+            service.is_active = True
+            service.display_order = index
+        services[slug] = service
+    db.flush()
+
+    adjacency_specs = (
+        ("product_engineering", "automation_qa", 82, "Product engineering accounts often benefit from test automation and quality enablement."),
+        ("product_engineering", "cloud_devops", 78, "Product delivery maturity usually exposes cloud, release, and reliability opportunities."),
+        ("cloud_devops", "data_analytics", 72, "Cloud modernization can unlock data platform and analytics expansion."),
+        ("data_analytics", "automation_qa", 68, "Analytics programs often need validation, automation, and data quality coverage."),
+        ("customer_success_ops", "data_analytics", 70, "Customer success operations benefit from reporting, segmentation, and retention analytics."),
+    )
+    for source_slug, target_slug, score, rationale in adjacency_specs:
+        source = services.get(source_slug)
+        target = services.get(target_slug)
+        if not source or not target:
+            continue
+        existing = db.scalar(
+            select(ServiceAdjacencyRule).where(
+                ServiceAdjacencyRule.source_service_id == source.id,
+                ServiceAdjacencyRule.target_service_id == target.id,
+            )
+        )
+        if existing:
+            existing.relevance_score = score
+            existing.rationale = rationale
+            existing.is_active = True
+            continue
+        db.add(ServiceAdjacencyRule(source_service_id=source.id, target_service_id=target.id, relevance_score=score, rationale=rationale, is_active=True))
 
     db.commit()
 

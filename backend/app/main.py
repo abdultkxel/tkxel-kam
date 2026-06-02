@@ -8,6 +8,7 @@ from app.config import get_settings
 from app.database import SessionLocal, init_db
 from app.exceptions import validation_exception_handler
 from app.routers import (
+    account_planning,
     accounts,
     admin,
     auth,
@@ -20,7 +21,9 @@ from app.routers import (
     onboarding,
     opportunities,
     playbooks_tasks,
+    retention,
     scoring,
+    service_catalog,
     signals,
     stakeholders,
     users,
@@ -92,6 +95,14 @@ openapi_tags = [
         "description": "Opportunity CRUD, pipeline board/list tracking, stage movement, local action items, timeline history, and opportunity type taxonomy APIs.",
     },
     {
+        "name": "Account Planning, Whitespace, and Service Catalog",
+        "description": "Account plans, service catalog, adjacency rules, whitespace inputs, and adjacent-service recommendations.",
+    },
+    {
+        "name": "Retention and Account Stability",
+        "description": "Renewal intelligence, notice windows, retention plans, stabilization actions, and recommendation-to-task workflows.",
+    },
+    {
         "name": "Scoring Engine",
         "description": "Configurable metric definitions, formula validation, score jobs, account/engagement score snapshots, and health recalculation APIs.",
     },
@@ -141,6 +152,9 @@ app.include_router(governance.router)
 app.include_router(playbooks_tasks.router)
 app.include_router(stakeholders.router)
 app.include_router(opportunities.router)
+app.include_router(account_planning.router)
+app.include_router(service_catalog.router)
+app.include_router(retention.router)
 app.include_router(scoring.router)
 app.include_router(signals.router)
 app.include_router(kyc.config_router)

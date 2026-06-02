@@ -2,12 +2,16 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, Query, status
 
-from app.dependencies import get_current_user, get_stakeholder_gap_service, get_stakeholder_service
+from app.dependencies import get_current_user, get_stakeholder_config_service, get_stakeholder_gap_service, get_stakeholder_service
 from app.models import User
 from app.schemas import (
     MessageResponse,
     StakeholderCoverageGapRead,
     StakeholderCreateRequest,
+    StakeholderGapRuleCreateRequest,
+    StakeholderGapRulePageRead,
+    StakeholderGapRuleRead,
+    StakeholderGapRuleUpdateRequest,
     StakeholderInteractionCreateRequest,
     StakeholderInteractionPageRead,
     StakeholderInteractionRead,
@@ -15,12 +19,16 @@ from app.schemas import (
     StakeholderPageRead,
     StakeholderPoliticalRisk,
     StakeholderRead,
-    StakeholderRole,
+    StakeholderRoleConfigCreateRequest,
+    StakeholderRoleConfigPageRead,
+    StakeholderRoleConfigRead,
+    StakeholderRoleConfigUpdateRequest,
     StakeholderSentiment,
     StakeholderStatus,
     StakeholderUpdateRequest,
 )
 from app.services.stakeholder_gap_service import StakeholderGapService
+from app.services.stakeholder_config import StakeholderConfigService
 from app.services.stakeholders import StakeholderService
 
 router = APIRouter(prefix="/api", tags=["Stakeholder Relationships"])
@@ -43,7 +51,7 @@ def list_stakeholders(
     current_user: Annotated[User, Depends(get_current_user)],
     service: Annotated[StakeholderService, Depends(get_stakeholder_service)],
     engagement_id: Annotated[str | None, Query(description="Filter by linked engagement ID.")] = None,
-    role: Annotated[StakeholderRole | None, Query(description="Filter by stakeholder role.")] = None,
+    role: Annotated[str | None, Query(description="Filter by stakeholder role.")] = None,
     sentiment: Annotated[StakeholderSentiment | None, Query(description="Filter by sentiment.")] = None,
     political_risk: Annotated[StakeholderPoliticalRisk | None, Query(description="Filter by political risk.")] = None,
     status_filter: Annotated[StakeholderStatus | None, Query(alias="status", description="Filter by stakeholder status.")] = None,
@@ -247,3 +255,79 @@ def delete_stakeholder(
     service: Annotated[StakeholderService, Depends(get_stakeholder_service)],
 ) -> MessageResponse:
     return service.delete(stakeholder_id, current_user)
+
+
+@router.get(
+    "/admin/stakeholder-roles",
+    response_model=StakeholderRoleConfigPageRead,
+    summary="List stakeholder role configuration",
+    description="Admin/KAM Head taxonomy for stakeholder roles used by stakeholder forms and coverage rules.",
+)
+def list_stakeholder_roles(
+    current_user: Annotated[User, Depends(get_current_user)],
+    service: Annotated[StakeholderConfigService, Depends(get_stakeholder_config_service)],
+    search: str | None = None,
+    active_state: Annotated[str, Query(pattern="^(all|active|inactive)$")] = "active",
+    page: Annotated[int, Query(ge=1)] = 1,
+    page_size: Annotated[int, Query(ge=1, le=100)] = 50,
+) -> StakeholderRoleConfigPageRead:
+    return service.list_roles(current_user, active_state=active_state, search=search, page=page, page_size=page_size, require_configure=True)
+
+
+@router.post(
+    "/admin/stakeholder-roles",
+    response_model=StakeholderRoleConfigRead,
+    status_code=status.HTTP_201_CREATED,
+    summary="Create stakeholder role",
+    description="Creates an active/inactive stakeholder role for relationship maps and coverage rules.",
+)
+def create_stakeholder_role(payload: StakeholderRoleConfigCreateRequest, current_user: Annotated[User, Depends(get_current_user)], service: Annotated[StakeholderConfigService, Depends(get_stakeholder_config_service)]) -> StakeholderRoleConfigRead:
+    return service.create_role(payload, current_user)
+
+
+@router.patch(
+    "/admin/stakeholder-roles/{role_id}",
+    response_model=StakeholderRoleConfigRead,
+    summary="Update stakeholder role",
+    description="Updates stakeholder role labels, slug, ordering, or active state while preserving historical stakeholder records.",
+)
+def update_stakeholder_role(role_id: str, payload: StakeholderRoleConfigUpdateRequest, current_user: Annotated[User, Depends(get_current_user)], service: Annotated[StakeholderConfigService, Depends(get_stakeholder_config_service)]) -> StakeholderRoleConfigRead:
+    return service.update_role(role_id, payload, current_user)
+
+
+@router.get(
+    "/admin/stakeholder-gap-rules",
+    response_model=StakeholderGapRulePageRead,
+    summary="List stakeholder gap rules",
+    description="Admin/KAM Head configurable stakeholder coverage gap rules with search, active state, and pagination.",
+)
+def list_stakeholder_gap_rules(
+    current_user: Annotated[User, Depends(get_current_user)],
+    service: Annotated[StakeholderConfigService, Depends(get_stakeholder_config_service)],
+    search: str | None = None,
+    active_state: Annotated[str, Query(pattern="^(all|active|inactive)$")] = "active",
+    page: Annotated[int, Query(ge=1)] = 1,
+    page_size: Annotated[int, Query(ge=1, le=100)] = 50,
+) -> StakeholderGapRulePageRead:
+    return service.list_rules(current_user, active_state=active_state, search=search, page=page, page_size=page_size, require_configure=True)
+
+
+@router.post(
+    "/admin/stakeholder-gap-rules",
+    response_model=StakeholderGapRuleRead,
+    status_code=status.HTTP_201_CREATED,
+    summary="Create stakeholder gap rule",
+    description="Creates a configurable coverage gap rule. Supported deterministic condition types include missing_role, missing_any_role, max_active_stakeholders, missing_any_influence, political_risk_present, and stale_interaction.",
+)
+def create_stakeholder_gap_rule(payload: StakeholderGapRuleCreateRequest, current_user: Annotated[User, Depends(get_current_user)], service: Annotated[StakeholderConfigService, Depends(get_stakeholder_config_service)]) -> StakeholderGapRuleRead:
+    return service.create_rule(payload, current_user)
+
+
+@router.patch(
+    "/admin/stakeholder-gap-rules/{rule_id}",
+    response_model=StakeholderGapRuleRead,
+    summary="Update stakeholder gap rule",
+    description="Updates stakeholder coverage gap rule condition, labels, severity, ordering, or active state.",
+)
+def update_stakeholder_gap_rule(rule_id: str, payload: StakeholderGapRuleUpdateRequest, current_user: Annotated[User, Depends(get_current_user)], service: Annotated[StakeholderConfigService, Depends(get_stakeholder_config_service)]) -> StakeholderGapRuleRead:
+    return service.update_rule(rule_id, payload, current_user)

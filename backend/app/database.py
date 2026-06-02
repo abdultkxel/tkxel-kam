@@ -214,6 +214,142 @@ _TABLE_BACKFILL_DEFAULTS: dict[str, dict[str, Any]] = {
         "created_at": lambda: datetime.now(timezone.utc),
         "updated_at": lambda: datetime.now(timezone.utc),
     },
+    "stakeholder_roles": {
+        "slug": "operational_poc",
+        "name": "Operational POC",
+        "is_active": True,
+        "display_order": 0,
+        "created_at": lambda: datetime.now(timezone.utc),
+        "updated_at": lambda: datetime.now(timezone.utc),
+    },
+    "stakeholder_gap_rules": {
+        "rule_key": "coverage_gap",
+        "title": "Stakeholder coverage gap",
+        "description": "Stakeholder coverage gap detected by configured rule.",
+        "severity": "warning",
+        "condition_json": {},
+        "is_active": True,
+        "display_order": 0,
+        "created_at": lambda: datetime.now(timezone.utc),
+        "updated_at": lambda: datetime.now(timezone.utc),
+    },
+    "opportunity_stage_definitions": {
+        "requires_outcome_reason": False,
+    },
+    "opportunity_stage_transitions": {
+        "from_stage": "Identified",
+        "to_stage": "Qualified",
+        "is_active": True,
+        "requires_reason": False,
+        "created_at": lambda: datetime.now(timezone.utc),
+        "updated_at": lambda: datetime.now(timezone.utc),
+    },
+    "account_plans": {
+        "risks": [],
+        "commitments": [],
+        "service_gaps": [],
+        "status": "draft",
+        "created_by_name": "System",
+        "created_at": lambda: datetime.now(timezone.utc),
+        "updated_at": lambda: datetime.now(timezone.utc),
+    },
+    "account_plan_versions": {
+        "version": 1,
+        "snapshot_json": {},
+        "actor_name": "System",
+        "created_at": lambda: datetime.now(timezone.utc),
+    },
+    "account_plan_actions": {
+        "title": "Plan action",
+        "owner_name": "System",
+        "due_at": lambda: datetime.now(timezone.utc),
+        "status": "open",
+        "priority": "medium",
+        "success_criteria": [],
+        "created_by_name": "System",
+        "created_at": lambda: datetime.now(timezone.utc),
+        "updated_at": lambda: datetime.now(timezone.utc),
+    },
+    "service_catalog_items": {
+        "slug": "service",
+        "name": "Service",
+        "tags": [],
+        "is_active": True,
+        "display_order": 0,
+        "created_at": lambda: datetime.now(timezone.utc),
+        "updated_at": lambda: datetime.now(timezone.utc),
+    },
+    "service_adjacency_rules": {
+        "relevance_score": 70,
+        "rationale": "Configured adjacency.",
+        "is_active": True,
+        "created_at": lambda: datetime.now(timezone.utc),
+        "updated_at": lambda: datetime.now(timezone.utc),
+    },
+    "account_whitespace_items": {
+        "service_name_snapshot": "Service",
+        "coverage_status": "unknown",
+        "source": "manual",
+        "created_at": lambda: datetime.now(timezone.utc),
+        "updated_at": lambda: datetime.now(timezone.utc),
+    },
+    "service_recommendations": {
+        "relevance_score": 70,
+        "rationale": "Recommended adjacent service.",
+        "status": "recommended",
+        "source_context": "adjacency",
+        "created_at": lambda: datetime.now(timezone.utc),
+        "updated_at": lambda: datetime.now(timezone.utc),
+    },
+    "engagement_renewal_profiles": {
+        "renewal_readiness": "unknown",
+        "renewal_risk": "unknown",
+        "confidence": 75,
+        "commercial_exposure": 0,
+        "commercial_exposure_currency": "USD",
+        "source_type": "manual",
+        "created_at": lambda: datetime.now(timezone.utc),
+        "updated_at": lambda: datetime.now(timezone.utc),
+    },
+    "retention_plans": {
+        "plan_type": "retention",
+        "status": "active",
+        "title": "Retention plan",
+        "owner_name": "System",
+        "success_criteria": [],
+        "created_by_name": "System",
+        "created_at": lambda: datetime.now(timezone.utc),
+        "updated_at": lambda: datetime.now(timezone.utc),
+    },
+    "retention_plan_milestones": {
+        "title": "Retention milestone",
+        "due_at": lambda: datetime.now(timezone.utc),
+        "status": "open",
+        "enforce_action_due_dates": True,
+        "created_at": lambda: datetime.now(timezone.utc),
+        "updated_at": lambda: datetime.now(timezone.utc),
+    },
+    "retention_plan_actions": {
+        "title": "Retention action",
+        "owner_name": "System",
+        "due_at": lambda: datetime.now(timezone.utc),
+        "status": "open",
+        "priority": "medium",
+        "success_criteria": [],
+        "created_by_name": "System",
+        "created_at": lambda: datetime.now(timezone.utc),
+        "updated_at": lambda: datetime.now(timezone.utc),
+    },
+    "retention_recommendations": {
+        "title": "Retention recommendation",
+        "rationale": "Recommended from deterministic account posture.",
+        "severity": "medium",
+        "recommended_action": "Review with account owner.",
+        "source_context": "deterministic",
+        "status": "recommended",
+        "created_at": lambda: datetime.now(timezone.utc),
+        "updated_at": lambda: datetime.now(timezone.utc),
+    },
 }
 _JSON_BACKFILL_COLUMNS = {
     "service_lines",
@@ -245,6 +381,13 @@ _JSON_BACKFILL_COLUMNS = {
     "template_snapshot",
     "citations_json",
     "evidence",
+    "condition_json",
+    "risks",
+    "commitments",
+    "service_gaps",
+    "snapshot_json",
+    "tags",
+    "success_criteria",
 }
 _LEGACY_TABLE_BACKFILL_DEFAULTS: dict[str, dict[str, Any]] = {
     "engagements": {
@@ -421,11 +564,27 @@ def apply_additive_migrations() -> None:
         Signal,
         SignalEvent,
         SignalRule,
+        OpportunityStageDefinition,
+        AccountPlan,
+        AccountPlanAction,
+        AccountPlanVersion,
+        AccountWhitespaceItem,
+        EngagementRenewalProfile,
+        OpportunityStageTransition,
+        RetentionPlan,
+        RetentionPlanAction,
+        RetentionPlanMilestone,
+        RetentionRecommendation,
+        ServiceAdjacencyRule,
+        ServiceCatalogItem,
+        ServiceRecommendation,
         Task,
         TaskEvidence,
         Stakeholder,
         StakeholderCoverageGap,
+        StakeholderGapRule,
         StakeholderInteraction,
+        StakeholderRoleConfig,
         TimelineEntry,
     )
 
@@ -451,6 +610,22 @@ def apply_additive_migrations() -> None:
             Stakeholder.__table__,
             StakeholderInteraction.__table__,
             StakeholderCoverageGap.__table__,
+            StakeholderRoleConfig.__table__,
+            StakeholderGapRule.__table__,
+            OpportunityStageDefinition.__table__,
+            OpportunityStageTransition.__table__,
+            AccountPlan.__table__,
+            AccountPlanVersion.__table__,
+            AccountPlanAction.__table__,
+            ServiceCatalogItem.__table__,
+            ServiceAdjacencyRule.__table__,
+            AccountWhitespaceItem.__table__,
+            ServiceRecommendation.__table__,
+            EngagementRenewalProfile.__table__,
+            RetentionPlan.__table__,
+            RetentionPlanMilestone.__table__,
+            RetentionPlanAction.__table__,
+            RetentionRecommendation.__table__,
         ]
     )
 
@@ -473,6 +648,16 @@ def migrate_missing_columns(tables: list) -> None:
                 backfill_missing_column(connection, table.name, column)
                 enforce_not_null_if_safe(connection, table.name, column)
                 existing_columns.add(column.name)
+            for column in table.columns:
+                if column.name not in existing_columns or column.nullable:
+                    continue
+                column_info = existing_column_info.get(column.name, {})
+                if column_info.get("nullable") is not True:
+                    continue
+                if column.name not in _TABLE_BACKFILL_DEFAULTS.get(table.name, {}):
+                    continue
+                backfill_missing_column(connection, table.name, column)
+                enforce_not_null_if_safe(connection, table.name, column)
             relax_nullable_columns(connection, table, existing_columns, existing_column_info)
             normalize_legacy_columns(connection, table.name, existing_columns, existing_column_info)
             existing_indexes = {index["name"] for index in inspector.get_indexes(table.name)}

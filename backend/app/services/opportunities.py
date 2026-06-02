@@ -7,7 +7,9 @@ from app.models import (
     Opportunity,
     OpportunityActionItem,
     OpportunityDecision,
+    OpportunityStageDefinition,
     OpportunityStageHistory,
+    OpportunityStageTransition,
     OpportunityType,
     User,
 )
@@ -30,9 +32,13 @@ from app.schemas import (
     OpportunityPipelineTotalsRead,
     OpportunityRead,
     OpportunityStageDefinitionRead,
+    OpportunityStageDefinitionCreateRequest,
+    OpportunityStageDefinitionUpdateRequest,
     OpportunityStageHistoryRead,
+    OpportunityStageTransitionConfigRead,
     OpportunityStageTransitionRead,
     OpportunityStageTransitionRequest,
+    OpportunityStageTransitionsUpdateRequest,
     OpportunityTypeCreateRequest,
     OpportunityTypePageRead,
     OpportunityTypeRead,
@@ -45,8 +51,6 @@ from app.services.timeline import TimelineService
 from app.services.user_management import page_count
 
 OPPORTUNITY_MODULE = "opportunity_management"
-OPPORTUNITY_STAGES = ("Identified", "Qualified", "Proposal Sent", "Negotiation", "Won", "Lost")
-TERMINAL_STAGES = {"Won", "Lost"}
 
 
 def field_error(field: str, message: str, status_code: int = status.HTTP_422_UNPROCESSABLE_ENTITY) -> HTTPException:
@@ -86,8 +90,8 @@ class OpportunityService:
     ) -> OpportunityPageRead:
         self.access.require_module_permission(current_user, OPPORTUNITY_MODULE, "view")
         account_ids = None if current_user.role in GLOBAL_VIEW_ROLES else self.accounts.list_account_ids_for_user(current_user.id)
-        if stage and stage not in OPPORTUNITY_STAGES:
-            raise field_error("stage", "Target stage is not valid.")
+        if stage:
+            self._ensure_active_stage(stage)
         items, total = self.repository.list_opportunities(
             account_id=account_id,
             account_ids=account_ids,
@@ -293,7 +297,68 @@ class OpportunityService:
 
     def list_stages(self, current_user: User) -> list[OpportunityStageDefinitionRead]:
         self.access.require_module_permission(current_user, OPPORTUNITY_MODULE, "view")
-        return [OpportunityStageDefinitionRead(id=item.id, slug=item.slug, name=item.name, is_terminal=item.is_terminal, is_active=item.is_active, display_order=item.display_order) for item in self.repository.list_stage_definitions()]
+        return [self._stage_definition_read(item) for item in self.repository.list_stage_definitions()]
+
+    def list_admin_stages(self, current_user: User) -> list[OpportunityStageDefinitionRead]:
+        self.access.require_module_permission(current_user, OPPORTUNITY_MODULE, "configure")
+        return [self._stage_definition_read(item) for item in self.repository.list_stage_definitions(active_only=False)]
+
+    def create_stage(self, payload: OpportunityStageDefinitionCreateRequest, current_user: User) -> OpportunityStageDefinitionRead:
+        self.access.require_module_permission(current_user, OPPORTUNITY_MODULE, "configure")
+        if self.repository.get_stage_by_slug(payload.slug):
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="An opportunity stage with this slug already exists")
+        if self.repository.get_stage_by_name(payload.name):
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="An opportunity stage with this name already exists")
+        stage = OpportunityStageDefinition(slug=payload.slug, name=payload.name, is_terminal=payload.is_terminal, requires_outcome_reason=payload.requires_outcome_reason, is_active=payload.is_active, display_order=payload.display_order)
+        self.repository.save_stage(stage)
+        self.audit.log(module=OPPORTUNITY_MODULE, action="configure_stage", entity_type="opportunity_stage", entity_id=stage.id, actor=current_user, after_value=self._stage_definition_snapshot(stage))
+        self.repository.commit()
+        return self._stage_definition_read(stage)
+
+    def update_stage(self, stage_id: str, payload: OpportunityStageDefinitionUpdateRequest, current_user: User) -> OpportunityStageDefinitionRead:
+        self.access.require_module_permission(current_user, OPPORTUNITY_MODULE, "configure")
+        stage = self.repository.get_stage_by_id(stage_id)
+        if stage is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Opportunity stage was not found")
+        before = self._stage_definition_snapshot(stage)
+        updates = payload.model_dump(exclude_unset=True)
+        if "slug" in updates and updates["slug"] != stage.slug and self.repository.get_stage_by_slug(updates["slug"]):
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="An opportunity stage with this slug already exists")
+        if "name" in updates and updates["name"] != stage.name and self.repository.get_stage_by_name(updates["name"]):
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="An opportunity stage with this name already exists")
+        for field, value in updates.items():
+            setattr(stage, field, value)
+        self.audit.log(module=OPPORTUNITY_MODULE, action="configure_stage", entity_type="opportunity_stage", entity_id=stage.id, actor=current_user, before_value=before, after_value=self._stage_definition_snapshot(stage))
+        self.repository.commit()
+        return self._stage_definition_read(stage)
+
+    def list_stage_transitions(self, current_user: User) -> list[OpportunityStageTransitionConfigRead]:
+        self.access.require_module_permission(current_user, OPPORTUNITY_MODULE, "configure")
+        return [self._stage_transition_config_read(item) for item in self.repository.list_stage_transitions()]
+
+    def replace_stage_transitions(self, payload: OpportunityStageTransitionsUpdateRequest, current_user: User) -> list[OpportunityStageTransitionConfigRead]:
+        self.access.require_module_permission(current_user, OPPORTUNITY_MODULE, "configure")
+        transitions: list[OpportunityStageTransition] = []
+        seen: set[tuple[str, str]] = set()
+        active_stages = {item.name for item in self.repository.list_stage_definitions(active_only=False)}
+        for index, item in enumerate(payload.transitions):
+            if item.from_stage == item.to_stage:
+                raise field_error(f"transitions.{index}.to_stage", "Transition target must be different from source.")
+            if item.from_stage not in active_stages:
+                raise field_error(f"transitions.{index}.from_stage", "Source stage is not configured.")
+            if item.to_stage not in active_stages:
+                raise field_error(f"transitions.{index}.to_stage", "Target stage is not configured.")
+            key = (item.from_stage, item.to_stage)
+            if key in seen:
+                raise field_error(f"transitions.{index}.to_stage", "Duplicate stage transition.")
+            seen.add(key)
+            transitions.append(OpportunityStageTransition(from_stage=item.from_stage, to_stage=item.to_stage, is_active=item.is_active, requires_reason=item.requires_reason, created_by_id=current_user.id, updated_by_id=current_user.id))
+        before = [self._stage_transition_config_snapshot(item) for item in self.repository.list_stage_transitions()]
+        self.repository.replace_stage_transitions(transitions)
+        after = [self._stage_transition_config_snapshot(item) for item in self.repository.list_stage_transitions()]
+        self.audit.log(module=OPPORTUNITY_MODULE, action="configure_stage_transitions", entity_type="opportunity_stage_transitions", entity_id="bulk", actor=current_user, before_value={"transitions": before}, after_value={"transitions": after})
+        self.repository.commit()
+        return [self._stage_transition_config_read(item) for item in self.repository.list_stage_transitions()]
 
     def list_types(self, current_user: User, *, active_state: str = "active", search: str | None = None, page: int = 1, page_size: int = 50, require_configure: bool = False) -> OpportunityTypePageRead:
         self.access.require_module_permission(current_user, OPPORTUNITY_MODULE, "configure" if require_configure else "view")
@@ -424,15 +489,22 @@ class OpportunityService:
         return self._action_item_read(action_item)
 
     def _transition_stage(self, opportunity: Opportunity, stage: str, current_user: User, reason: str | None, outcome_reason: str | None) -> OpportunityStageHistory:
-        self._ensure_active_stage(stage)
+        stage_definition = self._ensure_active_stage(stage)
         if stage == opportunity.stage:
             raise field_error("stage", "Opportunity is already in this stage.")
+        transition = self.repository.get_stage_transition(opportunity.stage, stage)
+        if transition is None or not transition.is_active:
+            raise field_error("stage", "Stage transition is not allowed by configuration.")
+        if transition.requires_reason and not reason:
+            raise field_error("reason", "A reason is required for this stage transition.")
+        if stage_definition.requires_outcome_reason and not (outcome_reason or opportunity.outcome_reason):
+            raise field_error("outcome_reason", "Outcome reason is required for this stage.")
         before = self._opportunity_snapshot(opportunity)
         before_stage = opportunity.stage
         opportunity.stage = stage
         opportunity.updated_by_id = current_user.id
         opportunity.updated_by_name = current_user.full_name
-        if stage in TERMINAL_STAGES:
+        if stage_definition.is_terminal:
             opportunity.outcome_reason = outcome_reason or opportunity.outcome_reason
         timeline_entry = self._write_opportunity_timeline(
             opportunity,
@@ -500,12 +572,11 @@ class OpportunityService:
             raise field_error(field, "Owner is required.")
         return user
 
-    def _ensure_active_stage(self, stage: str) -> None:
-        if stage not in OPPORTUNITY_STAGES:
-            raise field_error("stage", "Target stage is not valid.")
+    def _ensure_active_stage(self, stage: str) -> OpportunityStageDefinition:
         stage_definition = self.repository.get_stage_by_name(stage)
         if stage_definition is None or not stage_definition.is_active:
             raise field_error("stage", "Target stage is not valid.")
+        return stage_definition
 
     def _require_opportunity_view(self, current_user: User, opportunity: Opportunity) -> None:
         self.access.require_module_permission(current_user, OPPORTUNITY_MODULE, "view")
@@ -690,6 +761,52 @@ class OpportunityService:
             updated_at=opportunity_type.updated_at,
             in_use_count=self.repository.count_opportunities_for_type(opportunity_type.id),
         )
+
+    @staticmethod
+    def _stage_definition_read(stage: OpportunityStageDefinition) -> OpportunityStageDefinitionRead:
+        return OpportunityStageDefinitionRead(
+            id=stage.id,
+            slug=stage.slug,
+            name=stage.name,
+            is_terminal=stage.is_terminal,
+            requires_outcome_reason=stage.requires_outcome_reason,
+            is_active=stage.is_active,
+            display_order=stage.display_order,
+        )
+
+    @staticmethod
+    def _stage_definition_snapshot(stage: OpportunityStageDefinition) -> dict:
+        return {
+            "id": stage.id,
+            "slug": stage.slug,
+            "name": stage.name,
+            "is_terminal": stage.is_terminal,
+            "requires_outcome_reason": stage.requires_outcome_reason,
+            "is_active": stage.is_active,
+            "display_order": stage.display_order,
+        }
+
+    @staticmethod
+    def _stage_transition_config_read(transition: OpportunityStageTransition) -> OpportunityStageTransitionConfigRead:
+        return OpportunityStageTransitionConfigRead(
+            id=transition.id,
+            from_stage=transition.from_stage,
+            to_stage=transition.to_stage,
+            is_active=transition.is_active,
+            requires_reason=transition.requires_reason,
+            created_at=transition.created_at,
+            updated_at=transition.updated_at,
+        )
+
+    @staticmethod
+    def _stage_transition_config_snapshot(transition: OpportunityStageTransition) -> dict:
+        return {
+            "id": transition.id,
+            "from_stage": transition.from_stage,
+            "to_stage": transition.to_stage,
+            "is_active": transition.is_active,
+            "requires_reason": transition.requires_reason,
+        }
 
     @staticmethod
     def _opportunity_snapshot(opportunity: Opportunity) -> dict:

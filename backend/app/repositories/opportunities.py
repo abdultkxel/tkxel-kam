@@ -3,7 +3,7 @@ from datetime import datetime
 from sqlalchemy import false, func, or_, select
 from sqlalchemy.orm import Session, selectinload
 
-from app.models import Account, Engagement, Opportunity, OpportunityActionItem, OpportunityDecision, OpportunityStageDefinition, OpportunityStageHistory, OpportunityType, User
+from app.models import Account, Engagement, Opportunity, OpportunityActionItem, OpportunityDecision, OpportunityStageDefinition, OpportunityStageHistory, OpportunityStageTransition, OpportunityType, User
 
 
 class OpportunityRepository:
@@ -191,10 +191,36 @@ class OpportunityRepository:
     def get_stage_by_name(self, name: str) -> OpportunityStageDefinition | None:
         return self.db.scalar(select(OpportunityStageDefinition).where(OpportunityStageDefinition.name == name))
 
+    def get_stage_by_id(self, stage_id: str) -> OpportunityStageDefinition | None:
+        return self.db.get(OpportunityStageDefinition, stage_id)
+
+    def get_stage_by_slug(self, slug: str) -> OpportunityStageDefinition | None:
+        return self.db.scalar(select(OpportunityStageDefinition).where(OpportunityStageDefinition.slug == slug))
+
     def save_stage(self, stage: OpportunityStageDefinition) -> OpportunityStageDefinition:
         self.db.add(stage)
         self.db.flush()
         return stage
+
+    def get_stage_transition(self, from_stage: str, to_stage: str) -> OpportunityStageTransition | None:
+        return self.db.scalar(
+            select(OpportunityStageTransition).where(
+                OpportunityStageTransition.from_stage == from_stage,
+                OpportunityStageTransition.to_stage == to_stage,
+            )
+        )
+
+    def list_stage_transitions(self, active_only: bool = False) -> list[OpportunityStageTransition]:
+        conditions = [OpportunityStageTransition.is_active.is_(True)] if active_only else []
+        return list(self.db.scalars(select(OpportunityStageTransition).where(*conditions).order_by(OpportunityStageTransition.from_stage, OpportunityStageTransition.to_stage)))
+
+    def replace_stage_transitions(self, transitions: list[OpportunityStageTransition]) -> None:
+        for transition in self.db.scalars(select(OpportunityStageTransition)):
+            self.db.delete(transition)
+        self.db.flush()
+        for transition in transitions:
+            self.db.add(transition)
+        self.db.flush()
 
     def list_types(self, *, active_state: str = "active", search: str | None = None, page: int = 1, page_size: int = 50) -> tuple[list[OpportunityType], int]:
         conditions = []

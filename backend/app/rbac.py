@@ -63,7 +63,10 @@ DEFAULT_ROLES: tuple[DefaultRole, ...] = (
             ("account_onboarding_workspace", LEADERSHIP_ACTIONS),
             ("account_overview", LEADERSHIP_ACTIONS),
             ("engagement_sow_management", ("view", "create", "update", "delete", "assign", "export")),
+            ("stakeholder_relationship", CONFIG_ACTIONS),
+            ("account_planning", CONFIG_ACTIONS),
             ("opportunity_management", CONFIG_ACTIONS),
+            ("retention_stability", CONFIG_ACTIONS),
             ("kyc", ("view", "create", "update", "delete", "approve", "configure", "export")),
             ("client_education_content", CONFIG_ACTIONS),
             ("escalation_management", LEADERSHIP_ACTIONS),
@@ -128,7 +131,10 @@ DEFAULT_ROLES: tuple[DefaultRole, ...] = (
         description="Portfolio governance and configuration owner.",
         permission_rules=tuple((module, LEADERSHIP_ACTIONS) for module in OPERATIONAL_MODULES)
         + (
+            ("stakeholder_relationship", LEADERSHIP_ACTIONS + ("configure",)),
+            ("account_planning", LEADERSHIP_ACTIONS + ("configure",)),
             ("opportunity_management", LEADERSHIP_ACTIONS + ("configure",)),
+            ("retention_stability", LEADERSHIP_ACTIONS + ("configure",)),
             ("kyc", ("configure",)),
             ("scoring_engine", CONFIG_ACTIONS),
             ("signals_attention", CONFIG_ACTIONS),
