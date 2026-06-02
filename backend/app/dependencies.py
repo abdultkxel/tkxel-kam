@@ -22,6 +22,9 @@ from app.services.onboarding import OnboardingService
 from app.services.opportunities import OpportunityService
 from app.services.profile import ProfileService
 from app.services.rbac import RbacService
+from app.services.scoring import ScoringService
+from app.services.signals import SignalsService
+from app.services.tasks import TaskService
 from app.services.user_management import UserManagementService
 
 bearer_scheme = HTTPBearer(
@@ -106,6 +109,18 @@ def get_opportunity_service(db: Annotated[Session, Depends(get_db)]) -> Opportun
 
 def get_kyc_service(db: Annotated[Session, Depends(get_db)]) -> KycService:
     return KycService(db)
+
+
+def get_scoring_service(db: Annotated[Session, Depends(get_db)]) -> ScoringService:
+    return ScoringService(db)
+
+
+def get_signals_service(db: Annotated[Session, Depends(get_db)]) -> SignalsService:
+    return SignalsService(db)
+
+
+def get_task_service(db: Annotated[Session, Depends(get_db)]) -> TaskService:
+    return TaskService(db)
 
 
 def require_permission(module: str, action: str):

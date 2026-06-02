@@ -7,7 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.config import get_settings
 from app.database import SessionLocal, init_db
 from app.exceptions import validation_exception_handler
-from app.routers import accounts, admin, auth, content, custom_fields, engagements, escalations, governance, kyc, onboarding, opportunities, users
+from app.routers import accounts, admin, auth, content, custom_fields, engagements, escalations, governance, kyc, onboarding, opportunities, scoring, signals, tasks, users
 from app.services.seed import seed_default_data
 
 
@@ -67,6 +67,18 @@ openapi_tags = [
         "description": "Opportunity CRUD, pipeline board/list tracking, stage movement, local action items, timeline history, and opportunity type taxonomy APIs.",
     },
     {
+        "name": "Scoring Engine",
+        "description": "Configurable metric definitions, formula validation, score jobs, account/engagement score snapshots, and health recalculation APIs.",
+    },
+    {
+        "name": "Signals and Attention Center",
+        "description": "Deterministic signal evaluation, evidence, lifecycle status updates, advisory explanations, recommendations, and attention-center APIs.",
+    },
+    {
+        "name": "Playbooks, Tasks, and Calendar",
+        "description": "Playbook templates, explicit execution, generated/manual tasks, task evidence, lifecycle tracking, and unified calendar APIs.",
+    },
+    {
         "name": "KYC and AI Extraction",
         "description": "AI-assisted KYC drafts, review/approval, immutable snapshots, freshness, and agent workstream APIs.",
     },
@@ -106,6 +118,9 @@ app.include_router(custom_fields.router)
 app.include_router(escalations.router)
 app.include_router(governance.router)
 app.include_router(opportunities.router)
+app.include_router(scoring.router)
+app.include_router(signals.router)
+app.include_router(tasks.router)
 app.include_router(kyc.config_router)
 app.include_router(kyc.router)
 

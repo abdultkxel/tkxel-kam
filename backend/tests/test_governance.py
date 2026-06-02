@@ -40,7 +40,7 @@ def client(db_session: Session) -> Generator[TestClient, None, None]:
     app.dependency_overrides.clear()
 
 
-def auth_headers(client: TestClient, email: str = "admin@tkxelkam.com", password: str = "Admin@12345") -> dict[str, str]:
+def auth_headers(client: TestClient, email: str = "admin@tkxel.com", password: str = "Admin@12345") -> dict[str, str]:
     response = client.post("/api/auth/login", json={"email": email, "password": password})
     assert response.status_code == 200
     return {"Authorization": f"Bearer {response.json()['access_token']}"}
@@ -346,7 +346,7 @@ def test_governance_deterministic_agenda_brief_and_read_only_permissions(client:
     assert "Health snapshot" in brief["content"]
     assert "advisory" in brief["disclaimer"].lower()
 
-    leadership_headers = auth_headers(client, "leadership.viewer.user@tkxelkam.com", "User@12345")
+    leadership_headers = auth_headers(client, "leadership.viewer.user@tkxel.com", "User@12345")
     read_response = client.get(f"/api/governance-events/{event_id}", headers=leadership_headers)
     assert read_response.status_code == 200
     forbidden = client.patch(

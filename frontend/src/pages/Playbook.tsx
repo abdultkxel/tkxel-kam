@@ -1,6 +1,8 @@
-import { BookOpen, CheckCircle2, ClipboardList, FileText, Layers3, Target, UsersRound } from 'lucide-react'
-import { useState } from 'react'
+import { BookOpen, CheckCircle2, ClipboardList, FileText, Layers3, Loader2, Target, UsersRound } from 'lucide-react'
+import { useEffect, useState } from 'react'
 import { PageHeader } from '@/components/ui/PageHeader'
+import { useAuth } from '@/contexts/AuthContext'
+import { listPlaybookTemplates, PlaybookTemplate } from '@/services/scoringSignalsTasks'
 import { cn } from '@/utils/cn'
 
 interface PlaybookTopic {
@@ -237,7 +239,24 @@ const playbookStats = [
 ]
 
 export function Playbook() {
+  const { token } = useAuth()
   const [activeSection, setActiveSection] = useState(sections[0]?.id ?? '')
+  const [templates, setTemplates] = useState<PlaybookTemplate[]>([])
+  const [loadingTemplates, setLoadingTemplates] = useState(Boolean(token))
+  const [templateError, setTemplateError] = useState('')
+
+  useEffect(() => {
+    if (!token) {
+      setLoadingTemplates(false)
+      return
+    }
+    setLoadingTemplates(true)
+    setTemplateError('')
+    listPlaybookTemplates(token, { page: 1, page_size: 6, active_state: 'active', status: 'active' })
+      .then(page => setTemplates(page.items))
+      .catch(err => setTemplateError(err instanceof Error ? err.message : 'Unable to load configured playbooks'))
+      .finally(() => setLoadingTemplates(false))
+  }, [token])
 
   function scrollToSection(id: string) {
     const target = document.getElementById(id)
@@ -267,6 +286,35 @@ export function Playbook() {
             </div>
           ))}
         </div>
+      </section>
+
+      <section className="tk-card mb-4 p-4">
+        <div className="mb-3 flex items-center justify-between gap-3">
+          <div>
+            <p className="text-[10px] font-extrabold uppercase tracking-widest text-brand-blue">Configured plays</p>
+            <h2 className="text-base font-semibold text-ink">Active signal playbooks</h2>
+          </div>
+          {loadingTemplates ? <Loader2 className="h-4 w-4 animate-spin text-brand-blue" /> : null}
+        </div>
+        {templateError ? <p className="rounded-md border border-rag-red/20 bg-rag-red/10 p-3 text-sm text-rag-red">{templateError}</p> : null}
+        {!loadingTemplates && !templateError && !templates.length ? (
+          <p className="rounded-md border border-dashed border-surface-border bg-surface-tertiary p-3 text-sm text-ink-secondary">No active playbook templates are configured yet.</p>
+        ) : null}
+        {templates.length ? (
+          <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+            {templates.map(template => (
+              <article key={template.id} className="rounded-lg border border-surface-border bg-surface-secondary p-3">
+                <p className="text-sm font-semibold text-ink">{template.name}</p>
+                <p className="mt-1 line-clamp-2 text-xs leading-5 text-ink-secondary">{template.objective}</p>
+                <div className="mt-3 flex flex-wrap gap-1.5">
+                  {template.signal_types.slice(0, 3).map(signal => (
+                    <span key={signal} className="rounded-full border border-blue-tint-20 bg-blue-tint-20 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-brand-blue">{signal.replace('_', ' ')}</span>
+                  ))}
+                </div>
+              </article>
+            ))}
+          </div>
+        ) : null}
       </section>
 
       <div className="grid gap-4 xl:grid-cols-[280px_minmax(0,1fr)]">

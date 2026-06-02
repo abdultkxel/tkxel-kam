@@ -59,7 +59,7 @@ def test_seeded_domains_are_available_to_admin(client: TestClient) -> None:
     response = client.get("/api/admin/settings/allowed-email-domains", headers=auth_headers(client))
 
     assert response.status_code == 200
-    assert response.json()["domains"] == ["tkxel.com", "tkxel.io", "camp1.tkxel.com"]
+    assert response.json()["domains"] == ["tkxel.com", "tkxel.io", "camp1.tkxel.com", "camp1.tkxel.io"]
 
 
 def test_admin_can_save_normalized_domains_and_audit_change(client: TestClient, db_session: Session) -> None:

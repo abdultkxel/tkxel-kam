@@ -1,23 +1,42 @@
 import { Calculator, Save } from 'lucide-react'
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { toast } from 'sonner'
+import { useAuth } from '@/contexts/AuthContext'
 import { useRole } from '@/hooks/useRole'
+import { createScoringMetric, listScoringMetrics, publishScoringMetric, ScoringMetric, updateScoringMetric } from '@/services/scoringSignalsTasks'
 import { useAccountStore } from '@/stores/accountStore'
 import { emitTimelineEvent } from '@/utils/emitTimelineEvent'
 
 type Dimension = 'relationship' | 'usage' | 'delivery' | 'commercial'
 
 const dimensions: Dimension[] = ['relationship', 'usage', 'delivery', 'commercial']
+const metricSlugByDimension: Record<Dimension, string> = {
+  relationship: 'relationship_health',
+  usage: 'usage_adoption_health',
+  delivery: 'delivery_health',
+  commercial: 'commercial_health',
+}
+const metricNameByDimension: Record<Dimension, string> = {
+  relationship: 'Relationship Health',
+  usage: 'Usage and Adoption Health',
+  delivery: 'Delivery Health',
+  commercial: 'Commercial Health',
+}
 
 function weightedScore(health: Record<Dimension, number>, weights: Record<Dimension, number>) {
   return Math.round(dimensions.reduce((sum, dimension) => sum + health[dimension] * (weights[dimension] / 100), 0))
 }
 
 export function ScoringEngineBuilder() {
+  const { token } = useAuth()
   const user = useRole()
   const accounts = useAccountStore(state => state.accounts)
   const [weights, setWeights] = useState<Record<Dimension, number>>({ relationship: 30, usage: 25, delivery: 25, commercial: 20 })
   const [thresholds, setThresholds] = useState({ green: 75, amber: 60, red: 45 })
+  const [metrics, setMetrics] = useState<ScoringMetric[]>([])
+  const [loading, setLoading] = useState(Boolean(token))
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState('')
   const sum = Object.values(weights).reduce((total, value) => total + value, 0)
   const preview = useMemo(
     () =>
@@ -29,6 +48,28 @@ export function ScoringEngineBuilder() {
     [accounts, weights],
   )
 
+  useEffect(() => {
+    if (!token) {
+      setLoading(false)
+      return
+    }
+    void loadMetrics()
+  }, [token])
+
+  async function loadMetrics() {
+    if (!token) return
+    setLoading(true)
+    setError('')
+    try {
+      const page = await listScoringMetrics(token, { page: 1, page_size: 100, active_state: 'all' })
+      setMetrics(page.items)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Unable to load scoring metrics')
+    } finally {
+      setLoading(false)
+    }
+  }
+
   function updateWeight(dimension: Dimension, value: number) {
     const clamped = Math.max(0, Math.min(100, value))
     const balancingDimension = dimension === 'commercial' ? 'relationship' : 'commercial'
@@ -37,25 +78,60 @@ export function ScoringEngineBuilder() {
     setWeights({ ...weights, [dimension]: clamped, [balancingDimension]: balancingValue })
   }
 
-  function publish() {
-    accounts.forEach(account => {
-      emitTimelineEvent({
-        accountId: account.id,
-        eventType: 'calculator_change',
-        module: 'scoring',
-        title: 'Scoring calculator published',
-        description: 'Admin published scoring calculator v1.4 after previewing portfolio impact.',
-        performedBy: user.id,
-        performedByName: user.name,
-        beforeValue: { calculatorVersion: 'v1.3' },
-        afterValue: { calculatorVersion: 'v1.4', weights, thresholds },
-        tags: ['scoring-builder', 'calculator-v1.4'],
-        isSensitive: false,
-        isSystemGenerated: true,
-        isImmutable: true,
+  async function publish() {
+    if (!token) {
+      toast.error('You must be logged in to publish scoring metrics')
+      return
+    }
+    setSaving(true)
+    setError('')
+    try {
+      for (const dimension of dimensions) {
+        const slug = metricSlugByDimension[dimension]
+        const payload = {
+          slug,
+          name: metricNameByDimension[dimension],
+          description: `Configured account ${dimension} score dimension.`,
+          scope: 'account',
+          weight: weights[dimension],
+          thresholds: { red_max: thresholds.amber - 1, amber_min: thresholds.amber, green_min: thresholds.green },
+          formula: { op: 'field', field: `health_${dimension}` },
+          freshness_rule: { stale_after_days: 30 },
+          owner_role: 'kam_head',
+          source: 'admin_builder',
+          status: 'published',
+          is_active: true,
+        }
+        const existing = metrics.find(metric => metric.slug === slug)
+        const metric = existing ? await updateScoringMetric(token, existing.id, payload) : await createScoringMetric(token, payload)
+        await publishScoringMetric(token, metric.id)
+      }
+      await loadMetrics()
+      accounts.forEach(account => {
+        emitTimelineEvent({
+          accountId: account.id,
+          eventType: 'calculator_change',
+          module: 'scoring',
+          title: 'Scoring calculator published',
+          description: 'Admin published scoring calculator v1.4 after previewing portfolio impact.',
+          performedBy: user.id,
+          performedByName: user.name,
+          beforeValue: { calculatorVersion: 'v1.3' },
+          afterValue: { calculatorVersion: 'v1.4', weights, thresholds },
+          tags: ['scoring-builder', 'calculator-v1.4'],
+          isSensitive: false,
+          isSystemGenerated: true,
+          isImmutable: true,
+        })
       })
-    })
-    toast.success('Scoring calculator v1.4 published')
+      toast.success('Scoring metrics published')
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Unable to publish scoring metrics'
+      setError(message)
+      toast.error(message)
+    } finally {
+      setSaving(false)
+    }
   }
 
   return (
@@ -63,6 +139,17 @@ export function ScoringEngineBuilder() {
       <div className="border-b border-surface-border p-5">
         <p className="text-[10px] font-extrabold uppercase tracking-widest text-brand-blue">No-code scoring</p>
         <h2 className="text-base font-semibold text-ink">Scoring Engine Builder</h2>
+        {loading ? <p className="mt-2 text-sm text-ink-secondary">Loading published metric definitions...</p> : null}
+        {error ? (
+          <div className="mt-3 rounded-md border border-rag-red/20 bg-rag-red/10 p-3 text-sm text-rag-red">
+            <p className="font-semibold">Scoring configuration could not be loaded</p>
+            <p>{error}</p>
+            <button className="tk-button-secondary mt-2 bg-white" onClick={loadMetrics}>Retry</button>
+          </div>
+        ) : null}
+        {!loading && !error && !metrics.length ? (
+          <p className="mt-2 rounded-md border border-dashed border-surface-border bg-surface-tertiary p-3 text-sm text-ink-secondary">No scoring metrics have been configured yet. Publishing from this builder will create the default account-health metrics.</p>
+        ) : null}
       </div>
       <div className="grid gap-5 p-5 xl:grid-cols-[360px_1fr]">
         <div className="space-y-4">
@@ -86,9 +173,9 @@ export function ScoringEngineBuilder() {
               </label>
             ))}
           </div>
-          <button className="tk-button-primary w-full" disabled={sum !== 100} onClick={publish}>
+          <button className="tk-button-primary w-full" disabled={sum !== 100 || saving || !token} onClick={publish}>
             <Save className="h-4 w-4" />
-            Publish v1.4
+            {saving ? 'Publishing...' : 'Publish metrics'}
           </button>
         </div>
 
@@ -122,8 +209,10 @@ export function ScoringEngineBuilder() {
             </table>
           </div>
           <div className="mt-3 flex flex-wrap gap-2">
-            {['v1.4 Draft', 'v1.3 Published', 'v1.2 Archived'].map(version => (
-              <span key={version} className="rounded-full border border-surface-border bg-white px-3 py-1 text-xs font-semibold text-ink-secondary">{version}</span>
+            {metrics.slice(0, 8).map(metric => (
+              <span key={metric.id} className="rounded-full border border-surface-border bg-white px-3 py-1 text-xs font-semibold text-ink-secondary">
+                {metric.name} v{metric.current_version || 0} {metric.status}
+              </span>
             ))}
           </div>
         </div>

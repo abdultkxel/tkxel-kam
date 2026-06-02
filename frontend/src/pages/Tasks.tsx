@@ -14,13 +14,26 @@ import {
 import { addDays, isAfter, isBefore, isSameDay } from 'date-fns'
 import { CalendarClock, CheckCircle2, ClipboardCheck, ExternalLink, Filter, GripVertical, Loader2, Play, Plus, X, XCircle } from 'lucide-react'
 import { nanoid } from 'nanoid'
-import { FormEvent, useMemo, useState } from 'react'
+import { FormEvent, useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { toast } from 'sonner'
 import { EmptyState } from '@/components/ui/EmptyState'
 import { PageHeader } from '@/components/ui/PageHeader'
+import { useAuth } from '@/contexts/AuthContext'
 import { users } from '@/data/mock'
 import { useRole } from '@/hooks/useRole'
+import {
+  addTaskEvidence,
+  createTask as createRemoteTask,
+  listAttentionSignals,
+  listPlaybookTemplates,
+  listTasks,
+  PlaybookTemplate,
+  SignalRead,
+  TaskRead,
+  updateSignalStatus as updateRemoteSignalStatus,
+  updateTask as updateRemoteTask,
+} from '@/services/scoringSignalsTasks'
 import { useAccountStore } from '@/stores/accountStore'
 import { useScoreActivityStore } from '@/stores/scoreActivityStore'
 import { useV3Store } from '@/stores/v3Store'
@@ -68,14 +81,20 @@ const laneOrder: { key: LaneKey; title: string; description: string }[] = [
 const laneTitleByKey = Object.fromEntries(laneOrder.map(lane => [lane.key, lane.title])) as Record<LaneKey, string>
 
 export function Tasks() {
+  const { token } = useAuth()
   const user = useRole()
-  const tasks = useScoreActivityStore(state => state.tasks)
-  const templates = useScoreActivityStore(state => state.templates)
-  const attentionSignals = useV3Store(state => state.signals)
-  const updateSignalStatus = useV3Store(state => state.updateSignalStatus)
+  const localTasks = useScoreActivityStore(state => state.tasks)
+  const localTemplates = useScoreActivityStore(state => state.templates)
+  const localAttentionSignals = useV3Store(state => state.signals)
+  const updateLocalSignalStatus = useV3Store(state => state.updateSignalStatus)
   const accountsForCreate = useAccountStore(state => state.accounts)
   const addTask = useScoreActivityStore(state => state.addTask)
-  const updateTask = useScoreActivityStore(state => state.updateTask)
+  const updateLocalTask = useScoreActivityStore(state => state.updateTask)
+  const [remoteTasks, setRemoteTasks] = useState<ScoreActivityTask[]>([])
+  const [remoteSignals, setRemoteSignals] = useState<SignalRecord[]>([])
+  const [remoteTemplates, setRemoteTemplates] = useState<ScoreActivityTemplate[]>([])
+  const [loading, setLoading] = useState(Boolean(token))
+  const [error, setError] = useState('')
   const [accountId, setAccountId] = useState('')
   const [ownerId, setOwnerId] = useState('')
   const [calculator, setCalculator] = useState('')
@@ -87,6 +106,39 @@ export function Tasks() {
     useSensor(PointerSensor, { activationConstraint: { distance: 8 } }),
     useSensor(KeyboardSensor),
   )
+
+  const useRemoteData = Boolean(token)
+  const tasks = useRemoteData ? remoteTasks : localTasks
+  const templates = useRemoteData ? remoteTemplates : localTemplates
+  const attentionSignals = useRemoteData ? remoteSignals : localAttentionSignals
+
+  useEffect(() => {
+    if (!token) {
+      setLoading(false)
+      return
+    }
+    void loadRemoteWork()
+  }, [accountsForCreate, token])
+
+  async function loadRemoteWork() {
+    if (!token) return
+    setLoading(true)
+    setError('')
+    try {
+      const [taskPage, signalPage, templatePage] = await Promise.all([
+        listTasks(token, { page: 1, page_size: 100, sort: 'due_at', direction: 'asc' }),
+        listAttentionSignals(token, { page: 1, page_size: 100 }),
+        listPlaybookTemplates(token, { page: 1, page_size: 100, active_state: 'active', status: 'active' }),
+      ])
+      setRemoteTasks(taskPage.items.map(task => mapApiTask(task, accountsForCreate)))
+      setRemoteSignals(signalPage.items.map(signal => mapApiSignal(signal, accountsForCreate)))
+      setRemoteTemplates(templatePage.items.map(mapApiTemplate))
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Unable to load tasks and signals')
+    } finally {
+      setLoading(false)
+    }
+  }
 
   const accounts = useMemo(
     () => Array.from(new Map<string, string>([...tasks.map(task => [task.accountId, task.accountName] as const), ...attentionSignals.map(signal => [signal.accountId, signal.accountName] as const)]).entries()),
@@ -137,20 +189,70 @@ export function Tasks() {
     setPriority('')
   }
 
-  function updateEvidence(taskId: string, evidenceNote: string) {
-    updateTask(taskId, { evidenceNote })
+  async function handleCreateTask(task: ScoreActivityTask) {
+    if (token) {
+      try {
+        const created = await createRemoteTask(token, {
+          account_id: task.accountId,
+          title: task.title,
+          description: task.description,
+          owner_id: task.ownerId,
+          due_at: task.dueDate,
+          status: 'todo',
+          priority: task.priority,
+          source_type: 'manual',
+          notes: task.evidenceNote,
+        })
+        setRemoteTasks(current => [mapApiTask(created, accountsForCreate), ...current])
+      } catch (err) {
+        const message = err instanceof Error ? err.message : 'Task could not be created'
+        setError(message)
+        throw new Error(message)
+      }
+      return
+    }
+    addTask(task)
   }
 
-  function startTask(task: ScoreActivityTask) {
-    updateTask(task.id, { status: 'in_progress', workflowLane: 'in_progress' })
+  function updateEvidence(taskId: string, evidenceNote: string) {
+    if (token) {
+      setRemoteTasks(current => current.map(task => (task.id === taskId ? { ...task, evidenceNote } : task)))
+      return
+    }
+    updateLocalTask(taskId, { evidenceNote })
+  }
+
+  async function startTask(task: ScoreActivityTask) {
+    if (token) {
+      try {
+        const updated = await updateRemoteTask(token, task.id, { status: 'in_progress' })
+        setRemoteTasks(current => current.map(item => (item.id === task.id ? mapApiTask(updated, accountsForCreate) : item)))
+        toast.success('Task moved to in progress')
+      } catch (err) {
+        toast.error(err instanceof Error ? err.message : 'Task could not be updated')
+      }
+      return
+    }
+    updateLocalTask(task.id, { status: 'in_progress', workflowLane: 'in_progress' })
     toast.success('Task moved to in progress')
   }
 
-  function completeTask(task: ScoreActivityTask) {
+  async function completeTask(task: ScoreActivityTask) {
     const evidenceNote = task.evidenceNote?.trim() || `Evidence captured for ${task.title}.`
+    if (token) {
+      try {
+        if (evidenceNote) await addTaskEvidence(token, task.id, { evidence_type: 'note', note: evidenceNote })
+        const updated = await updateRemoteTask(token, task.id, { status: 'done', outcome: evidenceNote })
+        setRemoteTasks(current => current.map(item => (item.id === task.id ? mapApiTask(updated, accountsForCreate) : item)))
+        toast.success('Task completed and recorded')
+      } catch (err) {
+        toast.error(err instanceof Error ? err.message : 'Task could not be completed')
+      }
+      return
+    }
     const completedAt = new Date().toISOString()
     const entry = emitScoreActivityCompletion(task, user, evidenceNote)
-    updateTask(task.id, {
+    updateLocalTask(task.id, {
       status: 'done',
       workflowLane: 'done',
       evidenceNote,
@@ -161,11 +263,22 @@ export function Tasks() {
     toast.success('Task completed and recorded in timeline')
   }
 
-  function skipTask(task: ScoreActivityTask) {
-    updateTask(task.id, {
+  async function skipTask(task: ScoreActivityTask) {
+    const skipReason = task.evidenceNote?.trim() || task.skippedReason || 'Skipped from task review.'
+    if (token) {
+      try {
+        const updated = await updateRemoteTask(token, task.id, { status: 'skipped', skip_reason: skipReason })
+        setRemoteTasks(current => current.map(item => (item.id === task.id ? mapApiTask(updated, accountsForCreate) : item)))
+        toast.success('Task skipped with reason retained')
+      } catch (err) {
+        toast.error(err instanceof Error ? err.message : 'Task could not be skipped')
+      }
+      return
+    }
+    updateLocalTask(task.id, {
       status: 'skipped',
       workflowLane: 'done',
-      skippedReason: task.evidenceNote?.trim() || task.skippedReason || 'Skipped from task review.',
+      skippedReason: skipReason,
     })
     toast.success('Task skipped with reason retained')
   }
@@ -179,10 +292,10 @@ export function Tasks() {
     const laneKey = event.over?.id as LaneKey | undefined
     setActiveCard(null)
     if (!card || card.kind !== 'task' || !laneKey || !isLaneKey(laneKey) || card.lane === laneKey) return
-    moveTaskToLane(card.task, laneKey)
+    void moveTaskToLane(card.task, laneKey)
   }
 
-  function moveTaskToLane(task: ScoreActivityTask, lane: LaneKey) {
+  async function moveTaskToLane(task: ScoreActivityTask, lane: LaneKey) {
     const patch: Partial<ScoreActivityTask> = { workflowLane: lane }
     if (lane === 'done') {
       patch.status = 'done'
@@ -198,17 +311,51 @@ export function Tasks() {
       patch.skippedReason = undefined
       if (lane === 'at_risk' && task.priority === 'low') patch.priority = 'medium'
     }
-    updateTask(task.id, patch)
+    if (token) {
+      try {
+        const updated = await updateRemoteTask(token, task.id, {
+          status: patch.status,
+          priority: patch.priority,
+          outcome: patch.status === 'done' ? task.evidenceNote || 'Completed from board lane move.' : undefined,
+        })
+        setRemoteTasks(current => current.map(item => (item.id === task.id ? mapApiTask(updated, accountsForCreate) : item)))
+        toast.success(`Task moved to ${laneTitleByKey[lane]}`)
+      } catch (err) {
+        toast.error(err instanceof Error ? err.message : 'Task could not be moved')
+      }
+      return
+    }
+    updateLocalTask(task.id, patch)
     toast.success(`Task moved to ${laneTitleByKey[lane]}`)
   }
 
-  function reviewSignal(signal: SignalRecord) {
-    updateSignalStatus(signal.id, 'reviewed')
+  async function reviewSignal(signal: SignalRecord) {
+    if (token) {
+      try {
+        const updated = await updateRemoteSignalStatus(token, signal.id, 'reviewed')
+        setRemoteSignals(current => current.map(item => (item.id === signal.id ? mapApiSignal(updated, accountsForCreate) : item)))
+        toast.success('Signal marked reviewed')
+      } catch (err) {
+        toast.error(err instanceof Error ? err.message : 'Signal could not be reviewed')
+      }
+      return
+    }
+    updateLocalSignalStatus(signal.id, 'reviewed')
     toast.success('Signal marked reviewed')
   }
 
-  function resolveSignal(signal: SignalRecord) {
-    updateSignalStatus(signal.id, 'resolved')
+  async function resolveSignal(signal: SignalRecord) {
+    if (token) {
+      try {
+        const updated = await updateRemoteSignalStatus(token, signal.id, 'resolved', 'Resolved from task board.')
+        setRemoteSignals(current => current.map(item => (item.id === signal.id ? mapApiSignal(updated, accountsForCreate) : item)))
+        toast.success('Signal resolved')
+      } catch (err) {
+        toast.error(err instanceof Error ? err.message : 'Signal could not be resolved')
+      }
+      return
+    }
+    updateLocalSignalStatus(signal.id, 'resolved')
     toast.success('Signal resolved')
   }
 
@@ -224,10 +371,24 @@ export function Tasks() {
               <Filter className="h-4 w-4" />
               Clear filters
             </button>
-            <AddTaskDialog accounts={accountsForCreate} templates={templates} onCreate={addTask} currentUserId={user.id} currentUserName={user.name} />
+            <AddTaskDialog accounts={accountsForCreate} templates={templates} onCreate={handleCreateTask} currentUserId={user.id} currentUserName={user.name} persistLocalTimeline={!token} />
           </>
         }
       />
+
+      {loading ? (
+        <div className="mb-5 rounded-lg border border-surface-border bg-surface-tertiary p-4 text-sm text-ink-secondary">
+          <Loader2 className="mr-2 inline h-4 w-4 animate-spin text-brand-blue" />
+          Loading tasks, signals, and playbooks...
+        </div>
+      ) : null}
+      {error ? (
+        <div className="mb-5 rounded-lg border border-rag-red/20 bg-rag-red/10 p-4 text-sm text-rag-red">
+          <p className="font-semibold">Task data could not be loaded</p>
+          <p>{error}</p>
+          <button className="tk-button-secondary mt-2 bg-white" onClick={loadRemoteWork}>Retry</button>
+        </div>
+      ) : null}
 
       <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
         <TaskMetric label="Open" value={openTasks} tone="default" />
@@ -266,6 +427,7 @@ export function Tasks() {
               <optgroup label="Tasks">
                 <option value="todo">Todo</option>
                 <option value="in_progress">In progress</option>
+                <option value="blocked">Blocked</option>
                 <option value="done">Done</option>
                 <option value="skipped">Skipped</option>
               </optgroup>
@@ -292,6 +454,7 @@ export function Tasks() {
             <span className="tk-label text-xs">Priority</span>
             <select className="tk-input" value={priority} onChange={event => setPriority(event.target.value)}>
               <option value="">Any priority</option>
+              <option value="critical">Critical</option>
               <option value="high">High</option>
               <option value="medium">Medium</option>
               <option value="low">Low</option>
@@ -571,12 +734,14 @@ function AddTaskDialog({
   onCreate,
   currentUserId,
   currentUserName,
+  persistLocalTimeline,
 }: {
   accounts: Account[]
   templates: ScoreActivityTemplate[]
-  onCreate: (task: ScoreActivityTask) => void
+  onCreate: (task: ScoreActivityTask) => void | Promise<void>
   currentUserId: string
   currentUserName: string
+  persistLocalTimeline: boolean
 }) {
   const [open, setOpen] = useState(false)
   const [accountId, setAccountId] = useState(accounts[0]?.id ?? '')
@@ -621,26 +786,33 @@ function AddTaskDialog({
       workflowLane: 'needs_review',
       createdAt: new Date().toISOString(),
     }
-    onCreate(task)
-    emitTimelineEvent({
-      accountId: selectedAccount.id,
-      eventType: 'manual_note',
-      module: 'activity',
-      title: `Task created: ${task.title}`,
-      description: `Score-linked activity created for ${calculatorLabels[task.calculatorId]}. Owner: ${task.ownerName}.`,
-      performedBy: currentUserId,
-      performedByName: currentUserName,
-      sourceRecordId: task.id,
-      sourceRecordType: 'score_activity_task',
-      sourceRecordRoute: `/tasks`,
-      metadata: { taskId: task.id, calculatorId: task.calculatorId, criterionId: task.criterionId },
-      isSensitive: false,
-      isSystemGenerated: false,
-      isImmutable: false,
-    })
-    setSaving(false)
-    setOpen(false)
-    toast.success('Task created')
+    try {
+      await onCreate(task)
+      if (persistLocalTimeline) {
+        emitTimelineEvent({
+          accountId: selectedAccount.id,
+          eventType: 'manual_note',
+          module: 'activity',
+          title: `Task created: ${task.title}`,
+          description: `Score-linked activity created for ${calculatorLabels[task.calculatorId]}. Owner: ${task.ownerName}.`,
+          performedBy: currentUserId,
+          performedByName: currentUserName,
+          sourceRecordId: task.id,
+          sourceRecordType: 'score_activity_task',
+          sourceRecordRoute: `/tasks`,
+          metadata: { taskId: task.id, calculatorId: task.calculatorId, criterionId: task.criterionId },
+          isSensitive: false,
+          isSystemGenerated: false,
+          isImmutable: false,
+        })
+      }
+      setOpen(false)
+      toast.success('Task created')
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Task could not be created')
+    } finally {
+      setSaving(false)
+    }
   }
 
   return (
@@ -695,6 +867,7 @@ function AddTaskDialog({
               <label className="space-y-1">
                 <span className="tk-label text-xs">Priority</span>
                 <select className="tk-input" value={priority} onChange={event => setPriority(event.target.value as ScoreActivityPriority)}>
+                  <option value="critical">Critical</option>
                   <option value="high">High</option>
                   <option value="medium">Medium</option>
                   <option value="low">Low</option>
@@ -902,7 +1075,7 @@ function cardUrgency(card: LaneCard) {
     if (card.signal.severity === 'warning') return 1
     return 2
   }
-  const priority = { high: 0, medium: 1, low: 2 }
+  const priority = { critical: 0, high: 1, medium: 2, low: 3 }
   return priority[card.task.priority]
 }
 
@@ -950,9 +1123,77 @@ function matchesSignalDueFilter(signal: SignalRecord, due: DueFilter) {
 }
 
 function signalPriority(signal: SignalRecord): ScoreActivityPriority {
-  if (signal.severity === 'critical') return 'high'
+  if (signal.severity === 'critical') return 'critical'
   if (signal.severity === 'warning') return 'medium'
   return 'low'
+}
+
+function mapApiTask(task: TaskRead, accounts: Account[]): ScoreActivityTask {
+  const account = accounts.find(item => item.id === task.account_id)
+  const evidenceNote = task.outcome || task.notes || task.evidence_json.map(item => String(item.note ?? item.url ?? '')).filter(Boolean).join('\n')
+  return {
+    id: task.id,
+    templateId: task.playbook_execution_id ?? task.source_record_id ?? task.id,
+    accountId: task.account_id,
+    accountName: account?.name ?? 'Account',
+    ownerId: task.owner_id ?? '',
+    ownerName: task.owner_name ?? 'Unassigned',
+    calculatorId: 'relationship',
+    criterionId: task.source_type,
+    title: task.title,
+    description: task.description ?? '',
+    dueDate: task.due_at,
+    status: task.status,
+    priority: task.priority,
+    workflowLane: task.status === 'blocked' ? 'at_risk' : undefined,
+    evidenceNote,
+    completedAt: task.completed_at ?? undefined,
+    skippedReason: task.skip_reason ?? undefined,
+    sourceTimelineEntryId: task.source_record_id ?? undefined,
+    createdAt: task.created_at,
+  }
+}
+
+function mapApiSignal(signal: SignalRead, accounts: Account[]): SignalRecord {
+  const account = accounts.find(item => item.id === signal.account_id)
+  return {
+    id: signal.id,
+    accountId: signal.account_id,
+    accountName: account?.name ?? 'Account',
+    engagementId: signal.engagement_id ?? undefined,
+    type: signal.signal_type as SignalRecord['type'],
+    severity: signal.severity,
+    status: signal.status,
+    ownerId: signal.owner_id ?? '',
+    ownerName: signal.owner_name ?? 'Unassigned',
+    headline: signal.title,
+    detail: signal.detail,
+    reasonCodes: signal.reason_codes.map(item => item.label || item.code),
+    evidence: signal.evidence_json.map(item => String(item.label ?? item.value ?? item.type ?? 'Evidence')),
+    sourceRecordRoute: signal.source_record_route ?? '/attention-center',
+    createdAt: signal.created_at,
+    dueAt: signal.due_at ?? undefined,
+    slaAgeDays: signal.due_at ? Math.max(0, Math.floor((Date.now() - new Date(signal.due_at).getTime()) / 86_400_000)) : 0,
+    recommendedPlaybook: '',
+  }
+}
+
+function mapApiTemplate(template: PlaybookTemplate): ScoreActivityTemplate {
+  const firstActivity = template.activities_json[0] ?? {}
+  return {
+    id: template.id,
+    calculatorId: 'relationship',
+    criterionId: template.slug,
+    title: String(firstActivity.title ?? template.name),
+    description: String(firstActivity.description ?? template.objective),
+    defaultPriority: normalizePriority(firstActivity.priority),
+    defaultDueOffsetDays: Number(firstActivity.due_offset_days ?? 7),
+  }
+}
+
+function normalizePriority(value: unknown): ScoreActivityPriority {
+  if (value === 'critical' || value === 'high' || value === 'medium' || value === 'low') return value
+  return 'medium'
 }
 
 function signalStatusClass(status: SignalRecord['status']) {
@@ -971,11 +1212,13 @@ function signalSeverityClass(severity: SignalRecord['severity']) {
 function statusClass(status: ScoreActivityTask['status']) {
   if (status === 'done') return 'border-rag-green/20 bg-rag-green/10 text-rag-green'
   if (status === 'in_progress') return 'border-blue-tint-20 bg-blue-tint-20 text-brand-blue'
+  if (status === 'blocked') return 'border-rag-red/20 bg-rag-red/10 text-rag-red'
   if (status === 'skipped') return 'border-brand-orange/20 bg-brand-orange/10 text-brand-orange'
   return 'border-surface-border bg-surface-tertiary text-ink-secondary'
 }
 
 function priorityClass(priority: ScoreActivityTask['priority']) {
+  if (priority === 'critical') return 'border-rag-red/20 bg-rag-red/10 text-rag-red'
   if (priority === 'high') return 'border-brand-orange/20 bg-brand-orange/10 text-brand-orange'
   if (priority === 'medium') return 'border-blue-tint-20 bg-blue-tint-20 text-brand-blue'
   return 'border-surface-border bg-surface-tertiary text-ink-secondary'

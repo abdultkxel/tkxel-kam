@@ -4,7 +4,21 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.config import get_settings
-from app.models import Account, AccountOwner, KycConfiguration, Opportunity, OpportunityStageDefinition, OpportunityType, User, utc_now
+from app.models import (
+    Account,
+    AccountOwner,
+    KycConfiguration,
+    Opportunity,
+    OpportunityStageDefinition,
+    OpportunityType,
+    PlaybookTemplate,
+    PlaybookTemplateVersion,
+    ScoringMetricDefinition,
+    ScoringMetricVersion,
+    SignalRule,
+    User,
+    utc_now,
+)
 from app.rbac import DEFAULT_ROLES
 from app.security import hash_password
 from app.services.email_domains import EmailDomainPolicyService
@@ -21,6 +35,7 @@ def seed_default_data(db: Session) -> User:
     seed_default_role_users(db)
     seed_kyc_configuration(db)
     seed_opportunity_reference_data(db)
+    seed_scoring_signals_playbooks(db, super_admin)
     seed_demo_opportunities(db)
     return super_admin
 
@@ -147,6 +162,231 @@ def seed_opportunity_reference_data(db: Session) -> None:
         db.add(OpportunityType(slug=slug, name=name, description=description, display_order=index))
 
     db.commit()
+
+
+def seed_scoring_signals_playbooks(db: Session, super_admin: User) -> None:
+    metric_specs = (
+        (
+            "relationship_health",
+            "Relationship Health",
+            "Account-level relationship quality, stakeholder depth, and sponsor coverage.",
+            "account",
+            25,
+            {"red_max": 59, "amber_min": 60, "green_min": 75},
+            {"op": "field", "field": "health_relationship"},
+        ),
+        (
+            "usage_adoption_health",
+            "Usage and Adoption Health",
+            "Account-level usage/adoption and value realization signal.",
+            "account",
+            25,
+            {"red_max": 59, "amber_min": 60, "green_min": 75},
+            {"op": "field", "field": "health_usage"},
+        ),
+        (
+            "delivery_health",
+            "Delivery Health",
+            "Account and engagement delivery quality, risk, and execution confidence.",
+            "account",
+            25,
+            {"red_max": 59, "amber_min": 60, "green_min": 75},
+            {"op": "field", "field": "health_delivery"},
+        ),
+        (
+            "commercial_health",
+            "Commercial Health",
+            "Commercial stability, expansion opportunity, renewal outlook, and escalation drag.",
+            "account",
+            25,
+            {"red_max": 59, "amber_min": 60, "green_min": 75},
+            {"op": "field", "field": "health_commercial"},
+        ),
+        (
+            "engagement_delivery_health",
+            "Engagement Delivery Health",
+            "Engagement-level delivery and renewal-readiness score.",
+            "engagement",
+            100,
+            {"red_max": 59, "amber_min": 60, "green_min": 75},
+            {"op": "field", "field": "delivery_health"},
+        ),
+    )
+    for slug, name, description, scope, weight, thresholds, formula in metric_specs:
+        metric = db.scalar(select(ScoringMetricDefinition).where(ScoringMetricDefinition.slug == slug))
+        if metric is None:
+            metric = ScoringMetricDefinition(
+                slug=slug,
+                name=name,
+                description=description,
+                scope=scope,
+                weight=weight,
+                thresholds=thresholds,
+                formula=formula,
+                freshness_rule={"stale_after_days": 30},
+                owner_role="kam_head",
+                source="seed",
+                status="published",
+                is_active=True,
+                current_version=1,
+                created_by_id=super_admin.id,
+                updated_by_id=super_admin.id,
+            )
+            db.add(metric)
+            db.flush()
+            db.add(ScoringMetricVersion(metric_id=metric.id, version=1, config_json=_metric_config(metric), published_by_id=super_admin.id, published_by_name=super_admin.full_name))
+            continue
+        metric.name = name
+        metric.description = description
+        metric.scope = scope
+        metric.weight = weight
+        metric.thresholds = thresholds
+        metric.formula = formula
+        metric.freshness_rule = metric.freshness_rule or {"stale_after_days": 30}
+        metric.status = "published"
+        metric.is_active = True
+        metric.updated_by_id = super_admin.id
+        if metric.current_version <= 0:
+            metric.current_version = 1
+            db.add(ScoringMetricVersion(metric_id=metric.id, version=1, config_json=_metric_config(metric), published_by_id=super_admin.id, published_by_name=super_admin.full_name))
+
+    rule_specs = (
+        ("sow_expiry", "SOW Expiry Window", "sow_expiry", "warning", {"date_field": "engagement.end_date", "days_before": 45}),
+        ("renewal_date", "Renewal Date Approaching", "renewal_date", "warning", {"date_field": "engagement.renewal_date", "days_before": 45}),
+        ("notice_window", "Notice Window", "notice_window", "warning", {"date_field": "engagement.notice_deadline", "days_before": 30}),
+        ("stale_kyc", "Stale KYC", "stale_kyc", "warning", {"freshness_days": 180}),
+        ("weak_metric", "Weak Health Metric", "weak_metric", "warning", {"rag_status": ["red", "amber"]}),
+        ("stakeholder_gap", "Stakeholder Gap", "stakeholder_gap", "critical", {"missing": "primary_am"}),
+        ("escalation_sla", "Escalation SLA Attention", "escalation_sla", "critical", {"status": "open_or_overdue"}),
+    )
+    for slug, name, signal_type, severity, condition in rule_specs:
+        rule = db.scalar(select(SignalRule).where(SignalRule.slug == slug))
+        if rule is None:
+            db.add(
+                SignalRule(
+                    slug=slug,
+                    name=name,
+                    signal_type=signal_type,
+                    description=f"Seeded deterministic rule for {name.lower()}.",
+                    severity=severity,
+                    condition_json=condition,
+                    owner_rule_json={"default": "primary_am"},
+                    sla_rule_json={"due_in_days": 3 if severity == "critical" else 7},
+                    is_active=True,
+                    current_version=1,
+                    created_by_id=super_admin.id,
+                    updated_by_id=super_admin.id,
+                )
+            )
+            continue
+        rule.name = name
+        rule.signal_type = signal_type
+        rule.severity = severity
+        rule.condition_json = condition
+        rule.is_active = True
+        rule.updated_by_id = super_admin.id
+
+    playbook_specs = (
+        (
+            "renewal_rescue",
+            "Renewal Rescue",
+            "Stabilize an upcoming renewal or notice window before commercial risk escalates.",
+            ["notice_window", "renewal_date", "sow_expiry"],
+            ["renewal", "commercial"],
+            [
+                {"title": "Confirm renewal owner and decision process", "description": "Identify client approver, procurement path, and internal commercial owner.", "priority": "high", "due_offset_days": 2},
+                {"title": "Prepare renewal risk brief", "description": "Summarize blockers, value delivered, open asks, and next-best offer.", "priority": "high", "due_offset_days": 4},
+                {"title": "Schedule renewal alignment meeting", "description": "Book a client-facing renewal discussion and attach agenda.", "priority": "medium", "due_offset_days": 7},
+            ],
+        ),
+        (
+            "health_recovery",
+            "Health Recovery",
+            "Address weak health metrics or escalation drag with an owner-backed recovery plan.",
+            ["weak_metric", "escalation_sla", "stale_kyc"],
+            ["relationship", "usage", "delivery", "commercial", "stale_kyc"],
+            [
+                {"title": "Review score drivers and evidence", "description": "Validate weak metrics, evidence, and recent account activity.", "priority": "high", "due_offset_days": 1},
+                {"title": "Create recovery action plan", "description": "Document actions, owners, due dates, and success criteria.", "priority": "high", "due_offset_days": 3},
+                {"title": "Update executive sponsor narrative", "description": "Prepare concise health-recovery update for leadership visibility.", "priority": "medium", "due_offset_days": 7},
+            ],
+        ),
+        (
+            "stakeholder_map_refresh",
+            "Stakeholder Map Refresh",
+            "Repair missing ownership or stakeholder coverage gaps.",
+            ["stakeholder_gap"],
+            ["stakeholder", "relationship"],
+            [
+                {"title": "Assign or confirm primary account owner", "description": "Confirm the accountable AM and supporting owner matrix.", "priority": "critical", "due_offset_days": 1},
+                {"title": "Refresh stakeholder map", "description": "Capture sponsor, champion, economic buyer, and detractor coverage.", "priority": "high", "due_offset_days": 5},
+            ],
+        ),
+    )
+    for slug, name, objective, signal_types, weak_metrics, activities in playbook_specs:
+        template = db.scalar(select(PlaybookTemplate).where(PlaybookTemplate.slug == slug))
+        if template is None:
+            template = PlaybookTemplate(
+                slug=slug,
+                name=name,
+                objective=objective,
+                signal_types=signal_types,
+                weak_metrics=weak_metrics,
+                activities_json=activities,
+                default_owner_rule={"default": "primary_am"},
+                due_date_rule={"default_offset_days": 7},
+                success_criteria=["Tasks completed with evidence", "Signal resolved or accepted with recovery plan"],
+                skip_rules=["Duplicate task already open", "Signal dismissed with reason"],
+                status="active",
+                is_active=True,
+                current_version=1,
+                created_by_id=super_admin.id,
+                updated_by_id=super_admin.id,
+            )
+            db.add(template)
+            db.flush()
+            db.add(PlaybookTemplateVersion(template_id=template.id, version=1, config_json=_playbook_config(template), published_by_id=super_admin.id, published_by_name=super_admin.full_name))
+            continue
+        template.name = name
+        template.objective = objective
+        template.signal_types = signal_types
+        template.weak_metrics = weak_metrics
+        template.activities_json = activities
+        template.status = "active"
+        template.is_active = True
+        template.updated_by_id = super_admin.id
+        if template.current_version <= 0:
+            template.current_version = 1
+            db.add(PlaybookTemplateVersion(template_id=template.id, version=1, config_json=_playbook_config(template), published_by_id=super_admin.id, published_by_name=super_admin.full_name))
+
+    db.commit()
+
+
+def _metric_config(metric: ScoringMetricDefinition) -> dict:
+    return {
+        "slug": metric.slug,
+        "name": metric.name,
+        "scope": metric.scope,
+        "weight": metric.weight,
+        "thresholds": metric.thresholds,
+        "formula": metric.formula,
+        "freshness_rule": metric.freshness_rule,
+    }
+
+
+def _playbook_config(template: PlaybookTemplate) -> dict:
+    return {
+        "slug": template.slug,
+        "name": template.name,
+        "objective": template.objective,
+        "signal_types": template.signal_types,
+        "weak_metrics": template.weak_metrics,
+        "activities_json": template.activities_json,
+        "default_owner_rule": template.default_owner_rule,
+        "due_date_rule": template.due_date_rule,
+        "success_criteria": template.success_criteria,
+        "skip_rules": template.skip_rules,
+    }
 
 
 def seed_demo_opportunities(db: Session) -> None:
