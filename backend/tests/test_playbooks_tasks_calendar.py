@@ -37,7 +37,7 @@ def client(db_session: Session) -> Generator[TestClient, None, None]:
     app.dependency_overrides.clear()
 
 
-def auth_headers(client: TestClient, email: str = "admin@tkxelkam.com", password: str = "Admin@12345") -> dict[str, str]:
+def auth_headers(client: TestClient, email: str = "admin@tkxel.com", password: str = "Admin@12345") -> dict[str, str]:
     response = client.post("/api/auth/login", json={"email": email, "password": password})
     assert response.status_code == 200
     return {"Authorization": f"Bearer {response.json()['access_token']}"}
@@ -251,12 +251,24 @@ def test_playbooks_tasks_authorization_and_validation(client: TestClient, db_ses
     assert created.status_code == 201
     template = created.json()
 
+    kam_headers = auth_headers(client, "account.manager.user@tkxel.com", "User@12345")
+    kam_templates = client.get("/api/playbook-templates", headers=kam_headers, params={"search": "renewal"})
+    assert kam_templates.status_code == 200
+    assert kam_templates.json()["total"] == 1
+
+    kam_execution = client.post(f"/api/playbooks/{template['id']}/execute", headers=kam_headers, json={"account_id": "account-playbook", "confirmed": True})
+    assert kam_execution.status_code == 201
+    assert len(kam_execution.json()["tasks"]) == 2
+
     inactive = client.patch(f"/api/admin/playbook-templates/{template['id']}", headers=headers, json={"is_active": False})
     assert inactive.status_code == 200
+    kam_inactive_templates = client.get("/api/playbook-templates", headers=kam_headers, params={"search": "renewal"})
+    assert kam_inactive_templates.status_code == 200
+    assert kam_inactive_templates.json()["total"] == 0
     blocked = client.post(f"/api/playbooks/{template['id']}/execute", headers=headers, json={"account_id": "account-playbook", "confirmed": True})
     assert blocked.status_code == 400
 
-    viewer_headers = auth_headers(client, "leadership.viewer.user@tkxelkam.com", "User@12345")
+    viewer_headers = auth_headers(client, "leadership.viewer.user@tkxel.com", "User@12345")
     viewer_list = client.get("/api/tasks", headers=viewer_headers)
     assert viewer_list.status_code == 200
     viewer_create = client.post(
@@ -285,3 +297,51 @@ def test_playbooks_tasks_authorization_and_validation(client: TestClient, db_ses
 
     bad_link = client.post(f"/api/tasks/{task.json()['id']}/evidence", headers=headers, data={"evidence_type": "link", "url": "ftp://bad.example"})
     assert bad_link.status_code == 422 or bad_link.status_code == 400
+
+
+def test_playbook_admin_only_template_and_guide_section_management(client: TestClient, db_session: Session) -> None:
+    headers = auth_headers(client)
+    owner = seeded_user(db_session, "account_manager")
+
+    kam_head_headers = auth_headers(client, "kam.head.user@tkxel.com", "User@12345")
+    kam_head_create = client.post("/api/admin/playbook-templates", headers=kam_head_headers, json={**template_payload(owner.id), "custom_field_values": {}})
+    assert kam_head_create.status_code == 403
+
+    guide_list = client.get("/api/playbook-guide-sections", headers=kam_head_headers)
+    assert guide_list.status_code == 200
+    assert len(guide_list.json()) >= 1
+
+    blocked_section = client.post(
+        "/api/admin/playbook-guide-sections",
+        headers=kam_head_headers,
+        json={"title": "Blocked", "summary": "KAM Head cannot manage guide sections.", "topics": []},
+    )
+    assert blocked_section.status_code == 403
+
+    first_section = client.post(
+        "/api/admin/playbook-guide-sections",
+        headers=headers,
+        json={"title": "Admin section A", "summary": "First admin-managed guide section.", "topics": [{"title": "A topic", "body": "A body", "bullets": []}], "sort_order": 10},
+    )
+    second_section = client.post(
+        "/api/admin/playbook-guide-sections",
+        headers=headers,
+        json={"title": "Admin section B", "summary": "Second admin-managed guide section.", "topics": [{"title": "B topic", "body": "B body", "bullets": []}], "sort_order": 11},
+    )
+    assert first_section.status_code == 201
+    assert second_section.status_code == 201
+    first_id = first_section.json()["id"]
+    second_id = second_section.json()["id"]
+
+    updated = client.patch(f"/api/admin/playbook-guide-sections/{first_id}", headers=headers, json={"summary": "Updated guide section.", "is_active": False})
+    assert updated.status_code == 200
+    assert updated.json()["summary"] == "Updated guide section."
+    assert updated.json()["is_active"] is False
+
+    reordered = client.post("/api/admin/playbook-guide-sections/reorder", headers=headers, json={"ordered_ids": [second_id, first_id]})
+    assert reordered.status_code == 200
+    reordered_ids = [section["id"] for section in reordered.json() if section["id"] in {first_id, second_id}]
+    assert reordered_ids == [second_id, first_id]
+
+    deleted = client.delete(f"/api/admin/playbook-guide-sections/{first_id}", headers=headers)
+    assert deleted.status_code == 200

@@ -42,6 +42,7 @@ class DefaultRole:
 ALL_MODULE_SLUGS = tuple(module for module, _ in MODULES)
 ALL_ACTIONS = ACTIONS
 OPERATIONAL_MODULES = tuple(module for module in ALL_MODULE_SLUGS if module not in {"admin_audit_security_rbac", "integrations", "multi_owner_tenant_readiness"})
+KAM_HEAD_OPERATIONAL_MODULES = tuple(module for module in OPERATIONAL_MODULES if module != "playbooks_tasks_calendar")
 VIEW_ONLY_ACTIONS = ("view", "export")
 WORK_ACTIONS = ("view", "create", "update")
 LEADERSHIP_ACTIONS = ("view", "create", "update", "approve", "assign", "export")
@@ -124,13 +125,13 @@ DEFAULT_ROLES: tuple[DefaultRole, ...] = (
         slug="kam_head",
         name="KAM Head / VP",
         description="Portfolio governance and configuration owner.",
-        permission_rules=tuple((module, LEADERSHIP_ACTIONS) for module in OPERATIONAL_MODULES)
+        permission_rules=tuple((module, LEADERSHIP_ACTIONS) for module in KAM_HEAD_OPERATIONAL_MODULES)
         + (
             ("opportunity_management", LEADERSHIP_ACTIONS + ("configure",)),
             ("kyc", ("configure",)),
             ("scoring_engine", CONFIG_ACTIONS),
             ("signals_attention", CONFIG_ACTIONS),
-            ("playbooks_tasks_calendar", CONFIG_ACTIONS),
+            ("playbooks_tasks_calendar", VIEW_ONLY_ACTIONS),
             ("notifications_digests", CONFIG_ACTIONS),
             ("dashboards_reporting", ("view", "configure", "export")),
             ("analytics_portfolio", VIEW_ONLY_ACTIONS),

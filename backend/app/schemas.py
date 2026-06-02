@@ -3419,6 +3419,117 @@ class PlaybookTemplatePageRead(BaseModel):
     pages: int
 
 
+class PlaybookGuideTopicInput(BaseModel):
+    title: str
+    body: str
+    bullets: list[str] = Field(default_factory=list)
+
+    @field_validator("title")
+    @classmethod
+    def title_is_valid(cls, value: str) -> str:
+        return validate_short_text(value, "Guide topic title", 220)
+
+    @field_validator("body")
+    @classmethod
+    def body_is_valid(cls, value: str) -> str:
+        return validate_short_text(value, "Guide topic body", 4000)
+
+    @field_validator("bullets")
+    @classmethod
+    def bullets_are_valid(cls, value: list[str]) -> list[str]:
+        return validate_string_list(value, "Guide topic bullets", max_items=20)
+
+
+class PlaybookGuideSectionRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    title: str
+    summary: str
+    body: str | None = None
+    icon_key: str
+    topics: list[PlaybookGuideTopicInput] = Field(default_factory=list)
+    sort_order: int
+    is_active: bool
+    created_by_id: str | None = None
+    updated_by_id: str | None = None
+    created_at: datetime
+    updated_at: datetime
+
+
+class PlaybookGuideSectionCreateRequest(BaseModel):
+    title: str
+    summary: str
+    body: str | None = None
+    icon_key: str = "book_open"
+    topics: list[PlaybookGuideTopicInput] = Field(default_factory=list)
+    sort_order: int = Field(default=0, ge=0, le=10000)
+    is_active: bool = True
+
+    @field_validator("title")
+    @classmethod
+    def title_is_valid(cls, value: str) -> str:
+        return validate_short_text(value, "Guide section title", 220)
+
+    @field_validator("summary")
+    @classmethod
+    def summary_is_valid(cls, value: str) -> str:
+        return validate_short_text(value, "Guide section summary", 1000)
+
+    @field_validator("body")
+    @classmethod
+    def body_is_valid(cls, value: str | None) -> str | None:
+        return validate_optional_long_text(value, "Guide section body", 8000)
+
+    @field_validator("icon_key")
+    @classmethod
+    def icon_key_is_valid(cls, value: str) -> str:
+        return validate_slug(value, "Guide section icon")
+
+
+class PlaybookGuideSectionUpdateRequest(BaseModel):
+    title: str | None = None
+    summary: str | None = None
+    body: str | None = None
+    icon_key: str | None = None
+    topics: list[PlaybookGuideTopicInput] | None = None
+    sort_order: int | None = Field(default=None, ge=0, le=10000)
+    is_active: bool | None = None
+
+    @field_validator("title")
+    @classmethod
+    def title_is_valid(cls, value: str | None) -> str | None:
+        return validate_short_text(value, "Guide section title", 220) if value is not None else None
+
+    @field_validator("summary")
+    @classmethod
+    def summary_is_valid(cls, value: str | None) -> str | None:
+        return validate_short_text(value, "Guide section summary", 1000) if value is not None else None
+
+    @field_validator("body")
+    @classmethod
+    def body_is_valid(cls, value: str | None) -> str | None:
+        return validate_optional_long_text(value, "Guide section body", 8000)
+
+    @field_validator("icon_key")
+    @classmethod
+    def icon_key_is_valid(cls, value: str | None) -> str | None:
+        return validate_slug(value, "Guide section icon") if value is not None else None
+
+
+class PlaybookGuideSectionReorderRequest(BaseModel):
+    ordered_ids: list[str]
+
+    @field_validator("ordered_ids")
+    @classmethod
+    def ordered_ids_are_valid(cls, value: list[str]) -> list[str]:
+        if not value:
+            raise ValueError("At least one section id is required.")
+        if len(value) != len(set(value)):
+            raise ValueError("Section ids must be unique.")
+        return [validate_short_text(item, "Section id", 120) for item in value]
+
+
 class PlaybookTemplateCreateRequest(BaseModel):
     name: str
     objective: str

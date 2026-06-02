@@ -10,6 +10,7 @@ from app.models import (
     AccountOwner,
     Engagement,
     PlaybookExecution,
+    PlaybookGuideSection,
     PlaybookTemplate,
     PlaybookTemplateActivity,
     Task,
@@ -26,6 +27,10 @@ from app.schemas import (
     CalendarItemPageRead,
     CalendarItemRead,
     MessageResponse,
+    PlaybookGuideSectionCreateRequest,
+    PlaybookGuideSectionRead,
+    PlaybookGuideSectionReorderRequest,
+    PlaybookGuideSectionUpdateRequest,
     PlaybookExecutionRead,
     PlaybookExecutionRequest,
     PlaybookTemplateActivityInput,
@@ -77,6 +82,8 @@ class PlaybooksTasksService:
         page_size: int = 10,
     ) -> PlaybookTemplatePageRead:
         self.access.require_module_permission(current_user, MODULE, "view")
+        if current_user.role not in {"super_admin", "admin"}:
+            active_state = "active"
         items, total = self.repository.list_templates(
             search=search,
             active_state=active_state,
@@ -90,8 +97,70 @@ class PlaybooksTasksService:
         )
         return PlaybookTemplatePageRead(items=[self._template_read(item) for item in items], total=total, page=page, page_size=page_size, pages=page_count(total, page_size))
 
+    def list_guide_sections(self, current_user: User, *, active_state: str = "active") -> list[PlaybookGuideSectionRead]:
+        self.access.require_module_permission(current_user, MODULE, "view")
+        if current_user.role not in {"super_admin", "admin"}:
+            active_state = "active"
+        return [PlaybookGuideSectionRead.model_validate(item) for item in self.repository.list_guide_sections(active_state=active_state)]
+
+    def create_guide_section(self, payload: PlaybookGuideSectionCreateRequest, current_user: User) -> PlaybookGuideSectionRead:
+        self._require_admin_configure(current_user)
+        section = PlaybookGuideSection(
+            title=payload.title,
+            summary=payload.summary,
+            body=payload.body,
+            icon_key=payload.icon_key,
+            topics=[topic.model_dump() for topic in payload.topics],
+            sort_order=payload.sort_order,
+            is_active=payload.is_active,
+            created_by_id=current_user.id,
+            updated_by_id=current_user.id,
+        )
+        self.repository.save_guide_section(section)
+        self.audit.log(module=MODULE, action="create_guide_section", entity_type="playbook_guide_section", entity_id=section.id, actor=current_user, after_value=self._guide_section_snapshot(section))
+        self.repository.commit()
+        return PlaybookGuideSectionRead.model_validate(section)
+
+    def update_guide_section(self, section_id: str, payload: PlaybookGuideSectionUpdateRequest, current_user: User) -> PlaybookGuideSectionRead:
+        self._require_admin_configure(current_user)
+        section = self._get_guide_section_or_404(section_id)
+        before = self._guide_section_snapshot(section)
+        updates = payload.model_dump(exclude_unset=True)
+        if "topics" in updates and updates["topics"] is not None:
+            updates["topics"] = [topic.model_dump() for topic in payload.topics or []]
+        for field, value in updates.items():
+            setattr(section, field, value)
+        section.updated_by_id = current_user.id
+        self.audit.log(module=MODULE, action="update_guide_section", entity_type="playbook_guide_section", entity_id=section.id, actor=current_user, before_value=before, after_value=self._guide_section_snapshot(section))
+        self.repository.commit()
+        return PlaybookGuideSectionRead.model_validate(section)
+
+    def reorder_guide_sections(self, payload: PlaybookGuideSectionReorderRequest, current_user: User) -> list[PlaybookGuideSectionRead]:
+        self._require_admin_configure(current_user)
+        sections_by_id = {section.id: section for section in self.repository.list_guide_sections(active_state="all")}
+        missing = [section_id for section_id in payload.ordered_ids if section_id not in sections_by_id]
+        if missing:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="One or more guide sections were not found")
+        before = [{"id": section.id, "sort_order": section.sort_order} for section in sections_by_id.values()]
+        for index, section_id in enumerate(payload.ordered_ids):
+            section = sections_by_id[section_id]
+            section.sort_order = index
+            section.updated_by_id = current_user.id
+        self.audit.log(module=MODULE, action="reorder_guide_sections", entity_type="playbook_guide_section", entity_id="bulk", actor=current_user, before_value={"sections": before}, after_value={"ordered_ids": payload.ordered_ids})
+        self.repository.commit()
+        return self.list_guide_sections(current_user, active_state="all")
+
+    def delete_guide_section(self, section_id: str, current_user: User) -> MessageResponse:
+        self._require_admin_configure(current_user)
+        section = self._get_guide_section_or_404(section_id)
+        before = self._guide_section_snapshot(section)
+        self.repository.delete_guide_section(section)
+        self.audit.log(module=MODULE, action="delete_guide_section", entity_type="playbook_guide_section", entity_id=section_id, actor=current_user, before_value=before)
+        self.repository.commit()
+        return MessageResponse(message="Playbook guide section deleted successfully")
+
     def create_template(self, payload: PlaybookTemplateCreateRequest, current_user: User) -> PlaybookTemplateRead:
-        self._require_configure(current_user)
+        self._require_admin_configure(current_user)
         template = PlaybookTemplate(
             name=payload.name,
             objective=payload.objective,
@@ -114,7 +183,7 @@ class PlaybooksTasksService:
         return self._template_read(template)
 
     def update_template(self, template_id: str, payload: PlaybookTemplateUpdateRequest, current_user: User) -> PlaybookTemplateRead:
-        self._require_configure(current_user)
+        self._require_admin_configure(current_user)
         template = self._get_template_or_404(template_id)
         before = self._template_snapshot(template)
         updates = payload.model_dump(exclude_unset=True)
@@ -454,10 +523,10 @@ class PlaybooksTasksService:
         start = (page - 1) * page_size
         return CalendarItemPageRead(items=items[start:start + page_size], total=total, page=page, page_size=page_size, pages=page_count(total, page_size))
 
-    def _require_configure(self, user: User) -> None:
+    def _require_admin_configure(self, user: User) -> None:
         self.access.require_module_permission(user, MODULE, "configure")
-        if user.role not in {"super_admin", "admin", "kam_head"}:
-            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Only Admin or KAM Head can configure playbooks")
+        if user.role not in {"super_admin", "admin"}:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Only Admin can configure playbooks")
 
     def _require_account_work(self, user: User, account: Account, *, action: str) -> None:
         self.access.require_module_permission(user, MODULE, action)
@@ -481,6 +550,12 @@ class PlaybooksTasksService:
         if template is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Playbook template was not found")
         return template
+
+    def _get_guide_section_or_404(self, section_id: str) -> PlaybookGuideSection:
+        section = self.repository.get_guide_section(section_id)
+        if section is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Playbook guide section was not found")
+        return section
 
     def _get_task_or_404(self, task_id: str) -> Task:
         task = self.repository.get_task(task_id)
@@ -575,6 +650,18 @@ class PlaybooksTasksService:
                 }
                 for activity in sorted(template.activities, key=lambda item: item.sort_order)
             ],
+        }
+
+    @staticmethod
+    def _guide_section_snapshot(section: PlaybookGuideSection) -> dict[str, Any]:
+        return {
+            "id": section.id,
+            "title": section.title,
+            "summary": section.summary,
+            "icon_key": section.icon_key,
+            "topics": section.topics,
+            "sort_order": section.sort_order,
+            "is_active": section.is_active,
         }
 
     @staticmethod

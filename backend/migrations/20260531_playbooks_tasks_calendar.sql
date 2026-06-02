@@ -36,6 +36,21 @@ CREATE TABLE IF NOT EXISTS playbook_template_activities (
     updated_at TIMESTAMPTZ NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS playbook_guide_sections (
+    id VARCHAR(36) PRIMARY KEY,
+    title VARCHAR(220) NOT NULL,
+    summary TEXT NOT NULL,
+    body TEXT NULL,
+    icon_key VARCHAR(80) NOT NULL DEFAULT 'book_open',
+    topics JSONB NOT NULL DEFAULT '[]'::jsonb,
+    sort_order INTEGER NOT NULL DEFAULT 0,
+    is_active BOOLEAN NOT NULL DEFAULT TRUE,
+    created_by_id VARCHAR(36) NULL REFERENCES users(id) ON DELETE SET NULL,
+    updated_by_id VARCHAR(36) NULL REFERENCES users(id) ON DELETE SET NULL,
+    created_at TIMESTAMPTZ NOT NULL,
+    updated_at TIMESTAMPTZ NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS playbook_executions (
     id VARCHAR(36) PRIMARY KEY,
     template_id VARCHAR(36) NULL REFERENCES playbook_templates(id) ON DELETE SET NULL,
@@ -104,6 +119,7 @@ CREATE TABLE IF NOT EXISTS task_evidence (
 
 CREATE INDEX IF NOT EXISTS ix_playbook_templates_active_updated ON playbook_templates (is_active, updated_at);
 CREATE INDEX IF NOT EXISTS ix_playbook_template_activities_template ON playbook_template_activities (template_id, sort_order);
+CREATE INDEX IF NOT EXISTS ix_playbook_guide_sections_active_order ON playbook_guide_sections (is_active, sort_order);
 CREATE INDEX IF NOT EXISTS ix_playbook_executions_account ON playbook_executions (account_id, created_at);
 CREATE INDEX IF NOT EXISTS ix_playbook_executions_engagement ON playbook_executions (engagement_id);
 CREATE INDEX IF NOT EXISTS ix_tasks_account_due ON tasks (account_id, due_at);

@@ -7,8 +7,13 @@ from app.dependencies import get_current_user, get_playbooks_tasks_service
 from app.models import User
 from app.schemas import (
     CalendarItemPageRead,
+    MessageResponse,
     PlaybookExecutionRead,
     PlaybookExecutionRequest,
+    PlaybookGuideSectionCreateRequest,
+    PlaybookGuideSectionRead,
+    PlaybookGuideSectionReorderRequest,
+    PlaybookGuideSectionUpdateRequest,
     PlaybookTemplateCreateRequest,
     PlaybookTemplatePageRead,
     PlaybookTemplateRead,
@@ -45,6 +50,50 @@ def list_templates(
     page_size: Annotated[int, Query(ge=1, le=100)] = 10,
 ) -> PlaybookTemplatePageRead:
     return service.list_templates(current_user, search=search, active_state=active_state, signal_type=signal_type, weak_metric=weak_metric, owner_rule=owner_rule, sort=sort, direction=direction, page=page, page_size=page_size)
+
+
+@router.get("/playbook-templates", response_model=PlaybookTemplatePageRead, summary="List executable playbook templates", description="Paginated active playbook templates for users who can execute playbooks without template configuration access.")
+def list_executable_templates(
+    current_user: Annotated[User, Depends(get_current_user)],
+    service: Annotated[PlaybooksTasksService, Depends(get_playbooks_tasks_service)],
+    search: str | None = None,
+    signal_type: str | None = None,
+    weak_metric: str | None = None,
+    sort: TemplateSort = "updated_at",
+    direction: Direction = "desc",
+    page: Annotated[int, Query(ge=1)] = 1,
+    page_size: Annotated[int, Query(ge=1, le=100)] = 10,
+) -> PlaybookTemplatePageRead:
+    return service.list_templates(current_user, search=search, active_state="active", signal_type=signal_type, weak_metric=weak_metric, sort=sort, direction=direction, page=page, page_size=page_size)
+
+
+@router.get("/playbook-guide-sections", response_model=list[PlaybookGuideSectionRead], summary="List playbook guide sections", description="Ordered manual playbook guide sections. Non-admin users only receive active sections.")
+def list_guide_sections(
+    current_user: Annotated[User, Depends(get_current_user)],
+    service: Annotated[PlaybooksTasksService, Depends(get_playbooks_tasks_service)],
+    active_state: ActiveState = "active",
+) -> list[PlaybookGuideSectionRead]:
+    return service.list_guide_sections(current_user, active_state=active_state)
+
+
+@router.post("/admin/playbook-guide-sections", response_model=PlaybookGuideSectionRead, status_code=status.HTTP_201_CREATED, summary="Create playbook guide section", description="Admin-only manual playbook section creation with ordering metadata.")
+def create_guide_section(payload: PlaybookGuideSectionCreateRequest, current_user: Annotated[User, Depends(get_current_user)], service: Annotated[PlaybooksTasksService, Depends(get_playbooks_tasks_service)]) -> PlaybookGuideSectionRead:
+    return service.create_guide_section(payload, current_user)
+
+
+@router.post("/admin/playbook-guide-sections/reorder", response_model=list[PlaybookGuideSectionRead], summary="Reorder playbook guide sections", description="Admin-only ordering for manual playbook guide sections.")
+def reorder_guide_sections(payload: PlaybookGuideSectionReorderRequest, current_user: Annotated[User, Depends(get_current_user)], service: Annotated[PlaybooksTasksService, Depends(get_playbooks_tasks_service)]) -> list[PlaybookGuideSectionRead]:
+    return service.reorder_guide_sections(payload, current_user)
+
+
+@router.patch("/admin/playbook-guide-sections/{section_id}", response_model=PlaybookGuideSectionRead, summary="Update playbook guide section", description="Admin-only manual playbook section update.")
+def update_guide_section(section_id: str, payload: PlaybookGuideSectionUpdateRequest, current_user: Annotated[User, Depends(get_current_user)], service: Annotated[PlaybooksTasksService, Depends(get_playbooks_tasks_service)]) -> PlaybookGuideSectionRead:
+    return service.update_guide_section(section_id, payload, current_user)
+
+
+@router.delete("/admin/playbook-guide-sections/{section_id}", response_model=MessageResponse, summary="Delete playbook guide section", description="Admin-only manual playbook section deletion.")
+def delete_guide_section(section_id: str, current_user: Annotated[User, Depends(get_current_user)], service: Annotated[PlaybooksTasksService, Depends(get_playbooks_tasks_service)]) -> MessageResponse:
+    return service.delete_guide_section(section_id, current_user)
 
 
 @router.post("/admin/playbook-templates", response_model=PlaybookTemplateRead, status_code=status.HTTP_201_CREATED, summary="Create playbook template", description="Creates a configurable playbook template with objectives, activities, owners, due-date rules, success criteria, skip rules, audit, and Field Builder values.")

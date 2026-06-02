@@ -1,4 +1,4 @@
-import { BookOpen, CheckCircle2, ClipboardList, Layers3, Loader2, Play, Plus, RefreshCw, Save, Target, UsersRound, X } from 'lucide-react'
+import { ArrowDown, ArrowUp, BookOpen, CheckCircle2, ClipboardList, Edit3, Layers3, Loader2, Play, Plus, RefreshCw, Save, Target, Trash2, UsersRound, X } from 'lucide-react'
 import { FormEvent, useEffect, useMemo, useState } from 'react'
 import { toast } from 'sonner'
 import { RuntimeCustomFields, customValuesForSubmit, requiredCustomFieldErrors } from '@/components/custom-fields/RuntimeCustomFields'
@@ -8,99 +8,27 @@ import { useAuth } from '@/contexts/AuthContext'
 import { useRole } from '@/hooks/useRole'
 import { listRuntimeCustomFields, RuntimeCustomField } from '@/services/contentGovernance'
 import {
+  createPlaybookGuideSection,
   createPlaybookTemplate,
+  deletePlaybookGuideSection,
   executePlaybook,
+  listExecutablePlaybookTemplates,
+  listPlaybookGuideSections,
   listPlaybookTemplates,
   listRecommendedPlaybooks,
+  PlaybookGuideSection,
+  PlaybookGuideSectionPayload,
   PlaybookTemplate,
   PlaybookTemplatePayload,
   RecommendedPlaybook,
+  reorderPlaybookGuideSections,
+  updatePlaybookGuideSection,
   updatePlaybookTemplate,
 } from '@/services/playbooksTasks'
 import { useAccountStore } from '@/stores/accountStore'
 import { useV3Store } from '@/stores/v3Store'
 import { cn } from '@/utils/cn'
 import { formatDate } from '@/utils/formatters'
-
-interface PlaybookTopic {
-  title: string
-  body: string
-  bullets?: string[]
-}
-
-interface PlaybookSection {
-  id: string
-  number: string
-  title: string
-  summary: string
-  icon: typeof BookOpen
-  topics: PlaybookTopic[]
-}
-
-const manualSections: PlaybookSection[] = [
-  {
-    id: 'overview',
-    number: '1',
-    title: 'Overview: Account Manager at Tkxel',
-    summary: 'Defines the AM role, responsibilities, positioning, and problems KAM solves.',
-    icon: UsersRound,
-    topics: [
-      {
-        title: '1.1 Role of a Key Account Manager at Tkxel',
-        body: 'The Tkxel Account Manager owns the commercial and relationship health of strategic accounts and connects client priorities with delivery, leadership, finance, and growth teams.',
-        bullets: ['Own executive relationships and account cadence', 'Translate client objectives into internal operating priorities', 'Protect retention while identifying responsible expansion'],
-      },
-      {
-        title: '1.2 Core Responsibilities',
-        body: 'AM responsibilities span account governance, risk visibility, expansion planning, stakeholder mapping, and internal follow-through.',
-        bullets: ['Maintain KYC quality', 'Run QBRs, SteerCos, and delivery reviews', 'Coordinate escalations, renewals, and opportunity planning'],
-      },
-    ],
-  },
-  {
-    id: 'operating-model',
-    number: '2',
-    title: 'KAM Operating Model Overview',
-    summary: 'Explains the working model AMs use to convert account intelligence into repeatable execution.',
-    icon: Layers3,
-    topics: [
-      {
-        title: "2.1 Components of Tkxel's KAM Operating Model",
-        body: 'The model combines KYC, account strategy, governance cadence, health scoring, escalation handling, opportunity planning, and leadership review.',
-      },
-      {
-        title: '2.2 Outcome of the Operating Model',
-        body: 'The expected outcome is a managed portfolio where leadership can see account quality, AMs can prioritize work, delivery can act on context, and clients experience coordinated partnership.',
-      },
-    ],
-  },
-  {
-    id: 'objective',
-    number: '3',
-    title: 'Objective of This Playbook',
-    summary: 'Sets the purpose and boundaries of the KAM playbook.',
-    icon: Target,
-    topics: [
-      {
-        title: '3.1 Purpose of the Playbook',
-        body: 'This playbook gives Tkxel AMs a shared way to identify key accounts, document intelligence, run governance, assess health, and manage growth or retention plays.',
-      },
-    ],
-  },
-  {
-    id: 'processes',
-    number: '4',
-    title: 'Governance Activities / Account Plays',
-    summary: 'Provides repeatable plays AMs can use for governance and execution visibility.',
-    icon: ClipboardList,
-    topics: [
-      {
-        title: 'Monthly SteerCos, delivery reviews, and QBRs',
-        body: 'Recurring governance should produce decisions, owners, due dates, evidence, and follow-up tasks that remain visible in the unified calendar.',
-      },
-    ],
-  },
-]
 
 const blankActivity = {
   title: '',
@@ -134,7 +62,7 @@ export function Playbook() {
   const user = useRole()
   const accounts = useAccountStore(state => state.accounts)
   const signals = useV3Store(state => state.signals)
-  const [mode, setMode] = useState<'operations' | 'manual'>('operations')
+  const [mode, setMode] = useState<'operations' | 'manual' | 'execution'>('operations')
   const [templates, setTemplates] = useState<PlaybookTemplate[]>([])
   const [recommendations, setRecommendations] = useState<RecommendedPlaybook[]>([])
   const [customFields, setCustomFields] = useState<RuntimeCustomField[]>([])
@@ -157,7 +85,8 @@ export function Playbook() {
   const [weakMetric, setWeakMetric] = useState<string>(signals[0]?.reasonCodes?.[0] ?? '')
   const [form, setForm] = useState<PlaybookTemplatePayload>(blankTemplate)
   const [editingId, setEditingId] = useState('')
-  const canConfigure = ['super_admin', 'admin', 'kam_head'].includes(user.role)
+  const canConfigure = ['super_admin', 'admin'].includes(user.role)
+  const canExecutePlaybooks = user.role === 'account_manager'
   const readOnly = user.role === 'leadership_viewer'
   const selectedTemplate = useMemo(() => templates.find(template => template.id === selectedTemplateId) ?? templates[0], [selectedTemplateId, templates])
   const activeTemplates = templates.filter(template => template.is_active)
@@ -168,7 +97,7 @@ export function Playbook() {
   }, [accounts, selectedAccountId])
 
   useEffect(() => {
-    if (!token) return
+    if (!token || !canConfigure) return
     let cancelled = false
     setLoading(true)
     setError('')
@@ -191,17 +120,17 @@ export function Playbook() {
     return () => {
       cancelled = true
     }
-  }, [activeState, ownerRuleFilter, page, search, selectedTemplateId, sort, token])
+  }, [activeState, canConfigure, ownerRuleFilter, page, search, selectedTemplateId, sort, token])
 
   useEffect(() => {
-    if (!token) return
+    if (!token || !canConfigure) return
     listRuntimeCustomFields(token, 'playbooks_tasks_calendar')
       .then(setCustomFields)
       .catch(() => setCustomFields([]))
-  }, [token])
+  }, [canConfigure, token])
 
   useEffect(() => {
-    if (!token) return
+    if (!token || !canConfigure) return
     let cancelled = false
     setRecommendationLoading(true)
     const params = new URLSearchParams()
@@ -221,7 +150,7 @@ export function Playbook() {
     return () => {
       cancelled = true
     }
-  }, [selectedAccountId, signalType, signals, token, weakMetric])
+  }, [canConfigure, selectedAccountId, signalType, signals, token, weakMetric])
 
   async function refreshTemplates() {
     setPage(1)
@@ -292,7 +221,11 @@ export function Playbook() {
   }
 
   async function runTemplate(template: PlaybookTemplate) {
-    if (!token || !selectedAccountId || readOnly) return
+    if (!selectedAccountId) {
+      toast.error('Select an account before executing a playbook')
+      return
+    }
+    if (!token || readOnly) return
     setExecutingId(template.id)
     try {
       const execution = await executePlaybook(token, template.id, {
@@ -310,8 +243,18 @@ export function Playbook() {
     }
   }
 
-  if (mode === 'manual') {
-    return <ManualPlaybook onOperations={() => setMode('operations')} />
+  if (!canConfigure && mode === 'execution') {
+    return <ExecutionPlaybooks onManual={() => setMode('manual')} />
+  }
+
+  if (!canConfigure || mode === 'manual') {
+    return (
+      <ManualPlaybook
+        canManage={canConfigure}
+        onExecution={!canConfigure && canExecutePlaybooks ? () => setMode('execution') : undefined}
+        onOperations={canConfigure ? () => setMode('operations') : undefined}
+      />
+    )
   }
 
   return (
@@ -620,13 +563,337 @@ function TemplateForm({ form, setForm, customFields, customValues, customErrors,
   )
 }
 
-function ManualPlaybook({ onOperations }: { onOperations: () => void }) {
-  const [activeSection, setActiveSection] = useState(manualSections[0]?.id ?? '')
+function ExecutionPlaybooks({ onManual }: { onManual: () => void }) {
+  const { token } = useAuth()
+  const accounts = useAccountStore(state => state.accounts)
+  const signals = useV3Store(state => state.signals)
+  const [templates, setTemplates] = useState<PlaybookTemplate[]>([])
+  const [recommendations, setRecommendations] = useState<RecommendedPlaybook[]>([])
+  const [selectedTemplateId, setSelectedTemplateId] = useState('')
+  const [selectedAccountId, setSelectedAccountId] = useState(accounts[0]?.id ?? '')
+  const [signalType, setSignalType] = useState<string>(signals[0]?.type ?? '')
+  const [weakMetric, setWeakMetric] = useState<string>(signals[0]?.reasonCodes?.[0] ?? '')
+  const [search, setSearch] = useState('')
+  const [page, setPage] = useState(1)
+  const [total, setTotal] = useState(0)
+  const [loading, setLoading] = useState(false)
+  const [recommendationLoading, setRecommendationLoading] = useState(false)
+  const [executingId, setExecutingId] = useState('')
+  const [error, setError] = useState('')
+  const selectedTemplate = useMemo(() => templates.find(template => template.id === selectedTemplateId) ?? templates[0], [selectedTemplateId, templates])
+  const selectedAccount = accounts.find(account => account.id === selectedAccountId)
+
+  useEffect(() => {
+    if (!selectedAccountId && accounts[0]) setSelectedAccountId(accounts[0].id)
+  }, [accounts, selectedAccountId])
+
+  useEffect(() => {
+    if (!token) return
+    let cancelled = false
+    setLoading(true)
+    setError('')
+    const params = new URLSearchParams({ page: String(page), page_size: '8', sort: 'updated_at', direction: 'desc' })
+    if (search) params.set('search', search)
+    if (signalType) params.set('signal_type', signalType)
+    if (weakMetric) params.set('weak_metric', weakMetric)
+    listExecutablePlaybookTemplates(token, params)
+      .then(response => {
+        if (cancelled) return
+        setTemplates(response.items)
+        setTotal(response.total)
+        setSelectedTemplateId(current => current || response.items[0]?.id || '')
+      })
+      .catch(err => {
+        if (!cancelled) setError(err instanceof Error ? err.message : 'Executable playbooks could not load')
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [page, search, signalType, token, weakMetric])
+
+  useEffect(() => {
+    if (!token || !selectedAccountId) {
+      setRecommendations([])
+      return
+    }
+    let cancelled = false
+    setRecommendationLoading(true)
+    const params = new URLSearchParams({ account_id: selectedAccountId })
+    if (signalType) params.set('signal_type', signalType)
+    if (weakMetric) params.set('weak_metric', weakMetric)
+    listRecommendedPlaybooks(token, signals[0]?.id ?? 'manual-signal', params)
+      .then(items => {
+        if (!cancelled) setRecommendations(items)
+      })
+      .catch(() => {
+        if (!cancelled) setRecommendations([])
+      })
+      .finally(() => {
+        if (!cancelled) setRecommendationLoading(false)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [selectedAccountId, signalType, signals, token, weakMetric])
+
+  async function runTemplate(template: PlaybookTemplate) {
+    if (!selectedAccountId) {
+      toast.error('Select an account before executing a playbook')
+      return
+    }
+    if (!token) return
+    setExecutingId(template.id)
+    try {
+      const execution = await executePlaybook(token, template.id, {
+        account_id: selectedAccountId,
+        source_signal_id: signals[0]?.id,
+        source_signal_type: signalType || undefined,
+        source_metric: weakMetric || undefined,
+        confirmed: true,
+      })
+      toast.success(`${execution.tasks.length} task${execution.tasks.length === 1 ? '' : 's'} generated`)
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Playbook could not be executed')
+    } finally {
+      setExecutingId('')
+    }
+  }
+
+  return (
+    <div>
+      <PageHeader
+        eyebrow="Playbook execution"
+        title="Run account playbooks"
+        description="Select an assigned account, review recommended plays, and generate owner-backed tasks from active playbooks."
+        actions={<button className="tk-button-secondary" onClick={onManual}><BookOpen className="h-4 w-4" />Manual</button>}
+      />
+
+      <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+        <Metric label="Active Playbooks" value={total} />
+        <Metric label="Recommendations" value={recommendations.length} />
+        <Metric label="Selected Account" value={selectedAccount?.name ?? 'None'} compact />
+        <Metric label="Selected Playbook" value={selectedTemplate?.name ?? 'None'} compact />
+      </div>
+
+      <section className="tk-card mt-5 p-4">
+        <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_220px_180px_180px]">
+          <label className="space-y-1">
+            <span className="tk-label text-xs">Search</span>
+            <input className="tk-input" value={search} onChange={event => setSearch(event.target.value)} placeholder="Search active playbooks" />
+          </label>
+          <label className="space-y-1">
+            <span className="tk-label text-xs">Account</span>
+            <select className="tk-input" value={selectedAccountId} onChange={event => setSelectedAccountId(event.target.value)}>
+              <option value="">Select account</option>
+              {accounts.map(account => <option key={account.id} value={account.id}>{account.name}</option>)}
+            </select>
+          </label>
+          <label className="space-y-1">
+            <span className="tk-label text-xs">Signal type</span>
+            <input className="tk-input" value={signalType} onChange={event => setSignalType(event.target.value)} placeholder="relationship_gap" />
+          </label>
+          <label className="space-y-1">
+            <span className="tk-label text-xs">Weak metric</span>
+            <input className="tk-input" value={weakMetric} onChange={event => setWeakMetric(event.target.value)} placeholder="relationship" />
+          </label>
+        </div>
+      </section>
+
+      <div className="mt-5 grid gap-5 xl:grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)]">
+        <section className="tk-card p-4">
+          <div className="mb-4 flex items-start justify-between gap-3">
+            <div>
+              <p className="text-[10px] font-extrabold uppercase tracking-widest text-brand-blue">Recommended plays</p>
+              <h2 className="text-base font-semibold text-ink">Signal-driven recommendations</h2>
+            </div>
+          </div>
+          {recommendationLoading ? (
+            <LoadingBlock label="Loading recommendations" />
+          ) : recommendations.length === 0 ? (
+            <EmptyState icon={Target} heading="No recommendations" body="Active playbooks appear here when signal or weak-metric rules match." />
+          ) : (
+            <div className="grid gap-3">
+              {recommendations.map(item => (
+                <article key={item.template.id} className="rounded-lg border border-surface-border bg-white p-4">
+                  <div className="flex items-start justify-between gap-3">
+                    <div>
+                      <h3 className="text-sm font-semibold text-ink">{item.template.name}</h3>
+                      <p className="mt-1 text-xs leading-5 text-ink-secondary">{item.rationale}</p>
+                    </div>
+                    <span className="rounded-full border border-blue-tint-20 bg-blue-tint-20 px-2 py-1 text-xs font-semibold text-brand-blue">{item.match_score}%</span>
+                  </div>
+                  <button className="tk-button-primary mt-3 w-full" disabled={executingId === item.template.id || !selectedAccountId} onClick={() => runTemplate(item.template)}>
+                    {executingId === item.template.id ? <Loader2 className="h-4 w-4 animate-spin" /> : <Play className="h-4 w-4" />}
+                    Execute
+                  </button>
+                </article>
+              ))}
+            </div>
+          )}
+        </section>
+
+        <section className="tk-card p-4">
+          <div className="mb-4 flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+            <div>
+              <p className="text-[10px] font-extrabold uppercase tracking-widest text-brand-blue">Available playbooks</p>
+              <h2 className="text-base font-semibold text-ink">Active execution catalog</h2>
+            </div>
+            <div className="flex gap-2">
+              <button className="tk-button-secondary" disabled={page <= 1} onClick={() => setPage(value => Math.max(1, value - 1))}>Previous</button>
+              <button className="tk-button-secondary" disabled={page * 8 >= total} onClick={() => setPage(value => value + 1)}>Next</button>
+            </div>
+          </div>
+          {loading ? (
+            <LoadingBlock label="Loading active playbooks" />
+          ) : error ? (
+            <div className="rounded-lg border border-rag-red/20 bg-rag-red/10 p-4 text-sm font-semibold text-rag-red">{error}</div>
+          ) : templates.length === 0 ? (
+            <EmptyState icon={ClipboardList} heading="No active playbooks" body="No active playbooks match the current filters." />
+          ) : (
+            <div className="grid gap-3">
+              {templates.map(template => (
+                <TemplateCard
+                  key={template.id}
+                  template={template}
+                  selected={selectedTemplate?.id === template.id}
+                  canConfigure={false}
+                  readOnly={!selectedAccountId}
+                  executing={executingId === template.id}
+                  onSelect={() => setSelectedTemplateId(template.id)}
+                  onEdit={() => undefined}
+                  onRun={() => runTemplate(template)}
+                />
+              ))}
+            </div>
+          )}
+        </section>
+      </div>
+    </div>
+  )
+}
+
+const blankGuideTopic = { title: '', body: '', bullets: [] as string[] }
+
+const blankGuideSection: PlaybookGuideSectionPayload = {
+  title: '',
+  summary: '',
+  body: '',
+  icon_key: 'book_open',
+  topics: [{ ...blankGuideTopic }],
+  is_active: true,
+}
+
+function ManualPlaybook({ canManage, onExecution, onOperations }: { canManage: boolean; onExecution?: () => void; onOperations?: () => void }) {
+  const { token } = useAuth()
+  const [sections, setSections] = useState<PlaybookGuideSection[]>([])
+  const [activeSection, setActiveSection] = useState('')
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState('')
+  const [saving, setSaving] = useState(false)
+  const [editingId, setEditingId] = useState('')
+  const [form, setForm] = useState<PlaybookGuideSectionPayload>(blankGuideSection)
+
+  useEffect(() => {
+    if (!token) return
+    let cancelled = false
+    setLoading(true)
+    setError('')
+    const params = new URLSearchParams({ active_state: canManage ? 'all' : 'active' })
+    listPlaybookGuideSections(token, params)
+      .then(items => {
+        if (cancelled) return
+        const ordered = [...items].sort((a, b) => a.sort_order - b.sort_order)
+        setSections(ordered)
+        setActiveSection(current => current || ordered[0]?.id || '')
+      })
+      .catch(err => {
+        if (!cancelled) setError(err instanceof Error ? err.message : 'Playbook guide could not load')
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [canManage, token])
+
   function scrollToSection(id: string) {
     const target = document.getElementById(id)
     if (!target) return
     setActiveSection(id)
     window.scrollTo({ top: Math.max(target.getBoundingClientRect().top + window.scrollY - 88, 0), behavior: 'smooth' })
+  }
+
+  function startEdit(section: PlaybookGuideSection) {
+    setEditingId(section.id)
+    setForm({
+      title: section.title,
+      summary: section.summary,
+      body: section.body ?? '',
+      icon_key: section.icon_key,
+      topics: section.topics.length ? section.topics.map(topic => ({ ...topic, bullets: topic.bullets ?? [] })) : [{ ...blankGuideTopic }],
+      sort_order: section.sort_order,
+      is_active: section.is_active,
+    })
+  }
+
+  function resetSectionForm() {
+    setEditingId('')
+    setForm({ ...blankGuideSection, topics: [{ ...blankGuideTopic }] })
+  }
+
+  async function saveSection(event: FormEvent) {
+    event.preventDefault()
+    if (!token || !canManage) return
+    const payload = normalizeGuideSectionPayload({ ...form, sort_order: editingId ? form.sort_order : sections.length })
+    if (!payload.title || !payload.summary) {
+      toast.error('Title and summary are required')
+      return
+    }
+    setSaving(true)
+    try {
+      const saved = editingId ? await updatePlaybookGuideSection(token, editingId, payload) : await createPlaybookGuideSection(token, payload)
+      setSections(items => [saved, ...items.filter(item => item.id !== saved.id)].sort((a, b) => a.sort_order - b.sort_order))
+      setActiveSection(saved.id)
+      resetSectionForm()
+      toast.success(editingId ? 'Playbook section updated' : 'Playbook section created')
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Playbook section could not be saved')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  async function moveSection(index: number, direction: -1 | 1) {
+    if (!token || !canManage) return
+    const nextIndex = index + direction
+    if (nextIndex < 0 || nextIndex >= sections.length) return
+    const ordered = [...sections]
+    const [moved] = ordered.splice(index, 1)
+    ordered.splice(nextIndex, 0, moved)
+    setSections(ordered.map((section, sort_order) => ({ ...section, sort_order })))
+    try {
+      const saved = await reorderPlaybookGuideSections(token, ordered.map(section => section.id))
+      setSections(saved)
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Section order could not be saved')
+    }
+  }
+
+  async function deleteSection(section: PlaybookGuideSection) {
+    if (!token || !canManage) return
+    if (!window.confirm(`Delete "${section.title}" from the playbook guide?`)) return
+    try {
+      await deletePlaybookGuideSection(token, section.id)
+      setSections(items => items.filter(item => item.id !== section.id))
+      if (editingId === section.id) resetSectionForm()
+      toast.success('Playbook section deleted')
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Playbook section could not be deleted')
+    }
   }
 
   return (
@@ -635,41 +902,81 @@ function ManualPlaybook({ onOperations }: { onOperations: () => void }) {
         eyebrow="Customer success playbook"
         title="TKXEL KEY ACCOUNT MANAGEMENT (KAM) PLAYBOOK"
         description="A structured operating manual for account managers, leadership, and partner teams running the Tkxel KAM motion."
-        actions={<button className="tk-button-primary" onClick={onOperations}><Play className="h-4 w-4" />Operations</button>}
+        actions={
+          onExecution || onOperations ? (
+            <>
+              {onExecution ? <button className="tk-button-primary" onClick={onExecution}><Play className="h-4 w-4" />Run playbooks</button> : null}
+              {onOperations ? <button className="tk-button-primary" onClick={onOperations}><Play className="h-4 w-4" />Operations</button> : null}
+            </>
+          ) : undefined
+        }
       />
+      {canManage ? (
+        <section className="tk-card mb-4 p-4">
+          <div className="mb-4 flex items-start justify-between gap-3">
+            <div>
+              <p className="text-[10px] font-extrabold uppercase tracking-widest text-brand-blue">{editingId ? 'Edit manual section' : 'Add manual section'}</p>
+              <h2 className="text-base font-semibold text-ink">Guide content</h2>
+            </div>
+            {editingId ? (
+              <button className="tk-icon-button" type="button" aria-label="Cancel section edit" onClick={resetSectionForm}>
+                <X className="h-4 w-4" />
+              </button>
+            ) : null}
+          </div>
+          <GuideSectionForm form={form} setForm={setForm} saving={saving} editing={Boolean(editingId)} onSubmit={saveSection} />
+        </section>
+      ) : null}
       <div className="grid gap-4 xl:grid-cols-[280px_minmax(0,1fr)]">
         <aside className="tk-card h-fit p-3 xl:sticky xl:top-20">
           <nav className="grid gap-1">
-            {manualSections.map(section => (
+            {sections.map((section, index) => (
               <button key={section.id} type="button" onClick={() => scrollToSection(section.id)} aria-current={activeSection === section.id ? 'location' : undefined} className={cn('flex min-h-[44px] w-full items-center gap-3 rounded-md px-3 text-left text-sm font-semibold transition-colors', activeSection === section.id ? 'bg-blue-tint-20 text-brand-blue' : 'text-ink-secondary hover:bg-surface-tertiary hover:text-ink')}>
-                <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-white text-xs font-bold text-brand-blue">{section.number}</span>
+                <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-white text-xs font-bold text-brand-blue">{index + 1}</span>
                 <span>{section.title}</span>
               </button>
             ))}
           </nav>
         </aside>
         <div className="grid gap-4">
-          {manualSections.map(section => {
-            const Icon = section.icon
+          {loading ? <LoadingBlock label="Loading playbook guide" /> : null}
+          {error ? <div className="rounded-lg border border-rag-red/20 bg-rag-red/10 p-4 text-sm font-semibold text-rag-red">{error}</div> : null}
+          {!loading && !error && sections.length === 0 ? <EmptyState icon={BookOpen} heading="No guide sections" body="The playbook guide is not available yet." /> : null}
+          {sections.map((section, index) => {
+            const Icon = guideIcon(section.icon_key)
             return (
               <section key={section.id} id={section.id} className="tk-card scroll-mt-24 overflow-hidden">
                 <header className="border-b border-surface-border bg-surface-secondary p-5">
                   <div className="flex items-start justify-between gap-3">
                     <div>
-                      <p className="text-[10px] font-extrabold uppercase tracking-widest text-brand-blue">Section {section.number}</p>
+                      <div className="flex flex-wrap items-center gap-2">
+                        <p className="text-[10px] font-extrabold uppercase tracking-widest text-brand-blue">Section {index + 1}</p>
+                        {!section.is_active ? <span className="rounded-full border border-surface-border bg-white px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-ink-secondary">inactive</span> : null}
+                      </div>
                       <h2 className="mt-1 text-xl font-semibold text-ink">{section.title}</h2>
                       <p className="mt-2 max-w-3xl text-sm leading-6 text-ink-secondary">{section.summary}</p>
                     </div>
-                    <Icon className="h-5 w-5 shrink-0 text-brand-blue" />
+                    <div className="flex shrink-0 items-center gap-2">
+                      {canManage ? (
+                        <>
+                          <button className="tk-icon-button" type="button" aria-label={`Move ${section.title} up`} disabled={index === 0} onClick={() => moveSection(index, -1)}><ArrowUp className="h-4 w-4" /></button>
+                          <button className="tk-icon-button" type="button" aria-label={`Move ${section.title} down`} disabled={index === sections.length - 1} onClick={() => moveSection(index, 1)}><ArrowDown className="h-4 w-4" /></button>
+                          <button className="tk-icon-button" type="button" aria-label={`Edit ${section.title}`} onClick={() => startEdit(section)}><Edit3 className="h-4 w-4" /></button>
+                          <button className="tk-icon-button text-rag-red" type="button" aria-label={`Delete ${section.title}`} onClick={() => deleteSection(section)}><Trash2 className="h-4 w-4" /></button>
+                        </>
+                      ) : null}
+                      <Icon className="h-5 w-5 text-brand-blue" />
+                    </div>
                   </div>
                 </header>
                 <div className="divide-y divide-surface-border">
+                  {section.body ? <p className="p-5 text-sm leading-6 text-ink-secondary">{section.body}</p> : null}
                   {section.topics.map(topic => (
                     <article key={topic.title} className="grid gap-3 p-5 lg:grid-cols-[minmax(220px,0.35fr)_minmax(0,1fr)]">
                       <h3 className="text-sm font-semibold leading-6 text-ink">{topic.title}</h3>
                       <div>
                         <p className="text-sm leading-6 text-ink-secondary">{topic.body}</p>
-                        {topic.bullets ? (
+                        {topic.bullets?.length ? (
                           <ul className="mt-3 grid gap-2">
                             {topic.bullets.map(bullet => <li key={bullet} className="flex gap-2 text-sm leading-6 text-ink"><CheckCircle2 className="mt-1 h-4 w-4 shrink-0 text-rag-green" /><span>{bullet}</span></li>)}
                           </ul>
@@ -685,6 +992,87 @@ function ManualPlaybook({ onOperations }: { onOperations: () => void }) {
       </div>
     </div>
   )
+}
+
+function GuideSectionForm({ form, setForm, saving, editing, onSubmit }: { form: PlaybookGuideSectionPayload; setForm: (updater: PlaybookGuideSectionPayload | ((value: PlaybookGuideSectionPayload) => PlaybookGuideSectionPayload)) => void; saving: boolean; editing: boolean; onSubmit: (event: FormEvent) => void }) {
+  function updateTopic(index: number, patch: Partial<PlaybookGuideSectionPayload['topics'][number]>) {
+    setForm(current => ({
+      ...current,
+      topics: current.topics.map((topic, topicIndex) => (topicIndex === index ? { ...topic, ...patch } : topic)),
+    }))
+  }
+
+  return (
+    <form onSubmit={onSubmit} className="grid gap-4 lg:grid-cols-2">
+      <label className="space-y-1">
+        <span className="tk-label text-xs">Title *</span>
+        <input className="tk-input" value={form.title} onChange={event => setForm(current => ({ ...current, title: event.target.value }))} />
+      </label>
+      <label className="space-y-1">
+        <span className="tk-label text-xs">Icon</span>
+        <select className="tk-input" value={form.icon_key ?? 'book_open'} onChange={event => setForm(current => ({ ...current, icon_key: event.target.value }))}>
+          <option value="book_open">Book</option>
+          <option value="users_round">Users</option>
+          <option value="layers_3">Layers</option>
+          <option value="target">Target</option>
+          <option value="clipboard_list">Checklist</option>
+        </select>
+      </label>
+      <label className="space-y-1 lg:col-span-2">
+        <span className="tk-label text-xs">Summary *</span>
+        <textarea className="tk-input min-h-[72px]" value={form.summary} onChange={event => setForm(current => ({ ...current, summary: event.target.value }))} />
+      </label>
+      <label className="space-y-1 lg:col-span-2">
+        <span className="tk-label text-xs">Body</span>
+        <textarea className="tk-input min-h-[92px]" value={form.body ?? ''} onChange={event => setForm(current => ({ ...current, body: event.target.value }))} />
+      </label>
+      <label className="flex min-h-[44px] items-center gap-2 rounded-md border border-surface-border bg-white px-3 text-sm font-semibold text-ink">
+        <input type="checkbox" checked={form.is_active ?? true} onChange={event => setForm(current => ({ ...current, is_active: event.target.checked }))} />
+        Active
+      </label>
+      <div className="lg:col-span-2">
+        <div className="mb-3 flex items-center justify-between gap-3">
+          <p className="text-xs font-semibold uppercase tracking-wider text-ink-secondary">Topics</p>
+          <button type="button" className="tk-button-secondary" onClick={() => setForm(current => ({ ...current, topics: [...current.topics, { ...blankGuideTopic }] }))}>
+            <Plus className="h-4 w-4" />
+            Add topic
+          </button>
+        </div>
+        <div className="grid gap-3">
+          {form.topics.map((topic, index) => (
+            <div key={index} className="rounded-lg border border-surface-border bg-surface-secondary p-3">
+              <div className="grid gap-3">
+                <input className="tk-input" value={topic.title} onChange={event => updateTopic(index, { title: event.target.value })} placeholder="Topic title" />
+                <textarea className="tk-input min-h-[72px]" value={topic.body} onChange={event => updateTopic(index, { body: event.target.value })} placeholder="Topic body" />
+                <input className="tk-input" value={(topic.bullets ?? []).join(', ')} onChange={event => updateTopic(index, { bullets: event.target.value.split(',').map(item => item.trim()).filter(Boolean) })} placeholder="Bullet points" />
+                <button type="button" className="tk-button-secondary w-fit text-rag-red" disabled={form.topics.length === 1} onClick={() => setForm(current => ({ ...current, topics: current.topics.filter((_, topicIndex) => topicIndex !== index) }))}>
+                  <Trash2 className="h-4 w-4" />
+                  Remove topic
+                </button>
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+      <div className="flex justify-end lg:col-span-2">
+        <button type="submit" className="tk-button-primary" disabled={saving}>
+          {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
+          {editing ? 'Update section' : 'Create section'}
+        </button>
+      </div>
+    </form>
+  )
+}
+
+function guideIcon(iconKey: string) {
+  const icons: Record<string, typeof BookOpen> = {
+    book_open: BookOpen,
+    users_round: UsersRound,
+    layers_3: Layers3,
+    target: Target,
+    clipboard_list: ClipboardList,
+  }
+  return icons[iconKey] ?? BookOpen
 }
 
 function Metric({ label, value, compact = false }: { label: string; value: string | number; compact?: boolean }) {
@@ -725,5 +1113,23 @@ function normalizeTemplatePayload(payload: PlaybookTemplatePayload): PlaybookTem
         sort_order: index,
       }))
       .filter(activity => activity.title),
+  }
+}
+
+function normalizeGuideSectionPayload(payload: PlaybookGuideSectionPayload): PlaybookGuideSectionPayload {
+  const cleanText = (value?: string | null) => value?.trim() ?? ''
+  return {
+    ...payload,
+    title: cleanText(payload.title),
+    summary: cleanText(payload.summary),
+    body: cleanText(payload.body) || undefined,
+    icon_key: payload.icon_key || 'book_open',
+    topics: payload.topics
+      .map(topic => ({
+        title: cleanText(topic.title),
+        body: cleanText(topic.body),
+        bullets: (topic.bullets ?? []).map(item => item.trim()).filter(Boolean),
+      }))
+      .filter(topic => topic.title || topic.body),
   }
 }

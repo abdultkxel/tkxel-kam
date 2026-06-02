@@ -1180,6 +1180,23 @@ class PlaybookTemplateActivity(Base):
     template: Mapped[PlaybookTemplate] = relationship(back_populates="activities")
 
 
+class PlaybookGuideSection(Base):
+    __tablename__ = "playbook_guide_sections"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid4()))
+    title: Mapped[str] = mapped_column(String(220), nullable=False)
+    summary: Mapped[str] = mapped_column(Text, nullable=False)
+    body: Mapped[str | None] = mapped_column(Text, nullable=True)
+    icon_key: Mapped[str] = mapped_column(String(80), nullable=False, default="book_open")
+    topics: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    sort_order: Mapped[int] = mapped_column(Integer, index=True, nullable=False, default=0)
+    is_active: Mapped[bool] = mapped_column(Boolean, index=True, nullable=False, default=True)
+    created_by_id: Mapped[str | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    updated_by_id: Mapped[str | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utc_now, onupdate=utc_now)
+
+
 class PlaybookExecution(Base):
     __tablename__ = "playbook_executions"
 

@@ -44,6 +44,25 @@ export interface PlaybookTemplate {
   custom_field_values?: Record<string, unknown>
 }
 
+export interface PlaybookGuideTopic {
+  title: string
+  body: string
+  bullets: string[]
+}
+
+export interface PlaybookGuideSection {
+  id: string
+  title: string
+  summary: string
+  body?: string | null
+  icon_key: string
+  topics: PlaybookGuideTopic[]
+  sort_order: number
+  is_active: boolean
+  created_at: string
+  updated_at: string
+}
+
 export interface TaskEvidence {
   id: string
   task_id: string
@@ -152,8 +171,42 @@ export interface PlaybookTemplatePayload {
   custom_field_values?: Record<string, unknown>
 }
 
+export interface PlaybookGuideSectionPayload {
+  title: string
+  summary: string
+  body?: string
+  icon_key?: string
+  topics: PlaybookGuideTopic[]
+  sort_order?: number
+  is_active?: boolean
+}
+
 export async function listPlaybookTemplates(token: string, params = new URLSearchParams()) {
   return apiRequest<Page<PlaybookTemplate>>(`/api/admin/playbook-templates${queryString(params)}`, { token })
+}
+
+export async function listExecutablePlaybookTemplates(token: string, params = new URLSearchParams()) {
+  return apiRequest<Page<PlaybookTemplate>>(`/api/playbook-templates${queryString(params)}`, { token })
+}
+
+export async function listPlaybookGuideSections(token: string, params = new URLSearchParams()) {
+  return apiRequest<PlaybookGuideSection[]>(`/api/playbook-guide-sections${queryString(params)}`, { token })
+}
+
+export async function createPlaybookGuideSection(token: string, payload: PlaybookGuideSectionPayload) {
+  return apiRequest<PlaybookGuideSection>('/api/admin/playbook-guide-sections', { method: 'POST', token, body: JSON.stringify(payload) })
+}
+
+export async function updatePlaybookGuideSection(token: string, sectionId: string, payload: Partial<PlaybookGuideSectionPayload>) {
+  return apiRequest<PlaybookGuideSection>(`/api/admin/playbook-guide-sections/${sectionId}`, { method: 'PATCH', token, body: JSON.stringify(payload) })
+}
+
+export async function deletePlaybookGuideSection(token: string, sectionId: string) {
+  return apiRequest<{ message: string }>(`/api/admin/playbook-guide-sections/${sectionId}`, { method: 'DELETE', token })
+}
+
+export async function reorderPlaybookGuideSections(token: string, orderedIds: string[]) {
+  return apiRequest<PlaybookGuideSection[]>('/api/admin/playbook-guide-sections/reorder', { method: 'POST', token, body: JSON.stringify({ ordered_ids: orderedIds }) })
 }
 
 export async function createPlaybookTemplate(token: string, payload: PlaybookTemplatePayload) {

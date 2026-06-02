@@ -4,7 +4,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.config import get_settings
-from app.models import Account, AccountOwner, KycConfiguration, Opportunity, OpportunityStageDefinition, OpportunityType, User, utc_now
+from app.models import Account, AccountOwner, KycConfiguration, Opportunity, OpportunityStageDefinition, OpportunityType, PlaybookGuideSection, User, utc_now
 from app.rbac import DEFAULT_ROLES
 from app.security import hash_password
 from app.services.email_domains import EmailDomainPolicyService
@@ -22,6 +22,7 @@ def seed_default_data(db: Session) -> User:
     seed_kyc_configuration(db)
     seed_opportunity_reference_data(db)
     seed_demo_opportunities(db)
+    seed_playbook_guide_sections(db, super_admin)
     return super_admin
 
 
@@ -250,3 +251,87 @@ def seed_demo_opportunities(db: Session) -> None:
             )
         )
     db.commit()
+
+
+def seed_playbook_guide_sections(db: Session, actor: User) -> list[PlaybookGuideSection]:
+    existing = db.scalar(select(PlaybookGuideSection.id).limit(1))
+    if existing:
+        return list(db.scalars(select(PlaybookGuideSection).order_by(PlaybookGuideSection.sort_order)))
+
+    sections = [
+        PlaybookGuideSection(
+            title="Overview: Account Manager at Tkxel",
+            summary="Defines the AM role, responsibilities, positioning, and problems KAM solves.",
+            icon_key="users_round",
+            sort_order=0,
+            created_by_id=actor.id,
+            updated_by_id=actor.id,
+            topics=[
+                {
+                    "title": "1.1 Role of a Key Account Manager at Tkxel",
+                    "body": "The Tkxel Account Manager owns the commercial and relationship health of strategic accounts and connects client priorities with delivery, leadership, finance, and growth teams.",
+                    "bullets": ["Own executive relationships and account cadence", "Translate client objectives into internal operating priorities", "Protect retention while identifying responsible expansion"],
+                },
+                {
+                    "title": "1.2 Core Responsibilities",
+                    "body": "AM responsibilities span account governance, risk visibility, expansion planning, stakeholder mapping, and internal follow-through.",
+                    "bullets": ["Maintain KYC quality", "Run QBRs, SteerCos, and delivery reviews", "Coordinate escalations, renewals, and opportunity planning"],
+                },
+            ],
+        ),
+        PlaybookGuideSection(
+            title="KAM Operating Model Overview",
+            summary="Explains the working model AMs use to convert account intelligence into repeatable execution.",
+            icon_key="layers_3",
+            sort_order=1,
+            created_by_id=actor.id,
+            updated_by_id=actor.id,
+            topics=[
+                {
+                    "title": "2.1 Components of Tkxel's KAM Operating Model",
+                    "body": "The model combines KYC, account strategy, governance cadence, health scoring, escalation handling, opportunity planning, and leadership review.",
+                    "bullets": [],
+                },
+                {
+                    "title": "2.2 Outcome of the Operating Model",
+                    "body": "The expected outcome is a managed portfolio where leadership can see account quality, AMs can prioritize work, delivery can act on context, and clients experience coordinated partnership.",
+                    "bullets": [],
+                },
+            ],
+        ),
+        PlaybookGuideSection(
+            title="Objective of This Playbook",
+            summary="Sets the purpose and boundaries of the KAM playbook.",
+            icon_key="target",
+            sort_order=2,
+            created_by_id=actor.id,
+            updated_by_id=actor.id,
+            topics=[
+                {
+                    "title": "3.1 Purpose of the Playbook",
+                    "body": "This playbook gives Tkxel AMs a shared way to identify key accounts, document intelligence, run governance, assess health, and manage growth or retention plays.",
+                    "bullets": [],
+                },
+            ],
+        ),
+        PlaybookGuideSection(
+            title="Governance Activities / Account Plays",
+            summary="Provides repeatable plays AMs can use for governance and execution visibility.",
+            icon_key="clipboard_list",
+            sort_order=3,
+            created_by_id=actor.id,
+            updated_by_id=actor.id,
+            topics=[
+                {
+                    "title": "Monthly SteerCos, delivery reviews, and QBRs",
+                    "body": "Recurring governance should produce decisions, owners, due dates, evidence, and follow-up tasks that remain visible in the unified calendar.",
+                    "bullets": [],
+                },
+            ],
+        ),
+    ]
+    db.add_all(sections)
+    db.commit()
+    for section in sections:
+        db.refresh(section)
+    return sections

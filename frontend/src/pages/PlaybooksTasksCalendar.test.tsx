@@ -7,10 +7,14 @@ import { Playbook } from '@/pages/Playbook'
 import { Tasks } from '@/pages/Tasks'
 import { useAccountStore } from '@/stores/accountStore'
 
+const mockAuthState = vi.hoisted(() => ({
+  user: { id: 'usr-admin', name: 'Admin User', role: 'admin' as string, email: 'admin@example.com', avatarInitials: 'AU' },
+}))
+
 vi.mock('@/contexts/AuthContext', () => ({
   useAuth: () => ({
     token: 'test-token',
-    user: { id: 'usr-admin', name: 'Admin User', role: 'admin', email: 'admin@example.com', avatarInitials: 'AU' },
+    user: mockAuthState.user,
   }),
 }))
 
@@ -101,6 +105,7 @@ function jsonResponse(body: unknown, status = 200) {
 
 describe('playbooks, tasks, and calendar UI', () => {
   beforeEach(() => {
+    mockAuthState.user = { id: 'usr-admin', name: 'Admin User', role: 'admin', email: 'admin@example.com', avatarInitials: 'AU' }
     useAccountStore.setState({ accounts: [account] as any })
   })
 
@@ -163,7 +168,7 @@ describe('playbooks, tasks, and calendar UI', () => {
             account_name: account.name,
             owner_id: 'usr-admin',
             owner_name: 'Admin User',
-            date: '2026-05-20T00:00:00Z',
+            date: '2026-06-20T00:00:00Z',
             status: 'todo',
             priority: 'high',
             source_route: '/tasks',
@@ -181,5 +186,119 @@ describe('playbooks, tasks, and calendar UI', () => {
 
     expect(await screen.findByText('Confirm renewal owner')).toBeInTheDocument()
     expect(fetchMock.mock.calls.some(call => String(call[0]).includes('/api/calendar/items'))).toBe(true)
+  })
+
+  it('shows only the manual guide to non-admin users', async () => {
+    mockAuthState.user = { id: 'usr-kam', name: 'KAM User', role: 'account_manager', email: 'kam@example.com', avatarInitials: 'KU' }
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input)
+      if (url.includes('/api/playbook-guide-sections')) {
+        return jsonResponse([
+          {
+            id: 'guide-1',
+            title: 'Guide section',
+            summary: 'Read-only guidance.',
+            body: null,
+            icon_key: 'book_open',
+            topics: [{ title: 'Topic', body: 'Body', bullets: [] }],
+            sort_order: 0,
+            is_active: true,
+            created_at: '2026-06-01T00:00:00Z',
+            updated_at: '2026-06-01T00:00:00Z',
+          },
+        ])
+      }
+      return jsonResponse({})
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    render(<Playbook />, { wrapper: MemoryRouter })
+
+    expect(await screen.findAllByText('Guide section')).toHaveLength(2)
+    expect(screen.queryByText('Template catalog')).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /operations/i })).not.toBeInTheDocument()
+  })
+
+  it('lets KAM users execute active playbooks without template CRUD', async () => {
+    mockAuthState.user = { id: 'usr-kam', name: 'KAM User', role: 'account_manager', email: 'kam@example.com', avatarInitials: 'KU' }
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input)
+      if (url.includes('/api/playbook-guide-sections')) {
+        return jsonResponse([
+          {
+            id: 'guide-1',
+            title: 'Guide section',
+            summary: 'Read-only guidance.',
+            body: null,
+            icon_key: 'book_open',
+            topics: [{ title: 'Topic', body: 'Body', bullets: [] }],
+            sort_order: 0,
+            is_active: true,
+            created_at: '2026-06-01T00:00:00Z',
+            updated_at: '2026-06-01T00:00:00Z',
+          },
+        ])
+      }
+      if (url.includes('/api/signals/') && url.includes('/recommended-playbooks')) return jsonResponse([{ template, rationale: 'Matched notice window.', match_score: 100, matched_signal_types: ['notice_window'], matched_metrics: ['commercial'] }])
+      if (url.includes('/api/playbook-templates')) return jsonResponse(page([template], 8))
+      if (url.includes('/api/playbooks/tpl-1/execute') && init?.method === 'POST') return jsonResponse({ id: 'exec-1', template_id: 'tpl-1', template_name_snapshot: template.name, template_version_snapshot: 1, account_id: account.id, status: 'active', tasks: [task], created_at: '2026-05-31T00:00:00Z' }, 201)
+      return jsonResponse({})
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    render(<Playbook />, { wrapper: MemoryRouter })
+
+    await userEvent.click(await screen.findByRole('button', { name: /run playbooks/i }))
+    expect(await screen.findByText('Active execution catalog')).toBeInTheDocument()
+    expect((await screen.findAllByText('Renewal readiness recovery')).length).toBeGreaterThan(0)
+    expect(screen.queryByText('Playbook configuration')).not.toBeInTheDocument()
+
+    await userEvent.click(screen.getAllByRole('button', { name: /execute/i })[0])
+    await waitFor(() => expect(fetchMock.mock.calls.some(call => String(call[0]).includes('/api/playbooks/tpl-1/execute') && call[1]?.method === 'POST')).toBe(true))
+    expect(fetchMock.mock.calls.some(call => String(call[0]).includes('/api/admin/playbook-templates'))).toBe(false)
+  })
+
+  it('lets admins reorder manual guide sections', async () => {
+    const sectionA = {
+      id: 'guide-a',
+      title: 'Section A',
+      summary: 'First section.',
+      body: null,
+      icon_key: 'book_open',
+      topics: [{ title: 'Topic A', body: 'Body A', bullets: [] }],
+      sort_order: 0,
+      is_active: true,
+      created_at: '2026-06-01T00:00:00Z',
+      updated_at: '2026-06-01T00:00:00Z',
+    }
+    const sectionB = {
+      ...sectionA,
+      id: 'guide-b',
+      title: 'Section B',
+      summary: 'Second section.',
+      topics: [{ title: 'Topic B', body: 'Body B', bullets: [] }],
+      sort_order: 1,
+    }
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input)
+      if (url.includes('/api/custom-fields')) return jsonResponse([])
+      if (url.includes('/api/signals/') && url.includes('/recommended-playbooks')) return jsonResponse([])
+      if (url.includes('/api/admin/playbook-templates')) return jsonResponse(page([template], 8))
+      if (url.includes('/api/admin/playbook-guide-sections/reorder') && init?.method === 'POST') return jsonResponse([{ ...sectionB, sort_order: 0 }, { ...sectionA, sort_order: 1 }])
+      if (url.includes('/api/playbook-guide-sections')) return jsonResponse([sectionA, sectionB])
+      return jsonResponse({})
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    render(<Playbook />, { wrapper: MemoryRouter })
+
+    await userEvent.click(await screen.findByRole('button', { name: /manual/i }))
+    expect(await screen.findAllByText('Section A')).toHaveLength(2)
+
+    await userEvent.click(screen.getByRole('button', { name: /move section a down/i }))
+    await waitFor(() => {
+      const reorderCall = fetchMock.mock.calls.find(call => String(call[0]).includes('/api/admin/playbook-guide-sections/reorder'))
+      expect(reorderCall?.[1]?.body).toBe(JSON.stringify({ ordered_ids: ['guide-b', 'guide-a'] }))
+    })
   })
 })

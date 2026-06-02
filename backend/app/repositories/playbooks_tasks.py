@@ -9,6 +9,7 @@ from app.models import (
     GovernanceActionItem,
     GovernanceEvent,
     PlaybookExecution,
+    PlaybookGuideSection,
     PlaybookTemplate,
     PlaybookTemplateActivity,
     Task,
@@ -63,6 +64,32 @@ class PlaybooksTasksRepository:
             .where(PlaybookTemplate.id == template_id)
             .options(selectinload(PlaybookTemplate.activities))
         )
+
+    def list_guide_sections(self, *, active_state: str = "active") -> list[PlaybookGuideSection]:
+        conditions = []
+        if active_state == "active":
+            conditions.append(PlaybookGuideSection.is_active.is_(True))
+        if active_state == "inactive":
+            conditions.append(PlaybookGuideSection.is_active.is_(False))
+        return list(
+            self.db.scalars(
+                select(PlaybookGuideSection)
+                .where(*conditions)
+                .order_by(PlaybookGuideSection.sort_order, PlaybookGuideSection.created_at)
+            )
+        )
+
+    def get_guide_section(self, section_id: str) -> PlaybookGuideSection | None:
+        return self.db.get(PlaybookGuideSection, section_id)
+
+    def save_guide_section(self, section: PlaybookGuideSection) -> PlaybookGuideSection:
+        self.db.add(section)
+        self.db.flush()
+        return section
+
+    def delete_guide_section(self, section: PlaybookGuideSection) -> None:
+        self.db.delete(section)
+        self.db.flush()
 
     def save_template(self, template: PlaybookTemplate) -> PlaybookTemplate:
         self.db.add(template)
