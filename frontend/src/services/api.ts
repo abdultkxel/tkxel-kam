@@ -62,9 +62,16 @@ function getApiErrorMessage(payload: unknown): string {
 function getApiFieldErrors(payload: unknown): ApiFieldError[] {
   if (!isRecord(payload)) return []
   const errors = Array.isArray(payload.errors) ? payload.errors : isRecord(payload.detail) && Array.isArray(payload.detail.errors) ? payload.detail.errors : []
+  const fastApiErrors = Array.isArray(payload.detail) ? payload.detail : []
 
-  return errors.flatMap(error => {
+  const structuredErrors = errors.flatMap(error => {
     if (!isRecord(error) || typeof error.field !== 'string' || typeof error.message !== 'string') return []
     return [{ field: error.field, message: error.message }]
   })
+  const validationErrors = fastApiErrors.flatMap(error => {
+    if (!isRecord(error) || !Array.isArray(error.loc) || typeof error.msg !== 'string') return []
+    const field = error.loc.filter(part => typeof part === 'string' || typeof part === 'number').filter(part => part !== 'body').join('.')
+    return field ? [{ field, message: error.msg }] : []
+  })
+  return [...structuredErrors, ...validationErrors]
 }

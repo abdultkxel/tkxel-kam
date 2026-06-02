@@ -2,6 +2,7 @@ import { apiRequest } from '@/services/api'
 import type {
   AccountPlan,
   AccountPlanInput,
+  AccountPlanVersion,
   Page,
   OpportunityStageConfig,
   OpportunityStageTransitionConfig,
@@ -32,6 +33,18 @@ interface ApiAccountPlan {
   status: string
   actions: ApiAction[]
   updated_at: string
+}
+
+interface ApiAccountPlanVersion {
+  id: string
+  account_plan_id: string
+  account_id: string
+  version: number
+  snapshot_json: Record<string, unknown>
+  change_summary?: string | null
+  actor_id?: string | null
+  actor_name: string
+  created_at: string
 }
 
 interface ApiAction {
@@ -111,6 +124,7 @@ interface ApiWhitespaceItem {
 interface ApiServiceRecommendation {
   id: string
   account_id: string
+  engagement_id?: string | null
   source_service_id?: string | null
   source_service_name?: string | null
   target_service_id: string
@@ -193,9 +207,64 @@ interface ApiAdjacency {
   is_active: boolean
 }
 
-export async function getAccountPlan(token: string, accountId: string) {
-  const plan = await apiRequest<ApiAccountPlan | null>(`/api/accounts/${accountId}/plan`, { token })
+interface AccountPlanReadParams {
+  actionSearch?: string
+  actionOwnerId?: string
+  actionStatus?: string
+  actionPriority?: string
+  actionDueFrom?: string
+  actionDueTo?: string
+  actionSort?: string
+  actionDirection?: 'asc' | 'desc'
+}
+
+interface ServiceCatalogListParams {
+  search?: string
+  category?: string
+  activeState?: 'all' | 'active' | 'inactive'
+  sort?: 'display_order' | 'name' | 'category' | 'updated_at'
+  direction?: 'asc' | 'desc'
+  page?: number
+  pageSize?: number
+}
+
+interface RecommendationListParams {
+  engagementId?: string | null
+  search?: string
+  serviceLine?: string
+  status?: string
+  sort?: 'relevance_score' | 'updated_at' | 'status'
+  direction?: 'asc' | 'desc'
+  page?: number
+  pageSize?: number
+}
+
+interface WhitespaceInput {
+  serviceId: string
+  coverageStatus: string
+  engagementId?: string | null
+  notes?: string | null
+  source?: string
+}
+
+export async function getAccountPlan(token: string, accountId: string, params: AccountPlanReadParams = {}) {
+  const query = queryString({
+    action_search: params.actionSearch,
+    action_owner_id: params.actionOwnerId,
+    action_status: params.actionStatus,
+    action_priority: params.actionPriority,
+    action_due_from: params.actionDueFrom,
+    action_due_to: params.actionDueTo,
+    action_sort: params.actionSort,
+    action_direction: params.actionDirection,
+  })
+  const plan = await apiRequest<ApiAccountPlan | null>(`/api/accounts/${accountId}/plan${query}`, { token })
   return plan ? mapPlan(plan) : null
+}
+
+export async function listAccountPlanHistory(token: string, accountId: string, page = 1, pageSize = 10) {
+  const result = await apiRequest<Page<ApiAccountPlanVersion>>(`/api/accounts/${accountId}/plan/history?page=${page}&page_size=${pageSize}`, { token })
+  return { ...result, items: result.items.map(mapPlanVersion) }
 }
 
 export async function saveAccountPlan(token: string, accountId: string, input: AccountPlanInput) {
@@ -225,8 +294,16 @@ export async function saveAccountPlan(token: string, accountId: string, input: A
   }))
 }
 
-export async function listAdminServiceCatalog(token: string) {
-  const page = await apiRequest<Page<ApiServiceCatalogItem>>('/api/admin/service-catalog?active_state=all&page=1&page_size=100', { token })
+export async function listAdminServiceCatalog(token: string, params: ServiceCatalogListParams = {}) {
+  const page = await apiRequest<Page<ApiServiceCatalogItem>>(`/api/admin/service-catalog${queryString({
+    search: params.search,
+    category: params.category,
+    active_state: params.activeState ?? 'all',
+    sort: params.sort,
+    direction: params.direction,
+    page: params.page ?? 1,
+    page_size: params.pageSize ?? 100,
+  })}`, { token })
   return { ...page, items: page.items.map(mapService) }
 }
 
@@ -387,28 +464,37 @@ export async function replaceServiceAdjacencies(token: string, rules: { sourceSe
   })).map(mapAdjacency)
 }
 
-export async function listWhitespace(token: string, accountId: string) {
-  return (await apiRequest<ApiWhitespaceItem[]>(`/api/accounts/${accountId}/whitespace`, { token })).map(mapWhitespace)
+export async function listWhitespace(token: string, accountId: string, engagementId?: string | null) {
+  return (await apiRequest<ApiWhitespaceItem[]>(`/api/accounts/${accountId}/whitespace${queryString({ engagement_id: engagementId || undefined })}`, { token })).map(mapWhitespace)
 }
 
-export async function saveWhitespace(token: string, accountId: string, items: { serviceId: string; coverageStatus: string; notes?: string | null; source?: string }[]) {
-  return (await apiRequest<ApiWhitespaceItem[]>(`/api/accounts/${accountId}/whitespace`, {
+export async function saveWhitespace(token: string, accountId: string, items: WhitespaceInput[], engagementId?: string | null) {
+  return (await apiRequest<ApiWhitespaceItem[]>(`/api/accounts/${accountId}/whitespace${queryString({ engagement_id: engagementId || undefined })}`, {
     method: 'PUT',
     token,
-    body: JSON.stringify({ items: items.map(item => ({ service_id: item.serviceId, coverage_status: item.coverageStatus, notes: item.notes ?? null, source: item.source ?? 'manual' })) }),
+    body: JSON.stringify({ items: items.map(item => ({ engagement_id: item.engagementId ?? engagementId ?? null, service_id: item.serviceId, coverage_status: item.coverageStatus, notes: item.notes ?? null, source: item.source ?? 'manual' })) }),
   })).map(mapWhitespace)
 }
 
-export async function listServiceRecommendations(token: string, accountId: string) {
-  const page = await apiRequest<Page<ApiServiceRecommendation>>(`/api/accounts/${accountId}/service-recommendations?page=1&page_size=100`, { token })
+export async function listServiceRecommendations(token: string, accountId: string, params: RecommendationListParams = {}) {
+  const page = await apiRequest<Page<ApiServiceRecommendation>>(`/api/accounts/${accountId}/service-recommendations${queryString({
+    engagement_id: params.engagementId || undefined,
+    search: params.search,
+    service_line: params.serviceLine,
+    status: params.status,
+    sort: params.sort,
+    direction: params.direction,
+    page: params.page ?? 1,
+    page_size: params.pageSize ?? 100,
+  })}`, { token })
   return { ...page, items: page.items.map(mapRecommendation) }
 }
 
-export async function createOpportunityFromRecommendation(token: string, accountId: string, recommendationId: string, payload: { ownerId: string; targetDate: string; value?: number; currency?: string }) {
+export async function createOpportunityFromRecommendation(token: string, accountId: string, recommendationId: string, payload: { ownerId: string; targetDate: string; value?: number; currency?: string; nextStep?: string; confirm: boolean }) {
   return mapApiOpportunity(await apiRequest<ApiOpportunity>(`/api/accounts/${accountId}/service-recommendations/${recommendationId}/opportunity`, {
     method: 'POST',
     token,
-    body: JSON.stringify({ owner_id: payload.ownerId, target_date: payload.targetDate, value: payload.value ?? 0, currency: payload.currency ?? 'USD', confirm: true }),
+    body: JSON.stringify({ owner_id: payload.ownerId, target_date: payload.targetDate, value: payload.value ?? 0, currency: payload.currency ?? 'USD', next_step: payload.nextStep, confirm: payload.confirm }),
   })) satisfies Opportunity
 }
 
@@ -487,6 +573,10 @@ function mapPlan(plan: ApiAccountPlan): AccountPlan {
   }
 }
 
+function mapPlanVersion(item: ApiAccountPlanVersion): AccountPlanVersion {
+  return { id: item.id, accountPlanId: item.account_plan_id, accountId: item.account_id, version: item.version, snapshotJson: item.snapshot_json, changeSummary: item.change_summary, actorId: item.actor_id, actorName: item.actor_name, createdAt: item.created_at }
+}
+
 function mapService(item: ApiServiceCatalogItem): ServiceCatalogItem {
   return { id: item.id, slug: item.slug, name: item.name, category: item.category, description: item.description, tags: item.tags, isActive: item.is_active, displayOrder: item.display_order, inUseCount: item.in_use_count }
 }
@@ -516,7 +606,7 @@ function mapWhitespace(item: ApiWhitespaceItem): WhitespaceItem {
 }
 
 function mapRecommendation(item: ApiServiceRecommendation): ServiceRecommendation {
-  return { id: item.id, accountId: item.account_id, sourceServiceId: item.source_service_id, sourceServiceName: item.source_service_name, targetServiceId: item.target_service_id, targetServiceName: item.target_service_name, relevanceScore: item.relevance_score, rationale: item.rationale, status: item.status, sourceContext: item.source_context, createdOpportunityId: item.created_opportunity_id }
+  return { id: item.id, accountId: item.account_id, engagementId: item.engagement_id, sourceServiceId: item.source_service_id, sourceServiceName: item.source_service_name, targetServiceId: item.target_service_id, targetServiceName: item.target_service_name, relevanceScore: item.relevance_score, rationale: item.rationale, status: item.status, sourceContext: item.source_context, createdOpportunityId: item.created_opportunity_id }
 }
 
 function mapRenewal(item: ApiRenewalProfile): RenewalProfile {
@@ -529,4 +619,13 @@ function mapRetentionPlan(item: ApiRetentionPlan): RetentionPlan {
 
 function mapRetentionRecommendation(item: ApiRetentionRecommendation): RetentionRecommendation {
   return { id: item.id, accountId: item.account_id, engagementId: item.engagement_id, title: item.title, rationale: item.rationale, severity: item.severity, recommendedAction: item.recommended_action, sourceContext: item.source_context, status: item.status, createdTaskId: item.created_task_id }
+}
+
+function queryString(params: Record<string, string | number | null | undefined>) {
+  const query = new URLSearchParams()
+  Object.entries(params).forEach(([key, value]) => {
+    if (value !== undefined && value !== null && value !== '') query.set(key, String(value))
+  })
+  const result = query.toString()
+  return result ? `?${result}` : ''
 }

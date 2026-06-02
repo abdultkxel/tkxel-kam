@@ -176,6 +176,12 @@ def test_admin_configuration_catalog_and_stage_endpoints(client: TestClient) -> 
     target = create_service(client, headers, "relationship_qa_target", "Relationship QA Target")
     duplicate_service = client.post("/api/admin/service-catalog", headers=headers, json={"slug": source["slug"], "name": "Duplicate"})
     assert duplicate_service.status_code == 409
+    duplicate_service_name = client.post("/api/admin/service-catalog", headers=headers, json={"slug": "relationship_qa_duplicate_name", "name": source["name"]})
+    assert duplicate_service_name.status_code == 409
+    assert duplicate_service_name.json()["detail"]["errors"][0]["field"] == "name"
+    tag_search = client.get("/api/admin/service-catalog", headers=headers, params={"search": "relationship-test", "active_state": "all", "page": 1, "page_size": 20})
+    assert tag_search.status_code == 200
+    assert {item["id"] for item in tag_search.json()["items"]} >= {source["id"], target["id"]}
 
     adjacency = client.put(
         "/api/admin/service-adjacencies",
@@ -218,6 +224,8 @@ def test_account_plan_whitespace_recommendation_and_opportunity_flow(client: Tes
     assert empty_plan.status_code == 200
     assert empty_plan.json() is None
 
+    sponsor_due_at = datetime.now(timezone.utc) + timedelta(days=7)
+    commercial_due_at = datetime.now(timezone.utc) + timedelta(days=21)
     plan_response = client.put(
         f"/api/accounts/{account.id}/plan",
         headers=headers,
@@ -233,15 +241,31 @@ def test_account_plan_whitespace_recommendation_and_opportunity_flow(client: Tes
                 {
                     "title": "Confirm executive sponsor",
                     "owner_id": owner.id,
-                    "due_at": (datetime.now(timezone.utc) + timedelta(days=7)).isoformat(),
+                    "due_at": sponsor_due_at.isoformat(),
                     "priority": "high",
                     "success_criteria": ["Sponsor confirmed"],
+                },
+                {
+                    "title": "Commercial expansion review",
+                    "owner_id": owner.id,
+                    "due_at": commercial_due_at.isoformat(),
+                    "status": "completed",
+                    "priority": "low",
+                    "success_criteria": ["Commercial owner aligned"],
                 }
             ],
         },
     )
     assert plan_response.status_code == 200
-    assert plan_response.json()["actions"][0]["title"] == "Confirm executive sponsor"
+    assert {item["title"] for item in plan_response.json()["actions"]} == {"Confirm executive sponsor", "Commercial expansion review"}
+
+    filtered_plan = client.get(
+        f"/api/accounts/{account.id}/plan",
+        headers=headers,
+        params={"action_search": "sponsor", "action_status": "open", "action_sort": "priority", "action_direction": "asc"},
+    )
+    assert filtered_plan.status_code == 200
+    assert [item["title"] for item in filtered_plan.json()["actions"]] == ["Confirm executive sponsor"]
 
     history = client.get(f"/api/accounts/{account.id}/plan/history", headers=headers, params={"page": 1, "page_size": 10})
     assert history.status_code == 200
@@ -289,6 +313,73 @@ def test_account_plan_whitespace_recommendation_and_opportunity_flow(client: Tes
     assert db_session.scalar(select(Opportunity).where(Opportunity.id == opportunity["id"])) is not None
     assert db_session.scalar(select(OpportunityStageHistory).where(OpportunityStageHistory.opportunity_id == opportunity["id"])) is not None
     assert db_session.scalar(select(TimelineEntry).where(TimelineEntry.source_record_id == opportunity["id"])) is not None
+
+
+def test_engagement_whitespace_recommendation_scope_and_stale_conversion_guard(client: TestClient, db_session: Session) -> None:
+    headers = auth_headers(client)
+    owner = seeded_user(db_session, "account_manager")
+    account = create_account(db_session, owner, account_id="engagement-whitespace-account")
+    engagement = create_engagement(db_session, account, owner)
+    source = create_service(client, headers, "engagement_active_engineering", "Engagement Active Engineering")
+    target = create_service(client, headers, "engagement_quality_advisory", "Engagement Quality Advisory")
+
+    adjacency_response = client.put(
+        "/api/admin/service-adjacencies",
+        headers=headers,
+        json={"rules": [{"source_service_id": source["id"], "target_service_id": target["id"], "relevance_score": 88, "rationale": "Engagement engineering coverage commonly creates quality advisory whitespace."}]},
+    )
+    assert adjacency_response.status_code == 200
+
+    whitespace = client.put(
+        f"/api/accounts/{account.id}/whitespace",
+        headers=headers,
+        json={"items": [{"engagement_id": engagement.id, "service_id": source["id"], "coverage_status": "active", "source": "manual"}]},
+    )
+    assert whitespace.status_code == 200
+    assert whitespace.json()[0]["engagement_id"] == engagement.id
+
+    recommendations = client.get(f"/api/accounts/{account.id}/service-recommendations", headers=headers, params={"engagement_id": engagement.id, "page": 1, "page_size": 10})
+    assert recommendations.status_code == 200
+    scoped_recommendation = recommendations.json()["items"][0]
+    assert scoped_recommendation["engagement_id"] == engagement.id
+    assert scoped_recommendation["target_service_id"] == target["id"]
+
+    converted = client.post(
+        f"/api/accounts/{account.id}/service-recommendations/{scoped_recommendation['id']}/opportunity",
+        headers=headers,
+        json={"owner_id": owner.id, "target_date": (datetime.now(timezone.utc) + timedelta(days=30)).isoformat(), "confirm": True},
+    )
+    assert converted.status_code == 201
+    assert converted.json()["engagement_id"] == engagement.id
+
+    stale_account = create_account(db_session, owner, account_id="stale-recommendation-account")
+    stale_source = create_service(client, headers, "stale_active_engineering", "Stale Active Engineering")
+    stale_target = create_service(client, headers, "stale_quality_advisory", "Stale Quality Advisory")
+    stale_adjacency = client.put(
+        "/api/admin/service-adjacencies",
+        headers=headers,
+        json={"rules": [{"source_service_id": stale_source["id"], "target_service_id": stale_target["id"], "relevance_score": 74, "rationale": "Stale recommendation guard fixture."}]},
+    )
+    assert stale_adjacency.status_code == 200
+    active_whitespace = client.put(
+        f"/api/accounts/{stale_account.id}/whitespace",
+        headers=headers,
+        json={"items": [{"service_id": stale_source["id"], "coverage_status": "active", "source": "manual"}]},
+    )
+    assert active_whitespace.status_code == 200
+    stale_recommendations = client.get(f"/api/accounts/{stale_account.id}/service-recommendations", headers=headers)
+    assert stale_recommendations.status_code == 200
+    stale_recommendation = stale_recommendations.json()["items"][0]
+
+    cleared_whitespace = client.put(f"/api/accounts/{stale_account.id}/whitespace", headers=headers, json={"items": []})
+    assert cleared_whitespace.status_code == 200
+    stale_conversion = client.post(
+        f"/api/accounts/{stale_account.id}/service-recommendations/{stale_recommendation['id']}/opportunity",
+        headers=headers,
+        json={"owner_id": owner.id, "target_date": (datetime.now(timezone.utc) + timedelta(days=30)).isoformat(), "confirm": True},
+    )
+    assert stale_conversion.status_code == 422
+    assert stale_conversion.json()["detail"]["errors"][0]["field"] == "recommendation_id"
 
 
 def test_renewal_retention_plan_and_task_flow(client: TestClient, db_session: Session) -> None:

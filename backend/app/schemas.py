@@ -2952,6 +2952,7 @@ class AccountWhitespaceItemRead(BaseModel):
 class ServiceRecommendationRead(BaseModel):
     id: str
     account_id: str
+    engagement_id: str | None = None
     source_service_id: str | None = None
     source_service_name: str | None = None
     target_service_id: str

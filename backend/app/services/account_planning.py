@@ -1,4 +1,5 @@
 from datetime import datetime, timezone
+from dataclasses import dataclass
 
 from fastapi import HTTPException, status
 from sqlalchemy.orm import Session
@@ -24,6 +25,18 @@ from app.services.user_management import page_count
 ACCOUNT_PLANNING_MODULE = "account_planning"
 
 
+@dataclass(frozen=True)
+class AccountPlanActionFilters:
+    search: str | None = None
+    owner_id: str | None = None
+    status: str | None = None
+    priority: str | None = None
+    due_from: datetime | None = None
+    due_to: datetime | None = None
+    sort: str = "due_at"
+    direction: str = "asc"
+
+
 def field_error(field: str, message: str) -> HTTPException:
     return HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail={"message": "Validation failed", "errors": [{"field": field, "message": message}]})
 
@@ -36,11 +49,11 @@ class AccountPlanningService:
         self.audit = AuditService(AuditRepository(db))
         self.timeline = TimelineService(TimelineRepository(db))
 
-    def get_plan(self, account_id: str, current_user: User) -> AccountPlanRead | None:
+    def get_plan(self, account_id: str, current_user: User, action_filters: AccountPlanActionFilters | None = None) -> AccountPlanRead | None:
         account = self._get_account_or_404(account_id)
         self.access.require_account_view(current_user, account, module=ACCOUNT_PLANNING_MODULE)
         plan = self.repository.get_plan_for_account(account_id)
-        return self._plan_read(plan) if plan else None
+        return self._plan_read(plan, action_filters=action_filters) if plan else None
 
     def upsert_plan(self, account_id: str, payload: AccountPlanUpsertRequest, current_user: User) -> AccountPlanRead:
         account = self._get_account_or_404(account_id)
@@ -135,7 +148,8 @@ class AccountPlanningService:
             raise field_error(field, "Owner is required.")
         return user
 
-    def _plan_read(self, plan: AccountPlan) -> AccountPlanRead:
+    def _plan_read(self, plan: AccountPlan, action_filters: AccountPlanActionFilters | None = None) -> AccountPlanRead:
+        actions = self._filter_actions(list(plan.actions), action_filters)
         return AccountPlanRead(
             id=plan.id,
             account_id=plan.account_id,
@@ -154,8 +168,62 @@ class AccountPlanningService:
             updated_by_name=plan.updated_by_name,
             created_at=plan.created_at,
             updated_at=plan.updated_at,
-            actions=[self._action_read(action) for action in sorted(plan.actions, key=lambda item: (item.status == "completed", item.due_at, item.created_at))],
+            actions=[self._action_read(action) for action in actions],
         )
+
+    def _filter_actions(self, actions: list[AccountPlanAction], filters: AccountPlanActionFilters | None = None) -> list[AccountPlanAction]:
+        if filters is None or (
+            not filters.search
+            and not filters.owner_id
+            and not filters.status
+            and not filters.priority
+            and filters.due_from is None
+            and filters.due_to is None
+            and filters.sort == "due_at"
+            and filters.direction == "asc"
+        ):
+            return sorted(actions, key=lambda item: (item.status == "completed", item.due_at, item.created_at))
+
+        filtered = actions
+        if filters.search and filters.search.strip():
+            term = filters.search.strip().lower()
+            filtered = [
+                action
+                for action in filtered
+                if term
+                in " ".join(
+                    [
+                        action.title,
+                        action.owner_name,
+                        action.owner_email or "",
+                        action.status,
+                        action.priority,
+                        " ".join(action.success_criteria or []),
+                    ]
+                ).lower()
+            ]
+        if filters.owner_id:
+            filtered = [action for action in filtered if action.owner_id == filters.owner_id]
+        if filters.status:
+            filtered = [action for action in filtered if action.status == filters.status]
+        if filters.priority:
+            filtered = [action for action in filtered if action.priority == filters.priority]
+        if filters.due_from:
+            filtered = [action for action in filtered if action.due_at >= filters.due_from]
+        if filters.due_to:
+            filtered = [action for action in filtered if action.due_at <= filters.due_to]
+
+        priority_order = {"critical": 0, "high": 1, "medium": 2, "low": 3}
+        sorters = {
+            "due_at": lambda item: item.due_at,
+            "priority": lambda item: priority_order.get(item.priority, 99),
+            "status": lambda item: item.status,
+            "owner": lambda item: item.owner_name.lower(),
+            "created_at": lambda item: item.created_at,
+        }
+        sorter = sorters.get(filters.sort, sorters["due_at"])
+        reverse = filters.direction == "desc"
+        return sorted(filtered, key=lambda item: (sorter(item), item.due_at, item.title.lower()), reverse=reverse)
 
     @staticmethod
     def _action_read(action: AccountPlanAction) -> AccountPlanActionRead:

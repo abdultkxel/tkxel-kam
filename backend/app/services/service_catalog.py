@@ -35,6 +35,10 @@ def field_error(field: str, message: str) -> HTTPException:
     return HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail={"message": "Validation failed", "errors": [{"field": field, "message": message}]})
 
 
+def conflict_field_error(field: str, message: str) -> HTTPException:
+    return HTTPException(status_code=status.HTTP_409_CONFLICT, detail={"message": message, "errors": [{"field": field, "message": message}]})
+
+
 class ServiceCatalogService:
     def __init__(self, db: Session) -> None:
         self.repository = ServiceCatalogRepository(db)
@@ -53,7 +57,9 @@ class ServiceCatalogService:
     def create_service(self, payload: ServiceCatalogItemCreateRequest, current_user: User) -> ServiceCatalogItemRead:
         self.access.require_module_permission(current_user, ACCOUNT_PLANNING_MODULE, "configure")
         if self.repository.get_service_by_slug(payload.slug):
-            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="A service with this slug already exists")
+            raise conflict_field_error("slug", "A service with this slug already exists.")
+        if self.repository.get_service_by_name(payload.name):
+            raise conflict_field_error("name", "A service with this name already exists.")
         item = ServiceCatalogItem(
             slug=payload.slug,
             name=payload.name,
@@ -76,7 +82,11 @@ class ServiceCatalogService:
         before = self._service_snapshot(item)
         updates = payload.model_dump(exclude_unset=True)
         if "slug" in updates and updates["slug"] != item.slug and self.repository.get_service_by_slug(updates["slug"]):
-            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="A service with this slug already exists")
+            raise conflict_field_error("slug", "A service with this slug already exists.")
+        if "name" in updates and updates["name"] != item.name:
+            existing_name = self.repository.get_service_by_name(updates["name"])
+            if existing_name is not None and existing_name.id != item.id:
+                raise conflict_field_error("name", "A service with this name already exists.")
         for field, value in updates.items():
             setattr(item, field, value)
         item.updated_by_id = current_user.id
@@ -164,11 +174,13 @@ class ServiceCatalogService:
         self.repository.commit()
         return [self._whitespace_read(item) for item in after_items]
 
-    def list_recommendations(self, account_id: str, current_user: User, *, search: str | None = None, service_line: str | None = None, status_filter: str | None = None, sort: str = "relevance_score", direction: str = "desc", page: int = 1, page_size: int = 25) -> tuple[list[ServiceRecommendationRead], int, int]:
+    def list_recommendations(self, account_id: str, current_user: User, *, engagement_id: str | None = None, search: str | None = None, service_line: str | None = None, status_filter: str | None = None, sort: str = "relevance_score", direction: str = "desc", page: int = 1, page_size: int = 25) -> tuple[list[ServiceRecommendationRead], int, int]:
         account = self._get_account_or_404(account_id)
         self.access.require_account_view(current_user, account, module=ACCOUNT_PLANNING_MODULE)
+        if engagement_id:
+            self._ensure_engagement(account_id, engagement_id)
         self._generate_recommendations(account_id)
-        items, total = self.repository.list_recommendations(account_id=account_id, search=search, service_line=service_line, status=status_filter, sort=sort, direction=direction, page=page, page_size=page_size)
+        items, total = self.repository.list_recommendations(account_id=account_id, engagement_id=engagement_id, search=search, service_line=service_line, status=status_filter, sort=sort, direction=direction, page=page, page_size=page_size)
         return [self._recommendation_read(item) for item in items], total, page_count(total, page_size)
 
     def create_opportunity_from_recommendation(self, account_id: str, recommendation_id: str, payload: RecommendationOpportunityCreateRequest, current_user: User) -> OpportunityRead:
@@ -184,6 +196,8 @@ class ServiceCatalogService:
             existing = self.opportunities.get_opportunity(recommendation.created_opportunity_id)
             if existing is not None:
                 return self.opportunity_reader._opportunity_read(existing)
+        if recommendation.status != "recommended":
+            raise field_error("recommendation_id", "Only active recommendations can be converted into opportunities.")
         owner = self.opportunities.get_user(payload.owner_id)
         if owner is None or not owner.is_active:
             raise field_error("owner_id", "Owner is required.")
@@ -198,6 +212,7 @@ class ServiceCatalogService:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="No active Identified stage is configured")
         opportunity = Opportunity(
             account_id=account_id,
+            engagement_id=recommendation.engagement_id,
             type_id=opportunity_type.id,
             owner_id=owner.id,
             owner_name=owner.full_name,
@@ -252,33 +267,44 @@ class ServiceCatalogService:
 
     def _generate_recommendations(self, account_id: str) -> None:
         whitespace = self.repository.list_whitespace(account_id)
-        active_service_ids = {item.service_id for item in whitespace if item.coverage_status == "active"}
-        blocked_target_ids = {item.service_id for item in whitespace if item.coverage_status in {"active", "not_relevant"}}
         kept: set[str] = set()
-        if not active_service_ids:
+        whitespace_by_scope: dict[str | None, list[AccountWhitespaceItem]] = {}
+        for item in whitespace:
+            whitespace_by_scope.setdefault(item.engagement_id, []).append(item)
+        account_level_blocked_ids = {item.service_id for item in whitespace_by_scope.get(None, []) if item.coverage_status in {"active", "not_relevant"}}
+        active_adjacencies = self.repository.list_adjacencies(active_only=True)
+        if not whitespace_by_scope or not active_adjacencies:
             self.repository.clear_stale_recommendations(account_id, kept)
             return
-        for rule in self.repository.list_adjacencies(active_only=True):
-            if rule.source_service_id not in active_service_ids or rule.target_service_id in blocked_target_ids:
+        for engagement_id, scoped_whitespace in whitespace_by_scope.items():
+            active_service_ids = {item.service_id for item in scoped_whitespace if item.coverage_status == "active"}
+            blocked_target_ids = {item.service_id for item in scoped_whitespace if item.coverage_status in {"active", "not_relevant"}}
+            if engagement_id is not None:
+                blocked_target_ids.update(account_level_blocked_ids)
+            if not active_service_ids:
                 continue
-            recommendation = self.repository.recommendation_exists(account_id, rule.target_service_id, rule.source_service_id)
-            if recommendation is None:
-                recommendation = ServiceRecommendation(
-                    account_id=account_id,
-                    source_service_id=rule.source_service_id,
-                    target_service_id=rule.target_service_id,
-                    relevance_score=rule.relevance_score,
-                    rationale=rule.rationale,
-                    status="recommended",
-                    source_context="adjacency",
-                )
-                self.repository.save_recommendation(recommendation)
-            else:
-                recommendation.relevance_score = rule.relevance_score
-                recommendation.rationale = rule.rationale
-                if recommendation.status == "stale":
-                    recommendation.status = "recommended"
-            kept.add(recommendation.id)
+            for rule in active_adjacencies:
+                if rule.source_service_id not in active_service_ids or rule.target_service_id in blocked_target_ids:
+                    continue
+                recommendation = self.repository.recommendation_exists(account_id, rule.target_service_id, rule.source_service_id, engagement_id=engagement_id)
+                if recommendation is None:
+                    recommendation = ServiceRecommendation(
+                        account_id=account_id,
+                        engagement_id=engagement_id,
+                        source_service_id=rule.source_service_id,
+                        target_service_id=rule.target_service_id,
+                        relevance_score=rule.relevance_score,
+                        rationale=rule.rationale,
+                        status="recommended",
+                        source_context="adjacency",
+                    )
+                    self.repository.save_recommendation(recommendation)
+                else:
+                    recommendation.relevance_score = rule.relevance_score
+                    recommendation.rationale = rule.rationale
+                    if recommendation.status == "stale":
+                        recommendation.status = "recommended"
+                kept.add(recommendation.id)
         self.repository.clear_stale_recommendations(account_id, kept)
         self.repository.flush()
 
@@ -367,6 +393,7 @@ class ServiceCatalogService:
         return ServiceRecommendationRead(
             id=item.id,
             account_id=item.account_id,
+            engagement_id=item.engagement_id,
             source_service_id=item.source_service_id,
             source_service_name=item.source_service.name if item.source_service else None,
             target_service_id=item.target_service_id,

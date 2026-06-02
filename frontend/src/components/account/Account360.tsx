@@ -521,7 +521,7 @@ export function Account360({ account, overview }: { account: Account; overview?:
           <AccountPlanPanel account={account} />
         </Tabs.Content>
         <Tabs.Content value="Growth">
-          <GrowthWhitespacePanel account={account} />
+          <GrowthWhitespacePanel account={account} engagements={accountEngagements} />
         </Tabs.Content>
         <Tabs.Content value="Renewal">
           <RenewalIntelligencePanel account={account} />

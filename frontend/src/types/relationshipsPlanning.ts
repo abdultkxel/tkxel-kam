@@ -34,6 +34,18 @@ export interface AccountPlan {
   updatedAt: string
 }
 
+export interface AccountPlanVersion {
+  id: string
+  accountPlanId: string
+  accountId: string
+  version: number
+  snapshotJson: Record<string, unknown>
+  changeSummary?: string | null
+  actorId?: string | null
+  actorName: string
+  createdAt: string
+}
+
 export interface AccountPlanInput {
   retentionFocus?: string | null
   growthFocus?: string | null
@@ -124,6 +136,7 @@ export interface WhitespaceItem {
 export interface ServiceRecommendation {
   id: string
   accountId: string
+  engagementId?: string | null
   sourceServiceId?: string | null
   sourceServiceName?: string | null
   targetServiceId: string

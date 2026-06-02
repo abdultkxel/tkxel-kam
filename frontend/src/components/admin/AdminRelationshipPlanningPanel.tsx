@@ -1,4 +1,4 @@
-import { ArrowRight, BriefcaseBusiness, GitBranch, Loader2, Plus, RefreshCw, ShieldCheck, Users } from 'lucide-react'
+import { ArrowLeft, ArrowRight, BriefcaseBusiness, GitBranch, Loader2, Pencil, Plus, RefreshCw, Search, ShieldCheck, Users, X } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import { FormEvent, useEffect, useMemo, useState } from 'react'
 import type { ReactNode } from 'react'
@@ -29,6 +29,7 @@ import type { OpportunityStageConfig, OpportunityStageTransitionConfig, ServiceA
 import { apiFieldErrors, clearFieldError, FieldErrors } from '@/utils/formErrors'
 
 const emptyService = { slug: '', name: '', category: '', tags: '' }
+const emptyServiceEdit = { slug: '', name: '', category: '', description: '', tags: '', displayOrder: '0' }
 const emptyRole = { slug: '', name: '', description: '', displayOrder: '10' }
 const emptyRule = {
   ruleKey: '',
@@ -49,6 +50,15 @@ export function AdminRelationshipPlanningPanel() {
   const [error, setError] = useState('')
   const [fieldErrors, setFieldErrors] = useState<FieldErrors>({})
   const [services, setServices] = useState<ServiceCatalogItem[]>([])
+  const [serviceTotal, setServiceTotal] = useState(0)
+  const [servicePages, setServicePages] = useState(1)
+  const [serviceSearch, setServiceSearch] = useState('')
+  const [serviceCategory, setServiceCategory] = useState('')
+  const [serviceActiveState, setServiceActiveState] = useState<'all' | 'active' | 'inactive'>('all')
+  const [serviceSort, setServiceSort] = useState<'display_order' | 'name' | 'category' | 'updated_at'>('display_order')
+  const [servicePage, setServicePage] = useState(1)
+  const [editingServiceId, setEditingServiceId] = useState('')
+  const [serviceEditForm, setServiceEditForm] = useState(emptyServiceEdit)
   const [adjacencies, setAdjacencies] = useState<ServiceAdjacencyRule[]>([])
   const [roles, setRoles] = useState<StakeholderRoleConfig[]>([])
   const [gapRules, setGapRules] = useState<StakeholderGapRule[]>([])
@@ -67,28 +77,30 @@ export function AdminRelationshipPlanningPanel() {
   useEffect(() => {
     if (!token) return
     void loadAll()
-  }, [token])
+  }, [token, serviceActiveState, serviceCategory, servicePage, serviceSearch, serviceSort])
 
   async function loadAll() {
     if (!token) return
     setLoading(true)
     setError('')
     try {
-      const [servicePage, adjacencyItems, rolePage, gapPage, stageItems, transitionItems] = await Promise.all([
-        listAdminServiceCatalog(token),
+      const [serviceCatalogPage, adjacencyItems, rolePage, gapPage, stageItems, transitionItems] = await Promise.all([
+        listAdminServiceCatalog(token, { search: serviceSearch, category: serviceCategory, activeState: serviceActiveState, sort: serviceSort, page: servicePage, pageSize: 10 }),
         listServiceAdjacencies(token),
         listStakeholderRoles(token),
         listStakeholderGapRules(token),
         listAdminOpportunityStages(token),
         listOpportunityStageTransitions(token),
       ])
-      setServices(servicePage.items)
+      setServices(serviceCatalogPage.items)
+      setServiceTotal(serviceCatalogPage.total)
+      setServicePages(serviceCatalogPage.pages || 1)
       setAdjacencies(adjacencyItems)
       setRoles(rolePage.items)
       setGapRules(gapPage.items)
       setStages(stageItems)
       setTransitions(transitionItems)
-      setAdjacencyForm(current => ({ ...current, sourceServiceId: current.sourceServiceId || servicePage.items[0]?.id || '', targetServiceId: current.targetServiceId || servicePage.items[1]?.id || '' }))
+      setAdjacencyForm(current => ({ ...current, sourceServiceId: current.sourceServiceId || serviceCatalogPage.items[0]?.id || '', targetServiceId: current.targetServiceId || serviceCatalogPage.items[1]?.id || '' }))
       setTransitionForm(current => ({ ...current, fromStage: current.fromStage || stageItems[0]?.name || '', toStage: current.toStage || stageItems[1]?.name || '' }))
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Relationship planning settings could not load')
@@ -111,6 +123,25 @@ export function AdminRelationshipPlanningPanel() {
       toast.success('Service saved')
       await loadAll()
     })
+  }
+
+  async function submitServiceEdit(event: FormEvent) {
+    event.preventDefault()
+    if (!token || !editingServiceId) return
+    await saveWithErrors('serviceEdit', async () => {
+      await updateServiceCatalogItem(token, editingServiceId, {
+        slug: serviceEditForm.slug,
+        name: serviceEditForm.name,
+        category: serviceEditForm.category || null,
+        description: serviceEditForm.description || null,
+        tags: splitList(serviceEditForm.tags),
+        displayOrder: Number(serviceEditForm.displayOrder || 0),
+      })
+      setEditingServiceId('')
+      setServiceEditForm(emptyServiceEdit)
+      toast.success('Service updated')
+      await loadAll()
+    }, { display_order: 'displayOrder' })
   }
 
   async function submitRole(event: FormEvent) {
@@ -168,6 +199,7 @@ export function AdminRelationshipPlanningPanel() {
   async function submitAdjacency(event: FormEvent) {
     event.preventDefault()
     if (!token) return
+    const nextIndex = adjacencies.length
     await saveWithErrors('adjacency', async () => {
       if (!adjacencyForm.sourceServiceId) throw fieldError('adjacency.sourceServiceId', 'Source service is required.')
       if (!adjacencyForm.targetServiceId) throw fieldError('adjacency.targetServiceId', 'Target service is required.')
@@ -185,7 +217,7 @@ export function AdminRelationshipPlanningPanel() {
       setAdjacencyForm(emptyAdjacency)
       toast.success('Adjacency saved')
       await loadAll()
-    }, { 'rules.0.source_service_id': 'sourceServiceId', 'rules.0.target_service_id': 'targetServiceId', 'rules.0.relevance_score': 'relevanceScore' })
+    }, adjacencyAliases(nextIndex))
   }
 
   async function submitTransition(event: FormEvent) {
@@ -223,6 +255,20 @@ export function AdminRelationshipPlanningPanel() {
   async function toggleStage(item: OpportunityStageConfig) {
     if (!token) return
     await saveToggle(async () => updateOpportunityStageConfig(token, item.id, { isActive: !item.isActive }), 'Stage status updated')
+  }
+
+  async function toggleAdjacency(item: ServiceAdjacencyRule) {
+    if (!token) return
+    await saveToggle(
+      async () => replaceServiceAdjacencies(token, adjacencies.map(rule => ({ sourceServiceId: rule.sourceServiceId, targetServiceId: rule.targetServiceId, relevanceScore: rule.relevanceScore, rationale: rule.rationale, isActive: rule.id === item.id ? !rule.isActive : rule.isActive }))),
+      'Adjacency status updated',
+    )
+  }
+
+  function startEditingService(item: ServiceCatalogItem) {
+    setEditingServiceId(item.id)
+    setServiceEditForm({ slug: item.slug, name: item.name, category: item.category ?? '', description: item.description ?? '', tags: item.tags.join(', '), displayOrder: String(item.displayOrder) })
+    setFieldErrors(current => removePrefix(current, 'serviceEdit'))
   }
 
   async function saveToggle(action: () => Promise<unknown>, success: string) {
@@ -292,6 +338,18 @@ export function AdminRelationshipPlanningPanel() {
     <div className="space-y-4">
       <section className="grid gap-4 xl:grid-cols-2">
         <ConfigCard icon={BriefcaseBusiness} eyebrow="Service catalog" title="Services and adjacency">
+          <div className="grid gap-3 border-b border-surface-border p-4 md:grid-cols-[minmax(160px,1fr)_minmax(140px,180px)_minmax(140px,180px)_minmax(140px,180px)]">
+            <label className="grid gap-1">
+              <span className="tk-label text-xs">Search</span>
+              <span className="relative">
+                <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-ink-secondary" />
+                <input className="tk-input pl-9" value={serviceSearch} onChange={event => { setServiceSearch(event.target.value); setServicePage(1) }} />
+              </span>
+            </label>
+            <TextInput label="Category filter" value={serviceCategory} onChange={value => { setServiceCategory(value); setServicePage(1) }} />
+            <SelectInput label="State" value={serviceActiveState} options={[{ value: 'all', label: 'All' }, { value: 'active', label: 'Active' }, { value: 'inactive', label: 'Inactive' }]} onChange={value => { setServiceActiveState(value as typeof serviceActiveState); setServicePage(1) }} />
+            <SelectInput label="Sort" value={serviceSort} options={[{ value: 'display_order', label: 'Display order' }, { value: 'name', label: 'Name' }, { value: 'category', label: 'Category' }, { value: 'updated_at', label: 'Updated' }]} onChange={value => { setServiceSort(value as typeof serviceSort); setServicePage(1) }} />
+          </div>
           <form onSubmit={submitService} className="grid gap-3 border-b border-surface-border bg-surface-tertiary p-4 md:grid-cols-[minmax(160px,1fr)_minmax(160px,1fr)_160px_180px_auto]">
             <TextInput label="Name" value={serviceForm.name} error={fieldErrors['service.name']} onChange={value => updateService('name', value)} />
             <TextInput label="Slug" value={serviceForm.slug} error={fieldErrors['service.slug']} onChange={value => updateService('slug', value)} />
@@ -302,7 +360,7 @@ export function AdminRelationshipPlanningPanel() {
           <div className="overflow-x-auto">
             <table className="w-full min-w-[760px] text-left text-sm">
               <thead className="border-b border-surface-border bg-surface-secondary text-xs font-semibold uppercase tracking-wider text-ink-secondary">
-                <tr><th className="px-4 py-3">Service</th><th className="px-4 py-3">Category</th><th className="px-4 py-3">Tags</th><th className="px-4 py-3">Usage</th><th className="px-4 py-3">Status</th></tr>
+                <tr><th className="px-4 py-3">Service</th><th className="px-4 py-3">Category</th><th className="px-4 py-3">Tags</th><th className="px-4 py-3">Usage</th><th className="px-4 py-3">Status</th><th className="px-4 py-3">Actions</th></tr>
               </thead>
               <tbody>
                 {services.map(item => (
@@ -312,11 +370,50 @@ export function AdminRelationshipPlanningPanel() {
                     <td className="px-4 py-3 text-ink-secondary">{item.tags.join(', ') || 'None'}</td>
                     <td className="px-4 py-3 text-ink-secondary">{item.inUseCount}</td>
                     <td className="px-4 py-3"><StatusButton active={item.isActive} onClick={() => toggleService(item)} /></td>
+                    <td className="px-4 py-3">
+                      <button type="button" className="tk-button-secondary px-3 py-2" onClick={() => startEditingService(item)}>
+                        <Pencil className="h-4 w-4" />
+                        Edit
+                      </button>
+                    </td>
                   </tr>
                 ))}
               </tbody>
             </table>
             {!services.length ? <EmptyState icon={BriefcaseBusiness} heading="No services configured" body="Add the first service catalog item." className="py-8" /> : null}
+          </div>
+          {editingServiceId ? (
+            <form onSubmit={submitServiceEdit} className="grid gap-3 border-t border-surface-border bg-surface-secondary p-4">
+              <div className="flex items-center justify-between gap-3">
+                <h3 className="text-sm font-semibold text-ink">Edit service</h3>
+                <button type="button" className="tk-button-secondary px-3 py-2" onClick={() => { setEditingServiceId(''); setServiceEditForm(emptyServiceEdit) }}>
+                  <X className="h-4 w-4" />
+                  Cancel
+                </button>
+              </div>
+              <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+                <TextInput label="Name" value={serviceEditForm.name} error={fieldErrors['serviceEdit.name']} onChange={value => updateServiceEdit('name', value)} />
+                <TextInput label="Slug" value={serviceEditForm.slug} error={fieldErrors['serviceEdit.slug']} onChange={value => updateServiceEdit('slug', value)} />
+                <TextInput label="Category" value={serviceEditForm.category} error={fieldErrors['serviceEdit.category']} onChange={value => updateServiceEdit('category', value)} />
+                <TextInput label="Tags" value={serviceEditForm.tags} error={fieldErrors['serviceEdit.tags']} onChange={value => updateServiceEdit('tags', value)} />
+                <TextInput label="Order" type="number" value={serviceEditForm.displayOrder} error={fieldErrors['serviceEdit.displayOrder']} onChange={value => updateServiceEdit('displayOrder', value)} />
+              </div>
+              <TextArea label="Description" value={serviceEditForm.description} error={fieldErrors['serviceEdit.description']} onChange={value => updateServiceEdit('description', value)} />
+              <SubmitButton saving={saving} label="Save changes" />
+            </form>
+          ) : null}
+          <div className="flex flex-col gap-2 border-t border-surface-border p-4 text-sm text-ink-secondary sm:flex-row sm:items-center sm:justify-between">
+            <span>{serviceTotal} services · page {servicePage} of {servicePages}</span>
+            <span className="flex gap-2">
+              <button type="button" className="tk-button-secondary px-3 py-2" disabled={servicePage <= 1} onClick={() => setServicePage(page => Math.max(1, page - 1))}>
+                <ArrowLeft className="h-4 w-4" />
+                Previous
+              </button>
+              <button type="button" className="tk-button-secondary px-3 py-2" disabled={servicePage >= servicePages} onClick={() => setServicePage(page => Math.min(servicePages, page + 1))}>
+                <ArrowRight className="h-4 w-4" />
+                Next
+              </button>
+            </span>
           </div>
           <form onSubmit={submitAdjacency} className="grid gap-3 border-t border-surface-border p-4 md:grid-cols-[minmax(160px,1fr)_minmax(160px,1fr)_120px_minmax(180px,1fr)_auto]">
             <SelectInput label="Source" value={adjacencyForm.sourceServiceId} error={fieldErrors['adjacency.sourceServiceId']} options={activeServices.map(item => ({ value: item.id, label: item.name }))} onChange={value => updateAdjacency('sourceServiceId', value)} />
@@ -325,6 +422,17 @@ export function AdminRelationshipPlanningPanel() {
             <TextInput label="Rationale" value={adjacencyForm.rationale} error={fieldErrors['adjacency.rationale']} onChange={value => updateAdjacency('rationale', value)} />
             <SubmitButton saving={saving} label="Link" />
           </form>
+          <div className="grid gap-2 border-t border-surface-border p-4">
+            {adjacencies.map(item => (
+              <div key={item.id} className="flex flex-col gap-2 rounded-lg border border-surface-border p-3 sm:flex-row sm:items-center sm:justify-between">
+                <span className="text-sm font-semibold text-ink">{item.sourceServiceName}<ArrowRight className="mx-2 inline h-4 w-4 text-brand-blue" />{item.targetServiceName}</span>
+                <span className="flex items-center gap-2">
+                  <Badge label={`${item.relevanceScore}%`} />
+                  <StatusButton active={item.isActive} onClick={() => toggleAdjacency(item)} />
+                </span>
+              </div>
+            ))}
+          </div>
         </ConfigCard>
 
         <ConfigCard icon={Users} eyebrow="Stakeholder coverage" title="Roles and gap rules">
@@ -408,6 +516,11 @@ export function AdminRelationshipPlanningPanel() {
   function updateService(field: keyof typeof serviceForm, value: string) {
     setServiceForm(current => ({ ...current, [field]: value }))
     setFieldErrors(current => clearFieldError(current, `service.${field}`))
+  }
+
+  function updateServiceEdit(field: keyof typeof serviceEditForm, value: string) {
+    setServiceEditForm(current => ({ ...current, [field]: value }))
+    setFieldErrors(current => clearFieldError(current, `serviceEdit.${field}`))
   }
 
   function updateRole(field: keyof typeof roleForm, value: string) {
@@ -524,6 +637,15 @@ function prefixErrors(prefix: string, errors: FieldErrors) {
 
 function removePrefix(errors: FieldErrors, prefix: string) {
   return Object.fromEntries(Object.entries(errors).filter(([field]) => !field.startsWith(`${prefix}.`)))
+}
+
+function adjacencyAliases(index: number) {
+  return {
+    [`rules.${index}.source_service_id`]: 'sourceServiceId',
+    [`rules.${index}.target_service_id`]: 'targetServiceId',
+    [`rules.${index}.relevance_score`]: 'relevanceScore',
+    [`rules.${index}.rationale`]: 'rationale',
+  }
 }
 
 function fieldError(field: string, message: string) {

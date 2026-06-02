@@ -1034,10 +1034,11 @@ class AccountWhitespaceItem(Base):
 
 class ServiceRecommendation(Base):
     __tablename__ = "service_recommendations"
-    __table_args__ = (UniqueConstraint("account_id", "target_service_id", "source_service_id", name="uq_service_recommendations_account_target_source"),)
+    __table_args__ = (UniqueConstraint("account_id", "engagement_id", "target_service_id", "source_service_id", name="uq_service_recommendations_account_engagement_target_source"),)
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid4()))
     account_id: Mapped[str] = mapped_column(ForeignKey("accounts.id", ondelete="CASCADE"), index=True, nullable=False)
+    engagement_id: Mapped[str | None] = mapped_column(ForeignKey("engagements.id", ondelete="CASCADE"), index=True, nullable=True)
     source_service_id: Mapped[str | None] = mapped_column(ForeignKey("service_catalog_items.id", ondelete="SET NULL"), index=True, nullable=True)
     target_service_id: Mapped[str] = mapped_column(ForeignKey("service_catalog_items.id", ondelete="CASCADE"), index=True, nullable=False)
     relevance_score: Mapped[int] = mapped_column(Integer, nullable=False, default=70)
@@ -1049,6 +1050,7 @@ class ServiceRecommendation(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utc_now, onupdate=utc_now)
 
     account: Mapped[Account] = relationship(back_populates="service_recommendations")
+    engagement: Mapped[Engagement | None] = relationship()
     source_service: Mapped[ServiceCatalogItem | None] = relationship(foreign_keys=[source_service_id])
     target_service: Mapped[ServiceCatalogItem] = relationship(foreign_keys=[target_service_id])
     created_opportunity: Mapped[Opportunity | None] = relationship()

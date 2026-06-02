@@ -1,4 +1,4 @@
-from sqlalchemy import func, or_, select
+from sqlalchemy import String, cast, func, or_, select
 from sqlalchemy.orm import Session, selectinload
 
 from app.models import (
@@ -33,7 +33,7 @@ class ServiceCatalogRepository:
             conditions.append(ServiceCatalogItem.category == category)
         if search and search.strip():
             term = f"%{search.strip()}%"
-            conditions.append(or_(ServiceCatalogItem.name.ilike(term), ServiceCatalogItem.slug.ilike(term), ServiceCatalogItem.category.ilike(term), ServiceCatalogItem.description.ilike(term)))
+            conditions.append(or_(ServiceCatalogItem.name.ilike(term), ServiceCatalogItem.slug.ilike(term), ServiceCatalogItem.category.ilike(term), ServiceCatalogItem.description.ilike(term), cast(ServiceCatalogItem.tags, String).ilike(term)))
         total = self.db.scalar(select(func.count(ServiceCatalogItem.id)).where(*conditions)) or 0
         order_column = {
             "name": ServiceCatalogItem.name,
@@ -62,6 +62,9 @@ class ServiceCatalogRepository:
 
     def get_service_by_slug(self, slug: str) -> ServiceCatalogItem | None:
         return self.db.scalar(select(ServiceCatalogItem).where(ServiceCatalogItem.slug == slug))
+
+    def get_service_by_name(self, name: str) -> ServiceCatalogItem | None:
+        return self.db.scalar(select(ServiceCatalogItem).where(func.lower(ServiceCatalogItem.name) == name.strip().lower()))
 
     def save_service(self, service: ServiceCatalogItem) -> ServiceCatalogItem:
         self.db.add(service)
@@ -120,6 +123,7 @@ class ServiceCatalogRepository:
         self,
         *,
         account_id: str,
+        engagement_id: str | None = None,
         search: str | None = None,
         service_line: str | None = None,
         status: str | None = None,
@@ -129,6 +133,8 @@ class ServiceCatalogRepository:
         page_size: int = 25,
     ) -> tuple[list[ServiceRecommendation], int]:
         conditions = [ServiceRecommendation.account_id == account_id]
+        if engagement_id is not None:
+            conditions.append(ServiceRecommendation.engagement_id == engagement_id)
         if status:
             conditions.append(ServiceRecommendation.status == status)
         if service_line:
@@ -167,11 +173,13 @@ class ServiceCatalogRepository:
         self.db.flush()
         return recommendation
 
-    def recommendation_exists(self, account_id: str, target_service_id: str, source_service_id: str | None) -> ServiceRecommendation | None:
+    def recommendation_exists(self, account_id: str, target_service_id: str, source_service_id: str | None, engagement_id: str | None = None) -> ServiceRecommendation | None:
         source_condition = ServiceRecommendation.source_service_id == source_service_id if source_service_id else ServiceRecommendation.source_service_id.is_(None)
+        engagement_condition = ServiceRecommendation.engagement_id == engagement_id if engagement_id else ServiceRecommendation.engagement_id.is_(None)
         return self.db.scalar(
             select(ServiceRecommendation).where(
                 ServiceRecommendation.account_id == account_id,
+                engagement_condition,
                 ServiceRecommendation.target_service_id == target_service_id,
                 source_condition,
             )
