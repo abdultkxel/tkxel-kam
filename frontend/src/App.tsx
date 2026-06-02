@@ -9,10 +9,12 @@ import { Escalations } from '@/pages/Escalations'
 import { EngagementDetail } from '@/pages/EngagementDetail'
 import { Governance } from '@/pages/Governance'
 import { Login } from '@/pages/Login'
+import { Notifications } from '@/pages/Notifications'
 import { Onboarding } from '@/pages/Onboarding'
 import { Opportunities } from '@/pages/Opportunities'
 import { Playbook } from '@/pages/Playbook'
 import { Profile } from '@/pages/Profile'
+import { Reports } from '@/pages/Reports'
 import { ResetPassword } from '@/pages/ResetPassword'
 import { Tasks } from '@/pages/Tasks'
 
@@ -24,6 +26,7 @@ export default function App() {
       <Route element={<RequireAuth><AppShell /></RequireAuth>}>
         <Route index element={<Navigate to="/dashboard" replace />} />
         <Route path="/dashboard" element={<Dashboard />} />
+        <Route path="/notifications" element={<Notifications />} />
         <Route path="/alerts" element={<Navigate to="/dashboard" replace />} />
         <Route path="/onboarding" element={<Navigate to="/accounts/onboarding" replace />} />
         <Route path="/accounts" element={<Accounts />} />
@@ -37,6 +40,7 @@ export default function App() {
         <Route path="/governance" element={<Governance />} />
         <Route path="/health-scores" element={<Navigate to="/accounts" replace />} />
         <Route path="/analytics" element={<Navigate to="/dashboard" replace />} />
+        <Route path="/reports" element={<Reports />} />
         <Route path="/playbook" element={<Playbook />} />
         <Route path="/admin" element={<Admin />} />
         <Route path="/profile" element={<Profile />} />

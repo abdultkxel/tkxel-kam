@@ -12,6 +12,8 @@ docs/features/_feature-template.md
 
 - [Governance & Reviews](governance-reviews.md)
 - [Growth & Opportunity Management](growth-opportunity-management.md)
+- [Mailtrap Email Delivery](mailtrap-email-delivery.md)
+- [Notifications, Dashboards, And Reporting](notifications-dashboards-reporting.md)
 - [Relationships Planning Growth And Retention](relationships-planning-growth-retention.md)
 - [Scoring, Signals, Playbooks, and Tasks](scoring-signals-playbooks-and-tasks.md)
 - [Timeline And Handover](timeline-and-handover.md)

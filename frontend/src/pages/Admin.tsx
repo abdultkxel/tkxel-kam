@@ -10,6 +10,7 @@ import { AdminCustomizationPanel } from '@/components/admin/AdminCustomizationPa
 import { AdminContentPanel } from '@/components/admin/AdminContentPanel'
 import { AdminFieldBuilderPanel } from '@/components/admin/AdminFieldBuilderPanel'
 import { AdminGovernancePanel } from '@/components/admin/AdminGovernancePanel'
+import { AdminNotificationsReportingPanel } from '@/components/admin/AdminNotificationsReportingPanel'
 import { AdminOpportunityTypesPanel } from '@/components/admin/AdminOpportunityTypesPanel'
 import { AdminRelationshipPlanningPanel } from '@/components/admin/AdminRelationshipPlanningPanel'
 import { AdminRolesPanel } from '@/components/admin/AdminRolesPanel'
@@ -396,7 +397,7 @@ export function Admin() {
             <div id="settings" className="scroll-mt-24">
               <div className="space-y-4">
                 <AllowedEmailDomainsPanel />
-                <NotificationSettingsPanel />
+                <AdminNotificationsReportingPanel />
               </div>
             </div>
           ) : null}
