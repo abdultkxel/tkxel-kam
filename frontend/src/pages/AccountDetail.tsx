@@ -6,7 +6,8 @@ import { EmptyState } from '@/components/ui/EmptyState'
 import { PageHeader } from '@/components/ui/PageHeader'
 import { Skeleton } from '@/components/ui/Skeleton'
 import { useAuth } from '@/contexts/AuthContext'
-import { getAccount } from '@/services/accountWorkspace'
+import { getAccountOverview } from '@/services/accountWorkspace'
+import type { AccountOverviewView } from '@/services/accountWorkspace'
 import { useAccountStore } from '@/stores/accountStore'
 import { Account } from '@/types/account'
 
@@ -16,6 +17,7 @@ export function AccountDetail() {
   const cachedAccount = useAccountStore(state => state.accounts.find(item => item.id === id))
   const upsertAccount = useAccountStore(state => state.upsertAccount)
   const [account, setAccount] = useState<Account | undefined>(cachedAccount)
+  const [overview, setOverview] = useState<AccountOverviewView | undefined>()
   const [loading, setLoading] = useState(Boolean(id && token))
   const [error, setError] = useState('')
 
@@ -24,10 +26,13 @@ export function AccountDetail() {
     let active = true
     setLoading(true)
     setError('')
-    getAccount(token, id)
-      .then(nextAccount => {
+    setOverview(undefined)
+    getAccountOverview(token, id)
+      .then(nextOverview => {
         if (!active) return
+        const nextAccount = nextOverview.account
         setAccount(nextAccount)
+        setOverview(nextOverview)
         upsertAccount(nextAccount)
       })
       .catch(err => {
@@ -65,7 +70,7 @@ export function AccountDetail() {
   return (
     <div>
       <PageHeader eyebrow="Accounts -> Account Overview" title={account.name} description="Overview, health, stage, opportunities, governance, notes, timeline, and documents in one workspace." />
-      <Account360 account={account} />
+      <Account360 account={account} overview={overview} />
     </div>
   )
 }

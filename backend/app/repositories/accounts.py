@@ -3,7 +3,7 @@ from datetime import datetime, timedelta, timezone
 from sqlalchemy import and_, func, or_, select
 from sqlalchemy.orm import Session, selectinload
 
-from app.models import Account, AccountOwner, AccountOwnershipHistory, KycSnapshot, Opportunity, SourceCitation, SourceDocument, User
+from app.models import Account, AccountOwner, AccountOwnershipHistory, Escalation, KycSnapshot, Opportunity, Signal, SourceCitation, SourceDocument, Task, User
 
 
 class AccountRepository:
@@ -258,6 +258,32 @@ class AccountRepository:
                 Opportunity.account_id == account_id,
                 Opportunity.archived_at.is_(None),
                 Opportunity.stage.notin_(("Won", "Lost")),
+            )
+        ) or 0
+
+    def count_open_signals(self, account_id: str) -> int:
+        return self.db.scalar(
+            select(func.count(Signal.id)).where(
+                Signal.account_id == account_id,
+                Signal.resolved_at.is_(None),
+                Signal.status.notin_(("dismissed", "resolved")),
+            )
+        ) or 0
+
+    def count_overdue_tasks(self, account_id: str) -> int:
+        return self.db.scalar(
+            select(func.count(Task.id)).where(
+                Task.account_id == account_id,
+                Task.due_at < datetime.now(timezone.utc),
+                Task.status.notin_(("done", "skipped")),
+            )
+        ) or 0
+
+    def count_active_escalations(self, account_id: str) -> int:
+        return self.db.scalar(
+            select(func.count(Escalation.id)).where(
+                Escalation.account_id == account_id,
+                Escalation.status.notin_(("resolved", "closed", "cancelled")),
             )
         ) or 0
 
