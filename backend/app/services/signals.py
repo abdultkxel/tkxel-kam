@@ -12,6 +12,7 @@ from app.repositories.rbac import RbacRepository
 from app.repositories.signals import SignalsRepository
 from app.repositories.timeline import TimelineRepository
 from app.schemas import (
+    PlaybookExecutionRequest,
     RecommendedPlaybookRead,
     SignalAIExplanationRead,
     SignalConvertRequest,
@@ -24,6 +25,7 @@ from app.schemas import (
     SignalRuleRead,
     SignalRuleUpdateRequest,
     SignalStatusUpdateRequest,
+    TaskCreateRequest,
 )
 from app.services.account_access import AccountAccessService, GLOBAL_VIEW_ROLES
 from app.services.audit import AuditService
@@ -253,18 +255,45 @@ class SignalsService:
         self.access.require_account_update(current_user, account, module=SIGNALS_MODULE)
         if signal.status in TERMINAL_SIGNAL_STATUSES:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Dismissed or resolved signals cannot be converted")
-        if payload.target_type == "playbook":
-            from app.services.tasks import TaskService
+        from app.services.playbooks_tasks import PlaybooksTasksService
 
+        playbooks_tasks = PlaybooksTasksService(self.db)
+        if payload.target_type == "playbook":
             template_id = payload.playbook_template_id or self._first_recommended_template_id(signal)
             if not template_id:
                 raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="No active playbook template is mapped to this signal")
-            result = TaskService(self.db).execute_playbook(template_id, account_id=signal.account_id, engagement_id=signal.engagement_id, signal_id=signal.id, current_user=current_user, customization={"note": payload.note} if payload.note else {})
+            result = playbooks_tasks.execute_playbook(
+                template_id,
+                PlaybookExecutionRequest(
+                    account_id=signal.account_id,
+                    engagement_id=signal.engagement_id,
+                    source_signal_id=signal.id,
+                    source_signal_type=signal.signal_type,
+                    source_metric=self._first_weak_metric(signal),
+                    confirmed=True,
+                ),
+                current_user,
+            )
         else:
-            from app.services.tasks import TaskService
-
             due_at = payload.due_at or datetime.now(timezone.utc) + timedelta(days=7)
-            result = TaskService(self.db).create_task_from_signal(signal, current_user, owner_id=payload.owner_id, due_at=due_at, note=payload.note)
+            result = playbooks_tasks.create_task(
+                TaskCreateRequest(
+                    account_id=signal.account_id,
+                    engagement_id=signal.engagement_id,
+                    title=signal.title,
+                    description=signal.detail,
+                    owner_id=payload.owner_id or signal.owner_id or current_user.id,
+                    due_at=due_at,
+                    status="todo",
+                    priority=self._task_priority_for_signal(signal),
+                    notes=payload.note,
+                    source_type="signal",
+                    source_record_id=signal.id,
+                    source_metric=self._first_weak_metric(signal),
+                    success_criteria=["Signal reviewed and resolved"],
+                ),
+                current_user,
+            )
         previous = signal.status
         signal.status = "converted"
         self.repository.add_event(
@@ -306,21 +335,18 @@ class SignalsService:
         signal = self._get_signal_or_404(signal_id)
         account = self._get_account_or_404(signal.account_id)
         self.access.require_account_view(current_user, account, module=SIGNALS_MODULE)
-        from app.repositories.tasks import TasksRepository
+        from app.services.playbooks_tasks import PlaybooksTasksService
 
-        templates, _ = TasksRepository(self.db).list_templates(active_state="active", status_filter="active", page=1, page_size=100)
-        recommendations = []
-        for template in templates:
-            matched = []
-            if signal.signal_type in template.signal_types:
-                matched.append(f"Mapped signal type: {signal.signal_type}")
-            weak_codes = {item.get("code", "") for item in signal.reason_codes}
-            for metric in template.weak_metrics:
-                if any(metric in code for code in weak_codes):
-                    matched.append(f"Weak metric: {metric}")
-            if matched:
-                recommendations.append(RecommendedPlaybookRead(id=template.id, slug=template.slug, name=template.name, objective=template.objective, matched_reasons=matched))
-        return recommendations
+        return PlaybooksTasksService(self.db).recommended_playbooks(
+            signal.id,
+            current_user,
+            signal_type=signal.signal_type,
+            weak_metric=self._first_weak_metric(signal),
+            account_id=signal.account_id,
+            engagement_id=signal.engagement_id,
+            page=1,
+            page_size=100,
+        )
 
     def _account_signal_seeds(self, account: Account, rules: dict[str, SignalRule]) -> list["SignalSeed"]:
         seeds: list[SignalSeed] = []
@@ -656,13 +682,30 @@ class SignalsService:
         return None
 
     def _first_recommended_template_id(self, signal: Signal) -> str | None:
-        from app.repositories.tasks import TasksRepository
+        from app.repositories.playbooks_tasks import PlaybooksTasksRepository
 
-        templates, _ = TasksRepository(self.db).list_templates(active_state="active", status_filter="active", page=1, page_size=100)
+        templates, _ = PlaybooksTasksRepository(self.db).list_templates(active_state="active", page=1, page_size=100)
         for template in templates:
             if signal.signal_type in template.signal_types:
                 return template.id
         return None
+
+    @staticmethod
+    def _first_weak_metric(signal: Signal) -> str | None:
+        for reason in signal.reason_codes:
+            code = str(reason.get("code", "")).lower()
+            for metric in ("relationship", "usage", "delivery", "commercial", "renewal", "stakeholder", "stale_kyc"):
+                if metric in code:
+                    return metric
+        return None
+
+    @staticmethod
+    def _task_priority_for_signal(signal: Signal) -> str:
+        if signal.severity == "critical":
+            return "urgent"
+        if signal.severity == "warning":
+            return "high"
+        return "medium"
 
     def _rule_snapshot(self, rule: SignalRule) -> dict:
         return {

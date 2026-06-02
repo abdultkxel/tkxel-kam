@@ -7,7 +7,24 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.config import get_settings
 from app.database import SessionLocal, init_db
 from app.exceptions import validation_exception_handler
-from app.routers import accounts, admin, auth, content, custom_fields, engagements, escalations, governance, kyc, onboarding, opportunities, scoring, signals, tasks, users
+from app.routers import (
+    accounts,
+    admin,
+    auth,
+    content,
+    custom_fields,
+    engagements,
+    escalations,
+    governance,
+    kyc,
+    onboarding,
+    opportunities,
+    playbooks_tasks,
+    scoring,
+    signals,
+    stakeholders,
+    users,
+)
 from app.services.seed import seed_default_data
 
 
@@ -63,6 +80,14 @@ openapi_tags = [
         "description": "Governance calendar, recurrence, agenda drafts, decisions, actions, AI brief, and integration sync APIs.",
     },
     {
+        "name": "Playbooks, Activities, Tasks, and Calendar",
+        "description": "Configurable playbooks, execution-generated activities, task/evidence management, and unified calendar projections.",
+    },
+    {
+        "name": "Stakeholder Relationships",
+        "description": "Account and engagement stakeholder maps, relationship attributes, hierarchy, and stakeholder timeline events.",
+    },
+    {
         "name": "Growth & Opportunity Management",
         "description": "Opportunity CRUD, pipeline board/list tracking, stage movement, local action items, timeline history, and opportunity type taxonomy APIs.",
     },
@@ -73,10 +98,6 @@ openapi_tags = [
     {
         "name": "Signals and Attention Center",
         "description": "Deterministic signal evaluation, evidence, lifecycle status updates, advisory explanations, recommendations, and attention-center APIs.",
-    },
-    {
-        "name": "Playbooks, Tasks, and Calendar",
-        "description": "Playbook templates, explicit execution, generated/manual tasks, task evidence, lifecycle tracking, and unified calendar APIs.",
     },
     {
         "name": "KYC and AI Extraction",
@@ -117,10 +138,11 @@ app.include_router(content.router)
 app.include_router(custom_fields.router)
 app.include_router(escalations.router)
 app.include_router(governance.router)
+app.include_router(playbooks_tasks.router)
+app.include_router(stakeholders.router)
 app.include_router(opportunities.router)
 app.include_router(scoring.router)
 app.include_router(signals.router)
-app.include_router(tasks.router)
 app.include_router(kyc.config_router)
 app.include_router(kyc.router)
 

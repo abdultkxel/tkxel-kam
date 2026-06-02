@@ -22,6 +22,7 @@ class TimelineService:
         before_value: dict | None = None,
         after_value: dict | None = None,
         metadata: dict | None = None,
+        is_sensitive: bool = False,
     ):
         return self.repository.add(
             account_id=account_id,
@@ -38,6 +39,7 @@ class TimelineService:
             before_value=before_value,
             after_value=after_value,
             metadata=metadata,
+            is_sensitive=is_sensitive,
         )
 
     def add_engagement_event(
@@ -55,6 +57,7 @@ class TimelineService:
         source_record_id: str | None = None,
         source_record_type: str = "engagement",
         source_record_route: str | None = None,
+        is_sensitive: bool = False,
     ) -> None:
         self.add_account_event(
             account_id=account_id,
@@ -70,6 +73,7 @@ class TimelineService:
             source_record_type=source_record_type,
             source_record_route=source_record_route,
             metadata=metadata,
+            is_sensitive=is_sensitive,
         )
 
     def list_engagement_events(self, engagement_id: str, page: int = 1, page_size: int = 100) -> tuple[list[TimelineEntry], int]:

@@ -12,7 +12,7 @@ from app.models import (
     OpportunityStageDefinition,
     OpportunityType,
     PlaybookTemplate,
-    PlaybookTemplateVersion,
+    PlaybookTemplateActivity,
     ScoringMetricDefinition,
     ScoringMetricVersion,
     SignalRule,
@@ -323,41 +323,41 @@ def seed_scoring_signals_playbooks(db: Session, super_admin: User) -> None:
             ],
         ),
     )
-    for slug, name, objective, signal_types, weak_metrics, activities in playbook_specs:
-        template = db.scalar(select(PlaybookTemplate).where(PlaybookTemplate.slug == slug))
+    for _slug, name, objective, signal_types, weak_metrics, activities in playbook_specs:
+        template = db.scalar(select(PlaybookTemplate).where(PlaybookTemplate.name == name))
         if template is None:
             template = PlaybookTemplate(
-                slug=slug,
                 name=name,
                 objective=objective,
+                description=f"Seeded playbook for {name.lower()} signals.",
                 signal_types=signal_types,
                 weak_metrics=weak_metrics,
-                activities_json=activities,
-                default_owner_rule={"default": "primary_am"},
-                due_date_rule={"default_offset_days": 7},
+                default_owner_rule="account_primary_am",
+                due_date_rule={"basis": "execution_date", "offset_days": 7},
                 success_criteria=["Tasks completed with evidence", "Signal resolved or accepted with recovery plan"],
                 skip_rules=["Duplicate task already open", "Signal dismissed with reason"],
-                status="active",
+                version=1,
                 is_active=True,
-                current_version=1,
                 created_by_id=super_admin.id,
                 updated_by_id=super_admin.id,
             )
+            template.activities = _seed_playbook_activities(activities)
             db.add(template)
-            db.flush()
-            db.add(PlaybookTemplateVersion(template_id=template.id, version=1, config_json=_playbook_config(template), published_by_id=super_admin.id, published_by_name=super_admin.full_name))
             continue
         template.name = name
         template.objective = objective
+        template.description = f"Seeded playbook for {name.lower()} signals."
         template.signal_types = signal_types
         template.weak_metrics = weak_metrics
-        template.activities_json = activities
-        template.status = "active"
+        template.default_owner_rule = "account_primary_am"
+        template.due_date_rule = {"basis": "execution_date", "offset_days": 7}
+        template.success_criteria = ["Tasks completed with evidence", "Signal resolved or accepted with recovery plan"]
+        template.skip_rules = ["Duplicate task already open", "Signal dismissed with reason"]
         template.is_active = True
         template.updated_by_id = super_admin.id
-        if template.current_version <= 0:
-            template.current_version = 1
-            db.add(PlaybookTemplateVersion(template_id=template.id, version=1, config_json=_playbook_config(template), published_by_id=super_admin.id, published_by_name=super_admin.full_name))
+        template.activities.clear()
+        db.flush()
+        template.activities.extend(_seed_playbook_activities(activities))
 
     db.commit()
 
@@ -376,17 +376,44 @@ def _metric_config(metric: ScoringMetricDefinition) -> dict:
 
 def _playbook_config(template: PlaybookTemplate) -> dict:
     return {
-        "slug": template.slug,
         "name": template.name,
         "objective": template.objective,
         "signal_types": template.signal_types,
         "weak_metrics": template.weak_metrics,
-        "activities_json": template.activities_json,
         "default_owner_rule": template.default_owner_rule,
         "due_date_rule": template.due_date_rule,
         "success_criteria": template.success_criteria,
         "skip_rules": template.skip_rules,
+        "activities": [
+            {
+                "title": activity.title,
+                "description": activity.description,
+                "priority": activity.priority,
+                "due_offset_days": activity.due_offset_days,
+            }
+            for activity in template.activities
+        ],
     }
+
+
+def _seed_playbook_activities(activities: list[dict]) -> list[PlaybookTemplateActivity]:
+    seeded: list[PlaybookTemplateActivity] = []
+    for index, activity in enumerate(activities):
+        priority = "urgent" if activity.get("priority") == "critical" else activity.get("priority", "medium")
+        seeded.append(
+            PlaybookTemplateActivity(
+                title=activity["title"],
+                description=activity.get("description"),
+                owner_rule="account_primary_am",
+                due_offset_days=activity.get("due_offset_days", 7),
+                priority=priority,
+                success_criteria=["Evidence captured"],
+                skip_allowed=True,
+                requires_evidence=index == 0,
+                sort_order=index,
+            )
+        )
+    return seeded
 
 
 def seed_demo_opportunities(db: Session) -> None:

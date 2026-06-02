@@ -134,52 +134,85 @@ _TABLE_BACKFILL_DEFAULTS: dict[str, dict[str, Any]] = {
     },
     "playbook_templates": {
         "objective": "",
+        "description": "",
         "signal_types": [],
         "weak_metrics": [],
-        "activities_json": [],
-        "default_owner_rule": {},
+        "default_owner_rule": "account_primary_am",
         "due_date_rule": {},
         "success_criteria": [],
         "skip_rules": [],
-        "status": "draft",
+        "version": 1,
         "is_active": True,
-        "current_version": 0,
         "created_at": lambda: datetime.now(timezone.utc),
         "updated_at": lambda: datetime.now(timezone.utc),
     },
-    "playbook_template_versions": {
-        "config_json": {},
-        "published_by_name": "System",
-        "published_at": lambda: datetime.now(timezone.utc),
+    "playbook_template_activities": {
+        "title": "Playbook activity",
+        "owner_rule": "account_primary_am",
+        "due_offset_days": 7,
+        "priority": "medium",
+        "success_criteria": [],
+        "skip_allowed": True,
+        "requires_evidence": False,
+        "sort_order": 0,
         "created_at": lambda: datetime.now(timezone.utc),
+        "updated_at": lambda: datetime.now(timezone.utc),
     },
     "playbook_executions": {
-        "template_version": 1,
+        "template_name_snapshot": "Playbook",
+        "template_version_snapshot": 1,
         "status": "active",
-        "executed_by_name": "System",
-        "customization_json": {},
+        "skipped_activity_ids": [],
+        "skip_reasons": {},
+        "template_snapshot": {},
+        "created_by_name": "System",
         "created_at": lambda: datetime.now(timezone.utc),
+        "updated_at": lambda: datetime.now(timezone.utc),
     },
     "tasks": {
         "source_type": "manual",
         "due_at": lambda: datetime.now(timezone.utc),
         "status": "todo",
         "priority": "medium",
-        "evidence_json": [],
-        "created_by_name": "System",
+        "owner_name": "System",
+        "success_criteria": [],
+        "requires_evidence": False,
         "created_at": lambda: datetime.now(timezone.utc),
         "updated_at": lambda: datetime.now(timezone.utc),
     },
     "task_evidence": {
         "evidence_type": "note",
-        "metadata_json": {},
         "created_by_name": "System",
         "created_at": lambda: datetime.now(timezone.utc),
     },
-    "task_history": {
-        "event_type": "updated",
-        "metadata_json": {},
+    "stakeholders": {
+        "role": "operational_poc",
+        "influence": "medium",
+        "relationship_strength": "unknown",
+        "sentiment": "neutral",
+        "political_risk": "unknown",
+        "status": "active",
+        "is_sensitive": False,
         "created_at": lambda: datetime.now(timezone.utc),
+        "updated_at": lambda: datetime.now(timezone.utc),
+    },
+    "stakeholder_interactions": {
+        "interaction_type": "note",
+        "subject": "Stakeholder interaction",
+        "interaction_at": lambda: datetime.now(timezone.utc),
+        "is_sensitive": False,
+        "created_by_name": "System",
+        "created_at": lambda: datetime.now(timezone.utc),
+        "updated_at": lambda: datetime.now(timezone.utc),
+    },
+    "stakeholder_coverage_gaps": {
+        "severity": "medium",
+        "title": "Stakeholder coverage gap",
+        "description": "Stakeholder coverage gap detected by deterministic rules.",
+        "evidence": {},
+        "status": "open",
+        "created_at": lambda: datetime.now(timezone.utc),
+        "updated_at": lambda: datetime.now(timezone.utc),
     },
 }
 _JSON_BACKFILL_COLUMNS = {
@@ -204,12 +237,14 @@ _JSON_BACKFILL_COLUMNS = {
     "signal_types",
     "weak_metrics",
     "activities_json",
-    "default_owner_rule",
     "due_date_rule",
     "success_criteria",
     "skip_rules",
-    "customization_json",
+    "skipped_activity_ids",
+    "skip_reasons",
+    "template_snapshot",
     "citations_json",
+    "evidence",
 }
 _LEGACY_TABLE_BACKFILL_DEFAULTS: dict[str, dict[str, Any]] = {
     "engagements": {
@@ -258,7 +293,45 @@ def init_db() -> None:
 
     Base.metadata.create_all(bind=engine)
     apply_additive_migrations()
+    sync_playbooks_tasks_schema()
     sync_legacy_governance_schema()
+
+
+def sync_playbooks_tasks_schema() -> None:
+    """Convert older local playbook/task columns that auto-migration cannot type-change."""
+    if engine.dialect.name != "postgresql":
+        return
+
+    inspector = inspect(engine)
+    if not inspector.has_table("playbook_templates"):
+        return
+
+    columns = {column["name"]: column for column in inspector.get_columns("playbook_templates")}
+    owner_rule_column = columns.get("default_owner_rule")
+    if owner_rule_column is None or "json" not in str(owner_rule_column.get("type", "")).lower():
+        return
+
+    with engine.begin() as connection:
+        connection.execute(
+            text(
+                """
+                ALTER TABLE playbook_templates
+                ALTER COLUMN default_owner_rule DROP DEFAULT,
+                ALTER COLUMN default_owner_rule TYPE VARCHAR(80)
+                USING CASE
+                    WHEN default_owner_rule IS NULL THEN 'account_primary_am'
+                    WHEN jsonb_typeof(default_owner_rule::jsonb) = 'string' THEN trim(both '"' from default_owner_rule::text)
+                    WHEN default_owner_rule::jsonb ? 'default' THEN
+                        CASE
+                            WHEN default_owner_rule::jsonb ->> 'default' = 'primary_am' THEN 'account_primary_am'
+                            ELSE default_owner_rule::jsonb ->> 'default'
+                        END
+                    ELSE 'account_primary_am'
+                END,
+                ALTER COLUMN default_owner_rule SET DEFAULT 'account_primary_am'
+                """
+            )
+        )
 
 
 def sync_legacy_governance_schema() -> None:
@@ -340,7 +413,7 @@ def apply_additive_migrations() -> None:
         ManualScoreSubmission,
         PlaybookExecution,
         PlaybookTemplate,
-        PlaybookTemplateVersion,
+        PlaybookTemplateActivity,
         ScoreSnapshot,
         ScoringJob,
         ScoringMetricDefinition,
@@ -350,7 +423,9 @@ def apply_additive_migrations() -> None:
         SignalRule,
         Task,
         TaskEvidence,
-        TaskHistory,
+        Stakeholder,
+        StakeholderCoverageGap,
+        StakeholderInteraction,
         TimelineEntry,
     )
 
@@ -369,11 +444,13 @@ def apply_additive_migrations() -> None:
             Signal.__table__,
             SignalEvent.__table__,
             PlaybookTemplate.__table__,
-            PlaybookTemplateVersion.__table__,
+            PlaybookTemplateActivity.__table__,
             PlaybookExecution.__table__,
             Task.__table__,
             TaskEvidence.__table__,
-            TaskHistory.__table__,
+            Stakeholder.__table__,
+            StakeholderInteraction.__table__,
+            StakeholderCoverageGap.__table__,
         ]
     )
 

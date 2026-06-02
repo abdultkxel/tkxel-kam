@@ -198,6 +198,8 @@ class Account(Base):
     ownership_history: Mapped[list["AccountOwnershipHistory"]] = relationship(back_populates="account", cascade="all, delete-orphan")
     engagements: Mapped[list["Engagement"]] = relationship(back_populates="account", cascade="all, delete-orphan")
     source_documents: Mapped[list["SourceDocument"]] = relationship(back_populates="account")
+    stakeholders: Mapped[list["Stakeholder"]] = relationship(back_populates="account", cascade="all, delete-orphan")
+    stakeholder_coverage_gaps: Mapped[list["StakeholderCoverageGap"]] = relationship(back_populates="account", cascade="all, delete-orphan")
     governance_events: Mapped[list["GovernanceEvent"]] = relationship(back_populates="account", cascade="all, delete-orphan")
     opportunities: Mapped[list["Opportunity"]] = relationship(back_populates="account", cascade="all, delete-orphan")
     kyc_drafts: Mapped[list["KycDraft"]] = relationship(back_populates="account", cascade="all, delete-orphan")
@@ -538,6 +540,7 @@ class Engagement(Base):
     account: Mapped[Account] = relationship(back_populates="engagements")
     source_documents: Mapped[list[SourceDocument]] = relationship(back_populates="engagement")
     health_snapshots: Mapped[list["EngagementHealthSnapshot"]] = relationship(back_populates="engagement", cascade="all, delete-orphan")
+    stakeholders: Mapped[list["Stakeholder"]] = relationship(back_populates="engagement")
     governance_events: Mapped[list["GovernanceEvent"]] = relationship(back_populates="engagement")
     opportunities: Mapped[list["Opportunity"]] = relationship(back_populates="engagement")
     score_snapshots: Mapped[list["ScoreSnapshot"]] = relationship(back_populates="engagement")
@@ -603,6 +606,96 @@ class Engagement(Base):
     @property
     def updated_by(self) -> str | None:
         return self.updated_by_id
+
+
+class Stakeholder(Base):
+    __tablename__ = "stakeholders"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid4()))
+    account_id: Mapped[str] = mapped_column(ForeignKey("accounts.id", ondelete="CASCADE"), index=True, nullable=False)
+    engagement_id: Mapped[str | None] = mapped_column(ForeignKey("engagements.id", ondelete="SET NULL"), index=True, nullable=True)
+    reports_to_stakeholder_id: Mapped[str | None] = mapped_column(ForeignKey("stakeholders.id", ondelete="SET NULL"), index=True, nullable=True)
+    name: Mapped[str] = mapped_column(String(180), index=True, nullable=False)
+    title: Mapped[str | None] = mapped_column(String(160), nullable=True)
+    company: Mapped[str | None] = mapped_column(String(180), nullable=True)
+    email: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    phone: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    role: Mapped[str] = mapped_column(String(80), index=True, nullable=False)
+    influence: Mapped[str] = mapped_column(String(40), nullable=False, default="medium")
+    relationship_strength: Mapped[str] = mapped_column(String(40), nullable=False, default="unknown")
+    sentiment: Mapped[str] = mapped_column(String(40), index=True, nullable=False, default="neutral")
+    political_risk: Mapped[str] = mapped_column(String(40), index=True, nullable=False, default="unknown")
+    status: Mapped[str] = mapped_column(String(40), index=True, nullable=False, default="active")
+    notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    last_interaction_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    is_sensitive: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    created_by_id: Mapped[str | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    updated_by_id: Mapped[str | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utc_now, onupdate=utc_now)
+    archived_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    account: Mapped[Account] = relationship(back_populates="stakeholders")
+    engagement: Mapped[Engagement | None] = relationship(back_populates="stakeholders")
+    reports_to: Mapped["Stakeholder | None"] = relationship(
+        "Stakeholder",
+        remote_side=[id],
+        back_populates="direct_reports",
+    )
+    direct_reports: Mapped[list["Stakeholder"]] = relationship(
+        "Stakeholder",
+        back_populates="reports_to",
+    )
+    interactions: Mapped[list["StakeholderInteraction"]] = relationship(back_populates="stakeholder", cascade="all, delete-orphan")
+
+
+class StakeholderInteraction(Base):
+    __tablename__ = "stakeholder_interactions"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid4()))
+    stakeholder_id: Mapped[str] = mapped_column(ForeignKey("stakeholders.id", ondelete="CASCADE"), index=True, nullable=False)
+    account_id: Mapped[str] = mapped_column(ForeignKey("accounts.id", ondelete="CASCADE"), index=True, nullable=False)
+    engagement_id: Mapped[str | None] = mapped_column(ForeignKey("engagements.id", ondelete="SET NULL"), index=True, nullable=True)
+    interaction_type: Mapped[str] = mapped_column(String(80), index=True, nullable=False, default="note")
+    subject: Mapped[str] = mapped_column(String(220), nullable=False)
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    channel: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    sentiment: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    relationship_strength: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    political_risk: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    outcome: Mapped[str | None] = mapped_column(Text, nullable=True)
+    next_action: Mapped[str | None] = mapped_column(Text, nullable=True)
+    interaction_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True, nullable=False, default=utc_now)
+    is_sensitive: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    metadata_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    created_by_id: Mapped[str | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    created_by_name: Mapped[str] = mapped_column(String(160), nullable=False, default="System")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utc_now, onupdate=utc_now)
+    archived_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    stakeholder: Mapped[Stakeholder] = relationship(back_populates="interactions")
+    account: Mapped[Account] = relationship()
+    engagement: Mapped[Engagement | None] = relationship()
+
+
+class StakeholderCoverageGap(Base):
+    __tablename__ = "stakeholder_coverage_gaps"
+    __table_args__ = (UniqueConstraint("account_id", "rule_key", name="uq_stakeholder_coverage_gaps_account_rule"),)
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid4()))
+    account_id: Mapped[str] = mapped_column(ForeignKey("accounts.id", ondelete="CASCADE"), index=True, nullable=False)
+    rule_key: Mapped[str] = mapped_column(String(120), index=True, nullable=False)
+    severity: Mapped[str] = mapped_column(String(40), index=True, nullable=False)
+    title: Mapped[str] = mapped_column(String(220), nullable=False)
+    description: Mapped[str] = mapped_column(Text, nullable=False)
+    evidence: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    status: Mapped[str] = mapped_column(String(40), index=True, nullable=False, default="open")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utc_now, onupdate=utc_now)
+    resolved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    account: Mapped[Account] = relationship(back_populates="stakeholder_coverage_gaps")
 
 
 class OpportunityType(Base):
@@ -953,135 +1046,6 @@ class SignalEvent(Base):
     signal: Mapped[Signal] = relationship(back_populates="events")
 
 
-class PlaybookTemplate(Base):
-    __tablename__ = "playbook_templates"
-
-    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid4()))
-    slug: Mapped[str] = mapped_column(String(120), unique=True, index=True, nullable=False)
-    name: Mapped[str] = mapped_column(String(180), index=True, nullable=False)
-    objective: Mapped[str] = mapped_column(Text, nullable=False)
-    signal_types: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
-    weak_metrics: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
-    activities_json: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
-    default_owner_rule: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
-    due_date_rule: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
-    success_criteria: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
-    skip_rules: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
-    status: Mapped[str] = mapped_column(String(40), index=True, nullable=False, default="draft")
-    is_active: Mapped[bool] = mapped_column(Boolean, index=True, nullable=False, default=True)
-    current_version: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
-    created_by_id: Mapped[str | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
-    updated_by_id: Mapped[str | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utc_now)
-    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utc_now, onupdate=utc_now)
-
-    versions: Mapped[list["PlaybookTemplateVersion"]] = relationship(back_populates="template", cascade="all, delete-orphan")
-    executions: Mapped[list["PlaybookExecution"]] = relationship(back_populates="template")
-
-
-class PlaybookTemplateVersion(Base):
-    __tablename__ = "playbook_template_versions"
-    __table_args__ = (UniqueConstraint("template_id", "version", name="uq_playbook_template_versions_template_version"),)
-
-    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid4()))
-    template_id: Mapped[str] = mapped_column(ForeignKey("playbook_templates.id", ondelete="CASCADE"), index=True, nullable=False)
-    version: Mapped[int] = mapped_column(Integer, nullable=False)
-    config_json: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
-    published_by_id: Mapped[str | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
-    published_by_name: Mapped[str] = mapped_column(String(160), nullable=False)
-    published_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True, nullable=False, default=utc_now)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utc_now)
-
-    template: Mapped[PlaybookTemplate] = relationship(back_populates="versions")
-
-
-class PlaybookExecution(Base):
-    __tablename__ = "playbook_executions"
-
-    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid4()))
-    template_id: Mapped[str] = mapped_column(ForeignKey("playbook_templates.id", ondelete="RESTRICT"), index=True, nullable=False)
-    template_version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
-    account_id: Mapped[str] = mapped_column(ForeignKey("accounts.id", ondelete="CASCADE"), index=True, nullable=False)
-    engagement_id: Mapped[str | None] = mapped_column(ForeignKey("engagements.id", ondelete="SET NULL"), index=True, nullable=True)
-    signal_id: Mapped[str | None] = mapped_column(ForeignKey("signals.id", ondelete="SET NULL"), index=True, nullable=True)
-    status: Mapped[str] = mapped_column(String(40), index=True, nullable=False, default="active")
-    executed_by_id: Mapped[str | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
-    executed_by_name: Mapped[str] = mapped_column(String(160), nullable=False)
-    customization_json: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utc_now)
-
-    template: Mapped[PlaybookTemplate] = relationship(back_populates="executions")
-    tasks: Mapped[list["Task"]] = relationship(back_populates="playbook_execution")
-
-
-class Task(Base):
-    __tablename__ = "tasks"
-
-    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid4()))
-    account_id: Mapped[str] = mapped_column(ForeignKey("accounts.id", ondelete="CASCADE"), index=True, nullable=False)
-    engagement_id: Mapped[str | None] = mapped_column(ForeignKey("engagements.id", ondelete="SET NULL"), index=True, nullable=True)
-    playbook_execution_id: Mapped[str | None] = mapped_column(ForeignKey("playbook_executions.id", ondelete="SET NULL"), index=True, nullable=True)
-    source_type: Mapped[str] = mapped_column(String(80), index=True, nullable=False, default="manual")
-    source_record_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
-    source_record_route: Mapped[str | None] = mapped_column(String(500), nullable=True)
-    title: Mapped[str] = mapped_column(String(220), index=True, nullable=False)
-    description: Mapped[str | None] = mapped_column(Text, nullable=True)
-    owner_id: Mapped[str | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), index=True, nullable=True)
-    owner_name: Mapped[str | None] = mapped_column(String(160), nullable=True)
-    due_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True, nullable=False)
-    status: Mapped[str] = mapped_column(String(40), index=True, nullable=False, default="todo")
-    priority: Mapped[str] = mapped_column(String(40), index=True, nullable=False, default="medium")
-    notes: Mapped[str | None] = mapped_column(Text, nullable=True)
-    evidence_json: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
-    outcome: Mapped[str | None] = mapped_column(Text, nullable=True)
-    skip_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
-    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
-    completed_by_id: Mapped[str | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
-    created_by_id: Mapped[str | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
-    created_by_name: Mapped[str] = mapped_column(String(160), nullable=False)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utc_now)
-    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utc_now, onupdate=utc_now)
-
-    account: Mapped[Account] = relationship(back_populates="tasks")
-    engagement: Mapped[Engagement | None] = relationship(back_populates="tasks")
-    playbook_execution: Mapped[PlaybookExecution | None] = relationship(back_populates="tasks")
-    evidence_records: Mapped[list["TaskEvidence"]] = relationship(back_populates="task", cascade="all, delete-orphan")
-    history: Mapped[list["TaskHistory"]] = relationship(back_populates="task", cascade="all, delete-orphan")
-
-
-class TaskEvidence(Base):
-    __tablename__ = "task_evidence"
-
-    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid4()))
-    task_id: Mapped[str] = mapped_column(ForeignKey("tasks.id", ondelete="CASCADE"), index=True, nullable=False)
-    evidence_type: Mapped[str] = mapped_column(String(80), index=True, nullable=False, default="note")
-    note: Mapped[str | None] = mapped_column(Text, nullable=True)
-    url: Mapped[str | None] = mapped_column(String(1000), nullable=True)
-    metadata_json: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
-    created_by_id: Mapped[str | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
-    created_by_name: Mapped[str] = mapped_column(String(160), nullable=False)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utc_now)
-
-    task: Mapped[Task] = relationship(back_populates="evidence_records")
-
-
-class TaskHistory(Base):
-    __tablename__ = "task_history"
-
-    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid4()))
-    task_id: Mapped[str] = mapped_column(ForeignKey("tasks.id", ondelete="CASCADE"), index=True, nullable=False)
-    event_type: Mapped[str] = mapped_column(String(80), index=True, nullable=False)
-    previous_status: Mapped[str | None] = mapped_column(String(40), nullable=True)
-    new_status: Mapped[str | None] = mapped_column(String(40), nullable=True)
-    actor_id: Mapped[str | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
-    actor_name: Mapped[str | None] = mapped_column(String(160), nullable=True)
-    note: Mapped[str | None] = mapped_column(Text, nullable=True)
-    metadata_json: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utc_now)
-
-    task: Mapped[Task] = relationship(back_populates="history")
-
-
 class TimelineEntry(Base):
     __tablename__ = "timeline_entries"
 
@@ -1360,6 +1324,132 @@ class GovernanceSourceCitation(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utc_now)
 
     event: Mapped[GovernanceEvent] = relationship(back_populates="source_citations")
+
+
+class PlaybookTemplate(Base):
+    __tablename__ = "playbook_templates"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid4()))
+    name: Mapped[str] = mapped_column(String(180), index=True, nullable=False)
+    objective: Mapped[str] = mapped_column(Text, nullable=False)
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    signal_types: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    weak_metrics: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    default_owner_rule: Mapped[str] = mapped_column(String(80), nullable=False, default="account_primary_am")
+    due_date_rule: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    success_criteria: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    skip_rules: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    is_active: Mapped[bool] = mapped_column(Boolean, index=True, nullable=False, default=True)
+    created_by_id: Mapped[str | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    updated_by_id: Mapped[str | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True, nullable=False, default=utc_now, onupdate=utc_now)
+
+    activities: Mapped[list["PlaybookTemplateActivity"]] = relationship(back_populates="template", cascade="all, delete-orphan")
+    executions: Mapped[list["PlaybookExecution"]] = relationship(back_populates="template")
+
+
+class PlaybookTemplateActivity(Base):
+    __tablename__ = "playbook_template_activities"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid4()))
+    template_id: Mapped[str] = mapped_column(ForeignKey("playbook_templates.id", ondelete="CASCADE"), index=True, nullable=False)
+    title: Mapped[str] = mapped_column(String(220), nullable=False)
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    owner_rule: Mapped[str] = mapped_column(String(80), nullable=False, default="account_primary_am")
+    due_offset_days: Mapped[int] = mapped_column(Integer, nullable=False, default=7)
+    priority: Mapped[str] = mapped_column(String(40), index=True, nullable=False, default="medium")
+    success_criteria: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    skip_allowed: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    requires_evidence: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    sort_order: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utc_now, onupdate=utc_now)
+
+    template: Mapped[PlaybookTemplate] = relationship(back_populates="activities")
+
+
+class PlaybookExecution(Base):
+    __tablename__ = "playbook_executions"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid4()))
+    template_id: Mapped[str | None] = mapped_column(ForeignKey("playbook_templates.id", ondelete="SET NULL"), index=True, nullable=True)
+    template_name_snapshot: Mapped[str] = mapped_column(String(180), nullable=False)
+    template_version_snapshot: Mapped[int] = mapped_column(Integer, nullable=False)
+    account_id: Mapped[str] = mapped_column(ForeignKey("accounts.id", ondelete="CASCADE"), index=True, nullable=False)
+    engagement_id: Mapped[str | None] = mapped_column(ForeignKey("engagements.id", ondelete="SET NULL"), index=True, nullable=True)
+    source_signal_id: Mapped[str | None] = mapped_column(String(120), index=True, nullable=True)
+    source_signal_type: Mapped[str | None] = mapped_column(String(120), index=True, nullable=True)
+    source_metric: Mapped[str | None] = mapped_column(String(120), index=True, nullable=True)
+    status: Mapped[str] = mapped_column(String(40), index=True, nullable=False, default="active")
+    skipped_activity_ids: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    skip_reasons: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    template_snapshot: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    created_by_id: Mapped[str | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    created_by_name: Mapped[str] = mapped_column(String(160), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True, nullable=False, default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utc_now, onupdate=utc_now)
+
+    template: Mapped[PlaybookTemplate | None] = relationship(back_populates="executions")
+    tasks: Mapped[list["Task"]] = relationship(back_populates="playbook_execution")
+
+
+class Task(Base):
+    __tablename__ = "tasks"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid4()))
+    account_id: Mapped[str] = mapped_column(ForeignKey("accounts.id", ondelete="CASCADE"), index=True, nullable=False)
+    engagement_id: Mapped[str | None] = mapped_column(ForeignKey("engagements.id", ondelete="SET NULL"), index=True, nullable=True)
+    playbook_execution_id: Mapped[str | None] = mapped_column(ForeignKey("playbook_executions.id", ondelete="SET NULL"), index=True, nullable=True)
+    template_activity_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    source_type: Mapped[str] = mapped_column(String(80), index=True, nullable=False, default="manual")
+    source_record_id: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    source_metric: Mapped[str | None] = mapped_column(String(120), index=True, nullable=True)
+    title: Mapped[str] = mapped_column(String(220), index=True, nullable=False)
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    owner_id: Mapped[str | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), index=True, nullable=True)
+    owner_name: Mapped[str] = mapped_column(String(160), nullable=False)
+    due_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True, nullable=False)
+    status: Mapped[str] = mapped_column(String(40), index=True, nullable=False, default="todo")
+    priority: Mapped[str] = mapped_column(String(40), index=True, nullable=False, default="medium")
+    notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    outcome: Mapped[str | None] = mapped_column(Text, nullable=True)
+    success_criteria: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    requires_evidence: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    skipped_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    completed_by_id: Mapped[str | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    created_by_id: Mapped[str | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    updated_by_id: Mapped[str | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True, nullable=False, default=utc_now, onupdate=utc_now)
+
+    account: Mapped[Account] = relationship()
+    engagement: Mapped[Engagement | None] = relationship()
+    playbook_execution: Mapped[PlaybookExecution | None] = relationship(back_populates="tasks")
+    evidence: Mapped[list["TaskEvidence"]] = relationship(back_populates="task", cascade="all, delete-orphan")
+
+
+class TaskEvidence(Base):
+    __tablename__ = "task_evidence"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid4()))
+    task_id: Mapped[str] = mapped_column(ForeignKey("tasks.id", ondelete="CASCADE"), index=True, nullable=False)
+    evidence_type: Mapped[str] = mapped_column(String(40), index=True, nullable=False, default="note")
+    title: Mapped[str | None] = mapped_column(String(220), nullable=True)
+    body: Mapped[str | None] = mapped_column(Text, nullable=True)
+    url: Mapped[str | None] = mapped_column(String(1000), nullable=True)
+    file_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    file_path: Mapped[str | None] = mapped_column(String(1000), nullable=True)
+    file_storage_backend: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    file_mime_type: Mapped[str | None] = mapped_column(String(180), nullable=True)
+    file_size_bytes: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    created_by_id: Mapped[str | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    created_by_name: Mapped[str] = mapped_column(String(160), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utc_now)
+
+    task: Mapped[Task] = relationship(back_populates="evidence")
 
 
 class IntegrationConnection(Base):

@@ -52,6 +52,23 @@ GovernanceCadence = Literal["weekly", "monthly", "quarterly", "yearly"]
 GovernanceEndPolicy = Literal["never", "after_occurrences", "on_date"]
 IntegrationProvider = Literal["google-calendar", "fathom"]
 IntegrationStatus = Literal["configuration_required", "connected", "syncing", "error", "disabled"]
+PlaybookOwnerRule = Literal["account_primary_am", "task_creator", "ops_lead", "template_owner"]
+TaskStatus = Literal["todo", "in_progress", "done", "skipped", "blocked", "cancelled"]
+TaskPriority = Literal["low", "medium", "high", "urgent", "critical"]
+TaskEvidenceType = Literal["note", "link", "file"]
+StakeholderRole = Literal[
+    "executive_sponsor",
+    "economic_buyer",
+    "technical_decision_maker",
+    "operational_poc",
+    "commercial_owner",
+    "influencer",
+]
+StakeholderInfluence = Literal["low", "medium", "high", "critical"]
+StakeholderRelationshipStrength = Literal["unknown", "weak", "developing", "strong", "champion"]
+StakeholderSentiment = Literal["negative", "neutral", "positive", "champion"]
+StakeholderPoliticalRisk = Literal["unknown", "low", "medium", "high"]
+StakeholderStatus = Literal["active", "inactive", "left_company", "do_not_contact"]
 OpportunityStage = Literal["Identified", "Qualified", "Proposal Sent", "Negotiation", "Won", "Lost"]
 OpportunityActionItemStatus = Literal["open", "in_progress", "completed", "cancelled"]
 ScoringScope = Literal["account", "engagement", "portfolio"]
@@ -63,11 +80,6 @@ ScoringJobStatus = Literal["queued", "running", "complete", "failed"]
 SignalSeverity = Literal["info", "warning", "critical"]
 SignalStatus = Literal["new", "reviewed", "accepted", "dismissed", "converted", "resolved"]
 SignalConvertTarget = Literal["task", "playbook"]
-PlaybookStatus = Literal["draft", "active", "inactive"]
-PlaybookExecutionStatus = Literal["active", "completed", "skipped"]
-TaskStatus = Literal["todo", "in_progress", "blocked", "done", "skipped"]
-TaskPriority = Literal["low", "medium", "high", "critical"]
-TaskEvidenceType = Literal["note", "url", "file", "meeting_note", "source_link"]
 
 SELECT_FIELD_TYPES = {"single_select", "multi_select"}
 
@@ -1833,6 +1845,223 @@ class AccountOverviewRead(BaseModel):
     attachments: SourceDocumentPageRead
 
 
+class StakeholderRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    account_id: str
+    engagement_id: str | None = None
+    reports_to_stakeholder_id: str | None = None
+    name: str
+    title: str | None = None
+    company: str | None = None
+    email: EmailStr | None = None
+    phone: str | None = None
+    role: str
+    influence: str
+    relationship_strength: str
+    sentiment: str
+    political_risk: str
+    status: str
+    notes: str | None = None
+    last_interaction_at: datetime | None = None
+    is_sensitive: bool
+    sensitive_fields_redacted: bool = False
+    created_by_id: str | None = None
+    updated_by_id: str | None = None
+    created_at: datetime
+    updated_at: datetime
+    archived_at: datetime | None = None
+
+
+class StakeholderPageRead(BaseModel):
+    items: list[StakeholderRead]
+    total: int
+    page: int
+    page_size: int
+    pages: int
+
+
+class StakeholderInteractionRead(BaseModel):
+    id: str
+    stakeholder_id: str
+    account_id: str
+    engagement_id: str | None = None
+    interaction_type: str
+    interaction_date: datetime
+    summary: str | None = None
+    outcome: str | None = None
+    sentiment_after: str | None = None
+    relationship_strength_after: str | None = None
+    sensitive_fields_redacted: bool = False
+    created_by_id: str | None = None
+    created_by_name: str
+    created_at: datetime
+    updated_at: datetime
+
+
+class StakeholderInteractionPageRead(BaseModel):
+    items: list[StakeholderInteractionRead]
+    total: int
+    page: int
+    page_size: int
+    pages: int
+
+
+class StakeholderInteractionCreateRequest(BaseModel):
+    interaction_type: str = "note"
+    interaction_date: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    summary: str
+    outcome: str | None = None
+    sentiment_after: StakeholderSentiment | None = None
+    relationship_strength_after: StakeholderRelationshipStrength | None = None
+
+    @field_validator("interaction_type")
+    @classmethod
+    def interaction_type_is_valid(cls, value: str) -> str:
+        return validate_short_text(value, "Interaction type", max_length=80)
+
+    @field_validator("summary")
+    @classmethod
+    def summary_is_valid(cls, value: str) -> str:
+        text = require_text(value, "Interaction summary")
+        if len(text) > 4000:
+            raise ValueError("Interaction summary must be 4000 characters or fewer.")
+        return text
+
+    @field_validator("outcome")
+    @classmethod
+    def outcome_is_valid(cls, value: str | None) -> str | None:
+        return validate_optional_long_text(value, "Interaction outcome")
+
+
+class StakeholderCoverageGapRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    account_id: str
+    rule_key: str
+    severity: str
+    title: str
+    description: str
+    evidence: dict[str, Any]
+    status: str
+    created_at: datetime
+    resolved_at: datetime | None = None
+
+
+class StakeholderOrgChartNodeRead(BaseModel):
+    id: str
+    name: str
+    title: str | None = None
+    role: str | None = None
+    influence_level: str | None = None
+    relationship_strength: str | None = None
+    sentiment: str | None = None
+    political_risk: str | None = None
+    parent_id: str | None = None
+    sensitive_fields_redacted: bool = False
+
+
+class StakeholderOrgChartEdgeRead(BaseModel):
+    source: str
+    target: str
+    relationship_type: str
+
+
+class StakeholderOrgChartRead(BaseModel):
+    nodes: list[StakeholderOrgChartNodeRead]
+    edges: list[StakeholderOrgChartEdgeRead]
+
+
+class StakeholderCreateRequest(BaseModel):
+    engagement_id: str | None = None
+    reports_to_stakeholder_id: str | None = None
+    name: str
+    title: str | None = None
+    company: str | None = None
+    email: EmailStr | None = None
+    phone: str | None = None
+    role: StakeholderRole
+    influence: StakeholderInfluence = "medium"
+    relationship_strength: StakeholderRelationshipStrength = "unknown"
+    sentiment: StakeholderSentiment = "neutral"
+    political_risk: StakeholderPoliticalRisk = "unknown"
+    status: StakeholderStatus = "active"
+    notes: str | None = None
+    last_interaction_at: datetime | None = None
+    is_sensitive: bool = False
+
+    @field_validator("name")
+    @classmethod
+    def name_is_valid(cls, value: str) -> str:
+        return validate_short_text(value, "Stakeholder name")
+
+    @field_validator("title", "company")
+    @classmethod
+    def optional_profile_text_is_valid(cls, value: str | None) -> str | None:
+        return optional_text(value, "Stakeholder profile field", max_length=180)
+
+    @field_validator("phone")
+    @classmethod
+    def phone_is_valid(cls, value: str | None) -> str | None:
+        return validate_phone(value)
+
+    @field_validator("notes")
+    @classmethod
+    def notes_are_valid(cls, value: str | None) -> str | None:
+        return validate_optional_long_text(value, "Stakeholder notes")
+
+    @field_validator("engagement_id", "reports_to_stakeholder_id")
+    @classmethod
+    def optional_id_is_valid(cls, value: str | None) -> str | None:
+        return optional_text(value, "Linked record", max_length=36)
+
+
+class StakeholderUpdateRequest(BaseModel):
+    engagement_id: str | None = None
+    reports_to_stakeholder_id: str | None = None
+    name: str | None = None
+    title: str | None = None
+    company: str | None = None
+    email: EmailStr | None = None
+    phone: str | None = None
+    role: StakeholderRole | None = None
+    influence: StakeholderInfluence | None = None
+    relationship_strength: StakeholderRelationshipStrength | None = None
+    sentiment: StakeholderSentiment | None = None
+    political_risk: StakeholderPoliticalRisk | None = None
+    status: StakeholderStatus | None = None
+    notes: str | None = None
+    last_interaction_at: datetime | None = None
+    is_sensitive: bool | None = None
+
+    @field_validator("name")
+    @classmethod
+    def name_is_valid(cls, value: str | None) -> str | None:
+        return validate_short_text(value, "Stakeholder name") if value is not None else None
+
+    @field_validator("title", "company")
+    @classmethod
+    def optional_profile_text_is_valid(cls, value: str | None) -> str | None:
+        return optional_text(value, "Stakeholder profile field", max_length=180)
+
+    @field_validator("phone")
+    @classmethod
+    def phone_is_valid(cls, value: str | None) -> str | None:
+        return validate_phone(value)
+
+    @field_validator("notes")
+    @classmethod
+    def notes_are_valid(cls, value: str | None) -> str | None:
+        return validate_optional_long_text(value, "Stakeholder notes")
+
+    @field_validator("engagement_id", "reports_to_stakeholder_id")
+    @classmethod
+    def optional_id_is_valid(cls, value: str | None) -> str | None:
+        return optional_text(value, "Linked record", max_length=36)
+
+
 class ContentItemRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -3123,6 +3352,388 @@ class GovernanceAIBriefRead(GovernanceGeneratedOutputRead):
     citations: list[GovernanceGeneratedOutputCitationRead]
 
 
+class PlaybookTemplateActivityInput(BaseModel):
+    title: str
+    description: str | None = None
+    owner_rule: PlaybookOwnerRule = "account_primary_am"
+    due_offset_days: int = Field(default=7, ge=0, le=365)
+    priority: TaskPriority = "medium"
+    success_criteria: list[str] = Field(default_factory=list)
+    skip_allowed: bool = True
+    requires_evidence: bool = False
+    sort_order: int = Field(default=0, ge=0, le=10000)
+
+    @field_validator("title")
+    @classmethod
+    def title_is_valid(cls, value: str) -> str:
+        return validate_short_text(value, "Activity title", 220)
+
+    @field_validator("description")
+    @classmethod
+    def description_is_valid(cls, value: str | None) -> str | None:
+        return validate_optional_long_text(value, "Activity description", 4000)
+
+    @field_validator("success_criteria")
+    @classmethod
+    def success_criteria_are_valid(cls, value: list[str]) -> list[str]:
+        return validate_string_list(value, "Activity success criteria", max_items=20)
+
+
+class PlaybookTemplateActivityRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    template_id: str
+    title: str
+    description: str | None = None
+    owner_rule: str
+    due_offset_days: int
+    priority: str
+    success_criteria: list[str] = Field(default_factory=list)
+    skip_allowed: bool
+    requires_evidence: bool
+    sort_order: int
+    created_at: datetime
+    updated_at: datetime
+
+
+class PlaybookTemplateRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    name: str
+    objective: str
+    description: str | None = None
+    signal_types: list[str] = Field(default_factory=list)
+    weak_metrics: list[str] = Field(default_factory=list)
+    default_owner_rule: str
+    due_date_rule: dict[str, Any] = Field(default_factory=dict)
+    success_criteria: list[str] = Field(default_factory=list)
+    skip_rules: list[str] = Field(default_factory=list)
+    version: int
+    is_active: bool
+    created_by_id: str | None = None
+    updated_by_id: str | None = None
+    created_at: datetime
+    updated_at: datetime
+    activities: list[PlaybookTemplateActivityRead] = Field(default_factory=list)
+    custom_field_values: dict[str, Any] = Field(default_factory=dict)
+
+
+class PlaybookTemplatePageRead(BaseModel):
+    items: list[PlaybookTemplateRead]
+    total: int
+    page: int
+    page_size: int
+    pages: int
+
+
+class PlaybookTemplateCreateRequest(BaseModel):
+    name: str
+    objective: str
+    description: str | None = None
+    signal_types: list[str] = Field(default_factory=list)
+    weak_metrics: list[str] = Field(default_factory=list)
+    default_owner_rule: PlaybookOwnerRule = "account_primary_am"
+    due_date_rule: dict[str, Any] = Field(default_factory=lambda: {"basis": "execution_date", "offset_days": 7})
+    success_criteria: list[str] = Field(default_factory=list)
+    skip_rules: list[str] = Field(default_factory=list)
+    activities: list[PlaybookTemplateActivityInput] = Field(default_factory=list)
+    is_active: bool = True
+    custom_field_values: dict[str, Any] = Field(default_factory=dict, description="Field Builder values keyed by field_key.")
+
+    @field_validator("name")
+    @classmethod
+    def name_is_valid(cls, value: str) -> str:
+        return validate_short_text(value, "Playbook name", 180)
+
+    @field_validator("objective")
+    @classmethod
+    def objective_is_valid(cls, value: str) -> str:
+        return validate_short_text(value, "Playbook objective", 2000)
+
+    @field_validator("description")
+    @classmethod
+    def description_is_valid(cls, value: str | None) -> str | None:
+        return validate_optional_long_text(value, "Playbook description", 4000)
+
+    @field_validator("signal_types", "weak_metrics", "success_criteria", "skip_rules")
+    @classmethod
+    def string_lists_are_valid(cls, value: list[str]) -> list[str]:
+        return validate_string_list(value, "Playbook list", max_items=30)
+
+    @field_validator("custom_field_values")
+    @classmethod
+    def custom_field_keys_are_valid(cls, value: dict[str, Any]) -> dict[str, Any]:
+        return {validate_slug(key, "Custom field key"): item for key, item in value.items()}
+
+    @model_validator(mode="after")
+    def template_is_complete(self) -> "PlaybookTemplateCreateRequest":
+        if not self.activities:
+            raise ValueError("At least one activity is required.")
+        if not self.success_criteria:
+            raise ValueError("At least one success criterion is required.")
+        if not self.due_date_rule:
+            raise ValueError("Due-date rule is required.")
+        return self
+
+
+class PlaybookTemplateUpdateRequest(BaseModel):
+    name: str | None = None
+    objective: str | None = None
+    description: str | None = None
+    signal_types: list[str] | None = None
+    weak_metrics: list[str] | None = None
+    default_owner_rule: PlaybookOwnerRule | None = None
+    due_date_rule: dict[str, Any] | None = None
+    success_criteria: list[str] | None = None
+    skip_rules: list[str] | None = None
+    activities: list[PlaybookTemplateActivityInput] | None = None
+    is_active: bool | None = None
+    custom_field_values: dict[str, Any] | None = Field(default=None, description="Full replacement Field Builder values keyed by field_key.")
+
+    @field_validator("name")
+    @classmethod
+    def name_is_valid(cls, value: str | None) -> str | None:
+        return validate_short_text(value, "Playbook name", 180) if value is not None else None
+
+    @field_validator("objective")
+    @classmethod
+    def objective_is_valid(cls, value: str | None) -> str | None:
+        return validate_short_text(value, "Playbook objective", 2000) if value is not None else None
+
+    @field_validator("description")
+    @classmethod
+    def description_is_valid(cls, value: str | None) -> str | None:
+        return validate_optional_long_text(value, "Playbook description", 4000)
+
+    @field_validator("signal_types", "weak_metrics", "success_criteria", "skip_rules")
+    @classmethod
+    def optional_string_lists_are_valid(cls, value: list[str] | None) -> list[str] | None:
+        return validate_string_list(value, "Playbook list", max_items=30) if value is not None else None
+
+    @field_validator("custom_field_values")
+    @classmethod
+    def optional_custom_field_keys_are_valid(cls, value: dict[str, Any] | None) -> dict[str, Any] | None:
+        return {validate_slug(key, "Custom field key"): item for key, item in value.items()} if value is not None else None
+
+
+class PlaybookExecutionRequest(BaseModel):
+    account_id: str
+    engagement_id: str | None = None
+    source_signal_id: str | None = None
+    source_signal_type: str | None = None
+    source_metric: str | None = None
+    confirmed: bool = True
+    skipped_activity_ids: list[str] = Field(default_factory=list)
+    skip_reasons: dict[str, str] = Field(default_factory=dict)
+
+    @field_validator("source_signal_type", "source_metric")
+    @classmethod
+    def optional_signal_context_is_valid(cls, value: str | None) -> str | None:
+        return optional_text(value, "Signal context", max_length=120)
+
+    @field_validator("skip_reasons")
+    @classmethod
+    def skip_reasons_are_valid(cls, value: dict[str, str]) -> dict[str, str]:
+        return {validate_short_text(key, "Activity id", 120): validate_short_text(reason, "Skip reason", 500) for key, reason in value.items()}
+
+
+class TaskEvidenceRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    task_id: str
+    evidence_type: str
+    title: str | None = None
+    body: str | None = None
+    url: str | None = None
+    file_name: str | None = None
+    file_mime_type: str | None = None
+    file_size_bytes: int | None = None
+    created_by_id: str | None = None
+    created_by_name: str
+    created_at: datetime
+
+
+class TaskRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    account_id: str
+    engagement_id: str | None = None
+    playbook_execution_id: str | None = None
+    template_activity_id: str | None = None
+    source_type: str
+    source_record_id: str | None = None
+    source_metric: str | None = None
+    title: str
+    description: str | None = None
+    owner_id: str | None = None
+    owner_name: str
+    due_at: datetime
+    status: str
+    priority: str
+    notes: str | None = None
+    outcome: str | None = None
+    success_criteria: list[str] = Field(default_factory=list)
+    requires_evidence: bool
+    skipped_reason: str | None = Field(default=None, validation_alias=AliasChoices("skipped_reason", "skip_reason"))
+    completed_at: datetime | None = None
+    completed_by_id: str | None = None
+    created_by_id: str | None = None
+    updated_by_id: str | None = None
+    created_at: datetime
+    updated_at: datetime
+    evidence: list[TaskEvidenceRead] = Field(default_factory=list)
+    custom_field_values: dict[str, Any] = Field(default_factory=dict)
+
+
+class TaskPageRead(BaseModel):
+    items: list[TaskRead]
+    total: int
+    page: int
+    page_size: int
+    pages: int
+
+
+class PlaybookExecutionRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    template_id: str | None = None
+    template_name_snapshot: str
+    template_version_snapshot: int
+    account_id: str
+    engagement_id: str | None = None
+    source_signal_id: str | None = None
+    source_signal_type: str | None = None
+    source_metric: str | None = None
+    status: str
+    skipped_activity_ids: list[str] = Field(default_factory=list)
+    skip_reasons: dict[str, str] = Field(default_factory=dict)
+    created_by_id: str | None = None
+    created_by_name: str
+    created_at: datetime
+    updated_at: datetime
+    tasks: list[TaskRead] = Field(default_factory=list)
+
+
+class TaskCreateRequest(BaseModel):
+    account_id: str
+    engagement_id: str | None = None
+    title: str
+    description: str | None = None
+    owner_id: str
+    due_at: datetime
+    status: TaskStatus = "todo"
+    priority: TaskPriority = "medium"
+    notes: str | None = None
+    outcome: str | None = None
+    source_type: str = "manual"
+    source_record_id: str | None = None
+    source_metric: str | None = None
+    success_criteria: list[str] = Field(default_factory=list)
+    requires_evidence: bool = False
+    custom_field_values: dict[str, Any] = Field(default_factory=dict, description="Field Builder values keyed by field_key.")
+
+    @field_validator("title")
+    @classmethod
+    def title_is_valid(cls, value: str) -> str:
+        return validate_short_text(value, "Task title", 220)
+
+    @field_validator("description", "notes", "outcome")
+    @classmethod
+    def text_is_valid(cls, value: str | None) -> str | None:
+        return validate_optional_long_text(value, "Task text", 4000)
+
+    @field_validator("source_type", "source_metric")
+    @classmethod
+    def optional_short_is_valid(cls, value: str | None) -> str | None:
+        return optional_text(value, "Task source", max_length=120) if value is not None else None
+
+    @field_validator("success_criteria")
+    @classmethod
+    def success_criteria_are_valid(cls, value: list[str]) -> list[str]:
+        return validate_string_list(value, "Task success criteria", max_items=20)
+
+    @field_validator("custom_field_values")
+    @classmethod
+    def custom_field_keys_are_valid(cls, value: dict[str, Any]) -> dict[str, Any]:
+        return {validate_slug(key, "Custom field key"): item for key, item in value.items()}
+
+
+class TaskUpdateRequest(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    title: str | None = None
+    description: str | None = None
+    owner_id: str | None = None
+    due_at: datetime | None = None
+    status: TaskStatus | None = None
+    priority: TaskPriority | None = None
+    notes: str | None = None
+    outcome: str | None = None
+    skipped_reason: str | None = Field(default=None, validation_alias=AliasChoices("skipped_reason", "skip_reason"))
+    success_criteria: list[str] | None = None
+    requires_evidence: bool | None = None
+    custom_field_values: dict[str, Any] | None = Field(default=None, description="Full replacement Field Builder values keyed by field_key.")
+
+    @field_validator("title")
+    @classmethod
+    def title_is_valid(cls, value: str | None) -> str | None:
+        return validate_short_text(value, "Task title", 220) if value is not None else None
+
+    @field_validator("description", "notes", "outcome", "skipped_reason")
+    @classmethod
+    def text_is_valid(cls, value: str | None) -> str | None:
+        return validate_optional_long_text(value, "Task text", 4000)
+
+    @field_validator("success_criteria")
+    @classmethod
+    def success_criteria_are_valid(cls, value: list[str] | None) -> list[str] | None:
+        return validate_string_list(value, "Task success criteria", max_items=20) if value is not None else None
+
+    @field_validator("custom_field_values")
+    @classmethod
+    def optional_custom_field_keys_are_valid(cls, value: dict[str, Any] | None) -> dict[str, Any] | None:
+        return {validate_slug(key, "Custom field key"): item for key, item in value.items()} if value is not None else None
+
+
+class RecommendedPlaybookRead(BaseModel):
+    template: PlaybookTemplateRead
+    rationale: str
+    match_score: int
+    matched_signal_types: list[str] = Field(default_factory=list)
+    matched_metrics: list[str] = Field(default_factory=list)
+
+
+class CalendarItemRead(BaseModel):
+    id: str
+    kind: str
+    title: str
+    detail: str
+    account_id: str | None = None
+    account_name: str
+    engagement_id: str | None = None
+    owner_id: str | None = None
+    owner_name: str | None = None
+    date: datetime
+    status: str
+    priority: str | None = None
+    source_route: str | None = None
+    source_record_id: str | None = None
+    source_record_type: str | None = None
+
+
+class CalendarItemPageRead(BaseModel):
+    items: list[CalendarItemRead]
+    total: int
+    page: int
+    page_size: int
+    pages: int
+
+
 class IntegrationConnectionRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -3603,299 +4214,3 @@ class SignalAIExplanationRead(BaseModel):
     advisory_only: bool = True
     explanation: str
     citations: list[dict[str, Any]] = Field(default_factory=list)
-
-
-class RecommendedPlaybookRead(BaseModel):
-    id: str
-    slug: str
-    name: str
-    objective: str
-    matched_reasons: list[str] = Field(default_factory=list)
-
-
-class PlaybookTemplateBase(BaseModel):
-    slug: str
-    name: str
-    objective: str
-    signal_types: list[str] = Field(default_factory=list)
-    weak_metrics: list[str] = Field(default_factory=list)
-    activities_json: list[dict[str, Any]] = Field(default_factory=list)
-    default_owner_rule: dict[str, Any] = Field(default_factory=dict)
-    due_date_rule: dict[str, Any] = Field(default_factory=dict)
-    success_criteria: list[str] = Field(default_factory=list)
-    skip_rules: list[str] = Field(default_factory=list)
-    status: PlaybookStatus = "draft"
-    is_active: bool = True
-
-    @field_validator("slug")
-    @classmethod
-    def slug_is_valid(cls, value: str) -> str:
-        return validate_slug(value, "Playbook slug")
-
-    @field_validator("name")
-    @classmethod
-    def name_is_valid(cls, value: str) -> str:
-        return validate_short_text(value, "Playbook name", 180)
-
-    @field_validator("objective")
-    @classmethod
-    def objective_is_valid(cls, value: str) -> str:
-        return validate_short_text(value, "Playbook objective", 1000)
-
-    @field_validator("signal_types", "weak_metrics", "success_criteria", "skip_rules")
-    @classmethod
-    def string_list_is_valid(cls, value: list[str], info: ValidationInfo) -> list[str]:
-        return validate_string_list(value, info.field_name.replace("_", " "), max_items=30)
-
-    @field_validator("activities_json")
-    @classmethod
-    def activities_are_valid(cls, value: list[dict[str, Any]]) -> list[dict[str, Any]]:
-        if not value:
-            raise ValueError("Playbook must include at least one activity.")
-        if len(value) > 25:
-            raise ValueError("Playbook can include at most 25 activities.")
-        for activity in value:
-            if not require_text(str(activity.get("title", "")), "Activity title"):
-                raise ValueError("Each activity must include a title.")
-        return value
-
-
-class PlaybookTemplateCreateRequest(PlaybookTemplateBase):
-    pass
-
-
-class PlaybookTemplateUpdateRequest(BaseModel):
-    name: str | None = None
-    objective: str | None = None
-    signal_types: list[str] | None = None
-    weak_metrics: list[str] | None = None
-    activities_json: list[dict[str, Any]] | None = None
-    default_owner_rule: dict[str, Any] | None = None
-    due_date_rule: dict[str, Any] | None = None
-    success_criteria: list[str] | None = None
-    skip_rules: list[str] | None = None
-    status: PlaybookStatus | None = None
-    is_active: bool | None = None
-
-    @field_validator("name")
-    @classmethod
-    def name_is_valid(cls, value: str | None) -> str | None:
-        return validate_short_text(value, "Playbook name", 180) if value is not None else None
-
-    @field_validator("objective")
-    @classmethod
-    def objective_is_valid(cls, value: str | None) -> str | None:
-        return validate_short_text(value, "Playbook objective", 1000) if value is not None else None
-
-
-class PlaybookTemplateRead(BaseModel):
-    model_config = ConfigDict(from_attributes=True)
-
-    id: str
-    slug: str
-    name: str
-    objective: str
-    signal_types: list = Field(default_factory=list)
-    weak_metrics: list = Field(default_factory=list)
-    activities_json: list = Field(default_factory=list)
-    default_owner_rule: dict = Field(default_factory=dict)
-    due_date_rule: dict = Field(default_factory=dict)
-    success_criteria: list = Field(default_factory=list)
-    skip_rules: list = Field(default_factory=list)
-    status: str
-    is_active: bool
-    current_version: int
-    created_by_id: str | None = None
-    updated_by_id: str | None = None
-    created_at: datetime
-    updated_at: datetime
-
-
-class PlaybookTemplatePageRead(BaseModel):
-    items: list[PlaybookTemplateRead]
-    total: int
-    page: int
-    page_size: int
-    pages: int
-
-
-class PlaybookExecutionRequest(BaseModel):
-    account_id: str
-    engagement_id: str | None = None
-    signal_id: str | None = None
-    customization_json: dict[str, Any] = Field(default_factory=dict)
-
-
-class TaskRead(BaseModel):
-    model_config = ConfigDict(from_attributes=True)
-
-    id: str
-    account_id: str
-    engagement_id: str | None = None
-    playbook_execution_id: str | None = None
-    source_type: str
-    source_record_id: str | None = None
-    source_record_route: str | None = None
-    title: str
-    description: str | None = None
-    owner_id: str | None = None
-    owner_name: str | None = None
-    due_at: datetime
-    status: str
-    priority: str
-    notes: str | None = None
-    evidence_json: list = Field(default_factory=list)
-    outcome: str | None = None
-    skip_reason: str | None = None
-    completed_at: datetime | None = None
-    completed_by_id: str | None = None
-    created_by_id: str | None = None
-    created_by_name: str
-    created_at: datetime
-    updated_at: datetime
-
-
-class PlaybookExecutionRead(BaseModel):
-    model_config = ConfigDict(from_attributes=True)
-
-    id: str
-    template_id: str
-    template_version: int
-    account_id: str
-    engagement_id: str | None = None
-    signal_id: str | None = None
-    status: str
-    executed_by_id: str | None = None
-    executed_by_name: str
-    customization_json: dict = Field(default_factory=dict)
-    created_at: datetime
-    tasks: list[TaskRead] = Field(default_factory=list)
-
-
-class TaskCreateRequest(BaseModel):
-    account_id: str
-    engagement_id: str | None = None
-    source_type: str = "manual"
-    source_record_id: str | None = None
-    source_record_route: str | None = None
-    title: str
-    description: str | None = None
-    owner_id: str | None = None
-    due_at: datetime
-    status: TaskStatus = "todo"
-    priority: TaskPriority = "medium"
-    notes: str | None = None
-    evidence: list[dict[str, Any]] = Field(default_factory=list)
-
-    @field_validator("source_type")
-    @classmethod
-    def source_type_is_valid(cls, value: str) -> str:
-        return validate_short_text(value, "Task source type", 80)
-
-    @field_validator("source_record_route")
-    @classmethod
-    def route_is_valid(cls, value: str | None) -> str | None:
-        return validate_optional_long_text(value, "Task source route", 500)
-
-    @field_validator("title")
-    @classmethod
-    def title_is_valid(cls, value: str) -> str:
-        return validate_short_text(value, "Task title", 220)
-
-    @field_validator("description", "notes")
-    @classmethod
-    def long_text_is_valid(cls, value: str | None) -> str | None:
-        return validate_optional_long_text(value, "Task text", 2000)
-
-
-class TaskUpdateRequest(BaseModel):
-    engagement_id: str | None = None
-    title: str | None = None
-    description: str | None = None
-    owner_id: str | None = None
-    due_at: datetime | None = None
-    status: TaskStatus | None = None
-    priority: TaskPriority | None = None
-    notes: str | None = None
-    outcome: str | None = None
-    skip_reason: str | None = None
-
-    @field_validator("title")
-    @classmethod
-    def title_is_valid(cls, value: str | None) -> str | None:
-        return validate_short_text(value, "Task title", 220) if value is not None else None
-
-    @field_validator("description", "notes", "outcome", "skip_reason")
-    @classmethod
-    def long_text_is_valid(cls, value: str | None) -> str | None:
-        return validate_optional_long_text(value, "Task text", 2000)
-
-
-class TaskPageRead(BaseModel):
-    items: list[TaskRead]
-    total: int
-    page: int
-    page_size: int
-    pages: int
-
-
-class TaskEvidenceCreateRequest(BaseModel):
-    evidence_type: TaskEvidenceType = "note"
-    note: str | None = None
-    url: str | None = None
-    metadata_json: dict[str, Any] = Field(default_factory=dict)
-
-    @field_validator("note")
-    @classmethod
-    def note_is_valid(cls, value: str | None) -> str | None:
-        return validate_optional_long_text(value, "Evidence note", 2000)
-
-    @field_validator("url")
-    @classmethod
-    def url_is_valid(cls, value: str | None) -> str | None:
-        return validate_http_url(value, "Evidence URL")
-
-    @model_validator(mode="after")
-    def has_evidence(self) -> "TaskEvidenceCreateRequest":
-        if not self.note and not self.url:
-            raise ValueError("Evidence must include a note or URL.")
-        return self
-
-
-class TaskEvidenceRead(BaseModel):
-    model_config = ConfigDict(from_attributes=True)
-
-    id: str
-    task_id: str
-    evidence_type: str
-    note: str | None = None
-    url: str | None = None
-    metadata_json: dict = Field(default_factory=dict)
-    created_by_id: str | None = None
-    created_by_name: str
-    created_at: datetime
-
-
-class UnifiedCalendarItemRead(BaseModel):
-    id: str
-    kind: str
-    source_record_id: str
-    source_record_type: str
-    account_id: str
-    account_name: str
-    engagement_id: str | None = None
-    owner_id: str | None = None
-    date: datetime
-    title: str
-    detail: str
-    status: str
-    priority: str | None = None
-    route: str
-
-
-class UnifiedCalendarPageRead(BaseModel):
-    items: list[UnifiedCalendarItemRead]
-    total: int
-    page: int
-    page_size: int
-    pages: int

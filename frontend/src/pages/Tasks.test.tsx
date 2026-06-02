@@ -1,7 +1,7 @@
 import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { MemoryRouter } from 'react-router-dom'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { Tasks } from '@/pages/Tasks'
 import { useAccountStore } from '@/stores/accountStore'
 
@@ -47,9 +47,10 @@ const task = {
   account_id: account.id,
   engagement_id: null,
   playbook_execution_id: 'exec-1',
+  template_activity_id: 'activity-1',
   source_type: 'playbook',
   source_record_id: 'exec-1',
-  source_record_route: '/tasks',
+  source_metric: 'health',
   title: 'Backend recovery task',
   description: 'Review weak score drivers.',
   owner_id: 'usr-am',
@@ -58,11 +59,12 @@ const task = {
   status: 'todo',
   priority: 'high',
   notes: null,
-  evidence_json: [],
   outcome: null,
-  skip_reason: null,
+  success_criteria: ['Recovery owner confirmed'],
+  requires_evidence: true,
+  skipped_reason: null,
   completed_at: null,
-  created_by_name: 'Account Manager',
+  evidence: [],
   created_at: '2026-06-01T12:00:00Z',
   updated_at: '2026-06-01T12:00:00Z',
 }
@@ -83,63 +85,26 @@ describe('Tasks page backend work queue', () => {
     useAccountStore.setState({ accounts: [account] as never })
   })
 
-  it('shows loading state, renders backend tasks and signals, and updates task status', async () => {
+  afterEach(() => {
+    vi.unstubAllGlobals()
+  })
+
+  it('shows loading state, renders backend tasks, sends filters, and updates task status', async () => {
     let resolveTasks: (response: Response) => void = () => undefined
     const pendingTasks = new Promise<Response>(resolve => {
       resolveTasks = resolve
     })
+    let taskListRequests = 0
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input)
+      if (url.includes('/api/custom-fields')) return jsonResponse([])
       if (url.includes('/api/tasks/task-1') && init?.method === 'PATCH') {
         expect(JSON.parse(String(init.body))).toMatchObject({ status: 'in_progress' })
         return jsonResponse({ ...task, status: 'in_progress', updated_at: '2026-06-02T12:00:00Z' })
       }
-      if (url.includes('/api/tasks')) return pendingTasks
-      if (url.includes('/api/attention-center')) {
-        return jsonResponse(
-          page([
-            {
-              id: 'sig-1',
-              account_id: account.id,
-              engagement_id: null,
-              rule_id: 'rule-1',
-              signal_type: 'weak_metric',
-              severity: 'critical',
-              status: 'new',
-              owner_id: 'usr-am',
-              owner_name: 'Account Manager',
-              title: 'Backend weak signal',
-              detail: 'Account health is below threshold.',
-              reason_codes: [{ code: 'weak_health', label: 'Weak health score' }],
-              evidence_json: [{ label: 'Health score', value: 54 }],
-              citations_json: [],
-              source_record_route: `/accounts/${account.id}?tab=health`,
-              confidence: 100,
-              due_at: '2026-06-04T12:00:00Z',
-              created_at: '2026-06-01T12:00:00Z',
-              updated_at: '2026-06-01T12:00:00Z',
-            },
-          ]),
-        )
-      }
-      if (url.includes('/api/admin/playbook-templates')) {
-        return jsonResponse(
-          page([
-            {
-              id: 'tpl-1',
-              slug: 'health_recovery',
-              name: 'Health Recovery',
-              objective: 'Recover weak health.',
-              signal_types: ['weak_metric'],
-              weak_metrics: ['health'],
-              activities_json: [{ title: 'Review drivers', description: 'Review evidence.', priority: 'high', due_offset_days: 2 }],
-              status: 'active',
-              is_active: true,
-              current_version: 1,
-              updated_at: '2026-06-01T12:00:00Z',
-            },
-          ]),
-        )
+      if (url.includes('/api/tasks')) {
+        taskListRequests += 1
+        return taskListRequests === 1 ? pendingTasks : jsonResponse(page([task]))
       }
       return jsonResponse(page([]))
     })
@@ -151,18 +116,28 @@ describe('Tasks page backend work queue', () => {
       </MemoryRouter>,
     )
 
-    expect(await screen.findByText(/loading tasks, signals, and playbooks/i)).toBeInTheDocument()
+    expect(await screen.findByText(/loading tasks/i)).toBeInTheDocument()
     resolveTasks(jsonResponse(page([task])))
     expect(await screen.findByText('Backend recovery task')).toBeInTheDocument()
-    expect(await screen.findByText('Backend weak signal')).toBeInTheDocument()
 
-    await userEvent.click(screen.getByRole('button', { name: /mark in progress/i }))
+    await userEvent.type(screen.getByPlaceholderText(/search title/i), 'recovery')
+    await waitFor(() => expect(fetchMock.mock.calls.some(call => String(call[0]).includes('search=recovery'))).toBe(true))
+
+    await userEvent.click(screen.getByRole('button', { name: /start/i }))
 
     await waitFor(() => expect(screen.getByText('in progress')).toBeInTheDocument())
   })
 
   it('shows backend error state', async () => {
-    vi.stubGlobal('fetch', vi.fn(async () => jsonResponse({ detail: 'Forbidden' }, 403)))
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = String(input)
+        if (url.includes('/api/custom-fields')) return jsonResponse([])
+        if (url.includes('/api/tasks')) return jsonResponse({ detail: 'Forbidden' }, 403)
+        return jsonResponse({})
+      }),
+    )
 
     render(
       <MemoryRouter>
@@ -170,7 +145,6 @@ describe('Tasks page backend work queue', () => {
       </MemoryRouter>,
     )
 
-    expect(await screen.findByText('Task data could not be loaded')).toBeInTheDocument()
-    expect(screen.getByText('Forbidden')).toBeInTheDocument()
+    expect(await screen.findByText('Forbidden')).toBeInTheDocument()
   })
 })
