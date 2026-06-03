@@ -5,10 +5,7 @@ from sqlalchemy.orm import Session
 
 from app.config import get_settings
 from app.models import (
-    Account,
-    AccountOwner,
     KycConfiguration,
-    Opportunity,
     OpportunityStageDefinition,
     OpportunityStageTransition,
     OpportunityType,
@@ -38,18 +35,22 @@ DEFAULT_ROLE_USER_EMAIL_DOMAIN = "tkxel.com"
 
 
 def seed_default_data(db: Session) -> User:
-    RbacService(db).seed_defaults()
-    super_admin = seed_super_admin(db)
-    seed_allowed_email_domains(db, super_admin)
+    super_admin = seed_base_data(db)
     seed_approved_integrations(db, super_admin)
-    seed_default_role_users(db)
     seed_kyc_configuration(db)
     seed_opportunity_reference_data(db)
     seed_relationship_planning_reference_data(db)
     seed_scoring_signals_playbooks(db, super_admin)
     seed_timeline_reference_data(db, super_admin)
     seed_notifications_dashboards_reporting(db, super_admin)
-    seed_demo_opportunities(db)
+    return super_admin
+
+
+def seed_base_data(db: Session) -> User:
+    RbacService(db).seed_defaults()
+    super_admin = seed_super_admin(db)
+    seed_allowed_email_domains(db, super_admin)
+    seed_default_role_users(db)
     return super_admin
 
 
@@ -717,106 +718,3 @@ def _seed_playbook_activities(activities: list[dict]) -> list[PlaybookTemplateAc
             )
         )
     return seeded
-
-
-def seed_demo_opportunities(db: Session) -> None:
-    if db.bind is not None and db.bind.dialect.name == "sqlite":
-        return
-    if db.scalar(select(Opportunity.id).limit(1)):
-        return
-    if db.scalar(select(Account.id).limit(1)):
-        return
-    account_manager = db.scalar(select(User).where(User.role == "account_manager").order_by(User.email).limit(1))
-    admin_user = db.scalar(select(User).where(User.role == "admin").order_by(User.email).limit(1))
-    if account_manager is None:
-        return
-
-    demo_accounts = (
-        ("amd-001", "Signal", "Strategic", "healthy", 1840000, account_manager),
-        ("globex-002", "Cafe Zupas", "Enterprise", "warning", 1260000, admin_user or account_manager),
-        ("initech-003", "Canvs", "Growth", "critical", 740000, account_manager),
-        ("northstar-004", "TaxBack", "Enterprise", "healthy", 980000, admin_user or account_manager),
-    )
-    for account_id, name, segment, risk_status, commercial_value, owner in demo_accounts:
-        account = db.get(Account, account_id)
-        if account is None:
-            account = Account(
-                id=account_id,
-                name=name,
-                lifecycle_status="Active",
-                segment=segment,
-                risk_status=risk_status,
-                commercial_value=commercial_value,
-                currency="USD",
-                health_overall=78 if risk_status == "healthy" else 62,
-                health_relationship=80,
-                health_usage=74,
-                health_delivery=76,
-                health_commercial=72,
-                created_by_id=owner.id,
-            )
-            db.add(account)
-        owner_record = db.scalar(
-            select(AccountOwner).where(
-                AccountOwner.account_id == account_id,
-                AccountOwner.ownership_role == "primary_am",
-                AccountOwner.is_active.is_(True),
-            )
-        )
-        if owner_record is None:
-            db.add(
-                AccountOwner(
-                    account_id=account_id,
-                    user_id=owner.id,
-                    user_name=owner.full_name,
-                    user_email=owner.email,
-                    ownership_role="primary_am",
-                    is_primary=True,
-                    is_active=True,
-                    rationale="Seeded demo owner for local opportunity pipeline.",
-                    created_by_id=owner.id,
-                )
-            )
-
-    db.flush()
-    type_by_slug = {item.slug: item for item in db.scalars(select(OpportunityType))}
-    now = utc_now()
-    demo_opportunities = (
-        ("opp-101", "amd-001", "Cloud cost governance expansion", "expansion", "Cloud & DevOps", 420000, 24, "Negotiation", "Confirm commercial model with finance sponsor."),
-        ("opp-102", "globex-002", "Regional analytics rollout", "analytics", "Data Analytics", 310000, 41, "Proposal Sent", "Follow up on regional rollout proposal."),
-        ("opp-103", "initech-003", "Retention recovery package", "retention_recovery", "Customer Success", 180000, 15, "Qualified", "Align recovery scope with executive sponsor."),
-        ("opp-104", "northstar-004", "Store operations automation", "automation", "Automation", 260000, 58, "Identified", "Map store operations workflows with client ops lead."),
-        ("opp-105", "amd-001", "Data platform enablement", "analytics", "Data Platform", 620000, 73, "Won", "Prepare kickoff handoff for delivery team."),
-    )
-    for opportunity_id, account_id, name, type_slug, service_line, value, days, stage, next_step in demo_opportunities:
-        if db.get(Opportunity, opportunity_id):
-            continue
-        opportunity_type = type_by_slug.get(type_slug)
-        if opportunity_type is None:
-            continue
-        owner = next((item[5] for item in demo_accounts if item[0] == account_id), account_manager)
-        db.add(
-            Opportunity(
-                id=opportunity_id,
-                account_id=account_id,
-                type_id=opportunity_type.id,
-                owner_id=owner.id,
-                owner_name=owner.full_name,
-                owner_email=owner.email,
-                name=name,
-                service_line=service_line,
-                value=value,
-                currency="USD",
-                stage=stage,
-                next_step=next_step,
-                target_date=now + timedelta(days=days),
-                source_context="seed",
-                source_record_route=f"/opportunities?opportunity={opportunity_id}",
-                outcome_reason="Client approved expansion." if stage == "Won" else None,
-                created_by_id=owner.id,
-                created_by_name=owner.full_name,
-                updated_by_id=owner.id,
-                updated_by_name=owner.full_name,
-            )
-        )
-    db.commit()

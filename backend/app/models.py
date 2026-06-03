@@ -411,6 +411,17 @@ class SourceDocument(Base):
     file_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
     file_url: Mapped[str | None] = mapped_column(String(1000), nullable=True)
     link_url: Mapped[str | None] = mapped_column(String(1000), nullable=True)
+    storage_backend: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    storage_path: Mapped[str | None] = mapped_column(String(1000), nullable=True)
+    mime_type: Mapped[str | None] = mapped_column(String(180), nullable=True)
+    size_bytes: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    checksum_sha256: Mapped[str | None] = mapped_column(String(64), index=True, nullable=True)
+    extracted_text_checksum: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    extraction_started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    extraction_completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    extraction_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    ocr_status: Mapped[str | None] = mapped_column(String(40), index=True, nullable=True)
+    ocr_engine: Mapped[str | None] = mapped_column(String(80), nullable=True)
     uploaded_by_id: Mapped[str | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
     uploaded_by_name: Mapped[str] = mapped_column(String(160), nullable=False)
     extraction_status: Mapped[str] = mapped_column(String(40), index=True, nullable=False, default="completed")
@@ -424,6 +435,8 @@ class SourceDocument(Base):
     engagement: Mapped["Engagement | None"] = relationship(back_populates="source_documents")
     draft: Mapped[OnboardingDraft | None] = relationship(back_populates="source_documents")
     citations: Mapped[list["SourceCitation"]] = relationship(back_populates="source_document", cascade="all, delete-orphan")
+    extractions: Mapped[list["SourceDocumentExtraction"]] = relationship(back_populates="source_document", cascade="all, delete-orphan")
+    chunks: Mapped[list["SourceDocumentChunk"]] = relationship(back_populates="source_document", cascade="all, delete-orphan")
 
 
 class SourceCitation(Base):
@@ -437,6 +450,61 @@ class SourceCitation(Base):
     field_key: Mapped[str | None] = mapped_column(String(120), nullable=True)
 
     source_document: Mapped[SourceDocument] = relationship(back_populates="citations")
+
+
+class SourceDocumentExtraction(Base):
+    __tablename__ = "source_document_extractions"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid4()))
+    source_document_id: Mapped[str] = mapped_column(ForeignKey("source_documents.id", ondelete="CASCADE"), index=True, nullable=False)
+    status: Mapped[str] = mapped_column(String(40), index=True, nullable=False, default="pending")
+    extractor_name: Mapped[str] = mapped_column(String(120), nullable=False, default="local")
+    extractor_version: Mapped[str] = mapped_column(String(40), nullable=False, default="v1")
+    mime_type: Mapped[str | None] = mapped_column(String(180), nullable=True)
+    page_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    raw_text: Mapped[str | None] = mapped_column(Text, nullable=True)
+    normalized_text: Mapped[str | None] = mapped_column(Text, nullable=True)
+    metadata_json: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utc_now)
+
+    source_document: Mapped[SourceDocument] = relationship(back_populates="extractions")
+    chunks: Mapped[list["SourceDocumentChunk"]] = relationship(back_populates="extraction", cascade="all, delete-orphan")
+
+
+class SourceDocumentChunk(Base):
+    __tablename__ = "source_document_chunks"
+    __table_args__ = (UniqueConstraint("source_document_id", "chunk_hash", name="uq_source_document_chunks_document_hash"),)
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid4()))
+    source_document_id: Mapped[str] = mapped_column(ForeignKey("source_documents.id", ondelete="CASCADE"), index=True, nullable=False)
+    extraction_id: Mapped[str | None] = mapped_column(ForeignKey("source_document_extractions.id", ondelete="CASCADE"), index=True, nullable=True)
+    account_id: Mapped[str | None] = mapped_column(ForeignKey("accounts.id", ondelete="CASCADE"), index=True, nullable=True)
+    engagement_id: Mapped[str | None] = mapped_column(ForeignKey("engagements.id", ondelete="SET NULL"), index=True, nullable=True)
+    chunk_index: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    chunk_text: Mapped[str] = mapped_column(Text, nullable=False)
+    chunk_hash: Mapped[str] = mapped_column(String(64), index=True, nullable=False)
+    page_number: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    section_label: Mapped[str | None] = mapped_column(String(220), nullable=True)
+    start_offset: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    end_offset: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    token_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    sensitivity_level: Mapped[str] = mapped_column(String(40), index=True, nullable=False, default="standard")
+    source_type: Mapped[str] = mapped_column(String(80), index=True, nullable=False)
+    trust_score: Mapped[int] = mapped_column(Integer, nullable=False, default=50)
+    embedding_provider: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    embedding_model: Mapped[str | None] = mapped_column(String(160), nullable=True)
+    embedding_json: Mapped[list | None] = mapped_column(JSON, nullable=True)
+    embedding_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    metadata_json: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utc_now)
+
+    source_document: Mapped[SourceDocument] = relationship(back_populates="chunks")
+    extraction: Mapped[SourceDocumentExtraction | None] = relationship(back_populates="chunks")
+    account: Mapped[Account | None] = relationship()
+    engagement: Mapped["Engagement | None"] = relationship()
 
 
 class KycDraft(Base):
@@ -531,6 +599,17 @@ class KycAgentRun(Base):
     triggered_by_id: Mapped[str | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), index=True, nullable=True)
     triggered_by_name: Mapped[str] = mapped_column(String(160), nullable=False)
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    queued_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    retry_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    max_retries: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    next_retry_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    ai_gateway_run_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    retrieval_summary_json: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    provider_json: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    usage_json: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    cost_json: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    provider_response_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    model_name: Mapped[str | None] = mapped_column(String(160), nullable=True)
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utc_now)
@@ -556,6 +635,10 @@ class KycWorkstreamOutput(Base):
     citations_json: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
     missing_fields: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
     confidence: Mapped[int] = mapped_column(Integer, nullable=False, default=75)
+    reviewer_notes_json: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    follow_up_questions_json: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    retrieved_chunk_ids: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    provider_response_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

@@ -14,6 +14,8 @@ docs/features/_feature-template.md
 - [Growth & Opportunity Management](growth-opportunity-management.md)
 - [Approved Integrations](approved-integrations.md)
 - [Approved Integrations Coverage Report](approved-integrations-coverage-report.md)
+- [AI KYC Pipeline Phase 1-4](ai-kyc-pipeline-phase-1-to-4.md)
+- [Base Data Seeding](base-data-seeding.md)
 - [Mailtrap Email Delivery](mailtrap-email-delivery.md)
 - [Notifications, Dashboards, And Reporting](notifications-dashboards-reporting.md)
 - [Relationships Planning Growth And Retention](relationships-planning-growth-retention.md)

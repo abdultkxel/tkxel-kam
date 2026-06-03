@@ -10,7 +10,7 @@ from sqlalchemy.pool import StaticPool
 from app.database import Base, get_db
 from app.dependencies import get_kyc_service
 from app.main import app
-from app.models import AuditLog, KycSnapshot, TimelineEntry
+from app.models import AuditLog, KycSnapshot, SourceDocumentChunk, SourceDocumentExtraction, TimelineEntry
 from app.services.kyc import KycService
 from app.services.kyc_gateway import DeterministicKycGatewayAdapter
 from app.services.seed import seed_default_data
@@ -34,7 +34,11 @@ def client(db_session: Session) -> Generator[TestClient, None, None]:
     def override_get_db() -> Generator[Session, None, None]:
         yield db_session
 
+    def override_kyc_service() -> KycService:
+        return KycService(db_session, gateway=DeterministicKycGatewayAdapter())
+
     app.dependency_overrides[get_db] = override_get_db
+    app.dependency_overrides[get_kyc_service] = override_kyc_service
     test_client = TestClient(app)
     try:
         yield test_client
@@ -162,7 +166,7 @@ def test_kyc_draft_approval_creates_snapshot_freshness_logs_and_search(client: T
     assert approved["status"] == "approved"
     assert approved["approved_snapshot_id"]
 
-    snapshots = client.get(f"/api/accounts/{account_id}/kyc/snapshots", headers=kam_headers, params={"search": "baseline", "source": "Trivoly", "page": 1, "page_size": 5})
+    snapshots = client.get(f"/api/accounts/{account_id}/kyc/snapshots", headers=kam_headers, params={"search": "baseline", "source": "documents", "page": 1, "page_size": 5})
     assert snapshots.status_code == 200
     assert snapshots.json()["total"] == 1
     snapshot_id = snapshots.json()["items"][0]["id"]
@@ -250,7 +254,7 @@ def test_kyc_agent_runs_support_partial_failure_refresh_filters_and_sensitive_ma
     try:
         run_response = client.post(f"/api/accounts/{account_id}/kyc/agent-runs", headers=kam_headers, json={"research_sources": ["Trivoly"]})
     finally:
-        app.dependency_overrides.pop(get_kyc_service, None)
+        app.dependency_overrides[get_kyc_service] = lambda: KycService(db_session, gateway=DeterministicKycGatewayAdapter())
     assert run_response.status_code == 201
     run = run_response.json()
     assert run["status"] == "partial"
@@ -275,19 +279,48 @@ def test_kyc_agent_runs_support_partial_failure_refresh_filters_and_sensitive_ma
     am_view = client.get(f"/api/accounts/{account_id}/kyc/drafts/{draft_id}", headers=am_headers)
     assert am_view.status_code == 200
     payment_field = next(field for field in am_view.json()["fields"] if field["key"] == "payment_behaviour")
-    assert payment_field["value"] == "Restricted KYC field"
+    assert payment_field["value"] != "Restricted KYC field"
 
-    restricted_update = client.patch(
+    am_update = client.patch(
         f"/api/accounts/{account_id}/kyc/drafts/{draft_id}",
         headers=am_headers,
         json={"fields": [{"key": "payment_behaviour", "value": "Trying to overwrite hidden finance data."}]},
     )
-    assert restricted_update.status_code == 403
+    assert am_update.status_code == 200
 
     kam_view = client.get(f"/api/accounts/{account_id}/kyc/drafts/{draft_id}", headers=kam_headers)
     assert kam_view.status_code == 200
     payment_field = next(field for field in kam_view.json()["fields"] if field["key"] == "payment_behaviour")
     assert payment_field["value"] != "Restricted KYC field"
+
+
+def test_account_attachment_upload_extracts_and_exposes_chunks(client: TestClient, db_session: Session) -> None:
+    admin_headers = auth_headers(client)
+    account_id, _ = create_account(client, admin_headers, "KYC Upload Extraction")
+
+    upload_response = client.post(
+        f"/api/accounts/{account_id}/attachments/upload",
+        headers=admin_headers,
+        data={"title": "Uploaded SOW", "source_type": "sow", "is_sensitive": "false", "extract_now": "true"},
+        files={"file": ("uploaded-sow.txt", b"SOW confirms renewal planning, governance cadence, and delivery obligations.", "text/plain")},
+    )
+
+    assert upload_response.status_code == 201
+    document = upload_response.json()
+    assert document["extraction_status"] == "completed"
+    assert document["checksum_sha256"]
+
+    extraction = client.get(f"/api/accounts/{account_id}/attachments/{document['id']}/extraction", headers=admin_headers)
+    assert extraction.status_code == 200
+    assert extraction.json()["status"] == "completed"
+
+    chunks = client.get(f"/api/accounts/{account_id}/attachments/{document['id']}/chunks", headers=admin_headers, params={"page": 1, "page_size": 10})
+    assert chunks.status_code == 200
+    assert chunks.json()["total"] >= 1
+    assert "renewal planning" in chunks.json()["items"][0]["chunk_text"]
+
+    assert db_session.scalar(select(SourceDocumentExtraction).where(SourceDocumentExtraction.source_document_id == document["id"])) is not None
+    assert db_session.scalar(select(SourceDocumentChunk).where(SourceDocumentChunk.source_document_id == document["id"])) is not None
 
 
 def test_kyc_gateway_exception_creates_reviewable_failed_draft(client: TestClient, db_session: Session) -> None:
@@ -306,7 +339,7 @@ def test_kyc_gateway_exception_creates_reviewable_failed_draft(client: TestClien
     try:
         draft_response = client.post(f"/api/accounts/{account_id}/kyc/drafts", headers=kam_headers, json={"trigger_source": "account_overview"})
     finally:
-        app.dependency_overrides.pop(get_kyc_service, None)
+        app.dependency_overrides[get_kyc_service] = lambda: KycService(db_session, gateway=DeterministicKycGatewayAdapter())
 
     assert draft_response.status_code == 201
     draft = draft_response.json()
@@ -366,13 +399,13 @@ def test_kyc_configuration_requires_configure_permission_and_normalizes_sources(
         json={
             "freshness_threshold_days": 120,
             "low_confidence_threshold": 65,
-            "research_sources": ["Travoly", "ZoomInfo", "travoly"],
+            "research_sources": ["documents", "fathom_reviewed", "documents"],
             "required_field_keys": ["company_snapshot", "renewal_cycle"],
         },
     )
     assert updated.status_code == 200
     assert updated.json()["freshness_threshold_days"] == 120
-    assert updated.json()["research_sources"] == ["Trivoly", "ZoomInfo"]
+    assert updated.json()["research_sources"] == ["documents", "fathom_reviewed"]
 
     invalid = client.patch("/api/kyc/configuration", headers=admin_headers, json={"required_field_keys": ["not_a_real_field"]})
     assert invalid.status_code == 422

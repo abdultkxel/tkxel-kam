@@ -64,6 +64,35 @@ class Settings:
         self.integrations_worker_enabled = os.getenv("INTEGRATIONS_WORKER_ENABLED", "true").lower() == "true"
         self.integrations_worker_initial_delay_seconds = int(os.getenv("INTEGRATIONS_WORKER_INITIAL_DELAY_SECONDS", "45"))
         self.integrations_worker_interval_seconds = int(os.getenv("INTEGRATIONS_WORKER_INTERVAL_SECONDS", "300"))
+        self.ai_kyc_provider = os.getenv("AI_KYC_PROVIDER", "deterministic_local").strip().lower()
+        self.ai_kyc_api_key = os.getenv("AI_KYC_API_KEY", "")
+        self.ai_kyc_base_url = os.getenv("AI_KYC_BASE_URL", "").strip()
+        self.ai_kyc_model = os.getenv("AI_KYC_MODEL", "gpt-5-mini")
+        self.ai_kyc_organization = os.getenv("AI_KYC_ORGANIZATION", "").strip()
+        self.ai_kyc_project = os.getenv("AI_KYC_PROJECT", "").strip()
+        self.ai_kyc_timeout_seconds = int(os.getenv("AI_KYC_TIMEOUT_SECONDS", "45"))
+        self.ai_kyc_max_retries = int(os.getenv("AI_KYC_MAX_RETRIES", "2"))
+        self.ai_kyc_retry_backoff_seconds = float(os.getenv("AI_KYC_RETRY_BACKOFF_SECONDS", "1.5"))
+        self.ai_kyc_max_input_tokens = int(os.getenv("AI_KYC_MAX_INPUT_TOKENS", "35000"))
+        self.ai_kyc_max_output_tokens = int(os.getenv("AI_KYC_MAX_OUTPUT_TOKENS", "8000"))
+        self.ai_kyc_temperature = float(os.getenv("AI_KYC_TEMPERATURE", "0.2"))
+        self.ai_kyc_max_cost_per_run_usd = float(os.getenv("AI_KYC_MAX_COST_PER_RUN_USD", "0.25"))
+        self.ai_kyc_daily_budget_usd = float(os.getenv("AI_KYC_DAILY_BUDGET_USD", "5"))
+        self.ai_kyc_monthly_budget_usd = float(os.getenv("AI_KYC_MONTHLY_BUDGET_USD", "25"))
+        self.ai_kyc_estimated_input_cost_per_1k_usd = float(os.getenv("AI_KYC_ESTIMATED_INPUT_COST_PER_1K_USD", "0"))
+        self.ai_kyc_estimated_output_cost_per_1k_usd = float(os.getenv("AI_KYC_ESTIMATED_OUTPUT_COST_PER_1K_USD", "0"))
+        self.ai_kyc_retrieval_top_k = int(os.getenv("AI_KYC_RETRIEVAL_TOP_K", "30"))
+        self.ai_kyc_chunk_size_tokens = int(os.getenv("AI_KYC_CHUNK_SIZE_TOKENS", "650"))
+        self.ai_kyc_chunk_overlap_tokens = int(os.getenv("AI_KYC_CHUNK_OVERLAP_TOKENS", "90"))
+        self.ai_kyc_use_embeddings = os.getenv("AI_KYC_USE_EMBEDDINGS", "true").lower() == "true"
+        self.ai_kyc_embedding_provider = os.getenv("AI_KYC_EMBEDDING_PROVIDER", "openai").strip().lower()
+        self.ai_kyc_embedding_model = os.getenv("AI_KYC_EMBEDDING_MODEL", "text-embedding-3-small")
+        self.ai_kyc_embedding_dimensions = int(os.getenv("AI_KYC_EMBEDDING_DIMENSIONS", "1536"))
+        self.kyc_document_extraction_enabled = os.getenv("KYC_DOCUMENT_EXTRACTION_ENABLED", "true").lower() == "true"
+        self.kyc_document_extraction_max_file_mb = int(os.getenv("KYC_DOCUMENT_EXTRACTION_MAX_FILE_MB", "25"))
+        self.kyc_ocr_enabled = os.getenv("KYC_OCR_ENABLED", "true").lower() == "true"
+        self.kyc_ocr_engine = os.getenv("KYC_OCR_ENGINE", "tesseract").strip().lower()
+        self.kyc_ocr_min_text_chars = int(os.getenv("KYC_OCR_MIN_TEXT_CHARS", "80"))
 
 
 @lru_cache

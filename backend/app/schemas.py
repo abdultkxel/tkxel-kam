@@ -853,6 +853,16 @@ class SourceDocumentRead(BaseModel):
     file_name: str | None = None
     file_url: str | None = None
     link_url: str | None = None
+    storage_backend: str | None = None
+    mime_type: str | None = None
+    size_bytes: int | None = None
+    checksum_sha256: str | None = None
+    extracted_text_checksum: str | None = None
+    extraction_started_at: datetime | None = None
+    extraction_completed_at: datetime | None = None
+    extraction_error: str | None = None
+    ocr_status: str | None = None
+    ocr_engine: str | None = None
     uploaded_by_name: str
     extraction_status: str
     confidence: int
@@ -912,13 +922,66 @@ class SourceDocumentPageRead(BaseModel):
     pages: int
 
 
+class SourceDocumentExtractionRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    source_document_id: str
+    status: str
+    extractor_name: str
+    extractor_version: str
+    mime_type: str | None = None
+    page_count: int
+    metadata_json: dict[str, Any] = Field(default_factory=dict)
+    error_message: str | None = None
+    started_at: datetime | None = None
+    completed_at: datetime | None = None
+    created_at: datetime
+
+
+class SourceDocumentChunkRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    source_document_id: str
+    extraction_id: str | None = None
+    account_id: str | None = None
+    engagement_id: str | None = None
+    chunk_index: int
+    chunk_text: str
+    chunk_hash: str
+    page_number: int | None = None
+    section_label: str | None = None
+    token_count: int
+    sensitivity_level: str
+    source_type: str
+    trust_score: int
+    embedding_provider: str | None = None
+    embedding_model: str | None = None
+    metadata_json: dict[str, Any] = Field(default_factory=dict)
+    created_at: datetime
+
+
+class SourceDocumentChunkPageRead(BaseModel):
+    items: list[SourceDocumentChunkRead]
+    total: int
+    page: int
+    page_size: int
+    pages: int
+
+
 class KycCitationRead(BaseModel):
     source_document_id: str | None = None
+    source_chunk_id: str | None = None
+    source_record_id: str | None = None
     label: str
     page_number: int | None = None
+    section_label: str | None = None
     excerpt: str
     field_key: str | None = None
     restricted: bool = False
+    confidence: int | None = None
+    source_route: str | None = None
 
 
 class KycFieldRead(BaseModel):
@@ -935,6 +998,10 @@ class KycFieldRead(BaseModel):
     conflict: bool = False
     previous_value: str | None = None
     citations: list[KycCitationRead] = Field(default_factory=list)
+    missing_evidence_note: str | None = None
+    conflicts: list[str] = Field(default_factory=list)
+    reviewer_notes: list[str] = Field(default_factory=list)
+    suggested_follow_up_questions: list[str] = Field(default_factory=list)
 
 
 class KycWorkstreamRead(BaseModel):
@@ -947,6 +1014,10 @@ class KycWorkstreamRead(BaseModel):
     output: dict[str, Any] = Field(default_factory=dict)
     citations: list[KycCitationRead] = Field(default_factory=list)
     missing_fields: list[str] = Field(default_factory=list)
+    reviewer_notes: list[str] = Field(default_factory=list)
+    suggested_follow_up_questions: list[str] = Field(default_factory=list)
+    retrieved_chunk_ids: list[str] = Field(default_factory=list)
+    provider_response_id: str | None = None
     error_message: str | None = None
     started_at: datetime | None = None
     completed_at: datetime | None = None
