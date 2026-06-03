@@ -9,6 +9,7 @@ export type UserRole =
   | 'kam_head'
   | 'content_specialist'
   | 'commercial_stakeholder'
+  | 'delivery_lead'
   | 'delivery_stakeholder'
   | (string & {})
 

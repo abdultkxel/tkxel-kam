@@ -215,6 +215,22 @@ DEFAULT_ROLES: tuple[DefaultRole, ...] = (
             ("dashboards_reporting", ("view",)),
         ),
     ),
+    DefaultRole(
+        slug="delivery_lead",
+        name="Delivery Lead",
+        description="Tkxel delivery lead for engagement health, escalations, governance, and delivery tasks.",
+        permission_rules=(
+            ("engagement_sow_management", ("view", "update", "export")),
+            ("account_overview", ("view", "update")),
+            ("scoring_engine", ("view", "update")),
+            ("signals_attention", ("view", "update")),
+            ("playbooks_tasks_calendar", WORK_ACTIONS),
+            ("escalation_management", WORK_ACTIONS),
+            ("governance_reviews", ("view", "create", "update")),
+            ("account_timeline", ("view", "create")),
+            ("dashboards_reporting", ("view",)),
+        ),
+    ),
 )
 
 

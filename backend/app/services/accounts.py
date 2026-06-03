@@ -554,7 +554,7 @@ class AccountService:
         role_map = {
             "primary_am": {"account_manager", "am", "kam_head", "admin"},
             "supporting_am": {"account_manager", "am", "kam_head", "admin"},
-            "ops_lead": {"ops_lead", "delivery_stakeholder", "admin", "kam_head"},
+            "ops_lead": {"ops_lead", "delivery_lead", "delivery_stakeholder", "admin", "kam_head"},
             "leadership_sponsor": {"leadership_viewer", "leadership", "kam_head", "admin"},
         }
         allowed = role_map.get(ownership_role, set())

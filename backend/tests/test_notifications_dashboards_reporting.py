@@ -9,7 +9,7 @@ from sqlalchemy.pool import StaticPool
 
 from app.database import Base, get_db
 from app.main import app
-from app.models import Account, AccountOwner, CustomFieldDefinition, NotificationRecord, Signal, SlaEscalatedItem
+from app.models import Account, AccountOwner, CustomFieldDefinition, NotificationRecord, Signal, SlaEscalatedItem, Task
 from app.services.seed import seed_default_data
 
 
@@ -161,6 +161,11 @@ def test_dashboard_digest_and_report_workflows(client: TestClient, db_session: S
     owner = seeded_user(client, admin_headers, "account_manager")
     create_owned_account(db_session, owner, "dashboard-report-account")
 
+    current_dashboard = client.get("/api/dashboards/me", headers=admin_headers)
+    assert current_dashboard.status_code == 200
+    assert current_dashboard.json()["dashboard"] == "kam_head_portfolio"
+    assert current_dashboard.json()["role_group"] == "admin"
+
     dashboard = client.get("/api/dashboards/am-home", headers=admin_headers)
     assert dashboard.status_code == 200
     widget_keys = {item["key"] for item in dashboard.json()["widgets"]}
@@ -196,6 +201,87 @@ def test_dashboard_digest_and_report_workflows(client: TestClient, db_session: S
     exported = client.post(f"/api/reports/{report.json()['id']}/export", headers=admin_headers, json={"export_format": "csv"})
     assert exported.status_code == 200
     assert exported.json()["content_json"]["format"] == "csv"
+
+
+def test_role_based_dashboard_profiles_and_reduced_direct_endpoints(client: TestClient, db_session: Session) -> None:
+    admin_headers = auth_headers(client)
+    owner = seeded_user(client, admin_headers, "account_manager")
+    create_owned_account(db_session, owner, "role-dashboard-account")
+
+    owner_headers = auth_headers(client, owner["email"], "User@12345")
+    am_dashboard = client.get("/api/dashboards/me", headers=owner_headers)
+    assert am_dashboard.status_code == 200
+    assert am_dashboard.json()["dashboard"] == "am_home"
+    assert am_dashboard.json()["role_group"] == "account_manager"
+    assert "leadership" not in {item["key"] for item in am_dashboard.json()["widgets"]}
+    assert "ai_task_summary" in {item["key"] for item in am_dashboard.json()["widgets"]}
+
+    kam_head = seeded_user(client, admin_headers, "kam_head")
+    kam_headers = auth_headers(client, kam_head["email"], "User@12345")
+    kam_dashboard = client.get("/api/dashboards/me", headers=kam_headers)
+    assert kam_dashboard.status_code == 200
+    assert kam_dashboard.json()["dashboard"] == "kam_head_portfolio"
+    assert kam_dashboard.json()["role_group"] == "kam_head"
+
+    reduced = client.get("/api/dashboards/leadership", headers=kam_headers)
+    assert reduced.status_code == 200
+    assert reduced.json()["dashboard"] == "kam_head_portfolio"
+    assert reduced.json()["metadata"]["requested_dashboard"] == "leadership"
+    assert reduced.json()["metadata"]["reduced_scope"] is True
+
+    leader = seeded_user(client, admin_headers, "leadership_viewer")
+    leader_headers = auth_headers(client, leader["email"], "User@12345")
+    leader_dashboard = client.get("/api/dashboards/me", headers=leader_headers)
+    assert leader_dashboard.status_code == 200
+    assert leader_dashboard.json()["dashboard"] == "leadership"
+    assert leader_dashboard.json()["read_only"] is True
+    forecast = next(item for item in leader_dashboard.json()["widgets"] if item["key"] == "forecast_chart")
+    assert forecast["value"]["pipeline_value"] == "Restricted"
+
+
+def test_delivery_lead_dashboard_and_system_role_protection(client: TestClient, db_session: Session) -> None:
+    admin_headers = auth_headers(client)
+    owner = seeded_user(client, admin_headers, "account_manager")
+    delivery = seeded_user(client, admin_headers, "delivery_lead")
+    account = create_owned_account(db_session, owner, "delivery-dashboard-account")
+    db_session.add(
+        AccountOwner(
+            account_id=account.id,
+            user_id=delivery["id"],
+            user_name=delivery["full_name"],
+            user_email=delivery["email"],
+            ownership_role="ops_lead",
+            is_primary=False,
+            is_active=True,
+            rationale="Delivery lead assignment.",
+            created_by_id=owner["id"],
+        )
+    )
+    db_session.add(
+        Task(
+            account_id=account.id,
+            title="Resolve delivery blocker",
+            owner_id=delivery["id"],
+            owner_name=delivery["full_name"],
+            due_at=datetime.now(timezone.utc) + timedelta(days=1),
+            status="open",
+            priority="critical",
+            created_by_id=owner["id"],
+        )
+    )
+    db_session.commit()
+
+    delivery_headers = auth_headers(client, delivery["email"], "User@12345")
+    dashboard = client.get("/api/dashboards/me", headers=delivery_headers)
+    assert dashboard.status_code == 200
+    body = dashboard.json()
+    assert body["dashboard"] == "delivery"
+    assert body["role_group"] == "delivery_lead"
+    assert {"tasks", "signals", "escalations", "governance"}.issubset({item["key"] for item in body["widgets"]})
+
+    protected = client.delete("/api/admin/roles/delivery_lead", headers=admin_headers)
+    assert protected.status_code == 400
+    assert protected.json()["detail"] == "System roles cannot be deleted"
 
 
 def test_account_manager_cannot_configure_sla_rules(client: TestClient) -> None:
