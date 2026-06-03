@@ -35,13 +35,14 @@ from app.schemas import (
 from app.services.account_access import AccountAccessService, GLOBAL_EDIT_ROLES
 from app.services.audit import AuditService
 from app.services.kyc_gateway import DeterministicKycGatewayAdapter, KycGatewayAdapter, KycGatewayRequest
+from app.services.kyc_retrieval import KycRetrievalService
 from app.services.timeline import TimelineService
 from app.services.user_management import page_count
 
 logger = logging.getLogger(__name__)
 
 AI_DISCLAIMER = "AI-assisted output generated from recorded platform data. Verify before use in client communication."
-DEFAULT_RESEARCH_SOURCES = ["Trivoly", "ZoomInfo", "CrunchBase"]
+DEFAULT_RESEARCH_SOURCES = ["documents", "engagements", "timeline", "account_notes", "fathom_reviewed", "prior_snapshots"]
 LOW_CONFIDENCE_THRESHOLD = 70
 FRESHNESS_THRESHOLD_DAYS = 90
 
@@ -613,7 +614,27 @@ class KycService:
 
     @staticmethod
     def _normalize_research_sources(research_sources: list[str]) -> list[str]:
-        aliases = {"travoly": "Trivoly", "trivoly": "Trivoly", "zoominfo": "ZoomInfo", "crunchbase": "CrunchBase"}
+        aliases = {
+            "documents": "documents",
+            "source_documents": "documents",
+            "attachments": "documents",
+            "engagements": "engagements",
+            "sow": "engagements",
+            "timeline": "timeline",
+            "account_notes": "account_notes",
+            "notes": "account_notes",
+            "fathom": "fathom_reviewed",
+            "fathom_reviewed": "fathom_reviewed",
+            "prior_snapshots": "prior_snapshots",
+            "prior_kyc": "prior_snapshots",
+            "openai": "openai_context",
+            "openai_context": "openai_context",
+            # Legacy labels are accepted for backwards compatibility, but they do not trigger standalone providers.
+            "travoly": "documents",
+            "trivoly": "documents",
+            "zoominfo": "documents",
+            "crunchbase": "documents",
+        }
         normalized: list[str] = []
         seen: set[str] = set()
         unknown: list[str] = []
@@ -667,6 +688,16 @@ class KycService:
         current_user: User,
         latest_snapshot: KycSnapshot | None,
     ) -> KycGatewayRequest:
+        retrieved_context: list[dict[str, Any]] = []
+        if getattr(self.gateway, "requires_retrieval_context", False):
+            retrieved_context = KycRetrievalService(self.kyc.db).prepare_context(
+                account=account,
+                source_documents=source_documents,
+                current_user=current_user,
+                workstreams=[dict(item) for item in WORKSTREAMS],
+                can_view_sensitive=self._can_view_sensitive(current_user),
+                prior_snapshot=latest_snapshot,
+            )
         return KycGatewayRequest(
             account_context={
                 "id": account.id,
@@ -704,8 +735,13 @@ class KycService:
                     "id": document.id,
                     "title": document.title,
                     "source_type": document.source_type,
+                    "file_name": document.file_name,
+                    "storage_backend": document.storage_backend,
+                    "mime_type": document.mime_type,
                     "confidence": document.confidence,
                     "extraction_status": document.extraction_status,
+                    "extraction_error": document.extraction_error,
+                    "ocr_status": document.ocr_status,
                     "is_sensitive": document.is_sensitive,
                     "citations": [
                         {
@@ -726,6 +762,7 @@ class KycService:
             trigger_source=trigger_source,
             can_view_sensitive=self._can_view_sensitive(current_user),
             workstreams=[dict(item) for item in WORKSTREAMS],
+            retrieved_context=retrieved_context,
         )
 
     def _build_agent_run(
@@ -748,6 +785,8 @@ class KycService:
             research_sources=research_sources,
             triggered_by_id=current_user.id,
             triggered_by_name=current_user.full_name,
+            queued_at=now,
+            max_retries=0,
             started_at=now,
         )
         self.kyc.save_agent_run(run)
@@ -778,6 +817,9 @@ class KycService:
             run.completed_at = datetime.now(timezone.utc)
             return run
         for workstream in gateway_response.workstreams:
+            reviewer_notes = self._reviewer_notes_from_output(workstream.output)
+            follow_up_questions = self._follow_up_questions_from_output(workstream.output)
+            retrieved_chunk_ids = self._retrieved_chunk_ids_from_citations(workstream.citations)
             self.kyc.save_workstream(
                 KycWorkstreamOutput(
                     run_id=run.id,
@@ -790,6 +832,10 @@ class KycService:
                     citations_json=workstream.citations,
                     missing_fields=workstream.missing_fields,
                     confidence=workstream.confidence,
+                    reviewer_notes_json=reviewer_notes,
+                    follow_up_questions_json=follow_up_questions,
+                    retrieved_chunk_ids=retrieved_chunk_ids,
+                    provider_response_id=gateway_response.metadata.get("provider_response_id"),
                     error_message=workstream.error_message,
                     started_at=workstream.started_at or now,
                     completed_at=workstream.completed_at or datetime.now(timezone.utc),
@@ -797,6 +843,15 @@ class KycService:
             )
         run.status = gateway_response.status
         run.error_message = gateway_response.error_message
+        run.provider_json = {"adapter": gateway_response.metadata.get("adapter"), "model": gateway_response.metadata.get("model")}
+        run.usage_json = dict(gateway_response.metadata.get("usage") or {})
+        run.cost_json = dict(gateway_response.metadata.get("cost") or {})
+        run.provider_response_id = gateway_response.metadata.get("provider_response_id")
+        run.model_name = gateway_response.metadata.get("model")
+        run.retrieval_summary_json = {
+            "retrieved_context_count": gateway_response.metadata.get("retrieved_context_count"),
+            "source_document_ids": [document.id for document in source_documents],
+        }
         run.completed_at = datetime.now(timezone.utc)
         return run
 
@@ -829,6 +884,10 @@ class KycService:
                     "conflict": False,
                     "previous_value": previous.get(item["key"]),
                     "citations": output.get("citations", []),
+                    "missing_evidence_note": output.get("missing_evidence_note"),
+                    "conflicts": output.get("conflicts", []),
+                    "reviewer_notes": output.get("reviewer_notes", []),
+                    "suggested_follow_up_questions": output.get("suggested_follow_up_questions", []),
                 }
             )
         return fields
@@ -940,6 +999,36 @@ class KycService:
     @staticmethod
     def _field_labels_for_workstream(workstream_key: str) -> list[str]:
         return [str(field["label"]) for field in FIELD_CATALOG if field["workstream_key"] == workstream_key]
+
+    @staticmethod
+    def _reviewer_notes_from_output(output: dict[str, dict[str, Any]]) -> list[str]:
+        notes: list[str] = []
+        for value in output.values():
+            for note in value.get("reviewer_notes") or []:
+                if isinstance(note, str) and note.strip():
+                    notes.append(note.strip())
+        return notes[:20]
+
+    @staticmethod
+    def _follow_up_questions_from_output(output: dict[str, dict[str, Any]]) -> list[str]:
+        questions: list[str] = []
+        for value in output.values():
+            for question in value.get("suggested_follow_up_questions") or []:
+                if isinstance(question, str) and question.strip():
+                    questions.append(question.strip())
+        return questions[:20]
+
+    @staticmethod
+    def _retrieved_chunk_ids_from_citations(citations: list[dict[str, Any]]) -> list[str]:
+        seen: set[str] = set()
+        chunk_ids: list[str] = []
+        for citation in citations:
+            chunk_id = citation.get("source_chunk_id")
+            if not chunk_id or chunk_id in seen:
+                continue
+            seen.add(str(chunk_id))
+            chunk_ids.append(str(chunk_id))
+        return chunk_ids
 
     @staticmethod
     def _citations_from_documents(source_documents: list[SourceDocument], field_keys: dict[str, Any] | None = None) -> list[dict[str, Any]]:
@@ -1109,6 +1198,10 @@ class KycService:
                     output=self._masked_workstream_output(item.output_json, current_user),
                     citations=self._citations_read(item.citations_json, current_user),
                     missing_fields=list(item.missing_fields),
+                    reviewer_notes=list(item.reviewer_notes_json),
+                    suggested_follow_up_questions=list(item.follow_up_questions_json),
+                    retrieved_chunk_ids=list(item.retrieved_chunk_ids),
+                    provider_response_id=item.provider_response_id,
                     error_message=item.error_message,
                     started_at=item.started_at,
                     completed_at=item.completed_at,
@@ -1134,6 +1227,10 @@ class KycService:
                 conflict=bool(field.get("conflict", False)),
                 previous_value=None if field.get("is_sensitive") and not self._can_view_sensitive(current_user) else field.get("previous_value"),
                 citations=self._citations_read(field.get("citations", []), current_user),
+                missing_evidence_note=field.get("missing_evidence_note"),
+                conflicts=list(field.get("conflicts") or []),
+                reviewer_notes=list(field.get("reviewer_notes") or []),
+                suggested_follow_up_questions=list(field.get("suggested_follow_up_questions") or []),
             )
             for field in fields
         ]
@@ -1146,11 +1243,16 @@ class KycService:
             items.append(
                 KycCitationRead(
                     source_document_id=citation.get("source_document_id"),
+                    source_chunk_id=citation.get("source_chunk_id"),
+                    source_record_id=citation.get("source_record_id"),
                     label=str(citation.get("label") or "Source"),
                     page_number=citation.get("page_number"),
+                    section_label=citation.get("section_label"),
                     excerpt="Restricted citation" if restricted else str(citation.get("excerpt") or ""),
                     field_key=citation.get("field_key"),
                     restricted=restricted,
+                    confidence=citation.get("confidence"),
+                    source_route=citation.get("source_route"),
                 )
             )
         return items
@@ -1222,6 +1324,6 @@ class KycService:
         }
 
     def _can_view_sensitive(self, current_user: User) -> bool:
-        if current_user.role in GLOBAL_EDIT_ROLES:
+        if current_user.role in {*GLOBAL_EDIT_ROLES, "account_manager", "am"}:
             return True
         return RbacRepository(self.accounts.db).role_has_permission(current_user.role, "kyc", "export")

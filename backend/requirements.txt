@@ -2,6 +2,12 @@ fastapi
 cryptography
 email-validator
 google-auth
+openai
+pdf2image
+Pillow
+pypdf
+python-docx
+pytesseract
 requests
 psycopg[binary]
 PyJWT

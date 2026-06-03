@@ -1,9 +1,12 @@
+import hashlib
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 
-from fastapi import HTTPException, status
+from fastapi import HTTPException, UploadFile, status
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from app.models import Account, AccountOwner, AccountOwnershipHistory, SourceCitation, SourceDocument, User
+from app.models import Account, AccountOwner, AccountOwnershipHistory, SourceCitation, SourceDocument, SourceDocumentChunk, User
 from app.repositories.accounts import AccountRepository
 from app.repositories.audit import AuditRepository
 from app.repositories.kyc import KycRepository
@@ -23,13 +26,20 @@ from app.schemas import (
     HealthScoreRead,
     MessageResponse,
     SourceDocumentCreateRequest,
+    SourceDocumentChunkPageRead,
+    SourceDocumentChunkRead,
+    SourceDocumentExtractionRead,
     SourceDocumentPageRead,
     SourceDocumentRead,
 )
 from app.services.account_access import AccountAccessService, GLOBAL_EDIT_ROLES
 from app.services.audit import AuditService
+from app.services.kyc_document_extraction import KycDocumentExtractionService
+from app.services.storage import ContentStorageService
 from app.services.timeline import TimelineService
 from app.services.user_management import page_count
+
+SOURCE_TYPES = {"project_charter", "sow", "attachment", "source_link", "commercial_note", "research", "manual_import"}
 
 
 class AccountService:
@@ -349,6 +359,145 @@ class AccountService:
         self.accounts.commit()
         return SourceDocumentRead.model_validate(document)
 
+    async def upload_attachment(
+        self,
+        account_id: str,
+        upload: UploadFile,
+        current_user: User,
+        *,
+        title: str | None = None,
+        source_type: str = "attachment",
+        is_sensitive: bool = False,
+        extract_now: bool = True,
+    ) -> SourceDocumentRead:
+        account = self._get_account_or_404(account_id)
+        self.access.require_account_update(current_user, account)
+        if source_type not in SOURCE_TYPES:
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Source type is not supported for KYC extraction")
+        stored = await ContentStorageService().save_upload(upload)
+        checksum = self._file_checksum(stored.file_path)
+        document = SourceDocument(
+            account_id=account_id,
+            title=(title or stored.file_name).strip(),
+            source_type=source_type,
+            file_name=stored.file_name,
+            storage_backend=stored.storage_backend,
+            storage_path=stored.file_path,
+            mime_type=stored.mime_type,
+            size_bytes=stored.size_bytes,
+            checksum_sha256=checksum,
+            uploaded_by_id=current_user.id,
+            uploaded_by_name=current_user.full_name,
+            extraction_status="queued" if extract_now else "needs_review",
+            confidence=0 if extract_now else 50,
+            pages=0,
+            is_sensitive=is_sensitive,
+        )
+        self.accounts.add_attachment(document)
+        self.audit.log(
+            module="account_onboarding_workspace",
+            action="attachment_upload",
+            entity_type="source_document",
+            entity_id=document.id,
+            actor=current_user,
+            after_value={
+                "title": document.title,
+                "source_type": document.source_type,
+                "mime_type": document.mime_type,
+                "size_bytes": document.size_bytes,
+                "extract_now": extract_now,
+            },
+        )
+        self.timeline.add_account_event(
+            account_id=account_id,
+            title=f"Source uploaded: {document.title}",
+            description=f"{document.source_type.replace('_', ' ')} source uploaded for AI KYC extraction.",
+            actor=current_user,
+            source_record_id=document.id,
+            source_record_type="source_document",
+            source_record_route=f"/accounts/{account_id}?tab=documents",
+        )
+        if extract_now:
+            extraction_service = KycDocumentExtractionService(self.accounts.db)
+            extraction = extraction_service.extract_document(document, force=True)
+            if extraction.status == "completed":
+                extraction_service.chunk_document(document, extraction=extraction, force=True)
+            self.audit.log(
+                module="kyc",
+                action="source_extraction",
+                entity_type="source_document",
+                entity_id=document.id,
+                actor=current_user,
+                after_value={"extraction_status": document.extraction_status, "ocr_status": document.ocr_status, "pages": document.pages},
+            )
+        self.accounts.commit()
+        return SourceDocumentRead.model_validate(document)
+
+    def extract_attachment(self, account_id: str, attachment_id: str, current_user: User, *, force: bool = False) -> SourceDocumentExtractionRead:
+        account = self._get_account_or_404(account_id)
+        self.access.require_account_update(current_user, account)
+        document = self._get_attachment_for_account(account_id, attachment_id)
+        if document.is_sensitive and current_user.role not in {*GLOBAL_EDIT_ROLES, "account_manager", "am"}:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="You cannot extract sensitive source documents")
+        extraction_service = KycDocumentExtractionService(self.accounts.db)
+        extraction = extraction_service.extract_document(document, force=force)
+        if extraction.status == "completed":
+            extraction_service.chunk_document(document, extraction=extraction, force=force)
+        self.audit.log(
+            module="kyc",
+            action="source_extraction",
+            entity_type="source_document",
+            entity_id=document.id,
+            actor=current_user,
+            after_value={"extraction_status": document.extraction_status, "ocr_status": document.ocr_status, "pages": document.pages},
+        )
+        self.accounts.commit()
+        return SourceDocumentExtractionRead.model_validate(extraction)
+
+    def attachment_extraction(self, account_id: str, attachment_id: str, current_user: User) -> SourceDocumentExtractionRead:
+        account = self._get_account_or_404(account_id)
+        self.access.require_account_view(current_user, account)
+        document = self._get_attachment_for_account(account_id, attachment_id)
+        if document.is_sensitive and current_user.role not in {*GLOBAL_EDIT_ROLES, "account_manager", "am"}:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="You cannot view extraction details for sensitive source documents")
+        extraction = KycDocumentExtractionService(self.accounts.db).latest_extraction(attachment_id)
+        if extraction is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Extraction was not found for this attachment")
+        return SourceDocumentExtractionRead.model_validate(extraction)
+
+    def attachment_chunks(
+        self,
+        account_id: str,
+        attachment_id: str,
+        current_user: User,
+        *,
+        page: int = 1,
+        page_size: int = 25,
+    ) -> SourceDocumentChunkPageRead:
+        account = self._get_account_or_404(account_id)
+        self.access.require_account_view(current_user, account)
+        document = self._get_attachment_for_account(account_id, attachment_id)
+        if document.is_sensitive and current_user.role not in {*GLOBAL_EDIT_ROLES, "account_manager", "am"}:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="You cannot view chunks for sensitive source documents")
+        conditions = [SourceDocumentChunk.source_document_id == attachment_id]
+        total = self.accounts.db.scalar(select(func.count(SourceDocumentChunk.id)).where(*conditions)) or 0
+        items = list(
+            self.accounts.db.scalars(
+                select(SourceDocumentChunk)
+                .where(*conditions)
+                .order_by(SourceDocumentChunk.chunk_index)
+                .offset((page - 1) * page_size)
+                .limit(page_size)
+            )
+        )
+        return SourceDocumentChunkPageRead(
+            items=[SourceDocumentChunkRead.model_validate(item) for item in items],
+            total=total,
+            page=page,
+            page_size=page_size,
+            pages=page_count(total, page_size),
+        )
+
     def delete_attachment(self, account_id: str, attachment_id: str, current_user: User) -> MessageResponse:
         account = self._get_account_or_404(account_id)
         self.access.require_account_update(current_user, account)
@@ -368,6 +517,19 @@ class AccountService:
         self.accounts.delete_attachment(document)
         self.accounts.commit()
         return MessageResponse(message="Attachment deleted successfully")
+
+    def _get_attachment_for_account(self, account_id: str, attachment_id: str) -> SourceDocument:
+        document = self.accounts.get_attachment(attachment_id)
+        if document is None or document.account_id != account_id:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Attachment was not found")
+        return document
+
+    @staticmethod
+    def _file_checksum(path: str) -> str | None:
+        try:
+            return hashlib.sha256(Path(path).read_bytes()).hexdigest()
+        except OSError:
+            return None
 
     def _get_account_or_404(self, account_id: str) -> Account:
         account = self.accounts.get_by_id(account_id)

@@ -1,7 +1,7 @@
 import argparse
 
 from app.database import SessionLocal, init_db
-from app.services.seed import seed_default_data
+from app.services.seed import seed_base_data
 
 
 def migrate() -> None:
@@ -12,8 +12,8 @@ def migrate() -> None:
 def seed() -> None:
     init_db()
     with SessionLocal() as db:
-        user = seed_default_data(db)
-        print(f"Seeded default roles, permissions, and super admin: {user.email}")
+        user = seed_base_data(db)
+        print(f"Seeded base roles, permissions, allowed domains, and users. Super admin: {user.email}")
 
 
 def main() -> None:

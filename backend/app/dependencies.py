@@ -24,6 +24,7 @@ from app.services.escalations import EscalationService
 from app.services.governance import GovernanceService
 from app.services.integrations import IntegrationService
 from app.services.kyc import KycService
+from app.services.kyc_gateway import build_kyc_gateway_adapter
 from app.services.dashboards import DashboardsService
 from app.services.notifications import NotificationsService
 from app.services.onboarding import OnboardingService
@@ -163,7 +164,7 @@ def get_retention_service(db: Annotated[Session, Depends(get_db)]) -> RetentionS
 
 
 def get_kyc_service(db: Annotated[Session, Depends(get_db)]) -> KycService:
-    return KycService(db)
+    return KycService(db, gateway=build_kyc_gateway_adapter())
 
 
 def get_scoring_service(db: Annotated[Session, Depends(get_db)]) -> ScoringService:

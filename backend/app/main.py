@@ -40,7 +40,7 @@ from app.routers import (
     timeline,
     users,
 )
-from app.services.seed import seed_default_data
+from app.services.seed import seed_base_data
 from app.services.notifications import NotificationsService
 from app.services.reports import ReportsService
 from app.services.timeline import TimelineService
@@ -53,7 +53,7 @@ logger = logging.getLogger(__name__)
 async def lifespan(app: FastAPI):
     init_db()
     with SessionLocal() as db:
-        seed_default_data(db)
+        seed_base_data(db)
     retention_worker: asyncio.Task | None = None
     notifications_reporting_worker: asyncio.Task | None = None
     integrations_worker: asyncio.Task | None = None

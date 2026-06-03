@@ -1,7 +1,7 @@
 from datetime import datetime
 from typing import Annotated, Literal
 
-from fastapi import APIRouter, Depends, Query, status
+from fastapi import APIRouter, Depends, File, Form, Query, UploadFile, status
 
 from app.dependencies import get_account_service, get_current_user, get_custom_field_service, get_engagement_service, get_onboarding_service, require_permission
 from app.models import User
@@ -25,6 +25,8 @@ from app.schemas import (
     EngagementRead,
     MessageResponse,
     SourceDocumentCreateRequest,
+    SourceDocumentChunkPageRead,
+    SourceDocumentExtractionRead,
     SourceDocumentPageRead,
     SourceDocumentRead,
 )
@@ -389,6 +391,97 @@ def add_attachment(
     service: Annotated[AccountService, Depends(get_account_service)],
 ) -> SourceDocumentRead:
     return service.add_attachment(account_id, payload, current_user)
+
+
+@router.post(
+    "/{account_id}/attachments/upload",
+    response_model=SourceDocumentRead,
+    status_code=status.HTTP_201_CREATED,
+    summary="Upload account source document",
+    description=(
+        "Uploads a real account source document for AI KYC extraction. Local/demo environments store the file locally, "
+        "calculate a checksum, and can immediately extract text/chunks from PDF, DOCX, or plain text sources."
+    ),
+    responses={
+        400: {"description": "Uploaded file is empty, too large, unsupported, or cannot be extracted."},
+        401: {"description": "Missing, invalid, or expired bearer token."},
+        403: {"description": "Authenticated user cannot update this account."},
+        404: {"description": "Account was not found."},
+        422: {"description": "Upload form validation failed."},
+    },
+)
+async def upload_attachment(
+    account_id: str,
+    current_user: Annotated[User, Depends(get_current_user)],
+    service: Annotated[AccountService, Depends(get_account_service)],
+    file: Annotated[UploadFile, File(description="PDF, DOCX, text, CSV, or image file to store as an account source.")],
+    title: Annotated[str | None, Form(description="Optional display title. Defaults to uploaded filename.")] = None,
+    source_type: Annotated[str, Form(description="Source type such as sow, project_charter, attachment, commercial_note, or manual_import.")] = "attachment",
+    is_sensitive: Annotated[bool, Form(description="Marks source as sensitive for RBAC-aware KYC retrieval.")] = False,
+    extract_now: Annotated[bool, Form(description="Run text extraction and chunking immediately after upload.")] = True,
+) -> SourceDocumentRead:
+    return await service.upload_attachment(account_id, file, current_user, title=title, source_type=source_type, is_sensitive=is_sensitive, extract_now=extract_now)
+
+
+@router.post(
+    "/{account_id}/attachments/{attachment_id}/extract",
+    response_model=SourceDocumentExtractionRead,
+    summary="Extract account source document",
+    description="Runs local text extraction, OCR when configured and needed, and chunk generation for an uploaded account source document.",
+    responses={
+        400: {"description": "Attachment has no local file path or is unsupported."},
+        403: {"description": "Authenticated user cannot update or extract this attachment."},
+        404: {"description": "Account or attachment was not found."},
+    },
+)
+def extract_attachment(
+    account_id: str,
+    attachment_id: str,
+    current_user: Annotated[User, Depends(get_current_user)],
+    service: Annotated[AccountService, Depends(get_account_service)],
+    force: Annotated[bool, Query(description="Re-extract even when a completed extraction already exists.")] = False,
+) -> SourceDocumentExtractionRead:
+    return service.extract_attachment(account_id, attachment_id, current_user, force=force)
+
+
+@router.get(
+    "/{account_id}/attachments/{attachment_id}/extraction",
+    response_model=SourceDocumentExtractionRead,
+    summary="Read account source extraction",
+    description="Returns the latest stored text extraction metadata for an account source document without returning raw extracted text.",
+    responses={
+        403: {"description": "Authenticated user cannot view this extraction."},
+        404: {"description": "Account, attachment, or extraction was not found."},
+    },
+)
+def read_attachment_extraction(
+    account_id: str,
+    attachment_id: str,
+    current_user: Annotated[User, Depends(get_current_user)],
+    service: Annotated[AccountService, Depends(get_account_service)],
+) -> SourceDocumentExtractionRead:
+    return service.attachment_extraction(account_id, attachment_id, current_user)
+
+
+@router.get(
+    "/{account_id}/attachments/{attachment_id}/chunks",
+    response_model=SourceDocumentChunkPageRead,
+    summary="List account source chunks",
+    description="Returns source chunks used by AI KYC retrieval with pagination and source metadata.",
+    responses={
+        403: {"description": "Authenticated user cannot view these chunks."},
+        404: {"description": "Account or attachment was not found."},
+    },
+)
+def list_attachment_chunks(
+    account_id: str,
+    attachment_id: str,
+    current_user: Annotated[User, Depends(get_current_user)],
+    service: Annotated[AccountService, Depends(get_account_service)],
+    page: Annotated[int, Query(ge=1, description="One-based page number.")] = 1,
+    page_size: Annotated[int, Query(ge=1, le=100, description="Number of chunks per page.")] = 25,
+) -> SourceDocumentChunkPageRead:
+    return service.attachment_chunks(account_id, attachment_id, current_user, page=page, page_size=page_size)
 
 
 @router.delete(

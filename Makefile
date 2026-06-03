@@ -10,7 +10,7 @@ help:
 	@echo "  make run      - Run all services in the background"
 	@echo "  make qa-run   - Run all services for office LAN sharing using this machine's LAN IP"
 	@echo "  make migrate  - Create/update database schema"
-	@echo "  make seed     - Seed default data"
+	@echo "  make seed     - Seed base roles, users, and login domain data"
 	@echo "  make test     - Run backend and frontend tests in Docker"
 	@echo "  make down     - Stop Docker services"
 	@echo "  make logs     - Follow Docker logs"
