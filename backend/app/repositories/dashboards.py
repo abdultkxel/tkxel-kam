@@ -3,7 +3,7 @@ from datetime import datetime, timezone
 from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session, selectinload
 
-from app.models import Account, AccountOwner, Escalation, GovernanceEvent, KycSnapshot, Opportunity, Signal, Task
+from app.models import Account, AccountOwner, Engagement, Escalation, GovernanceEvent, KycSnapshot, Opportunity, Signal, Task
 
 
 class DashboardRepository:
@@ -15,6 +15,33 @@ class DashboardRepository:
             self.db.scalars(
                 select(AccountOwner.account_id)
                 .where(AccountOwner.user_id == user_id, AccountOwner.is_active.is_(True))
+                .distinct()
+            )
+        )
+
+    def account_ids_for_user_by_ownership_roles(self, user_id: str, ownership_roles: list[str]) -> list[str]:
+        return list(
+            self.db.scalars(
+                select(AccountOwner.account_id)
+                .where(AccountOwner.user_id == user_id, AccountOwner.is_active.is_(True), AccountOwner.ownership_role.in_(ownership_roles))
+                .distinct()
+            )
+        )
+
+    def account_ids_for_engagement_assignment(self, user_id: str) -> list[str]:
+        return list(
+            self.db.scalars(
+                select(Engagement.account_id)
+                .where(Engagement.archived_at.is_(None), or_(Engagement.owner_id == user_id, Engagement.ops_lead_id == user_id))
+                .distinct()
+            )
+        )
+
+    def account_ids_for_task_owner(self, user_id: str) -> list[str]:
+        return list(
+            self.db.scalars(
+                select(Task.account_id)
+                .where(Task.owner_id == user_id, Task.status.in_(["open", "in_progress", "blocked"]))
                 .distinct()
             )
         )

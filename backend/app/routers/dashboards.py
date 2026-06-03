@@ -10,6 +10,18 @@ from app.services.dashboards import DashboardsService
 router = APIRouter(prefix="/api/dashboards", tags=["Dashboards and Reporting"])
 
 
+@router.get("/me", response_model=DashboardRead, summary="Current user's role-based dashboard", description="Returns the dashboard profile and widgets allowed for the logged-in user's role, RBAC permissions, account scope, and field sensitivity rules.")
+def current_user_dashboard(
+    current_user: Annotated[User, Depends(get_current_user)],
+    service: Annotated[DashboardsService, Depends(get_dashboards_service)],
+    search: str | None = None,
+    risk: str | None = None,
+    page: int = Query(1, ge=1),
+    page_size: int = Query(10, ge=1, le=50),
+) -> DashboardRead:
+    return service.for_current_user(current_user, search=search, risk=risk, page=page, page_size=page_size)
+
+
 @router.get("/am-home", response_model=DashboardRead, summary="AM Home dashboard", description="Returns assigned-account operational widgets for accounts, signals, tasks, escalations, opportunities, governance cadence, and AI Task Summary.")
 def am_home(
     current_user: Annotated[User, Depends(get_current_user)],

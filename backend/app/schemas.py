@@ -7009,6 +7009,7 @@ class DashboardWidgetRead(BaseModel):
     status: Literal["complete", "empty", "failed"] = "complete"
     generated_at: datetime
     data_scope: str
+    primary_route: str | None = None
     value: Any | None = None
     items: list[dict[str, Any]] = Field(default_factory=list)
     metadata: dict[str, Any] = Field(default_factory=dict)
@@ -7017,9 +7018,14 @@ class DashboardWidgetRead(BaseModel):
 
 class DashboardRead(BaseModel):
     dashboard: str
+    display_name: str | None = None
+    role_group: str | None = None
+    read_only: bool = False
+    allowed_filters: list[str] = Field(default_factory=list)
     generated_at: datetime
     data_scope: str
     widgets: list[DashboardWidgetRead]
+    metadata: dict[str, Any] = Field(default_factory=dict)
 
 
 class TaskSummaryRefreshRead(BaseModel):

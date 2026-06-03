@@ -56,6 +56,7 @@ export interface DashboardWidget {
   status: 'complete' | 'empty' | 'failed'
   generated_at: string
   data_scope: string
+  primary_route?: string | null
   value?: unknown
   items: Record<string, unknown>[]
   metadata: Record<string, unknown>
@@ -64,9 +65,14 @@ export interface DashboardWidget {
 
 export interface DashboardRead {
   dashboard: string
+  display_name?: string | null
+  role_group?: string | null
+  read_only: boolean
+  allowed_filters: string[]
   generated_at: string
   data_scope: string
   widgets: DashboardWidget[]
+  metadata: Record<string, unknown>
 }
 
 export interface SlaRule {
@@ -218,6 +224,10 @@ export function evaluateSla(token: string) {
 
 export function getEscalatedItems(token: string, params: Record<string, string | number | undefined> = {}) {
   return apiRequest<Page<EscalatedItem>>(`/api/escalated-items${query(params)}`, { token })
+}
+
+export function getMyDashboard(token: string, params: Record<string, string | number | undefined> = {}) {
+  return apiRequest<DashboardRead>(`/api/dashboards/me${query(params)}`, { token })
 }
 
 export function getDigestSchedules(token: string) {
