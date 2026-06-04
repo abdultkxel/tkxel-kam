@@ -53,6 +53,7 @@ GovernanceCadence = Literal["weekly", "monthly", "quarterly", "yearly"]
 GovernanceEndPolicy = Literal["never", "after_occurrences", "on_date"]
 IntegrationProvider = Literal["google_calendar", "google-calendar", "fathom", "csat", "ai_llm_gateway"]
 IntegrationStatus = Literal["configuration_required", "connected", "syncing", "error", "disabled"]
+MeetingArtifactStatus = Literal["draft", "waiting_for_fathom", "ready", "attached"]
 PlaybookOwnerRule = Literal["account_primary_am", "task_creator", "ops_lead", "template_owner"]
 TaskStatus = Literal["open", "in_progress", "done", "blocked", "cancelled", "todo", "skipped"]
 TaskPriority = Literal["low", "medium", "high", "urgent", "critical"]
@@ -131,6 +132,21 @@ def validate_string_list(value: list[str], field_label: str, max_items: int = 30
         key = text.lower()
         if key in seen:
             raise ValueError(f"{field_label} must not contain duplicates.")
+        seen.add(key)
+        items.append(text)
+    return items
+
+
+def validate_meeting_action_items(value: list[str]) -> list[str]:
+    if len(value) > 50:
+        raise ValueError("Meeting action items can include at most 50 items.")
+    seen: set[str] = set()
+    items: list[str] = []
+    for item in value:
+        text = validate_short_text(item, "Meeting action item", 220)
+        key = text.lower()
+        if key in seen:
+            raise ValueError("Meeting action items must not contain duplicates.")
         seen.add(key)
         items.append(text)
     return items
@@ -4409,6 +4425,7 @@ class GovernanceActionItemCreateRequest(BaseModel):
     due_at: datetime | None = None
     due_date: datetime | None = None
     priority: EscalationPriority = "medium"
+    create_task: bool = True
 
     @field_validator("title")
     @classmethod
@@ -4456,6 +4473,7 @@ class GovernanceEventCompleteRequest(BaseModel):
     notes: str
     decisions: list[GovernanceDecisionCreateRequest] = Field(default_factory=list)
     action_items: list[GovernanceActionItemCreateRequest] = Field(default_factory=list)
+    meeting_artifact_id: str | None = None
 
     @field_validator("notes")
     @classmethod
@@ -5418,6 +5436,137 @@ class IntegrationConnectionRead(BaseModel):
     last_error: str | None = None
     created_at: datetime
     updated_at: datetime
+
+
+class UserFathomConnectionRead(BaseModel):
+    id: str | None = None
+    provider: str = "fathom"
+    enabled: bool = False
+    status: str = "configuration_required"
+    auth_type: str = "api_key"
+    credential_status: dict[str, Any] = Field(default_factory=dict)
+    settings_json: dict[str, Any] = Field(default_factory=dict)
+    last_synced_at: datetime | None = None
+    last_error: str | None = None
+    created_at: datetime | None = None
+    updated_at: datetime | None = None
+
+
+class UserFathomConnectionUpdateRequest(BaseModel):
+    enabled: bool = True
+    api_key: str | None = Field(default=None, description="Personal Fathom API key. Existing key is preserved when omitted.")
+    settings_json: dict[str, Any] | None = None
+
+    @field_validator("api_key")
+    @classmethod
+    def api_key_is_valid(cls, value: str | None) -> str | None:
+        return optional_text(value, "Fathom API key", max_length=1000)
+
+
+class MeetingArtifactRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    owner_id: str
+    provider: str
+    external_id: str | None = None
+    title: str
+    summary: str | None = None
+    action_items: list[str] = Field(default_factory=list)
+    meeting_url: str | None = None
+    source_link: str | None = None
+    occurred_at: datetime | None = None
+    scheduled_at: datetime | None = None
+    account_id: str | None = None
+    engagement_id: str | None = None
+    linked_object_type: str | None = None
+    linked_object_id: str | None = None
+    status: str
+    metadata_json: dict[str, Any] = Field(default_factory=dict)
+    created_at: datetime
+    updated_at: datetime
+
+
+class MeetingArtifactPageRead(BaseModel):
+    items: list[MeetingArtifactRead]
+    total: int
+    page: int
+    page_size: int
+    pages: int
+
+
+class MeetingArtifactCreateRequest(BaseModel):
+    provider: Literal["fathom"] = "fathom"
+    title: str | None = None
+    meeting_url: str | None = None
+    summary: str | None = None
+    action_items: list[str] = Field(default_factory=list)
+    occurred_at: datetime | None = None
+    scheduled_at: datetime | None = None
+    account_id: str | None = None
+    engagement_id: str | None = None
+    linked_object_type: str | None = None
+    linked_object_id: str | None = None
+
+    @field_validator("title", "linked_object_type", "linked_object_id")
+    @classmethod
+    def short_text_is_valid(cls, value: str | None) -> str | None:
+        return optional_text(value, "Meeting field", max_length=255)
+
+    @field_validator("meeting_url")
+    @classmethod
+    def meeting_url_is_valid(cls, value: str | None) -> str | None:
+        return validate_http_url(value, "Meeting URL")
+
+    @field_validator("summary")
+    @classmethod
+    def summary_is_valid(cls, value: str | None) -> str | None:
+        return validate_optional_long_text(value, "Meeting summary", 8000)
+
+    @field_validator("action_items")
+    @classmethod
+    def action_items_are_valid(cls, value: list[str]) -> list[str]:
+        return validate_meeting_action_items(value)
+
+    @model_validator(mode="after")
+    def has_meeting_reference(self) -> "MeetingArtifactCreateRequest":
+        if not (self.title or self.meeting_url or self.summary):
+            raise ValueError("Add a meeting title, URL, or summary.")
+        return self
+
+
+class MeetingArtifactUpdateRequest(BaseModel):
+    title: str | None = None
+    meeting_url: str | None = None
+    summary: str | None = None
+    action_items: list[str] | None = None
+    occurred_at: datetime | None = None
+    scheduled_at: datetime | None = None
+    account_id: str | None = None
+    engagement_id: str | None = None
+    linked_object_type: str | None = None
+    linked_object_id: str | None = None
+    status: MeetingArtifactStatus | None = None
+
+    @field_validator("title", "linked_object_type", "linked_object_id")
+    @classmethod
+    def optional_short_text_is_valid(cls, value: str | None) -> str | None:
+        return optional_text(value, "Meeting field", max_length=255) if value is not None else None
+
+    @field_validator("meeting_url")
+    @classmethod
+    def optional_meeting_url_is_valid(cls, value: str | None) -> str | None:
+        return validate_http_url(value, "Meeting URL") if value is not None else None
+
+    @field_validator("summary")
+    @classmethod
+    def optional_summary_is_valid(cls, value: str | None) -> str | None:
+        return validate_optional_long_text(value, "Meeting summary", 8000) if value is not None else None
+
+    @field_validator("action_items")
+    @classmethod
+    def optional_action_items_are_valid(cls, value: list[str] | None) -> list[str] | None:
+        return validate_meeting_action_items(value) if value is not None else None
 
 
 class IntegrationConnectionUpdateRequest(BaseModel):

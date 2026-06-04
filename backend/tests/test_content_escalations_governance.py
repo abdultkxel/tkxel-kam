@@ -14,7 +14,7 @@ from sqlalchemy.pool import StaticPool
 
 from app.database import Base, get_db
 from app.main import app
-from app.models import Account, AccountOwner, AiGatewayRun, AuditLog, CsatScore, CustomFieldDefinition, IntegrationImportedItem, IntegrationSyncRun, NotificationRecord, ScoreSnapshot, TimelineEntry, User
+from app.models import Account, AccountOwner, AiGatewayRun, AuditLog, CsatScore, CustomFieldDefinition, IntegrationImportedItem, IntegrationSyncRun, MeetingArtifact, NotificationRecord, ScoreSnapshot, TimelineEntry, User
 from app.services.integrations import IntegrationService
 from app.services.seed import seed_default_data
 
@@ -401,8 +401,10 @@ def test_governance_recurrence_ai_brief_integrations_and_permissions(client: Tes
     assert "credentials_json" not in configured.json()
     synced = client.post("/api/admin/integrations/google-calendar/sync", headers=headers)
     assert synced.status_code == 200
-    assert synced.json()["created"] == 1
-    assert db_session.scalar(select(IntegrationImportedItem).where(IntegrationImportedItem.external_id == "cal-1")) is not None
+    assert synced.json()["created"] == 0
+    assert synced.json()["updated"] == 0
+    assert "outbound only" in synced.json()["message"]
+    assert db_session.scalar(select(IntegrationImportedItem).where(IntegrationImportedItem.external_id == "cal-1")) is None
 
     sync_logs = client.get("/api/admin/integrations/sync-logs", headers=headers, params={"provider": "google_calendar"})
     assert sync_logs.status_code == 200
@@ -501,6 +503,32 @@ def test_profile_admin_calendar_id_and_manual_csat_flow(client: TestClient, db_s
     assert db_session.scalar(select(AuditLog).where(AuditLog.entity_id == body["id"], AuditLog.action == "map_csat_score")) is not None
 
 
+def test_google_calendar_oauth_callback_redirects_to_frontend(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
+    def token_payload(self: IntegrationService, code: str) -> dict:
+        assert code == "oauth-code"
+        return {
+            "access_token": "access-token",
+            "refresh_token": "refresh-token",
+            "token_type": "Bearer",
+            "expires_in": 3600,
+            "scope": "https://www.googleapis.com/auth/calendar.events",
+        }
+
+    monkeypatch.setattr(IntegrationService, "_exchange_google_code", token_payload)
+
+    response = client.get(
+        "/api/admin/integrations/google-calendar/oauth-callback",
+        params={"code": "oauth-code", "state": "user-id"},
+        follow_redirects=False,
+    )
+
+    assert response.status_code in {302, 307}
+    location = response.headers["location"]
+    assert location.startswith("http://127.0.0.1:5173/admin/integrations/google-calendar/callback?")
+    assert "status=success" in location
+    assert "Google+Calendar+connected+successfully" in location
+
+
 def test_fathom_api_key_sync_meeting_links_and_signed_webhook(client: TestClient, db_session: Session, monkeypatch: pytest.MonkeyPatch) -> None:
     headers = auth_headers(client)
 
@@ -594,6 +622,60 @@ def test_fathom_api_key_sync_meeting_links_and_signed_webhook(client: TestClient
         headers={"webhook-id": message_id, "webhook-timestamp": timestamp, "webhook-signature": "v1,bad", "Content-Type": "application/json"},
     )
     assert bad_webhook.status_code == 401
+
+
+def test_personal_fathom_connection_syncs_private_meeting_artifacts(client: TestClient, db_session: Session, monkeypatch: pytest.MonkeyPatch) -> None:
+    headers = auth_headers(client)
+
+    def fathom_get(url: str, request_headers: dict[str, str]) -> dict:
+        assert url.startswith("https://api.fathom.ai/external/v1/meetings/?")
+        assert "include_transcript=false" in url
+        assert request_headers["X-Api-Key"] == "personal-fathom-key"
+        return {
+            "items": [
+                {
+                    "recording_id": "meeting-1",
+                    "meeting_title": "Client governance call",
+                    "share_url": "https://fathom.video/share/meeting-1",
+                    "scheduled_start_time": "2026-06-03T10:00:00Z",
+                    "default_summary": {"markdown_formatted": "## Summary\nGovernance decisions and follow-up."},
+                    "transcript": [{"speaker": {"display_name": "Client"}, "text": "Do not store full transcript."}],
+                    "action_items": [{"description": "Send the post-meeting plan"}],
+                }
+            ]
+        }
+
+    monkeypatch.setattr(IntegrationService, "_json_get", staticmethod(fathom_get))
+
+    connection = client.patch(
+        "/api/meeting-capture/fathom/connection",
+        headers=headers,
+        json={"enabled": True, "api_key": "personal-fathom-key"},
+    )
+    assert connection.status_code == 200
+    assert connection.json()["credential_status"]["configured"] is True
+    assert "personal-fathom-key" not in connection.text
+
+    synced = client.post("/api/meeting-capture/fathom/sync", headers=headers)
+    assert synced.status_code == 200
+    assert synced.json()["created"] == 1
+
+    artifact = db_session.scalar(select(MeetingArtifact).where(MeetingArtifact.external_id == "meeting-1"))
+    assert artifact is not None
+    assert artifact.owner_id == db_session.scalar(select(User.id).where(User.email == "admin@tkxel.com"))
+    assert artifact.source_link == "https://fathom.video/share/meeting-1"
+    assert artifact.action_items == ["Send the post-meeting plan"]
+    assert artifact.metadata_json["transcript_metadata"]["omitted"] is True
+    assert "transcript" not in artifact.metadata_json
+
+    listed = client.get("/api/meeting-capture/meetings", headers=headers, params={"search": "governance"})
+    assert listed.status_code == 200
+    assert listed.json()["total"] == 1
+
+    manager_headers = auth_headers(client, "account.manager.user@tkxel.com", "User@12345")
+    manager_list = client.get("/api/meeting-capture/meetings", headers=manager_headers)
+    assert manager_list.status_code == 200
+    assert manager_list.json()["total"] == 0
 
 
 def test_timeline_ai_search_writes_unified_ai_gateway_run(client: TestClient, db_session: Session) -> None:

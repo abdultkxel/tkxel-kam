@@ -86,7 +86,6 @@ PROVIDER_DISPLAY_NAMES = {
 }
 SECRET_KEYS = {"access_token", "refresh_token", "api_key", "client_secret", "webhook_secret", "password", "secret", "token"}
 GOOGLE_CALENDAR_SCOPE = "https://www.googleapis.com/auth/calendar.events"
-GOOGLE_CALENDAR_LIST_SCOPE = "https://www.googleapis.com/auth/calendar.calendarlist.readonly"
 
 
 def canonical_provider(provider: str) -> str:
@@ -229,7 +228,11 @@ class IntegrationService:
             run.created_count = created
             run.updated_count = updated
             run.skipped_count = skipped
-            run.message = f"Synced {created} created, {updated} updated, {skipped} skipped."
+            run.message = (
+                "Google Calendar inbound sync is disabled; governance events are pushed outbound only."
+                if canonical == "google_calendar"
+                else f"Synced {created} created, {updated} updated, {skipped} skipped."
+            )
             run.finished_at = utc_now()
             connection.status = "connected"
             connection.last_error = None
@@ -537,7 +540,6 @@ class IntegrationService:
             item, was_created = self._upsert_imported_item("fathom", record, connection)
             if was_created:
                 created += 1
-                self._create_fathom_suggestions(item, record)
             else:
                 updated += 1
         self._sync_log("fathom", "webhook", "success", f"Fathom webhook accepted: {created} created, {updated} updated.", source_record_id=webhook_id, deduplication_key=f"fathom:webhook:{webhook_id}" if webhook_id else None, payload={"created": created, "updated": updated})
@@ -553,7 +555,7 @@ class IntegrationService:
                 "client_id": self.settings.google_calendar_client_id,
                 "redirect_uri": self.settings.google_calendar_redirect_uri,
                 "response_type": "code",
-                "scope": f"{GOOGLE_CALENDAR_SCOPE} {GOOGLE_CALENDAR_LIST_SCOPE}",
+                "scope": GOOGLE_CALENDAR_SCOPE,
                 "access_type": "offline",
                 "prompt": "consent",
                 "state": current_user.id,
@@ -582,6 +584,33 @@ class IntegrationService:
         self.repository.commit()
         return self._connection_read(connection)
 
+    def google_oauth_callback_redirect_url(
+        self,
+        *,
+        code: str | None = None,
+        state: str | None = None,
+        error_value: str | None = None,
+        error_description: str | None = None,
+    ) -> str:
+        query: dict[str, str] = {"provider": "google_calendar"}
+        if error_value:
+            query.update({"status": "error", "message": error_description or error_value})
+            return self._frontend_oauth_callback_url(query)
+        if not code:
+            query.update({"status": "error", "message": "Google did not return an authorization code."})
+            return self._frontend_oauth_callback_url(query)
+        try:
+            self.google_oauth_callback(code, state)
+        except HTTPException as exc:
+            detail = exc.detail if isinstance(exc.detail, str) else "Google Calendar OAuth could not be completed."
+            query.update({"status": "error", "message": detail})
+        except Exception:
+            logger.exception("Google Calendar OAuth callback failed")
+            query.update({"status": "error", "message": "Google Calendar OAuth could not be completed."})
+        else:
+            query.update({"status": "success", "message": "Google Calendar connected successfully."})
+        return self._frontend_oauth_callback_url(query)
+
     def scheduled_sync_due_connections(self) -> int:
         synced = 0
         system_user = self.users.get_by_email(self.settings.super_admin_email) or self.users.list_users()[0]
@@ -597,6 +626,9 @@ class IntegrationService:
         return synced
 
     def _sync_provider(self, provider: str, connection: IntegrationConnection, actor: User) -> tuple[int, int, int]:
+        if provider == "google_calendar":
+            self._sync_log(provider, "sync", "skipped", "Google Calendar inbound sync is disabled; governance events are pushed outbound only.")
+            return 0, 0, 0
         if provider == "csat":
             return 0, 0, 0
         if provider == "ai_llm_gateway":
@@ -608,8 +640,6 @@ class IntegrationService:
             item, was_created = self._upsert_imported_item(provider, record, connection)
             if was_created:
                 created += 1
-                if provider == "fathom":
-                    self._create_fathom_suggestions(item, record)
                 if provider == "google_calendar" and not item.review_required:
                     if self._create_governance_event_from_calendar_item(item, record, actor):
                         updated += 1
@@ -629,8 +659,9 @@ class IntegrationService:
                 deduplication_key=event.deduplication_key,
             )
             return None
+        target_user = self.users.get_by_id(event.owner_id) if event.owner_id else None
         try:
-            calendar_id = self._calendar_id_for_user(actor, connection)
+            calendar_id = self._calendar_id_for_user(target_user or actor)
         except ValueError as exc:
             self._sync_log(
                 "google_calendar",
@@ -641,28 +672,41 @@ class IntegrationService:
                 deduplication_key=event.deduplication_key,
             )
             return None
+        if event.status == "cancelled" and not event.external_event_id:
+            self._sync_log(
+                "google_calendar",
+                "outbound_write",
+                "skipped",
+                "Google Calendar write skipped because the governance event is cancelled.",
+                source_record_id=event.id,
+                deduplication_key=event.deduplication_key,
+                payload={"calendar_id": calendar_id},
+            )
+            return None
         token = self._credentials(connection).get("access_token")
-        body = {
-            "summary": f"{event.governance_type}: {event.account.name if event.account else 'Account'}",
-            "description": "\n\n".join([value for value in (event.agenda, event.notes) if value]),
-            "start": {"dateTime": event.scheduled_at.isoformat()},
-            "end": {"dateTime": (event.end_at or event.scheduled_at + timedelta(hours=1)).isoformat()},
-            "attendees": [{"email": item.get("email")} for item in (event.attendees or []) if item.get("email")],
-            "extendedProperties": {"private": {"kam_governance_event_id": event.id}},
-        }
+        body = self._google_event_body(event)
+        has_external_event = event.external_provider == "google_calendar" and bool(event.external_event_id)
         url = f"https://www.googleapis.com/calendar/v3/calendars/{parse.quote(calendar_id, safe='')}/events"
+        if has_external_event:
+            url = f"{url}/{parse.quote(str(event.external_event_id), safe='')}"
         try:
-            payload = self._json_post(url, {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}, body)
+            payload = (
+                self._json_patch(url, {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}, body)
+                if has_external_event
+                else self._json_post(url, {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}, body)
+            )
         except ValueError as exc:
+            message = f"{exc} while writing to Google Calendar ID {calendar_id}"
             self._sync_log(
                 "google_calendar",
                 "outbound_write",
                 "error",
-                str(exc),
+                message,
                 source_record_id=event.id,
                 deduplication_key=event.deduplication_key,
+                payload={"calendar_id": calendar_id},
             )
-            raise
+            raise ValueError(message) from exc
         external_id = str(payload.get("id") or "")
         if external_id:
             event.external_provider = "google_calendar"
@@ -671,7 +715,7 @@ class IntegrationService:
                 "google_calendar",
                 "outbound_write",
                 "success",
-                "Governance event written to Google Calendar.",
+                "Governance event updated in Google Calendar." if has_external_event else "Governance event written to Google Calendar.",
                 source_record_id=event.id,
                 deduplication_key=event.deduplication_key,
                 payload={"calendar_id": calendar_id, "external_event_id": external_id},
@@ -722,19 +766,31 @@ class IntegrationService:
         raise ValueError("Unsupported integration provider")
 
     @staticmethod
-    def _calendar_id_for_user(user: User, connection: IntegrationConnection) -> str:
-        settings = connection.settings_json or {}
-        calendar_id = (
-            user.primary_google_calendar_id
-            or settings.get("shared_governance_calendar_id")
-            or settings.get("calendar_id")
-        )
+    def _calendar_id_for_user(user: User) -> str:
+        calendar_id = user.primary_google_calendar_id
         if not calendar_id:
-            raise ValueError("Google Calendar target is not configured. Add a primary Calendar ID or shared Governance Calendar ID.")
+            raise ValueError("Google Calendar target is not configured. Add a primary Calendar ID on the governance owner profile.")
         return str(calendar_id)
+
+    @staticmethod
+    def _google_event_body(event: GovernanceEvent) -> dict[str, Any]:
+        body: dict[str, Any] = {
+            "summary": f"{event.governance_type}: {event.account.name if event.account else 'Account'}",
+            "description": "\n\n".join([value for value in (event.agenda, event.notes) if value]),
+            "start": {"dateTime": event.scheduled_at.isoformat()},
+            "end": {"dateTime": (event.end_at or event.scheduled_at + timedelta(hours=1)).isoformat()},
+            "extendedProperties": {"private": {"kam_governance_event_id": event.id}},
+        }
+        if event.status == "cancelled":
+            body["status"] = "cancelled"
+        return body
 
     def _test_provider(self, provider: str, connection: IntegrationConnection) -> None:
         if provider == "csat":
+            return
+        if provider == "google_calendar":
+            if not self._has_required_config(provider, connection):
+                raise ValueError("Google Calendar access token is required.")
             return
         if provider == "ai_llm_gateway":
             base_url = (connection.settings_json or {}).get("base_url")
@@ -1117,7 +1173,7 @@ class IntegrationService:
             with request.urlopen(req, timeout=12) as response:
                 return json.loads(response.read().decode("utf-8"))
         except error.HTTPError as exc:
-            raise ValueError(f"External API returned {exc.code}") from exc
+            raise ValueError(IntegrationService._external_api_error_message(exc)) from exc
 
     @staticmethod
     def _json_post(url: str, headers: dict[str, str], body: dict[str, Any]) -> dict[str, Any]:
@@ -1126,7 +1182,53 @@ class IntegrationService:
             with request.urlopen(req, timeout=12) as response:
                 return json.loads(response.read().decode("utf-8"))
         except error.HTTPError as exc:
-            raise ValueError(f"External API returned {exc.code}") from exc
+            raise ValueError(IntegrationService._external_api_error_message(exc)) from exc
+
+    @staticmethod
+    def _json_patch(url: str, headers: dict[str, str], body: dict[str, Any]) -> dict[str, Any]:
+        req = request.Request(url, data=json.dumps(body).encode("utf-8"), headers=headers, method="PATCH")
+        try:
+            with request.urlopen(req, timeout=12) as response:
+                return json.loads(response.read().decode("utf-8"))
+        except error.HTTPError as exc:
+            raise ValueError(IntegrationService._external_api_error_message(exc)) from exc
+
+    @staticmethod
+    def _external_api_error_message(exc: error.HTTPError) -> str:
+        base = f"External API returned {exc.code}"
+        try:
+            raw_body = exc.read().decode("utf-8")
+        except Exception:
+            return base
+        if not raw_body:
+            return base
+        try:
+            payload = json.loads(raw_body)
+        except json.JSONDecodeError:
+            return base
+        error_payload = payload.get("error") if isinstance(payload, dict) else None
+        if not isinstance(error_payload, dict):
+            return base
+        status_value = str(error_payload.get("status") or "").strip()
+        message = str(error_payload.get("message") or "").strip()
+        reason = IntegrationService._external_api_error_reason(error_payload)
+        details = " - ".join(item for item in (status_value, message) if item)
+        if reason:
+            details = f"{details} (reason: {reason})" if details else f"reason: {reason}"
+        return f"{base}: {details}" if details else base
+
+    @staticmethod
+    def _external_api_error_reason(error_payload: dict[str, Any]) -> str | None:
+        errors = error_payload.get("errors")
+        if not isinstance(errors, list):
+            return None
+        for item in errors:
+            if isinstance(item, dict) and item.get("reason"):
+                return str(item["reason"])
+        return None
+
+    def _frontend_oauth_callback_url(self, query: dict[str, str]) -> str:
+        return f"{self.settings.frontend_app_url}/admin/integrations/google-calendar/callback?{parse.urlencode(query)}"
 
     def _exchange_google_code(self, code: str) -> dict[str, Any]:
         payload = parse.urlencode(

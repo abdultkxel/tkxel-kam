@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { ApiGovernanceEvent, buildCreatePayload, mapApiGovernanceEvent } from '@/services/governance'
+import { ApiGovernanceEvent, buildCompletePayload, buildCreatePayload, mapApiGovernanceEvent } from '@/services/governance'
 
 const apiEvent: ApiGovernanceEvent = {
   id: 'gov-1',
@@ -49,6 +49,19 @@ describe('governance service mapping', () => {
       governance_type: 'QBR',
       scheduled_at: '2026-06-15T10:00:00Z',
       attendee_emails: ['am@example.com', 'client@example.com'],
+    })
+  })
+
+  it('builds completion payloads with meeting artifacts and task flags', () => {
+    expect(buildCompletePayload({
+      meetingArtifactId: 'meeting-1',
+      notes: 'Reviewed Fathom notes.',
+      decisions: [{ decisionText: 'Approve cadence.' }],
+      actionItems: [{ title: 'Share plan', ownerId: 'usr-1', dueDate: '2026-06-22T17:00:00Z', createTask: false }],
+    })).toMatchObject({
+      meeting_artifact_id: 'meeting-1',
+      decisions: [{ decision_text: 'Approve cadence.' }],
+      action_items: [{ title: 'Share plan', owner_id: 'usr-1', due_date: '2026-06-22T17:00:00Z', create_task: false }],
     })
   })
 })

@@ -25,6 +25,7 @@ from app.services.governance import GovernanceService
 from app.services.integrations import IntegrationService
 from app.services.kyc import KycService
 from app.services.kyc_gateway import build_kyc_gateway_adapter
+from app.services.meeting_capture import MeetingCaptureService
 from app.services.dashboards import DashboardsService
 from app.services.notifications import NotificationsService
 from app.services.onboarding import OnboardingService
@@ -121,6 +122,10 @@ def get_governance_service(db: Annotated[Session, Depends(get_db)]) -> Governanc
 
 def get_integration_service(db: Annotated[Session, Depends(get_db)]) -> IntegrationService:
     return IntegrationService(db)
+
+
+def get_meeting_capture_service(db: Annotated[Session, Depends(get_db)]) -> MeetingCaptureService:
+    return MeetingCaptureService(db)
 
 
 def get_csat_service(db: Annotated[Session, Depends(get_db)]) -> CsatService:

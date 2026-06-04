@@ -2360,6 +2360,49 @@ class TaskEvidence(Base):
     task: Mapped[Task] = relationship(back_populates="evidence")
 
 
+class UserIntegrationConnection(Base):
+    __tablename__ = "user_integration_connections"
+    __table_args__ = (UniqueConstraint("user_id", "provider", name="uq_user_integration_connections_user_provider"),)
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid4()))
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True, nullable=False)
+    provider: Mapped[str] = mapped_column(String(80), index=True, nullable=False)
+    enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    status: Mapped[str] = mapped_column(String(40), index=True, nullable=False, default="configuration_required")
+    auth_type: Mapped[str] = mapped_column(String(60), nullable=False, default="api_key")
+    credentials_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    settings_json: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    last_synced_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utc_now, onupdate=utc_now)
+
+
+class MeetingArtifact(Base):
+    __tablename__ = "meeting_artifacts"
+    __table_args__ = (UniqueConstraint("owner_id", "provider", "external_id", name="uq_meeting_artifacts_owner_provider_external"),)
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid4()))
+    owner_id: Mapped[str] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True, nullable=False)
+    provider: Mapped[str] = mapped_column(String(80), index=True, nullable=False, default="fathom")
+    external_id: Mapped[str | None] = mapped_column(String(255), index=True, nullable=True)
+    title: Mapped[str] = mapped_column(String(255), index=True, nullable=False)
+    summary: Mapped[str | None] = mapped_column(Text, nullable=True)
+    action_items: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    meeting_url: Mapped[str | None] = mapped_column(String(1000), nullable=True)
+    source_link: Mapped[str | None] = mapped_column(String(1000), nullable=True)
+    occurred_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), index=True, nullable=True)
+    scheduled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), index=True, nullable=True)
+    account_id: Mapped[str | None] = mapped_column(ForeignKey("accounts.id", ondelete="SET NULL"), index=True, nullable=True)
+    engagement_id: Mapped[str | None] = mapped_column(ForeignKey("engagements.id", ondelete="SET NULL"), index=True, nullable=True)
+    linked_object_type: Mapped[str | None] = mapped_column(String(80), index=True, nullable=True)
+    linked_object_id: Mapped[str | None] = mapped_column(String(36), index=True, nullable=True)
+    status: Mapped[str] = mapped_column(String(40), index=True, nullable=False, default="draft")
+    metadata_json: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utc_now, onupdate=utc_now)
+
+
 class IntegrationConnection(Base):
     __tablename__ = "integration_connections"
     __table_args__ = (UniqueConstraint("provider", name="uq_integration_connections_provider"),)

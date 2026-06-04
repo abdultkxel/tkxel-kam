@@ -20,7 +20,8 @@ Feature 17 manages formal account governance moments such as QBRs, SteerCos, mon
   - Actual AI/agent/LLM generation logic, prompts, retrieval ranking, model selection, and provider integration.
   - Autonomous AI-created decisions, action items, scores, escalations, or authoritative business changes.
 - Out of scope for now:
-  - External Google Calendar/Fathom integration behavior.
+  - Google Calendar inbound sync.
+  - Programmatic Fathom bot invitation and non-governance object insertion buttons.
 
 ## Requirement Links
 
@@ -52,12 +53,17 @@ Governance reminder decisions:
 
 - Use governance overdue status to drive in-app reminders in the user's top-right Notifications tray.
 - Add a `governance_overdue` notification trigger for this feature.
+- Creating a governance event creates a linked task with `source_type=governance_event` and `source_record_id=<event id>`.
+- The linked reminder task is assigned to the governance event owner, not the event creator.
+- The linked reminder task due date equals the governance event scheduled date/time; task reminder lead time will be handled by the notification/reminder layer.
+- Rescheduling a governance event updates the linked reminder task due date/title/owner. Cancelling the governance event cancels the linked task. Completing the governance event marks the linked task done.
 - A governance event becomes overdue when its scheduled date/time is in the past and the event is not completed/cancelled.
 - When an event becomes overdue, create/dedupe an in-app notification for the event owner.
 - Do not notify KAM Head for every overdue governance event in this pass; that would create too much notification noise. Keep this as a future discussion point for digest/escalation-style notifications.
 - Dashboard should show upcoming governance events in the upcoming list and overdue governance events in the overdue list.
 - Keep the Dashboard upcoming window at 30 days.
-- Google Calendar reminders are integration scope and should not be mixed into the first manual scheduling pass.
+- Google Calendar is integration scope and pushes governance events outbound only. It does not pull Google events into governance and does not invite governance attendee emails.
+- Fathom meeting capture is user-owned. Governance completion can pull a selected meeting artifact as draft notes/action items, but the user must review and save the completion.
 - Future notification implementation concern: overdue governance notification creation should move to a backend-owned scheduled process, not a frontend login/session scan. The notification feature should provide persistent notification storage, backend dedupe by source/event/owner/status transition, and a scheduler/dispatcher that can later support in-app, email, push, Slack, or Teams delivery channels.
 - Until the notification feature exists, frontend-triggered owner-only overdue notifications are acceptable for QA/prototype behavior, but they should be treated as temporary wiring.
 
@@ -88,7 +94,9 @@ Completion/action-item decisions:
 - Completing a governance event requires notes.
 - Decisions are optional for completion.
 - Action items are optional for completion.
-- Action items stay governance-local in this feature and should not create Task records yet.
+- Fathom-imported meeting data is draft input only; governance completion remains the approval point.
+- Selected action items saved during governance completion create owner-assigned Task records with `source_type=governance_action_item`.
+- Standalone Fathom meeting artifacts do not create Task records directly.
 
 Generated agenda/brief notes:
 

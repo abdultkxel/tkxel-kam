@@ -8,6 +8,7 @@ import { Analytics } from '@/pages/Analytics'
 import { Dashboard } from '@/pages/Dashboard'
 import { Escalations } from '@/pages/Escalations'
 import { EngagementDetail } from '@/pages/EngagementDetail'
+import { GoogleCalendarOAuthCallback } from '@/pages/GoogleCalendarOAuthCallback'
 import { Governance } from '@/pages/Governance'
 import { HealthScores } from '@/pages/HealthScores'
 import { Login } from '@/pages/Login'
@@ -45,6 +46,7 @@ export default function App() {
         <Route path="/reports" element={<Reports />} />
         <Route path="/playbook" element={<Playbook />} />
         <Route path="/admin" element={<Admin />} />
+        <Route path="/admin/integrations/google-calendar/callback" element={<GoogleCalendarOAuthCallback />} />
         <Route path="/profile" element={<Profile />} />
         <Route path="/settings" element={<Navigate to="/profile" replace />} />
       </Route>

@@ -27,6 +27,7 @@ from app.routers import (
     governance,
     integrations,
     kyc,
+    meeting_capture,
     notifications,
     onboarding,
     opportunities,
@@ -174,6 +175,10 @@ openapi_tags = [
         "description": "Approved Google Calendar, Fathom, CSAT, and AI/LLM Gateway integration configuration, sync, review, and audit APIs.",
     },
     {
+        "name": "Meeting Capture",
+        "description": "User-owned Fathom connection, meeting artifacts, summaries, action items, and governance completion inputs.",
+    },
+    {
         "name": "Playbooks, Activities, Tasks, and Calendar",
         "description": "Configurable playbooks, execution-generated activities, task/evidence management, and unified calendar projections.",
     },
@@ -258,6 +263,7 @@ app.include_router(custom_fields.router)
 app.include_router(escalations.router)
 app.include_router(governance.router)
 app.include_router(integrations.router)
+app.include_router(meeting_capture.router)
 app.include_router(csat.router)
 app.include_router(csat.integration_router)
 app.include_router(playbooks_tasks.router)
