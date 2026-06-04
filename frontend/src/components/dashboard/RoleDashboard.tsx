@@ -22,7 +22,9 @@ import {
   Check,
   ExternalLink,
   Filter,
+  Info,
   LineChart,
+  ListChecks,
   Loader2,
   RefreshCw,
   Search,
@@ -113,8 +115,10 @@ export function RoleDashboard({
 }: DashboardProps) {
   const widgets = dashboard?.widgets ?? []
   const widgetByKey = useMemo(() => new Map(widgets.map(widget => [widget.key, widget])), [widgets])
+  const isAccountManagerDashboard = dashboard?.dashboard === 'am_home' || dashboard?.role_group === 'account_manager'
   const summary = widgetByKey.get('summary')
   const taskSummary = widgetByKey.get('ai_task_summary')
+  const taskPanel = taskSummary ?? (isAccountManagerDashboard ? widgetByKey.get('tasks') : undefined)
   const health = widgetByKey.get('health_distribution') ?? widgetByKey.get('strategic_health')
   const opportunities = widgetByKey.get('opportunities') ?? widgetByKey.get('growth')
   const portfolio = widgetByKey.get('account_portfolio') ?? widgetByKey.get('accounts')
@@ -156,19 +160,21 @@ export function RoleDashboard({
         <>
           <MetricGrid summary={summary} />
 
-          {taskSummary ? (
+          {taskPanel ? (
             <TaskSummaryPanel
-              widget={taskSummary}
+              widget={taskPanel}
               refreshing={refreshingSummary}
-              canRefresh={canRefreshSummary}
+              canRefresh={taskPanel.key === 'ai_task_summary' && canRefreshSummary}
               onRefresh={onRefreshSummary}
             />
           ) : null}
 
-          <section className="grid gap-4 xl:grid-cols-[minmax(0,0.95fr)_minmax(360px,0.75fr)]">
-            {opportunities ? <PipelinePanel widget={opportunities} /> : null}
-            {health ? <HealthDistributionPanel widget={health} /> : null}
-          </section>
+          {opportunities && health ? (
+            <section className="grid gap-4 xl:grid-cols-[minmax(0,0.95fr)_minmax(360px,0.75fr)]">
+              <PipelinePanel widget={opportunities} />
+              <HealthDistributionPanel widget={health} />
+            </section>
+          ) : opportunities ? <PipelinePanel widget={opportunities} /> : health ? <HealthDistributionPanel widget={health} /> : null}
 
           {forecast ? <ForecastPanel widget={forecast} /> : null}
           {portfolio ? <PortfolioTable widget={portfolio} /> : null}
@@ -177,7 +183,7 @@ export function RoleDashboard({
             {[
               widgetByKey.get('high_risk_accounts'),
               widgetByKey.get('signals'),
-              widgetByKey.get('tasks'),
+              taskPanel?.key === 'tasks' ? undefined : widgetByKey.get('tasks'),
               widgetByKey.get('stale_kyc'),
               widgetByKey.get('renewal_focus'),
               widgetByKey.get('escalations') ?? widgetByKey.get('major_escalations'),
@@ -292,24 +298,40 @@ function DashboardControls({
 
 function MetricGrid({ summary }: { summary?: DashboardWidget }) {
   const value = isRecord(summary?.value) ? summary.value : {}
-  const metrics = Object.entries(value).slice(0, 4)
+  const metadataTiles = Array.isArray(summary?.metadata.tiles) ? summary.metadata.tiles.filter(isRecord) : []
+  const metrics = metadataTiles.length
+    ? metadataTiles.slice(0, 4).map(tile => ({
+      key: getString(tile.key) || getString(tile.label),
+      label: getString(tile.label) || labelize(getString(tile.key)),
+      value: tile.value,
+      route: getString(tile.route),
+      detail: getString(tile.detail),
+    }))
+    : Object.entries(value).slice(0, 4).map(([key, item]) => ({
+      key,
+      label: labelize(key),
+      value: item,
+      route: '',
+      detail: metricDetail(key, item),
+    }))
   if (!metrics.length) return null
 
   return (
     <section className="grid auto-rows-fr gap-4 md:grid-cols-2 xl:grid-cols-4">
-      {metrics.map(([key, item], index) => {
+      {metrics.map((metric, index) => {
+        const key = metric.key || metric.label
         const tone = metricTone(key, index)
         const Icon = metricIcon(key)
-        return (
-          <article key={key} className={cn('tk-card flex min-h-[152px] flex-col justify-between p-5 animate-fade-in', staggerClass(index))}>
+        const content = (
+          <>
             <div className="flex items-start justify-between gap-4">
               <div className="min-w-0">
-                <p className="text-xs font-semibold uppercase tracking-wider text-ink-secondary">{labelize(key)}</p>
+                <p className="text-xs font-semibold uppercase tracking-wider text-ink-secondary">{metric.label}</p>
                 <div className="mt-3 flex min-h-[44px] items-baseline gap-1 text-ink">
-                  {typeof item === 'number' ? (
-                    <AnimatedNumber value={item} format={metricFormatter(key)} className="block font-display text-4xl font-bold leading-none text-current" />
+                  {typeof metric.value === 'number' ? (
+                    <AnimatedNumber value={metric.value} format={metricFormatter(key)} className="block font-display text-4xl font-bold leading-none text-current" />
                   ) : (
-                    <span className="block font-display text-4xl font-bold leading-none text-current">{formatValue(item, key)}</span>
+                    <span className="block font-display text-4xl font-bold leading-none text-current">{formatValue(metric.value, key)}</span>
                   )}
                 </div>
               </div>
@@ -317,7 +339,16 @@ function MetricGrid({ summary }: { summary?: DashboardWidget }) {
                 <Icon className="h-6 w-6" />
               </span>
             </div>
-            <p className="mt-4 line-clamp-2 text-sm leading-5 text-ink-secondary">{metricDetail(key, item)}</p>
+            <p className="mt-4 line-clamp-2 text-sm leading-5 text-ink-secondary">{metric.detail || metricDetail(key, metric.value)}</p>
+          </>
+        )
+        return metric.route ? (
+          <Link key={key} to={metric.route} className={cn('tk-card flex min-h-[152px] flex-col justify-between p-5 animate-fade-in transition hover:-translate-y-0.5 hover:border-brand-blue/40 hover:shadow-md', staggerClass(index))}>
+            {content}
+          </Link>
+        ) : (
+          <article key={key} className={cn('tk-card flex min-h-[152px] flex-col justify-between p-5 animate-fade-in', staggerClass(index))}>
+            {content}
           </article>
         )
       })}
@@ -326,6 +357,8 @@ function MetricGrid({ summary }: { summary?: DashboardWidget }) {
 }
 
 function TaskSummaryPanel({ widget, refreshing, canRefresh, onRefresh }: { widget: DashboardWidget; refreshing: boolean; canRefresh: boolean; onRefresh: () => void }) {
+  if (widget.key === 'tasks') return <TaskBreakdownPanel widget={widget} />
+
   const value = isRecord(widget.value) ? widget.value : {}
   const blockers = Array.isArray(value.top_blockers) ? value.top_blockers.map(String) : []
   const sourceCounts = isRecord(value.source_counts) ? value.source_counts : {}
@@ -375,6 +408,60 @@ function TaskSummaryPanel({ widget, refreshing, canRefresh, onRefresh }: { widge
   )
 }
 
+function TaskBreakdownPanel({ widget }: { widget: DashboardWidget }) {
+  const value = isRecord(widget.value) ? widget.value : {}
+  const cards = [
+    { key: 'open', label: 'Open', value: value.open, detail: `across ${formatValue(value.accounts_with_open_tasks)} accounts`, tone: 'text-ink' },
+    { key: 'in_progress', label: 'In progress', value: value.in_progress, detail: 'assigned to me', tone: 'text-brand-blue' },
+    { key: 'overdue', label: 'Overdue', value: value.overdue, detail: 'needs action today', tone: 'text-rag-red' },
+    { key: 'due_this_week', label: 'Due this week', value: value.due_this_week, detail: 'across all accounts', tone: 'text-brand-orange' },
+  ]
+
+  return (
+    <section className="tk-card overflow-hidden p-5">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+        <div className="flex min-w-0 items-start gap-3">
+          <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-brand-orange/10 text-brand-orange">
+            <ListChecks className="h-5 w-5" />
+          </span>
+          <div>
+            <h2 className="text-xl font-semibold text-ink">{widget.title}</h2>
+            <p className="mt-1 text-sm leading-6 text-ink-secondary">Full task status breakdown across assigned accounts</p>
+          </div>
+        </div>
+        {widget.primary_route ? <Link to={widget.primary_route} className="tk-button-secondary w-fit">Open tasks <ArrowRight className="h-4 w-4" /></Link> : null}
+      </div>
+
+      <div className="mt-5 grid gap-3 md:grid-cols-2">
+        {cards.map(card => (
+          <div key={card.key} className="rounded-lg bg-surface-secondary p-5">
+            <p className="text-xs font-semibold uppercase tracking-wider text-ink-secondary">{card.label}</p>
+            <p className={cn('mt-4 font-display text-4xl font-bold leading-none', card.tone)}>{formatValue(card.value)}</p>
+            <p className="mt-3 text-sm font-medium text-ink-secondary">{card.detail}</p>
+          </div>
+        ))}
+      </div>
+
+      <div className="mt-5 divide-y divide-surface-border border-y border-surface-border">
+        <div className="grid gap-3 py-4 md:grid-cols-[220px_minmax(0,1fr)] md:items-center">
+          <p className="flex items-center gap-3 text-sm font-semibold text-ink-secondary"><span className="h-2.5 w-2.5 rounded-full bg-brand-blue" />Data source</p>
+          <p className="text-sm font-semibold text-ink">{getString(widget.metadata.data_source) || 'Task records filtered to assigned account scope'}</p>
+        </div>
+        {widget.items.length ? (
+          <div className="py-2">
+            {widget.items.slice(0, 5).map(item => <RowLink key={String(item.id ?? item.title)} item={item} dateKey="due_at" />)}
+          </div>
+        ) : null}
+      </div>
+
+      <div className="mt-4 flex items-start gap-2 rounded-lg border border-brand-blue/40 bg-blue-tint-20 px-4 py-3 text-sm font-medium text-brand-blue-dark">
+        <Info className="mt-0.5 h-4 w-4 shrink-0" />
+        <p>Task completion does NOT improve health scores; only underlying account data changes do.</p>
+      </div>
+    </section>
+  )
+}
+
 function MiniMetric({ label, value }: { label: string; value: unknown }) {
   return (
     <div className="min-w-0 rounded-md bg-white p-3">
@@ -389,21 +476,48 @@ function PipelinePanel({ widget }: { widget: DashboardWidget }) {
   const series = Array.isArray(value.series) ? value.series.filter(isRecord) : []
   const max = Math.max(1, ...series.map(item => Number(item.value) || 0))
   const masked = Boolean(widget.metadata.masked)
+  const stalledDays = Number(widget.metadata.stalled_after_days) || 90
 
   return (
     <section className="tk-card overflow-hidden p-5">
-      <div className="flex flex-col gap-4 border-b border-surface-border pb-5 lg:flex-row lg:items-start lg:justify-between">
-        <div>
-          <div className="flex items-center gap-2">
-            <LineChart className="h-5 w-5 text-brand-blue" />
-            <h2 className="text-lg font-semibold text-ink">{widget.title}</h2>
-          </div>
-          <div className="mt-4 flex flex-wrap items-end gap-x-4 gap-y-2">
-            <p className="font-display text-5xl font-bold leading-none text-ink">{formatValue(value.pipeline_value, 'pipeline_value')}</p>
-            <p className="pb-1 text-sm text-ink-secondary">{formatValue(value.open_opportunities)} open opportunities</p>
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+        <div className="flex min-w-0 items-start gap-3">
+          <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-rag-green/10 text-rag-green">
+            <LineChart className="h-5 w-5" />
+          </span>
+          <div>
+            <h2 className="text-xl font-semibold text-ink">{widget.title}</h2>
+            <p className="mt-1 text-sm leading-6 text-ink-secondary">Active opportunities across assigned accounts</p>
           </div>
         </div>
         {widget.primary_route ? <Link to={widget.primary_route} className="tk-button-secondary w-fit">View all <ArrowRight className="h-4 w-4" /></Link> : null}
+      </div>
+
+      <div className="mt-5 grid gap-3 lg:grid-cols-3">
+        <div className="rounded-lg bg-surface-secondary p-5">
+          <p className="text-xs font-semibold uppercase tracking-wider text-ink-secondary">Open opps</p>
+          <p className="mt-4 font-display text-4xl font-bold leading-none text-rag-green">{formatValue(value.open_opportunities)}</p>
+        </div>
+        <div className="rounded-lg bg-surface-secondary p-5">
+          <p className="text-xs font-semibold uppercase tracking-wider text-ink-secondary">Total value</p>
+          <p className="mt-4 font-display text-4xl font-bold leading-none text-ink">{formatValue(value.pipeline_value, 'pipeline_value')}</p>
+        </div>
+        <div className="rounded-lg bg-surface-secondary p-5">
+          <p className="text-xs font-semibold uppercase tracking-wider text-ink-secondary">Stalled</p>
+          <p className="mt-4 font-display text-4xl font-bold leading-none text-brand-orange">{formatValue(value.stalled)}</p>
+          <p className="mt-3 text-sm font-medium text-ink-secondary">&gt;{stalledDays} days no move</p>
+        </div>
+      </div>
+
+      <div className="mt-5 divide-y divide-surface-border border-y border-surface-border">
+        <div className="grid gap-3 py-4 md:grid-cols-[320px_minmax(0,1fr)] md:items-center">
+          <p className="flex items-center gap-3 text-sm font-semibold text-ink-secondary"><span className="h-2.5 w-2.5 rounded-full bg-rag-green" />Data source</p>
+          <p className="text-sm font-semibold text-ink">Opportunity records filtered to assigned accounts; stage not Won/Lost</p>
+        </div>
+        <div className="grid gap-3 py-4 md:grid-cols-[320px_minmax(0,1fr)] md:items-center">
+          <p className="flex items-center gap-3 text-sm font-semibold text-ink-secondary"><span className="h-2.5 w-2.5 rounded-full bg-brand-orange" />Stalled signal</p>
+          <p className="text-sm font-semibold text-ink">Opportunity with no recorded update &gt; {stalledDays} days surfaces as a signal</p>
+        </div>
       </div>
 
       <div className="mt-5 grid gap-5 xl:grid-cols-[minmax(0,0.95fr)_minmax(0,1.05fr)]">

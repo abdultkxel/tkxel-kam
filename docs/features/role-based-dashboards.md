@@ -16,7 +16,7 @@ Implements role-resolved dashboard behavior so users no longer see AM Home, KAM 
 - Existing direct dashboard endpoints return reduced current-user scope when the requested dashboard is not allowed for the caller role.
 - Admin/Super Admin receive the platform-wide portfolio, risk, governance, commercial, decision, and admin/system widgets in the backend-defined order.
 - Leadership dashboard is read-only and masks commercial pipeline, revenue-risk, and forecast values.
-- Forecast Chart is available only where `analytics_portfolio:view` is allowed and sensitive values are masked before leaving the backend when required.
+- Forecast Chart is available where `analytics_portfolio:view` is allowed, and on the Account Manager dashboard from assigned-account opportunities with sensitive values masked before leaving the backend when required.
 - Dashboard widgets and items include route metadata for source navigation.
 - `delivery_lead` is added as the preferred system role while `delivery_stakeholder` remains a legacy-compatible delivery dashboard role.
 - Dashboard UI now uses the approved V4 dashboard visual language from `Feature/Playbooks-Activities` while omitting the previous Generative command center.
@@ -26,6 +26,7 @@ Implements role-resolved dashboard behavior so users no longer see AM Home, KAM 
 - Dashboard panels must use persisted records or backend-derived aggregates only. Unsupported data is represented as an empty widget/state, not demo/sample payloads.
 - Admin/system alerts are sourced from failed worker runs, failed notification records, integration error connections, and persisted account-change alert counts.
 - Executive summaries are account fact rows from authorized account records, not generated placeholder prose.
+- Account Manager dashboard scope is intentionally focused on clickable attention tiles, account portfolio table, signals/critical tasks, merged task breakdown/listing, upcoming governance, opportunities/pipeline, assigned-account forecast, and the governance calendar. Stale KYC, renewal focus, duplicate AI task summary, and escalation panels are omitted for this role.
 
 ## Backend
 
