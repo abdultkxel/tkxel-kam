@@ -21,6 +21,7 @@ docs/features/_feature-template.md
 - [Base Data Seeding](base-data-seeding.md)
 - [Mailtrap Email Delivery](mailtrap-email-delivery.md)
 - [Notifications, Dashboards, And Reporting](notifications-dashboards-reporting.md)
+- [Notification Workflow Revamp](notification-workflow-revamp.md)
 - [Relationships Planning Growth And Retention](relationships-planning-growth-retention.md)
 - [Role-Based Dashboards](role-based-dashboards.md)
 - [Scoring, Signals, Playbooks, and Tasks](scoring-signals-playbooks-and-tasks.md)

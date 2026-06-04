@@ -43,10 +43,16 @@ from app.schemas import (
     NotificationPreferenceRead,
     NotificationPreferenceUpdateRequest,
     NotificationRecordRead,
+    NotificationSchedulerDryRunRead,
+    NotificationSummaryRead,
+    NotificationTriggerUpdateRequest,
     NotificationTriggerConfigRead,
+    NotificationTriggerTestRequest,
     SlaEscalatedItemPageRead,
     SlaEscalatedItemRead,
     SlaEvaluationRead,
+    ScheduledWorkerRunPageRead,
+    ScheduledWorkerRunRead,
     SlaRuleCreateRequest,
     SlaRulePageRead,
     SlaRuleRead,
@@ -55,24 +61,15 @@ from app.schemas import (
 from app.services.account_access import AccountAccessService
 from app.services.audit import AuditService
 from app.services.email_delivery import EmailDeliveryService
+from app.services.notification_catalog import (
+    MANDATORY_TRIGGERS,
+    NOTIFICATION_TRIGGER_DEFINITIONS,
+    OPTIONAL_TRIGGERS,
+    REMINDER_DEFAULTS,
+)
 from app.services.user_management import page_count
 
 logger = logging.getLogger(__name__)
-
-DEFAULT_TRIGGER_CONFIGS = (
-    ("new_signal", "New signal", "A new rule-based attention signal needs review.", "in_app", "daily", False),
-    ("overdue_activity", "Overdue activity", "A task or activity is past due.", "in_app", "daily", False),
-    ("stale_kyc", "Stale KYC", "An account KYC snapshot needs refresh.", "in_app", "weekly", True),
-    ("renewal_due", "Renewal due", "A renewal or notice window needs action.", "in_app", "weekly", True),
-    ("unresolved_escalation", "Unresolved escalation", "A formal escalation remains unresolved.", "in_app_email", "daily", True),
-    ("timeline_mention", "Timeline mention", "A user mentioned you in account history.", "in_app", "daily", False),
-    ("timeline_comment", "Timeline comment", "A comment was added to a watched timeline item.", "in_app", "daily", False),
-    ("governance_reminder", "Governance reminder", "A governance review or decision needs attention.", "in_app", "weekly", False),
-    ("sla_escalation", "SLA escalation", "An item breached an inactivity SLA.", "in_app_email", "daily", True),
-    ("integration_failure", "Integration failure", "An approved integration has repeated failures or needs administrator attention.", "in_app", "daily", True),
-    ("account_change_alert", "Account-change alert", "A proactive analytics alert needs owner review.", "in_app_email", "daily", True),
-    ("ai_stage_change_confirmed", "AI stage change confirmed", "A human confirmed an AI-assisted account stage change.", "in_app", "daily", False),
-)
 
 DEFAULT_SLA_RULES = (
     ("Critical signal inactivity", "signal", "critical", None, 240, ["status_change", "comment", "convert"], "kam_head"),
@@ -104,29 +101,63 @@ class NotificationsService:
         self.email_delivery = email_delivery or EmailDeliveryService()
 
     def seed_defaults(self, actor: User | None = None) -> None:
-        for trigger, label, description, mode, cadence, mandatory in DEFAULT_TRIGGER_CONFIGS:
-            config = self.repository.get_trigger_config(trigger)
+        for definition in NOTIFICATION_TRIGGER_DEFINITIONS:
+            timing_mode, timing_value, timing_unit = REMINDER_DEFAULTS.get(definition.trigger, ("immediate", None, "business_days"))
+            mandatory = definition.trigger in MANDATORY_TRIGGERS or definition.priority == "critical"
+            default_mode = "in_app_email" if mandatory or definition.trigger in {"sla_escalation", "unresolved_escalation", "integration_failure"} else "in_app"
+            is_active = definition.trigger not in OPTIONAL_TRIGGERS
+            config = self.repository.get_trigger_config(definition.trigger)
             if config is None:
                 self.repository.save_trigger_config(
                     NotificationTriggerConfig(
-                        trigger=trigger,
-                        label=label,
-                        description=description,
-                        default_mode=mode,
-                        default_digest_cadence=cadence,
+                        trigger=definition.trigger,
+                        label=definition.label,
+                        description=definition.description,
+                        workflow=definition.workflow,
+                        priority=definition.priority,
+                        recipient_policy=definition.recipients,
+                        action_label=definition.action_label,
+                        default_mode=default_mode,
+                        default_digest_cadence="daily",
                         supported_channels=["in_app", "email"],
                         mandatory=mandatory,
-                        is_active=True,
+                        timing_mode=timing_mode,
+                        timing_unit=timing_unit,
+                        lead_time_value=timing_value if timing_mode == "before_due" else None,
+                        lead_time_direction="before" if timing_mode == "before_due" else None,
+                        pending_threshold_value=timing_value if timing_mode == "after_pending" else None,
+                        escalation_enabled=definition.priority in {"high", "critical"} and timing_mode != "immediate",
+                        escalation_after_value=timing_value if definition.priority in {"high", "critical"} and timing_mode != "immediate" else None,
+                        escalation_recipient_policy="kam_head_admin" if definition.priority in {"high", "critical"} else None,
+                        template_json={
+                            "title": definition.label,
+                            "body": definition.description,
+                            "action_label": definition.action_label,
+                        },
+                        is_active=is_active,
                     )
                 )
                 continue
-            config.label = label
-            config.description = description
+            config.label = definition.label
+            config.description = definition.description
+            config.workflow = definition.workflow
+            config.priority = definition.priority
+            config.recipient_policy = config.recipient_policy or definition.recipients
+            config.action_label = config.action_label or definition.action_label
             config.supported_channels = config.supported_channels or ["in_app", "email"]
-            config.default_mode = config.default_mode or mode
-            config.default_digest_cadence = config.default_digest_cadence or cadence
+            config.default_mode = config.default_mode or default_mode
+            if mandatory and config.default_mode == "in_app":
+                config.default_mode = "in_app_email"
+            config.default_digest_cadence = config.default_digest_cadence or "daily"
             config.mandatory = mandatory
-            config.is_active = True
+            config.timing_mode = config.timing_mode or timing_mode
+            config.timing_unit = config.timing_unit or timing_unit
+            if timing_value and config.timing_mode == "before_due" and config.lead_time_value is None:
+                config.lead_time_value = timing_value
+                config.lead_time_direction = "before"
+            if timing_value and config.timing_mode == "after_pending" and config.pending_threshold_value is None:
+                config.pending_threshold_value = timing_value
+            config.template_json = config.template_json or {"title": definition.label, "body": definition.description, "action_label": definition.action_label}
 
         for name, item_type, severity, priority, minutes, activities, policy in DEFAULT_SLA_RULES:
             existing = next((rule for rule in self.repository.list_active_sla_rules() if rule.name == name), None)
@@ -159,18 +190,105 @@ class NotificationsService:
         self.access.require_module_permission(current_user, "notifications_digests", "configure")
         before = [NotificationTriggerConfigRead.model_validate(item).model_dump(mode="json") for item in self.repository.list_trigger_configs()]
         for item in payload.items:
+            if item.trigger in MANDATORY_TRIGGERS and (not item.is_active or item.default_mode == "off"):
+                raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"{item.label} is mandatory and cannot be disabled")
+        for item in payload.items:
             config = self.repository.get_trigger_config(item.trigger) or NotificationTriggerConfig(trigger=item.trigger, label=item.label)
             config.label = item.label
             config.description = item.description
+            config.workflow = item.workflow
+            config.priority = item.priority
+            config.recipient_policy = item.recipient_policy
+            config.action_label = item.action_label
             config.default_mode = item.default_mode
             config.default_digest_cadence = item.default_digest_cadence
             config.supported_channels = list(item.supported_channels)
             config.mandatory = item.mandatory
+            config.timing_mode = item.timing_mode
+            config.timing_unit = item.timing_unit
+            config.lead_time_value = item.lead_time_value
+            config.lead_time_direction = item.lead_time_direction
+            config.pending_threshold_value = item.pending_threshold_value
+            config.repeat_enabled = item.repeat_enabled
+            config.repeat_every_value = item.repeat_every_value
+            config.repeat_limit = item.repeat_limit
+            config.escalation_enabled = item.escalation_enabled
+            config.escalation_after_value = item.escalation_after_value
+            config.escalation_recipient_policy = item.escalation_recipient_policy
+            config.quiet_hours_start = item.quiet_hours_start
+            config.quiet_hours_end = item.quiet_hours_end
+            config.template_json = item.template_json
+            if config.trigger in MANDATORY_TRIGGERS:
+                config.mandatory = True
+            if config.mandatory and (config.default_mode == "off" or not item.is_active):
+                raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"{config.label} is mandatory and cannot be disabled")
             config.is_active = item.is_active
             self.repository.save_trigger_config(config)
         self.audit.log(module="notifications_digests", action="configure", entity_type="notification_defaults", entity_id="defaults", actor=current_user, before_value={"items": before}, after_value={"items": [item.model_dump() for item in payload.items]})
         self.repository.commit()
         return self.get_defaults(current_user)
+
+    def update_trigger_config(self, trigger: str, payload: NotificationTriggerUpdateRequest, current_user: User) -> NotificationTriggerConfigRead:
+        self.access.require_module_permission(current_user, "notifications_digests", "configure")
+        config = self.repository.get_trigger_config(trigger)
+        if config is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Notification trigger was not found")
+        if config.trigger in MANDATORY_TRIGGERS and (payload.is_active is False or payload.default_mode == "off"):
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Mandatory notifications cannot be disabled")
+        before = NotificationTriggerConfigRead.model_validate(config).model_dump(mode="json")
+        updates = payload.model_dump(exclude_unset=True)
+        if "supported_channels" in updates and updates["supported_channels"] is not None:
+            updates["supported_channels"] = list(updates["supported_channels"])
+        for field, value in updates.items():
+            setattr(config, field, value)
+        if config.trigger in MANDATORY_TRIGGERS:
+            config.mandatory = True
+        if config.mandatory and config.default_mode == "off":
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Mandatory notifications cannot default to off")
+        if config.mandatory and not config.is_active:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Mandatory notifications cannot be deactivated")
+        if config.mandatory and config.default_mode == "in_app":
+            config.default_mode = "in_app_email"
+        self.audit.log(module="notifications_digests", action="update_trigger", entity_type="notification_trigger", entity_id=config.trigger, actor=current_user, before_value=before, after_value=updates)
+        self.repository.commit()
+        return NotificationTriggerConfigRead.model_validate(config)
+
+    def reset_trigger_config(self, trigger: str, current_user: User) -> NotificationTriggerConfigRead:
+        self.access.require_module_permission(current_user, "notifications_digests", "configure")
+        definition = next((item for item in NOTIFICATION_TRIGGER_DEFINITIONS if item.trigger == trigger), None)
+        config = self.repository.get_trigger_config(trigger)
+        if definition is None or config is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Notification trigger was not found")
+        timing_mode, timing_value, timing_unit = REMINDER_DEFAULTS.get(trigger, ("immediate", None, "business_days"))
+        mandatory = trigger in MANDATORY_TRIGGERS or definition.priority == "critical"
+        config.label = definition.label
+        config.description = definition.description
+        config.workflow = definition.workflow
+        config.priority = definition.priority
+        config.recipient_policy = definition.recipients
+        config.action_label = definition.action_label
+        config.default_mode = "in_app_email" if mandatory else "in_app"
+        config.default_digest_cadence = "daily"
+        config.supported_channels = ["in_app", "email"]
+        config.mandatory = mandatory
+        config.timing_mode = timing_mode
+        config.timing_unit = timing_unit
+        config.lead_time_value = timing_value if timing_mode == "before_due" else None
+        config.lead_time_direction = "before" if timing_mode == "before_due" else None
+        config.pending_threshold_value = timing_value if timing_mode == "after_pending" else None
+        config.repeat_enabled = False
+        config.repeat_every_value = None
+        config.repeat_limit = None
+        config.escalation_enabled = definition.priority in {"high", "critical"} and timing_mode != "immediate"
+        config.escalation_after_value = timing_value if config.escalation_enabled else None
+        config.escalation_recipient_policy = "kam_head_admin" if config.escalation_enabled else None
+        config.quiet_hours_start = None
+        config.quiet_hours_end = None
+        config.template_json = {"title": definition.label, "body": definition.description, "action_label": definition.action_label}
+        config.is_active = trigger not in OPTIONAL_TRIGGERS
+        self.audit.log(module="notifications_digests", action="reset_trigger", entity_type="notification_trigger", entity_id=config.trigger, actor=current_user)
+        self.repository.commit()
+        return NotificationTriggerConfigRead.model_validate(config)
 
     def get_preferences(self, current_user: User) -> list[NotificationPreferenceRead]:
         configs = self.repository.list_trigger_configs(active_only=True)
@@ -205,6 +323,8 @@ class NotificationsService:
         search: str | None = None,
         read_state: str | None = None,
         trigger: str | None = None,
+        workflow: str | None = None,
+        priority: str | None = None,
         account_id: str | None = None,
         channel: str | None = None,
         date_from: datetime | None = None,
@@ -215,11 +335,19 @@ class NotificationsService:
         page_size: int = 25,
     ) -> NotificationPageRead:
         self.access.require_module_permission(current_user, "notifications_digests", "view")
+        if trigger and self.repository.get_trigger_config(trigger) is None:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Notification trigger '{trigger}' was not found")
+        if workflow:
+            workflows = {item.workflow for item in self.repository.list_trigger_configs()}
+            if workflow not in workflows:
+                raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Notification workflow '{workflow}' was not found")
         items, total, unread_count = self.repository.list_notifications(
             recipient_user_id=current_user.id,
             search=search,
             read_state=read_state,
             trigger=trigger,
+            workflow=workflow,
+            priority=priority,
             account_id=account_id,
             channel=channel,
             date_from=date_from,
@@ -231,6 +359,10 @@ class NotificationsService:
         )
         return NotificationPageRead(items=[self._notification_read(item, current_user) for item in items], total=total, page=page, page_size=page_size, pages=page_count(total, page_size), unread_count=unread_count)
 
+    def notification_summary(self, current_user: User) -> NotificationSummaryRead:
+        page = self.list_notifications(current_user, read_state=None, page=1, page_size=8)
+        return NotificationSummaryRead(unread_count=page.unread_count, total_count=page.total, latest=page.items)
+
     def mark_notification_read(self, notification_id: str, current_user: User) -> NotificationRecordRead:
         notification = self.repository.get_notification(notification_id)
         if notification is None or notification.recipient_user_id != current_user.id:
@@ -239,11 +371,69 @@ class NotificationsService:
         self.repository.commit()
         return self._notification_read(notification, current_user)
 
+    def archive_notification(self, notification_id: str, current_user: User) -> NotificationRecordRead:
+        notification = self.repository.get_notification(notification_id)
+        if notification is None or notification.recipient_user_id != current_user.id:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Notification was not found")
+        self.repository.archive_notification(notification)
+        self.repository.commit()
+        return self._notification_read(notification, current_user)
+
     def mark_all_notifications_read(self, current_user: User) -> dict[str, int]:
         self.access.require_module_permission(current_user, "notifications_digests", "view")
         count = self.repository.mark_all_notifications_read(current_user.id)
         self.repository.commit()
         return {"updated": count}
+
+    def test_trigger(self, trigger: str, payload: NotificationTriggerTestRequest, current_user: User) -> NotificationRecordRead:
+        self.access.require_module_permission(current_user, "notifications_digests", "configure")
+        config = self.repository.get_trigger_config(trigger)
+        if config is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Notification trigger was not found")
+        recipient = self.db.get(User, payload.recipient_user_id) if payload.recipient_user_id else current_user
+        if recipient is None or not recipient.is_active:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Recipient must be an active user")
+        title = payload.title or f"Test: {config.label}"
+        body = payload.body or "This is a test notification from Admin notification settings."
+        result = self.queue_notification(
+            recipient=recipient,
+            trigger=trigger,
+            title=title,
+            body=body,
+            source_record_type="notification_trigger_config",
+            source_record_id=config.id,
+            source_record_route="/admin?section=notifications",
+            priority=config.priority,
+            delivery_metadata={"test": True, "trigger_config_id": config.id},
+            deduplication_key=f"notification-test:{trigger}:{recipient.id}:{datetime.now(timezone.utc).timestamp()}",
+        )
+        self.repository.commit()
+        return self._notification_read(result.notification, recipient)
+
+    def dry_run_scheduler(self, current_user: User) -> NotificationSchedulerDryRunRead:
+        self.access.require_module_permission(current_user, "notifications_digests", "configure")
+        configs = self.repository.list_trigger_configs(active_only=True)
+        due = [item for item in configs if item.timing_mode in {"before_due", "after_pending", "scheduled"}]
+        self.repository.save_worker_run(
+            ScheduledWorkerRun(
+                job_type="notification_scheduler",
+                mode="dry_run",
+                status="complete",
+                matched_count=len(configs),
+                affected_count=len(due),
+                actor_id=current_user.id,
+                actor_name=current_user.full_name,
+                finished_at=datetime.now(timezone.utc),
+                metadata_json={"due_trigger_keys": [item.trigger for item in due]},
+            )
+        )
+        self.repository.commit()
+        return NotificationSchedulerDryRunRead(evaluated_triggers=len(configs), due_triggers=len(due), message="Dry run completed without creating notifications.")
+
+    def list_scheduler_runs(self, current_user: User, *, job_type: str | None = "notification_scheduler", page: int = 1, page_size: int = 25) -> ScheduledWorkerRunPageRead:
+        self.access.require_module_permission(current_user, "notifications_digests", "configure")
+        items, total = self.repository.list_worker_runs(job_type=job_type, page=page, page_size=page_size)
+        return ScheduledWorkerRunPageRead(items=[ScheduledWorkerRunRead.model_validate(item) for item in items], total=total, page=page, page_size=page_size, pages=page_count(total, page_size))
 
     def queue_notification(
         self,
@@ -265,6 +455,8 @@ class NotificationsService:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Notification trigger '{trigger}' is not active")
         preference = self.repository.get_preference(recipient.id, trigger)
         mode = preference.mode if preference else config.default_mode
+        if config.mandatory and "email" in (config.supported_channels or []):
+            mode = "in_app_email"
         key = deduplication_key or self._dedup_key(recipient.id, trigger, source_record_type, source_record_id)
         if mode == "off" and not config.mandatory:
             existing = self.repository.get_notification_by_deduplication_key(key)
@@ -275,6 +467,7 @@ class NotificationsService:
                 recipient_name=recipient.full_name,
                 recipient_email=recipient.email,
                 trigger=trigger,
+                workflow=config.workflow,
                 title=title,
                 body=body,
                 account_id=account.id if account else None,
@@ -283,6 +476,7 @@ class NotificationsService:
                 source_record_id=source_record_id,
                 source_record_route=source_record_route,
                 priority=priority,
+                action_label=config.action_label,
                 delivery_status="skipped",
                 delivery_metadata_json={"reason": "preference_off", **(delivery_metadata or {})},
                 deduplication_key=key,
@@ -298,6 +492,7 @@ class NotificationsService:
             recipient_name=recipient.full_name,
             recipient_email=recipient.email,
             trigger=trigger,
+            workflow=config.workflow,
             title=title,
             body=body,
             account_id=account.id if account else None,
@@ -306,6 +501,7 @@ class NotificationsService:
             source_record_id=source_record_id,
             source_record_route=source_record_route,
             priority=priority,
+            action_label=config.action_label,
             channel="in_app",
             delivery_status="delivered",
             delivery_metadata_json=delivery_metadata or {},

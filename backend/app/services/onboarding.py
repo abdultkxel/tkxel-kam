@@ -41,6 +41,7 @@ from app.services.audit import AuditService
 from app.services.custom_fields import CustomFieldService
 from app.services.engagements import calculate_notice_deadline
 from app.services.engagement_health_rollup import notify_account_health_impacted_by_engagement_change
+from app.services.notifications import NotificationsService
 from app.services.timeline import TimelineService
 from app.services.user_management import page_count
 
@@ -55,6 +56,7 @@ class OnboardingService:
         self.timeline = TimelineService(TimelineRepository(db))
         self.custom_fields = CustomFieldService(db, CustomFieldRepository(db))
         self.account_service = AccountService(db)
+        self.notifications = NotificationsService(db)
 
     def list_drafts(
         self,
@@ -143,6 +145,7 @@ class OnboardingService:
             actor=current_user,
             after_value={"account_name": draft.account_name, "source_count": len(payload.source_documents)},
         )
+        self._notify_draft_created(draft, current_user)
         self.onboarding.commit()
         return OnboardingDraftRead.model_validate(self._get_draft_or_404(draft.id))
 
@@ -207,6 +210,7 @@ class OnboardingService:
         draft.approved_account_id = account.id
         draft.decided_at = datetime.now(timezone.utc)
         self._log_approval(account, draft, current_user, created_engagements)
+        self._notify_draft_outcome(draft, current_user, "account_draft_approved", f"Draft approved: {draft.account_name}", f"{current_user.full_name} approved the draft account.", account_id=account.id)
         self.onboarding.commit()
         return OnboardingDraftRead.model_validate(self._get_draft_or_404(draft.id))
 
@@ -228,6 +232,7 @@ class OnboardingService:
             after_value={"status": draft.status},
             reason=payload.reason,
         )
+        self._notify_draft_outcome(draft, current_user, "account_draft_rejected", f"Draft rejected: {draft.account_name}", payload.reason)
         self.onboarding.commit()
         return OnboardingDraftRead.model_validate(self._get_draft_or_404(draft.id))
 
@@ -265,6 +270,7 @@ class OnboardingService:
             source_record_type="onboarding_draft",
             source_record_route=f"/accounts/onboarding?draft={draft.id}",
         )
+        self._notify_draft_outcome(draft, current_user, "account_draft_linked_existing", f"Draft linked: {draft.account_name}", payload.reason, account_id=account.id)
         self.onboarding.commit()
         return OnboardingDraftRead.model_validate(self._get_draft_or_404(draft.id))
 
@@ -562,6 +568,68 @@ class OnboardingService:
             return None
         text = str(value).strip()
         return text or None
+
+    def _notify_draft_created(self, draft: OnboardingDraft, current_user: User) -> None:
+        recipients = self._draft_approvers(exclude_user_id=current_user.id)
+        trigger = "account_duplicate_detected" if draft.duplicate_account_id else "account_draft_created"
+        title = f"Draft account ready: {draft.account_name}"
+        body = f"{current_user.full_name} created a draft account that needs approval."
+        if draft.duplicate_account_id:
+            body = f"{current_user.full_name} created a draft account with a possible duplicate. Review before approval."
+        for recipient in recipients:
+            self.notifications.queue_notification(
+                recipient=recipient,
+                trigger=trigger,
+                title=title,
+                body=body,
+                source_record_type="onboarding_draft",
+                source_record_id=draft.id,
+                source_record_route=f"/accounts/onboarding?draft={draft.id}",
+                priority="high",
+                delivery_metadata={"draft_id": draft.id, "created_by_id": current_user.id},
+                deduplication_key=f"{trigger}:{draft.id}:{recipient.id}",
+            )
+
+    def _notify_draft_outcome(self, draft: OnboardingDraft, actor: User, trigger: str, title: str, body: str, *, account_id: str | None = None) -> None:
+        recipients = self._draft_owner_recipients(draft, exclude_user_id=actor.id)
+        account = self.accounts.get_by_id(account_id) if account_id else None
+        for recipient in recipients:
+            self.notifications.queue_notification(
+                recipient=recipient,
+                trigger=trigger,
+                title=title,
+                body=body,
+                account=account,
+                source_record_type="onboarding_draft",
+                source_record_id=draft.id,
+                source_record_route=f"/accounts/onboarding?draft={draft.id}",
+                priority="high" if trigger == "account_draft_rejected" else "medium",
+                delivery_metadata={"draft_id": draft.id, "actor_id": actor.id, "approved_account_id": account_id},
+                deduplication_key=f"{trigger}:{draft.id}:{recipient.id}",
+            )
+
+    def _draft_approvers(self, *, exclude_user_id: str | None = None) -> list[User]:
+        users = self.notifications.repository.list_active_users_by_roles(["kam_head", "admin", "super_admin"])
+        return self._unique_users(users, exclude_user_id=exclude_user_id)
+
+    def _draft_owner_recipients(self, draft: OnboardingDraft, *, exclude_user_id: str | None = None) -> list[User]:
+        candidates = [
+            self._get_user_if_active(draft.created_by_id),
+            self._get_user_if_active(draft.primary_owner_id),
+            self.accounts.get_user_by_email(draft.primary_owner_email) if draft.primary_owner_email else None,
+        ]
+        return self._unique_users([user for user in candidates if user is not None], exclude_user_id=exclude_user_id)
+
+    @staticmethod
+    def _unique_users(users: list[User], *, exclude_user_id: str | None = None) -> list[User]:
+        seen: set[str] = set()
+        unique: list[User] = []
+        for user in users:
+            if user.id == exclude_user_id or user.id in seen:
+                continue
+            seen.add(user.id)
+            unique.append(user)
+        return unique
 
     def _get_draft_or_404(self, draft_id: str) -> OnboardingDraft:
         draft = self.onboarding.get_by_id(draft_id)
