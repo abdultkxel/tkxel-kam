@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from '@testing-library/react'
+import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
 import { IntegrationsPanel } from '@/components/admin/IntegrationsPanel'
@@ -26,14 +26,15 @@ const integrations = [
 ]
 
 describe('IntegrationsPanel', () => {
-  it('loads approved adapters from the API and triggers sync through the backend', async () => {
+  it('loads approved adapters, hides Google inbound sync, and triggers sync for supported adapters', async () => {
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input)
       if (url.endsWith('/api/admin/integrations')) return jsonResponse(integrations)
       if (url.includes('/api/admin/settings/security-alert-email')) return jsonResponse({ administration_email: 'admin@tkxel.com' })
+      if (url.includes('/api/admin/integrations/sync-logs')) return jsonResponse(page([], 0))
       if (url.includes('/api/admin/integrations/imported-items')) return jsonResponse(page([], 0))
-      if (url.includes('/api/admin/integrations/google_calendar/sync') && init?.method === 'POST') {
-        return jsonResponse({ provider: 'google_calendar', status: 'connected', created: 1, updated: 0, skipped: 0, errors: 0, message: 'Synced.' })
+      if (url.includes('/api/admin/integrations/fathom/sync') && init?.method === 'POST') {
+        return jsonResponse({ provider: 'fathom', status: 'connected', created: 1, updated: 0, skipped: 0, errors: 0, message: 'Synced.' })
       }
       return jsonResponse({})
     })
@@ -45,12 +46,22 @@ describe('IntegrationsPanel', () => {
     expect(screen.getByText('Fathom')).toBeInTheDocument()
     expect(screen.getByText('CSAT')).toBeInTheDocument()
     expect(screen.getByText('AI/LLM Gateway')).toBeInTheDocument()
+    const googleCard = screen.getByText('Google Calendar').closest('article')
+    expect(googleCard).not.toBeNull()
+    expect(within(googleCard as HTMLElement).queryByRole('button', { name: /sync/i })).not.toBeInTheDocument()
 
-    await userEvent.click(screen.getAllByRole('button', { name: /sync/i })[0])
+    await userEvent.click(within(screen.getByText('Fathom').closest('article') as HTMLElement).getByRole('button', { name: /sync/i }))
 
     await waitFor(() => {
-      expect(fetchMock).toHaveBeenCalledWith(expect.stringContaining('/api/admin/integrations/google_calendar/sync'), expect.objectContaining({ method: 'POST' }))
+      expect(fetchMock).toHaveBeenCalledWith(expect.stringContaining('/api/admin/integrations/fathom/sync'), expect.objectContaining({ method: 'POST' }))
     })
+
+    const refreshedGoogleCard = (await screen.findByText('Google Calendar')).closest('article')
+    expect(refreshedGoogleCard).not.toBeNull()
+    await userEvent.click(within(refreshedGoogleCard as HTMLElement).getByRole('button', { name: /configure/i }))
+    expect(screen.queryByLabelText(/Read Calendar ID/i)).not.toBeInTheDocument()
+    expect(screen.queryByLabelText(/Access token/i)).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /connect google/i })).toBeInTheDocument()
   })
 })
 

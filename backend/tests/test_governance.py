@@ -1,4 +1,6 @@
 from collections.abc import Generator
+import io
+from urllib.error import HTTPError
 
 import pytest
 from fastapi.testclient import TestClient
@@ -8,7 +10,8 @@ from sqlalchemy.pool import StaticPool
 
 from app.database import Base, get_db
 from app.main import app
-from app.models import AuditLog, TimelineEntry
+from app.models import AuditLog, IntegrationSyncLog, MeetingArtifact, Task, TimelineEntry, User
+from app.services.integrations import IntegrationService
 from app.services.seed import seed_default_data
 
 
@@ -130,7 +133,7 @@ def governance_payload(account_id: str, engagement_id: str | None, owner_id: str
     return payload
 
 
-def test_governance_event_create_list_calendar_and_validation(client: TestClient) -> None:
+def test_governance_event_create_list_calendar_and_validation(client: TestClient, db_session: Session) -> None:
     headers = auth_headers(client)
     account_id, engagement_id, owner_id = create_approved_account(client, headers)
 
@@ -149,6 +152,14 @@ def test_governance_event_create_list_calendar_and_validation(client: TestClient
     assert created["account_name"] == "Governance Workspace"
     assert created["status"] == "upcoming"
     assert created["attendee_emails"] == ["client.lead@example.com", "sponsor@example.com"]
+    reminder_task = db_session.query(Task).filter_by(source_type="governance_event", source_record_id=created["id"]).one()
+    assert reminder_task.owner_id == owner_id
+    assert reminder_task.due_at.isoformat().startswith("2026-06-15T10:00:00")
+    assert reminder_task.title == "QBR: Governance Workspace"
+
+    duplicate_event = client.post("/api/governance-events", headers=headers, json=governance_payload(account_id, engagement_id, owner_id))
+    assert duplicate_event.status_code == 409
+    assert duplicate_event.json()["detail"] == "A governance event already exists for this account, governance type, and scheduled time."
 
     account_response = client.get(f"/api/accounts/{account_id}", headers=headers)
     assert account_response.status_code == 200
@@ -184,7 +195,149 @@ def test_governance_event_create_list_calendar_and_validation(client: TestClient
     assert calendar_item["route"] == f"/accounts/{account_id}?tab=governance"
 
 
-def test_governance_update_cancel_and_sort_flow(client: TestClient) -> None:
+def test_governance_create_pushes_owner_calendar_without_google_attendees(client: TestClient, db_session: Session, monkeypatch: pytest.MonkeyPatch) -> None:
+    headers = auth_headers(client)
+    account_id, engagement_id, owner_id = create_approved_account(client, headers, "Calendar Mirror Workspace")
+    owner = db_session.get(User, owner_id)
+    assert owner is not None
+    captured: dict[str, object] = {}
+
+    def fake_json_post(url: str, request_headers: dict[str, str], body: dict) -> dict:
+        captured["url"] = url
+        captured["headers"] = request_headers
+        captured["body"] = body
+        return {"id": "google-event-123"}
+
+    monkeypatch.setattr(IntegrationService, "_json_post", staticmethod(fake_json_post))
+    configured = client.patch(
+        "/api/admin/integrations/google-calendar",
+        headers=headers,
+        json={
+            "enabled": True,
+            "credentials_json": {"access_token": "test-token"},
+            "settings_json": {"shared_governance_calendar_id": "governance-calendar@group.calendar.google.com"},
+        },
+    )
+    assert configured.status_code == 200
+
+    create_response = client.post(
+        "/api/governance-events",
+        headers=headers,
+        json=governance_payload(
+            account_id,
+            engagement_id,
+            owner_id,
+            attendee_emails=["Client.Lead@Example.com", "Sponsor@Example.com"],
+        ),
+    )
+
+    assert create_response.status_code == 201
+    created = create_response.json()
+    assert created["external_provider"] == "google_calendar"
+    assert created["external_event_id"] == "google-event-123"
+    assert owner.primary_google_calendar_id
+    assert str(owner.primary_google_calendar_id).replace("@", "%40") in str(captured["url"])
+    assert "attendees" not in captured["body"]
+
+
+def test_governance_update_patches_google_calendar_event(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
+    headers = auth_headers(client)
+    account_id, engagement_id, owner_id = create_approved_account(client, headers, "Calendar Patch Workspace")
+    captured: dict[str, object] = {}
+
+    def fake_json_post(url: str, request_headers: dict[str, str], body: dict) -> dict:
+        return {"id": "google-event-456"}
+
+    def fake_json_patch(url: str, request_headers: dict[str, str], body: dict) -> dict:
+        captured["url"] = url
+        captured["headers"] = request_headers
+        captured["body"] = body
+        return {"id": "google-event-456"}
+
+    monkeypatch.setattr(IntegrationService, "_json_post", staticmethod(fake_json_post))
+    monkeypatch.setattr(IntegrationService, "_json_patch", staticmethod(fake_json_patch))
+    configured = client.patch(
+        "/api/admin/integrations/google-calendar",
+        headers=headers,
+        json={"enabled": True, "credentials_json": {"access_token": "test-token"}},
+    )
+    assert configured.status_code == 200
+
+    create_response = client.post("/api/governance-events", headers=headers, json=governance_payload(account_id, engagement_id, owner_id))
+    assert create_response.status_code == 201
+    event_id = create_response.json()["id"]
+
+    update_response = client.patch(
+        f"/api/governance-events/{event_id}",
+        headers=headers,
+        json={"governance_type": "SteerCo", "scheduled_at": "2026-06-18T12:00:00Z", "attendee_emails": ["client@example.com"]},
+    )
+
+    assert update_response.status_code == 200
+    assert "google-event-456" in str(captured["url"])
+    assert captured["body"]["summary"] == "SteerCo: Calendar Patch Workspace"
+    assert captured["body"]["start"]["dateTime"].startswith("2026-06-18T12:00:00")
+    assert "attendees" not in captured["body"]
+
+
+def test_governance_calendar_mirror_error_logs_target_calendar(client: TestClient, db_session: Session, monkeypatch: pytest.MonkeyPatch) -> None:
+    headers = auth_headers(client)
+    account_id, engagement_id, owner_id = create_approved_account(client, headers, "Calendar Error Workspace")
+
+    def failed_json_post(url: str, request_headers: dict[str, str], body: dict) -> dict:
+        raise ValueError("External API returned 404: Not Found (reason: notFound)")
+
+    monkeypatch.setattr(IntegrationService, "_json_post", staticmethod(failed_json_post))
+    configured = client.patch(
+        "/api/admin/integrations/google-calendar",
+        headers=headers,
+        json={
+            "enabled": True,
+            "credentials_json": {"access_token": "test-token"},
+            "settings_json": {"shared_governance_calendar_id": "missing-calendar@example.com"},
+        },
+    )
+    assert configured.status_code == 200
+
+    create_response = client.post(
+        "/api/governance-events",
+        headers=headers,
+        json=governance_payload(
+            account_id,
+            engagement_id,
+            owner_id,
+            scheduled_at="2026-06-16T10:00:00Z",
+        ),
+    )
+
+    assert create_response.status_code == 201
+    sync_log = db_session.query(IntegrationSyncLog).filter_by(provider="google_calendar", action="outbound_write", status="error").one()
+    assert "while writing to Google Calendar ID" in sync_log.message
+    owner = db_session.get(User, owner_id)
+    assert owner is not None
+    assert sync_log.payload == {"calendar_id": owner.primary_google_calendar_id}
+
+
+def test_google_calendar_http_error_message_includes_provider_reason() -> None:
+    body = (
+        b'{"error":{"code":403,"message":"The caller does not have permission",'
+        b'"status":"PERMISSION_DENIED","errors":[{"reason":"forbidden"}]}}'
+    )
+    error = HTTPError(
+        url="https://www.googleapis.com/calendar/v3/calendars/test/events",
+        code=403,
+        msg="Forbidden",
+        hdrs={},
+        fp=io.BytesIO(body),
+    )
+
+    assert (
+        IntegrationService._external_api_error_message(error)
+        == "External API returned 403: PERMISSION_DENIED - The caller does not have permission (reason: forbidden)"
+    )
+
+
+def test_governance_update_cancel_and_sort_flow(client: TestClient, db_session: Session) -> None:
     headers = auth_headers(client)
     account_id, engagement_id, owner_id = create_approved_account(client, headers, "Sortable Governance Workspace")
 
@@ -226,6 +379,10 @@ def test_governance_update_cancel_and_sort_flow(client: TestClient) -> None:
     assert updated["governance_type"] == "SteerCo"
     assert updated["scheduled_at"].startswith("2026-06-12T11:00:00")
     assert updated["attendee_emails"] == ["delivery.lead@example.com"]
+    reminder_task = db_session.query(Task).filter_by(source_type="governance_event", source_record_id=first_id).one()
+    assert reminder_task.title == "SteerCo: Sortable Governance Workspace"
+    assert reminder_task.due_at.isoformat().startswith("2026-06-12T11:00:00")
+    assert reminder_task.status == "open"
 
     sorted_response = client.get(
         "/api/governance-events",
@@ -239,6 +396,9 @@ def test_governance_update_cancel_and_sort_flow(client: TestClient) -> None:
     cancel_response = client.patch(f"/api/governance-events/{first_id}", headers=headers, json={"status": "cancelled"})
     assert cancel_response.status_code == 200
     assert cancel_response.json()["status"] == "cancelled"
+    db_session.refresh(reminder_task)
+    assert reminder_task.status == "cancelled"
+    assert reminder_task.skipped_reason == "Governance event was cancelled."
 
 
 def test_governance_completion_audit_timeline_overdue_and_openapi(client: TestClient, db_session: Session) -> None:
@@ -308,6 +468,58 @@ def test_governance_completion_audit_timeline_overdue_and_openapi(client: TestCl
     assert paths["/api/governance-events"]["post"]["summary"] == "Create governance event"
     assert paths["/api/governance-events/{event_id}/complete"]["post"]["summary"] == "Complete governance event"
     assert paths["/api/governance-events/{event_id}/ai-brief"]["post"]["summary"] == "Generate governance brief"
+
+
+def test_governance_completion_uses_meeting_capture_and_creates_action_task(client: TestClient, db_session: Session) -> None:
+    headers = auth_headers(client)
+    account_id, engagement_id, owner_id = create_approved_account(client, headers, "Meeting Capture Governance")
+    created = client.post("/api/governance-events", headers=headers, json=governance_payload(account_id, engagement_id, owner_id))
+    assert created.status_code == 201
+    event = created.json()
+
+    meeting = client.post(
+        "/api/meeting-capture/meetings",
+        headers=headers,
+        json={
+            "title": "Executive QBR recording",
+            "meeting_url": "https://fathom.video/share/capture-1",
+            "summary": "Reviewed rollout health and confirmed executive follow-up.",
+            "action_items": ["Share the recovery plan"],
+            "account_id": account_id,
+        },
+    )
+    assert meeting.status_code == 201
+
+    completed = client.post(
+        f"/api/governance-events/{event['id']}/complete",
+        headers=headers,
+        json={
+            "meeting_artifact_id": meeting.json()["id"],
+            "notes": "Reviewed rollout health and confirmed executive follow-up.",
+            "decisions": [{"decision_text": "Keep weekly recovery cadence."}],
+            "action_items": [
+                {
+                    "title": "Share the recovery plan",
+                    "owner_id": owner_id,
+                    "due_date": "2026-06-22T17:00:00Z",
+                    "create_task": True,
+                }
+            ],
+        },
+    )
+    assert completed.status_code == 200
+    assert completed.json()["status"] == "completed"
+
+    artifact = db_session.get(MeetingArtifact, meeting.json()["id"])
+    assert artifact is not None
+    assert artifact.status == "attached"
+    assert artifact.linked_object_type == "governance_event"
+    assert artifact.linked_object_id == event["id"]
+
+    action_task = db_session.query(Task).filter_by(source_type="governance_action_item").one()
+    assert action_task.owner_id == owner_id
+    assert action_task.title == "Share the recovery plan"
+    assert action_task.due_at.isoformat().startswith("2026-06-22T17:00:00")
 
 
 def test_governance_deterministic_agenda_brief_and_read_only_permissions(client: TestClient) -> None:

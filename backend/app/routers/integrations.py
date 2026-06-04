@@ -2,6 +2,7 @@ from datetime import datetime
 from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends, Query, Request, status
+from fastapi.responses import RedirectResponse
 
 from app.dependencies import get_current_user, get_integration_service
 from app.models import User
@@ -258,21 +259,47 @@ def get_ai_gateway_run_alias(run_id: str, current_user: Annotated[User, Depends(
     return service.get_ai_gateway_run(run_id, current_user)
 
 
-@router.get("/admin/integrations/google-calendar/oauth-url", response_model=dict[str, str], summary="Create Google Calendar OAuth URL", description="Returns the Google OAuth authorization URL for Calendar event read/write scopes.")
+@router.get("/admin/integrations/google-calendar/oauth-url", response_model=dict[str, str], summary="Create Google Calendar OAuth URL", description="Returns the Google OAuth authorization URL for outbound Calendar event scopes.")
 def google_oauth_authorize_url(current_user: Annotated[User, Depends(get_current_user)], service: Annotated[IntegrationService, Depends(get_integration_service)]) -> dict[str, str]:
     return service.google_oauth_authorize_url(current_user)
 
 
-@router.get("/integrations/google-calendar/oauth/authorize", response_model=dict[str, str], summary="Create Google Calendar OAuth URL", description="Returns the Google OAuth authorization URL for Calendar event read/write scopes.")
+@router.get("/integrations/google-calendar/oauth/authorize", response_model=dict[str, str], summary="Create Google Calendar OAuth URL", description="Returns the Google OAuth authorization URL for outbound Calendar event scopes.")
 def google_oauth_authorize_url_alias(current_user: Annotated[User, Depends(get_current_user)], service: Annotated[IntegrationService, Depends(get_integration_service)]) -> dict[str, str]:
     return service.google_oauth_authorize_url(current_user)
 
 
-@router.get("/admin/integrations/google-calendar/oauth-callback", response_model=IntegrationConnectionRead, summary="Complete Google Calendar OAuth", description="Exchanges a Google authorization code and stores Calendar tokens for the integration.")
-def google_oauth_callback(code: str, service: Annotated[IntegrationService, Depends(get_integration_service)], state: str | None = None) -> IntegrationConnectionRead:
-    return service.google_oauth_callback(code, state)
+@router.get("/admin/integrations/google-calendar/oauth-callback", summary="Complete Google Calendar OAuth", description="Exchanges a Google authorization code, stores Calendar tokens, and redirects to the frontend status screen.")
+def google_oauth_callback(
+    service: Annotated[IntegrationService, Depends(get_integration_service)],
+    code: str | None = None,
+    state: str | None = None,
+    error: str | None = None,
+    error_description: str | None = None,
+) -> RedirectResponse:
+    return RedirectResponse(
+        service.google_oauth_callback_redirect_url(
+            code=code,
+            state=state,
+            error_value=error,
+            error_description=error_description,
+        )
+    )
 
 
-@router.get("/integrations/google-calendar/oauth/callback", response_model=IntegrationConnectionRead, summary="Complete Google Calendar OAuth", description="Exchanges a Google authorization code and stores Calendar tokens for the integration.")
-def google_oauth_callback_alias(code: str, service: Annotated[IntegrationService, Depends(get_integration_service)], state: str | None = None) -> IntegrationConnectionRead:
-    return service.google_oauth_callback(code, state)
+@router.get("/integrations/google-calendar/oauth/callback", summary="Complete Google Calendar OAuth", description="Exchanges a Google authorization code, stores Calendar tokens, and redirects to the frontend status screen.")
+def google_oauth_callback_alias(
+    service: Annotated[IntegrationService, Depends(get_integration_service)],
+    code: str | None = None,
+    state: str | None = None,
+    error: str | None = None,
+    error_description: str | None = None,
+) -> RedirectResponse:
+    return RedirectResponse(
+        service.google_oauth_callback_redirect_url(
+            code=code,
+            state=state,
+            error_value=error,
+            error_description=error_description,
+        )
+    )

@@ -8,6 +8,7 @@ import { MobileNav } from '@/components/layout/MobileNav'
 import { Sidebar } from '@/components/layout/Sidebar'
 import { Topbar } from '@/components/layout/Topbar'
 import { V4AmbientScene } from '@/components/layout/V4AmbientScene'
+import { MeetingCapturePanel } from '@/components/meeting/MeetingCapturePanel'
 import { useAuth } from '@/contexts/AuthContext'
 import { useKeyboardShortcuts } from '@/hooks/useKeyboardShortcuts'
 import { listAccounts } from '@/services/accountWorkspace'
@@ -101,6 +102,7 @@ export function AppShell() {
       </div>
       <MobileNav />
       <KAMAIPanel />
+      <MeetingCapturePanel />
       <AddNoteModal accountId={activeAccountId} open={noteOpen} onOpenChange={setNoteOpen} />
       <Dialog.Root open={shortcutOpen} onOpenChange={setShortcutOpen}>
         <Dialog.Portal>

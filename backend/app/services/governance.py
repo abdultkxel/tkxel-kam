@@ -4,6 +4,7 @@ import json
 import logging
 
 from fastapi import HTTPException, status
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.config import get_settings
@@ -15,12 +16,15 @@ from app.models import (
     GovernanceSourceCitation,
     IntegrationConnection,
     IntegrationSyncLog,
+    MeetingArtifact,
+    Task,
     User,
 )
 from app.repositories.accounts import AccountRepository
 from app.repositories.audit import AuditRepository
 from app.repositories.custom_fields import CustomFieldRepository
 from app.repositories.governance import GovernanceRepository
+from app.repositories.meeting_capture import MeetingCaptureRepository
 from app.repositories.rbac import RbacRepository
 from app.repositories.timeline import TimelineRepository
 from app.schemas import (
@@ -57,11 +61,14 @@ from app.schemas import (
 from app.services.account_access import AccountAccessService, GLOBAL_EDIT_ROLES, GLOBAL_VIEW_ROLES
 from app.services.audit import AuditService
 from app.services.custom_fields import CustomFieldService
+from app.services.email_domains import field_validation_error
 from app.services.integrations import IntegrationService
 from app.services.timeline import TimelineService
 from app.services.user_management import page_count
 
 logger = logging.getLogger(__name__)
+GOVERNANCE_REMINDER_TASK_SOURCE = "governance_event"
+GOVERNANCE_ACTION_TASK_SOURCE = "governance_action_item"
 
 
 class GovernanceService:
@@ -73,6 +80,7 @@ class GovernanceService:
         self.timeline = TimelineService(TimelineRepository(db))
         self.settings = get_settings()
         self.custom_fields = CustomFieldService(db, CustomFieldRepository(db))
+        self.meeting_capture = MeetingCaptureRepository(db)
 
     def list_events(
         self,
@@ -154,6 +162,12 @@ class GovernanceService:
         owner = self._get_user_or_404(payload.owner_id)
         attendees = self._event_attendees(payload.attendees, payload.attendee_emails)
         source = self._provider_event_source(payload.source) if payload.source != "manual" else "manual"
+        deduplication_key = self._event_deduplication_key(source, payload.account_id, payload.governance_type, payload.scheduled_at)
+        if self.repository.get_event_by_deduplication_key(deduplication_key):
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="A governance event already exists for this account, governance type, and scheduled time.",
+            )
         event = GovernanceEvent(
             account_id=payload.account_id,
             engagement_id=payload.engagement_id,
@@ -161,7 +175,7 @@ class GovernanceService:
             owner_name=owner.full_name,
             governance_type=payload.governance_type,
             source=source,
-            deduplication_key=f"{source}:{payload.account_id}:{payload.governance_type}:{payload.scheduled_at.isoformat()}",
+            deduplication_key=deduplication_key,
             scheduled_at=payload.scheduled_at,
             end_at=payload.end_at,
             status=payload.status,
@@ -172,8 +186,16 @@ class GovernanceService:
             created_by_id=current_user.id,
             created_by_name=current_user.full_name,
         )
-        self.repository.save_event(event)
+        try:
+            self.repository.save_event(event)
+        except IntegrityError as exc:
+            self.repository.db.rollback()
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="A governance event already exists for this account, governance type, and scheduled time.",
+            ) from exc
         self.custom_fields.save_record_values("governance_reviews", event.id, payload.custom_field_values, current_user, audit_module="governance_reviews")
+        self._sync_governance_reminder_task(event, current_user)
         self._write_governance_timeline(event, current_user, "scheduled")
         self._mirror_calendar_event(event, current_user)
         self.audit.log(module="governance_reviews", action="create", entity_type="governance_event", entity_id=event.id, actor=current_user, after_value=self._event_snapshot(event))
@@ -204,7 +226,8 @@ class GovernanceService:
             setattr(event, field, value)
         if custom_values is not None:
             self.custom_fields.replace_record_values("governance_reviews", event.id, custom_values, current_user, audit_module="governance_reviews")
-        if not event.external_event_id and event.source == "manual":
+        self._sync_governance_reminder_task(event, current_user)
+        if event.source == "manual":
             self._mirror_calendar_event(event, current_user)
         self.audit.log(module="governance_reviews", action="update", entity_type="governance_event", entity_id=event.id, actor=current_user, before_value=before, after_value=self._event_snapshot(event))
         self._update_next_governance(event.account)
@@ -216,7 +239,10 @@ class GovernanceService:
         self._require_event_update(current_user, event)
         if event.status == "cancelled":
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Cancelled governance events must be reopened or rescheduled before completion")
+        before = self._event_snapshot(event)
+        meeting_artifact: MeetingArtifact | None = None
         if payload is not None:
+            meeting_artifact = self._meeting_artifact_for_completion(payload.meeting_artifact_id, event, current_user)
             event.notes = payload.notes
             for decision_payload in payload.decisions:
                 decision = self._decision_from_payload(event, decision_payload, current_user)
@@ -231,12 +257,16 @@ class GovernanceService:
                 )
                 decision.timeline_entry_id = timeline_entry.id if timeline_entry else None
             for action_payload in payload.action_items:
-                self.repository.add_action_item(self._action_item_from_payload(event, action_payload, current_user))
+                action_item = self.repository.add_action_item(self._action_item_from_payload(event, action_payload, current_user))
+                if action_payload.create_task:
+                    self._sync_governance_action_task(event, action_item, current_user)
+            if meeting_artifact:
+                self._attach_meeting_artifact(event, meeting_artifact)
         if not event.notes and not event.decisions:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Governance completion requires notes or at least one decision")
-        before = self._event_snapshot(event)
         event.status = "completed"
         event.completed_at = datetime.now(timezone.utc)
+        self._sync_governance_reminder_task(event, current_user)
         self._write_governance_timeline(event, current_user, "completed")
         self.audit.log(module="governance_reviews", action="complete", entity_type="governance_event", entity_id=event.id, actor=current_user, before_value=before, after_value=self._event_snapshot(event))
         self._update_next_governance(event.account)
@@ -498,6 +528,131 @@ class GovernanceService:
         items, total = self.repository.list_sync_logs(provider=provider, status=status_filter, page=page, page_size=page_size)
         return IntegrationSyncLogPageRead(items=[IntegrationSyncLogRead.model_validate(item) for item in items], total=total, page=page, page_size=page_size, pages=page_count(total, page_size))
 
+    def _sync_governance_reminder_task(self, event: GovernanceEvent, actor: User) -> None:
+        if not event.account_id or event.review_required:
+            return
+        task = self.repository.get_task_by_source(GOVERNANCE_REMINDER_TASK_SOURCE, event.id)
+        if event.status == "cancelled":
+            if task:
+                task.status = "cancelled"
+                task.skipped_reason = task.skipped_reason or "Governance event was cancelled."
+                task.updated_by_id = actor.id
+            return
+        if event.status == "completed":
+            if task:
+                task.status = "done"
+                task.outcome = task.outcome or "Governance event completed."
+                task.completed_at = task.completed_at or datetime.now(timezone.utc)
+                task.completed_by_id = actor.id
+                task.updated_by_id = actor.id
+            return
+        if task is None:
+            task = Task(
+                account_id=event.account_id,
+                engagement_id=event.engagement_id,
+                source_type=GOVERNANCE_REMINDER_TASK_SOURCE,
+                source_record_id=event.id,
+                title=self._governance_task_title(event),
+                description=self._governance_task_description(event),
+                owner_id=event.owner_id,
+                owner_name=event.owner_name,
+                due_at=event.scheduled_at,
+                status="open",
+                priority="medium",
+                success_criteria=[],
+                requires_evidence=False,
+                created_by_id=actor.id,
+                updated_by_id=actor.id,
+            )
+            self.repository.save_task(task)
+            return
+        task.account_id = event.account_id
+        task.engagement_id = event.engagement_id
+        task.title = self._governance_task_title(event)
+        task.description = self._governance_task_description(event)
+        task.owner_id = event.owner_id
+        task.owner_name = event.owner_name
+        task.due_at = event.scheduled_at
+        if task.status in {"done", "cancelled"}:
+            task.status = "open"
+            task.completed_at = None
+            task.completed_by_id = None
+            task.skipped_reason = None
+        task.updated_by_id = actor.id
+
+    def _sync_governance_action_task(self, event: GovernanceEvent, action_item: GovernanceActionItem, actor: User) -> None:
+        if not event.account_id:
+            return
+        existing = self.repository.get_task_by_source(GOVERNANCE_ACTION_TASK_SOURCE, action_item.id)
+        owner = self.repository.get_user(event.owner_id) if event.owner_id else None
+        owner_id = owner.id if owner else event.owner_id or actor.id
+        owner_name = owner.full_name if owner else event.owner_name or actor.full_name
+        if existing is None:
+            existing = Task(
+                account_id=event.account_id,
+                engagement_id=event.engagement_id,
+                source_type=GOVERNANCE_ACTION_TASK_SOURCE,
+                source_record_id=action_item.id,
+                title=action_item.title,
+                description=f"{event.governance_type} follow-up for {event.account.name if event.account else 'governance event'}.",
+                owner_id=owner_id,
+                owner_name=owner_name,
+                due_at=action_item.due_at,
+                status="open",
+                priority=action_item.priority,
+                success_criteria=[],
+                requires_evidence=False,
+                created_by_id=actor.id,
+                updated_by_id=actor.id,
+            )
+            self.repository.save_task(existing)
+            return
+        existing.account_id = event.account_id
+        existing.engagement_id = event.engagement_id
+        existing.title = action_item.title
+        existing.owner_id = owner_id
+        existing.owner_name = owner_name
+        existing.due_at = action_item.due_at
+        existing.priority = action_item.priority
+        existing.updated_by_id = actor.id
+
+    def _meeting_artifact_for_completion(self, meeting_artifact_id: str | None, event: GovernanceEvent, current_user: User) -> MeetingArtifact | None:
+        if not meeting_artifact_id:
+            return None
+        artifact = self.meeting_capture.get_meeting_artifact(meeting_artifact_id)
+        if artifact is None or artifact.owner_id != current_user.id:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Meeting capture was not found")
+        if artifact.account_id and artifact.account_id != event.account_id:
+            raise field_validation_error("meeting_artifact_id", "Meeting capture belongs to a different account.")
+        return artifact
+
+    def _attach_meeting_artifact(self, event: GovernanceEvent, artifact: MeetingArtifact) -> None:
+        if not artifact.account_id:
+            artifact.account_id = event.account_id
+            artifact.engagement_id = event.engagement_id
+        artifact.linked_object_type = "governance_event"
+        artifact.linked_object_id = event.id
+        artifact.status = "attached"
+        self.meeting_capture.save_meeting_artifact(artifact)
+        self._ensure_citation(
+            event,
+            "meeting_capture",
+            "meeting_artifact",
+            artifact.id,
+            artifact.source_link[:500] if artifact.source_link else None,
+            "Fathom meeting notes",
+            artifact.summary or artifact.title,
+        )
+
+    @staticmethod
+    def _governance_task_title(event: GovernanceEvent) -> str:
+        account_name = event.account.name if event.account else "Governance event"
+        return f"{event.governance_type}: {account_name}"[:220]
+
+    @staticmethod
+    def _governance_task_description(event: GovernanceEvent) -> str:
+        return event.agenda or event.notes or "Governance event reminder."
+
     def _generate_recurrence_events(self, rule: GovernanceRecurrenceRule, actor: User) -> None:
         if not rule.account_id:
             return
@@ -637,7 +792,7 @@ class GovernanceService:
         return provider
 
     def _mirror_calendar_event(self, event: GovernanceEvent, current_user: User) -> None:
-        if event.external_provider == "google_calendar":
+        if event.source == "google_calendar":
             return
         try:
             IntegrationService(self.repository.db).write_governance_event_to_calendar(event, current_user)
@@ -825,6 +980,10 @@ class GovernanceService:
         if emails:
             return list(dict.fromkeys(emails))
         return attendees or []
+
+    @staticmethod
+    def _event_deduplication_key(source: str, account_id: str, governance_type: str, scheduled_at: datetime) -> str:
+        return f"{source}:{account_id}:{governance_type}:{scheduled_at.isoformat()}"
 
     @staticmethod
     def _attendee_emails(attendees: list[str] | None) -> list[str]:

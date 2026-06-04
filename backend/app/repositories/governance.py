@@ -12,6 +12,7 @@ from app.models import (
     GovernanceSourceCitation,
     IntegrationConnection,
     IntegrationSyncLog,
+    Task,
     User,
 )
 
@@ -220,6 +221,19 @@ class GovernanceRepository:
         self.db.add(log)
         self.db.flush()
         return log
+
+    def get_task_by_source(self, source_type: str, source_record_id: str) -> Task | None:
+        return self.db.scalar(
+            select(Task)
+            .where(Task.source_type == source_type, Task.source_record_id == source_record_id)
+            .order_by(Task.created_at.desc())
+            .limit(1)
+        )
+
+    def save_task(self, task: Task) -> Task:
+        self.db.add(task)
+        self.db.flush()
+        return task
 
     def list_sync_logs(
         self,

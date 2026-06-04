@@ -128,7 +128,9 @@ export interface GovernanceEventCompleteInput {
     ownerName?: string | null
     ownerEmail?: string | null
     dueDate: string
+    createTask?: boolean
   }>
+  meetingArtifactId?: string | null
 }
 
 export interface GovernanceGeneratedOutputInput {

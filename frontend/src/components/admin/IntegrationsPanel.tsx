@@ -55,10 +55,14 @@ interface ConfigState {
 }
 
 const providerHelp: Record<IntegrationProvider, string> = {
-  google_calendar: 'Calendar events',
+  google_calendar: 'Outbound governance events',
   fathom: 'Meeting summaries',
   csat: 'Manual CSAT',
   ai_llm_gateway: 'AI run logs',
+}
+
+function supportsInboundSync(provider: IntegrationProvider) {
+  return provider !== 'google_calendar'
 }
 
 function connectionName(connection: IntegrationConnection) {
@@ -95,6 +99,7 @@ function ConfigDrawer({
 
   if (!config) return null
   const activeConfig = config
+  const showSyncSettings = supportsInboundSync(config.provider)
 
   function setField<K extends keyof ConfigState>(field: K, value: ConfigState[K]) {
     setForm(current => ({ ...current, [field]: value }))
@@ -177,38 +182,19 @@ function ConfigDrawer({
                   <input type="checkbox" checked={form.enabled} onChange={event => setField('enabled', event.target.checked)} />
                   <span className="text-sm font-semibold text-ink">Enabled</span>
                 </label>
-                <label className="block">
-                  <span className="tk-label">Sync interval minutes</span>
-                  <input className={cn('tk-input mt-2', fieldErrors.syncIntervalMinutes && 'border-rag-red')} value={form.syncIntervalMinutes} onChange={event => setField('syncIntervalMinutes', event.target.value)} inputMode="numeric" />
-                  <FieldError id="integration-sync-interval-error" message={fieldErrors.syncIntervalMinutes} />
-                </label>
+                {showSyncSettings ? (
+                  <label className="block">
+                    <span className="tk-label">Sync interval minutes</span>
+                    <input className={cn('tk-input mt-2', fieldErrors.syncIntervalMinutes && 'border-rag-red')} value={form.syncIntervalMinutes} onChange={event => setField('syncIntervalMinutes', event.target.value)} inputMode="numeric" />
+                    <FieldError id="integration-sync-interval-error" message={fieldErrors.syncIntervalMinutes} />
+                  </label>
+                ) : null}
               </div>
             </section>
 
             {config.provider === 'google_calendar' ? (
               <section className="rounded-lg border border-surface-border p-4">
-                <div className="grid gap-4 sm:grid-cols-2">
-                  <label className="block">
-                    <span className="tk-label">Shared Governance Calendar ID</span>
-                    <input className={cn('tk-input mt-2', fieldErrors.sharedGovernanceCalendarId && 'border-rag-red')} value={form.sharedGovernanceCalendarId} onChange={event => setField('sharedGovernanceCalendarId', event.target.value)} />
-                    <FieldError id="integration-shared-calendar-error" message={fieldErrors.sharedGovernanceCalendarId} />
-                  </label>
-                  <label className="block">
-                    <span className="tk-label">Read Calendar ID</span>
-                    <input className={cn('tk-input mt-2', fieldErrors.calendarId && 'border-rag-red')} value={form.calendarId} onChange={event => setField('calendarId', event.target.value)} />
-                    <FieldError id="integration-calendar-error" message={fieldErrors.calendarId} />
-                  </label>
-                  <label className="block sm:col-span-2">
-                    <span className="tk-label">Access token</span>
-                    <input className={cn('tk-input mt-2', fieldErrors.apiKey && 'border-rag-red')} value={form.accessToken} onChange={event => setField('accessToken', event.target.value)} type="password" autoComplete="off" />
-                    <FieldError id="integration-google-token-error" message={fieldErrors.apiKey} />
-                  </label>
-                  <label className="flex min-h-[44px] items-center gap-3">
-                    <input type="checkbox" checked={form.autoCreateTaggedEvents} onChange={event => setField('autoCreateTaggedEvents', event.target.checked)} />
-                    <span className="text-sm font-semibold text-ink">Auto-create tagged events</span>
-                  </label>
-                </div>
-                <button className="tk-button-secondary mt-4" type="button" onClick={() => void startOAuth()}>
+                <button className="tk-button-secondary" type="button" onClick={() => void startOAuth()}>
                   <ExternalLink className="h-4 w-4" />
                   Connect Google
                 </button>
@@ -443,14 +429,18 @@ export function IntegrationsPanel() {
               {connection.last_error ? <p className="mt-3 rounded-md border border-rag-red/20 bg-rag-red/10 px-3 py-2 text-xs font-medium text-rag-red">{connection.last_error}</p> : null}
 
               <div className="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-4">
-                <button className="tk-button-secondary px-2 text-xs" type="button" onClick={() => void run(connection.provider, 'sync')} disabled={Boolean(action)}>
-                  {action === `sync:${connection.provider}` ? <Loader2 className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4" />}
-                  Sync
-                </button>
-                <button className="tk-button-secondary px-2 text-xs" type="button" onClick={() => void run(connection.provider, 'retry')} disabled={Boolean(action)}>
-                  {action === `retry:${connection.provider}` ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCcw className="h-4 w-4" />}
-                  Retry
-                </button>
+                {supportsInboundSync(connection.provider) ? (
+                  <>
+                    <button className="tk-button-secondary px-2 text-xs" type="button" onClick={() => void run(connection.provider, 'sync')} disabled={Boolean(action)}>
+                      {action === `sync:${connection.provider}` ? <Loader2 className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4" />}
+                      Sync
+                    </button>
+                    <button className="tk-button-secondary px-2 text-xs" type="button" onClick={() => void run(connection.provider, 'retry')} disabled={Boolean(action)}>
+                      {action === `retry:${connection.provider}` ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCcw className="h-4 w-4" />}
+                      Retry
+                    </button>
+                  </>
+                ) : null}
                 <button className="tk-button-secondary px-2 text-xs" type="button" onClick={() => setSelected(connection)}>
                   <Settings className="h-4 w-4" />
                   Configure
@@ -546,17 +536,14 @@ function formFromConnection(config: IntegrationConnection | null): ConfigState {
 }
 
 function buildPayload(provider: IntegrationProvider, form: ConfigState) {
-  const settings: Record<string, unknown> = {
-    sync_interval_minutes: numberOrUndefined(form.syncIntervalMinutes),
+  const settings: Record<string, unknown> = {}
+  if (supportsInboundSync(provider)) {
+    settings.sync_interval_minutes = numberOrUndefined(form.syncIntervalMinutes)
   }
   const credentials: Record<string, unknown> = {}
 
   if (provider === 'google_calendar') {
-    settings.shared_governance_calendar_id = emptyToUndefined(form.sharedGovernanceCalendarId)
-    settings.calendar_id = emptyToUndefined(form.calendarId)
-    settings.auto_create_tagged_events = form.autoCreateTaggedEvents
-    settings.deduplication_window_minutes = numberOrUndefined(form.deduplicationWindowMinutes)
-    if (form.accessToken.trim()) credentials.access_token = form.accessToken.trim()
+    return { enabled: form.enabled }
   }
   if (provider === 'fathom') {
     settings.base_url = emptyToUndefined(form.baseUrl)

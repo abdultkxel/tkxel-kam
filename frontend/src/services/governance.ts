@@ -255,9 +255,10 @@ function buildUpdatePayload(payload: GovernanceEventUpdateInput) {
   }
 }
 
-function buildCompletePayload(payload: GovernanceEventCompleteInput) {
+export function buildCompletePayload(payload: GovernanceEventCompleteInput) {
   return {
     notes: payload.notes,
+    meeting_artifact_id: payload.meetingArtifactId ?? null,
     decisions: (payload.decisions ?? []).map(item => ({
       decision_text: item.decisionText,
       owner_id: item.ownerId ?? null,
@@ -269,6 +270,7 @@ function buildCompletePayload(payload: GovernanceEventCompleteInput) {
       owner_name: item.ownerName ?? null,
       owner_email: item.ownerEmail ?? null,
       due_date: item.dueDate,
+      create_task: item.createTask ?? true,
     })),
   }
 }
