@@ -9,7 +9,7 @@ from sqlalchemy.pool import StaticPool
 
 from app.database import Base, get_db
 from app.main import app
-from app.models import Account, AccountChangeAlert, AccountOwner, CustomFieldDefinition, Engagement, NotificationRecord, Signal, SlaEscalatedItem, Task
+from app.models import Account, AccountChangeAlert, AccountOwner, CustomFieldDefinition, Engagement, GovernanceEvent, NotificationRecord, Signal, SlaEscalatedItem, Task
 from app.services.seed import seed_default_data
 
 
@@ -246,7 +246,8 @@ def test_dashboard_digest_and_report_workflows(client: TestClient, db_session: S
     dashboard = client.get("/api/dashboards/am-home", headers=admin_headers)
     assert dashboard.status_code == 200
     widget_keys = {item["key"] for item in dashboard.json()["widgets"]}
-    assert "ai_task_summary" in widget_keys
+    assert "tasks" in widget_keys
+    assert "ai_task_summary" not in widget_keys
 
     refresh = client.post("/api/dashboards/am-home/task-summary/refresh", headers=admin_headers)
     assert refresh.status_code == 200
@@ -285,6 +286,43 @@ def test_role_based_dashboard_profiles_and_reduced_direct_endpoints(client: Test
     owner = seeded_user(client, admin_headers, "account_manager")
     account = create_owned_account(db_session, owner, "role-dashboard-account")
     alert = create_account_change_alert(db_session, account, owner)
+    now = datetime.now(timezone.utc)
+    db_session.add_all(
+        [
+            Task(
+                account_id=account.id,
+                title="Open account follow-up",
+                owner_id=owner["id"],
+                owner_name=owner["full_name"],
+                due_at=now + timedelta(days=2),
+                status="open",
+                priority="medium",
+                created_by_id=owner["id"],
+            ),
+            Task(
+                account_id=account.id,
+                title="Overdue blocker",
+                owner_id=owner["id"],
+                owner_name=owner["full_name"],
+                due_at=now - timedelta(days=1),
+                status="in_progress",
+                priority="critical",
+                created_by_id=owner["id"],
+            ),
+            GovernanceEvent(
+                account_id=account.id,
+                owner_id=owner["id"],
+                owner_name=owner["full_name"],
+                governance_type="QBR",
+                deduplication_key="role-dashboard-qbr",
+                scheduled_at=now + timedelta(days=5),
+                status="scheduled",
+                created_by_id=owner["id"],
+                created_by_name=owner["full_name"],
+            ),
+        ]
+    )
+    db_session.commit()
 
     owner_headers = auth_headers(client, owner["email"], "User@12345")
     am_dashboard = client.get("/api/dashboards/me", headers=owner_headers)
@@ -292,10 +330,23 @@ def test_role_based_dashboard_profiles_and_reduced_direct_endpoints(client: Test
     assert am_dashboard.json()["dashboard"] == "am_home"
     assert am_dashboard.json()["role_group"] == "account_manager"
     assert "leadership" not in {item["key"] for item in am_dashboard.json()["widgets"]}
-    am_keys = {item["key"] for item in am_dashboard.json()["widgets"]}
-    assert "ai_task_summary" in am_keys
-    assert "forecast_chart" not in am_keys
+    am_keys = [item["key"] for item in am_dashboard.json()["widgets"]]
+    assert am_keys == ["summary", "account_portfolio", "signals", "tasks", "governance", "opportunities", "forecast_chart", "governance_calendar"]
+    assert "ai_task_summary" not in am_keys
+    assert "stale_kyc" not in am_keys
+    assert "renewal_focus" not in am_keys
+    assert "forecast_chart" in am_keys
     assert "governance_calendar" in am_keys
+    summary = next(item for item in am_dashboard.json()["widgets"] if item["key"] == "summary")
+    assert [tile["label"] for tile in summary["metadata"]["tiles"]] == ["My Accounts", "At risk", "Signals / Critical tasks", "Upcoming governance"]
+    assert summary["metadata"]["tiles"][0]["route"] == "/accounts"
+    tasks = next(item for item in am_dashboard.json()["widgets"] if item["key"] == "tasks")
+    assert tasks["value"]["open"] == 1
+    assert tasks["value"]["in_progress"] == 1
+    assert tasks["value"]["overdue"] == 1
+    assert tasks["value"]["due_this_week"] == 1
+    governance = next(item for item in am_dashboard.json()["widgets"] if item["key"] == "governance")
+    assert governance["items"][0]["route"] == f"/accounts/{account.id}?tab=governance"
 
     kam_head = seeded_user(client, admin_headers, "kam_head")
     kam_headers = auth_headers(client, kam_head["email"], "User@12345")
