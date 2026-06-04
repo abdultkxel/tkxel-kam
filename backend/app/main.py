@@ -46,6 +46,7 @@ from app.services.notifications import NotificationsService
 from app.services.reports import ReportsService
 from app.services.timeline import TimelineService
 from app.services.integrations import IntegrationService
+from app.services.kyc_worker import KycWorkerService
 
 logger = logging.getLogger(__name__)
 
@@ -58,12 +59,15 @@ async def lifespan(app: FastAPI):
     retention_worker: asyncio.Task | None = None
     notifications_reporting_worker: asyncio.Task | None = None
     integrations_worker: asyncio.Task | None = None
+    kyc_worker: asyncio.Task | None = None
     if settings.timeline_retention_worker_enabled:
         retention_worker = asyncio.create_task(timeline_retention_worker_loop())
     if settings.notifications_reporting_worker_enabled:
         notifications_reporting_worker = asyncio.create_task(notifications_reporting_worker_loop())
     if settings.integrations_worker_enabled:
         integrations_worker = asyncio.create_task(integrations_worker_loop())
+    if settings.kyc_worker_enabled:
+        kyc_worker = asyncio.create_task(kyc_worker_loop())
     try:
         yield
     finally:
@@ -79,6 +83,10 @@ async def lifespan(app: FastAPI):
             integrations_worker.cancel()
             with contextlib.suppress(asyncio.CancelledError):
                 await integrations_worker
+        if kyc_worker:
+            kyc_worker.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await kyc_worker
 
 
 async def timeline_retention_worker_loop() -> None:
@@ -125,6 +133,19 @@ async def integrations_worker_loop() -> None:
         except Exception:
             logger.exception("Integrations worker failed")
         await asyncio.sleep(settings.integrations_worker_interval_seconds)
+
+
+async def kyc_worker_loop() -> None:
+    await asyncio.sleep(settings.kyc_worker_initial_delay_seconds)
+    while True:
+        try:
+            with SessionLocal() as db:
+                processed = await asyncio.to_thread(KycWorkerService(db).run_pending, limit=settings.kyc_worker_batch_size)
+                if processed:
+                    logger.info("KYC worker completed %s queued run(s)", processed)
+        except Exception:
+            logger.exception("KYC worker failed")
+        await asyncio.sleep(settings.kyc_worker_interval_seconds)
 
 
 settings = get_settings()
@@ -277,6 +298,7 @@ app.include_router(retention.router)
 app.include_router(scoring.router)
 app.include_router(signals.router)
 app.include_router(kyc.config_router)
+app.include_router(kyc.admin_jobs_router)
 app.include_router(kyc.router)
 app.include_router(timeline.router)
 app.include_router(notifications.router)

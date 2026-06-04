@@ -7,9 +7,12 @@ import {
   approveKycDraft,
   createKycDraft,
   getKycFreshness,
+  listKycAgentRuns,
   listKycDrafts,
   listKycSnapshots,
   rejectKycDraft,
+  runPendingKycJobs,
+  restoreKycSnapshot,
   updateKycDraft,
 } from '@/services/kyc'
 import { Account } from '@/types/account'
@@ -31,9 +34,12 @@ vi.mock('@/services/kyc', () => ({
   approveKycDraft: vi.fn(),
   createKycDraft: vi.fn(),
   getKycFreshness: vi.fn(),
+  listKycAgentRuns: vi.fn(),
   listKycDrafts: vi.fn(),
   listKycSnapshots: vi.fn(),
   rejectKycDraft: vi.fn(),
+  runPendingKycJobs: vi.fn(),
+  restoreKycSnapshot: vi.fn(),
   updateKycDraft: vi.fn(),
 }))
 
@@ -122,7 +128,7 @@ function draft(overrides: Partial<KycDraft> = {}): KycDraft {
   }
 }
 
-function snapshot(): KycSnapshot {
+function snapshot(overrides: Partial<KycSnapshot> = {}): KycSnapshot {
   const item = draft()
   return {
     id: 'snapshot-1',
@@ -146,6 +152,7 @@ function snapshot(): KycSnapshot {
     change_summary: ['Initial snapshot approved.'],
     created_at: '2026-06-01T08:00:00Z',
     ai_disclaimer: item.ai_disclaimer,
+    ...overrides,
   }
 }
 
@@ -170,12 +177,15 @@ const freshness: KycFreshness = {
 describe('KYCAssistedReview', () => {
   beforeEach(() => {
     vi.mocked(listKycDrafts).mockResolvedValue({ items: [draft()], total: 6, page: 1, page_size: 5, pages: 2 })
+    vi.mocked(listKycAgentRuns).mockResolvedValue({ items: [], total: 0, page: 1, page_size: 1, pages: 1 })
     vi.mocked(listKycSnapshots).mockResolvedValue({ items: [snapshot()], total: 1, page: 1, page_size: 3, pages: 1 })
     vi.mocked(getKycFreshness).mockResolvedValue(freshness)
     vi.mocked(updateKycDraft).mockResolvedValue(draft({ reviewed_by_name: 'KAM Head' }))
     vi.mocked(approveKycDraft).mockResolvedValue(draft({ status: 'approved' }))
     vi.mocked(rejectKycDraft).mockResolvedValue(draft({ status: 'rejected' }))
     vi.mocked(createKycDraft).mockResolvedValue(draft({ id: 'draft-2' }))
+    vi.mocked(runPendingKycJobs).mockResolvedValue({ processed_count: 0, failed_count: 0, processed_runs: [], failures: [] })
+    vi.mocked(restoreKycSnapshot).mockResolvedValue(snapshot({ id: 'snapshot-3', version: 3 }))
   })
 
   it('loads drafts, sends filters and pagination to the API, saves edits, and renders approval errors', async () => {
@@ -227,5 +237,36 @@ describe('KYCAssistedReview', () => {
     await user.click(screen.getByRole('button', { name: /Create KYC draft/i }))
 
     await waitFor(() => expect(createKycDraft).toHaveBeenCalledWith('test-token', account.id, expect.objectContaining({ trigger_source: 'kyc_page' })))
+  })
+
+  it('restores an older snapshot as the active KYC version', async () => {
+    const user = userEvent.setup()
+    vi.mocked(listKycSnapshots).mockResolvedValue({
+      items: [
+        snapshot({ id: 'snapshot-2', version: 2 }),
+        snapshot({ id: 'snapshot-1', version: 1 }),
+      ],
+      total: 2,
+      page: 1,
+      page_size: 3,
+      pages: 1,
+    })
+    vi.mocked(getKycFreshness).mockResolvedValue({ ...freshness, snapshot_id: 'snapshot-2', snapshot_version: 2 })
+
+    render(<KYCAssistedReview account={account} />)
+
+    expect(await screen.findByText('Version 1')).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: /Restore as active/i }))
+    expect(await screen.findByText(/Restore KYC version 1/i)).toBeInTheDocument()
+    await user.type(screen.getByLabelText(/Restore reason/i), 'Previous version has the correct account context.')
+    const restoreButtons = screen.getAllByRole('button', { name: /Restore as active/i })
+    await user.click(restoreButtons[restoreButtons.length - 1])
+
+    await waitFor(() => expect(restoreKycSnapshot).toHaveBeenCalledWith(
+      'test-token',
+      account.id,
+      'snapshot-1',
+      { reason: 'Previous version has the correct account context.' },
+    ))
   })
 })

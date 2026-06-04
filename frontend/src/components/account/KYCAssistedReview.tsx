@@ -21,26 +21,30 @@ import {
   approveKycDraft,
   createKycDraft,
   getKycFreshness,
+  listKycAgentRuns,
   listKycDrafts,
   listKycSnapshots,
   rejectKycDraft,
+  runPendingKycJobs,
+  restoreKycSnapshot,
   updateKycDraft,
 } from '@/services/kyc'
 import { Account } from '@/types/account'
-import { KycDraft, KycDraftStatus, KycFreshness, KycPage, KycSnapshot } from '@/types/kyc'
+import { KycAgentRun, KycDraft, KycDraftStatus, KycFreshness, KycPage, KycSnapshot } from '@/types/kyc'
 import { EmptyState } from '@/components/ui/EmptyState'
 import { cn } from '@/utils/cn'
 
 const DRAFT_PAGE_SIZE = 5
 const SNAPSHOT_PAGE_SIZE = 3
 
-type ActionState = 'initial' | 'refresh' | 'create' | 'save' | 'approve' | 'reject' | ''
+type ActionState = 'initial' | 'refresh' | 'create' | 'save' | 'approve' | 'reject' | 'restore' | 'runPending' | ''
 
 export function KYCAssistedReview({ account }: { account: Account }) {
   const { token } = useAuth()
   const [drafts, setDrafts] = useState<KycPage<KycDraft> | null>(null)
   const [snapshots, setSnapshots] = useState<KycPage<KycSnapshot> | null>(null)
   const [freshness, setFreshness] = useState<KycFreshness | null>(null)
+  const [latestRun, setLatestRun] = useState<KycAgentRun | null>(null)
   const [activeDraftId, setActiveDraftId] = useState<string | null>(null)
   const [fieldValues, setFieldValues] = useState<Record<string, string>>({})
   const [ackLowConfidence, setAckLowConfidence] = useState(false)
@@ -48,6 +52,9 @@ export function KYCAssistedReview({ account }: { account: Account }) {
   const [overrideReason, setOverrideReason] = useState('')
   const [reviewNotes, setReviewNotes] = useState('')
   const [rejectionReason, setRejectionReason] = useState('')
+  const [rejectModalOpen, setRejectModalOpen] = useState(false)
+  const [restoreSnapshot, setRestoreSnapshot] = useState<KycSnapshot | null>(null)
+  const [restoreReason, setRestoreReason] = useState('')
   const [searchTerm, setSearchTerm] = useState('')
   const [statusFilter, setStatusFilter] = useState<KycDraftStatus | 'all'>('all')
   const [sortOption, setSortOption] = useState('created_at:desc')
@@ -80,7 +87,7 @@ export function KYCAssistedReview({ account }: { account: Account }) {
       setLoading(mode)
       setError(null)
       try {
-        const [draftPageResponse, snapshotPageResponse, freshnessResponse] = await Promise.all([
+        const [draftPageResponse, snapshotPageResponse, freshnessResponse, runPageResponse] = await Promise.all([
           listKycDrafts(token, account.id, {
             search: searchTerm.trim(),
             status: statusFilter,
@@ -96,10 +103,17 @@ export function KYCAssistedReview({ account }: { account: Account }) {
             page_size: SNAPSHOT_PAGE_SIZE,
           }),
           getKycFreshness(token, account.id),
+          listKycAgentRuns(token, account.id, {
+            page: 1,
+            page_size: 1,
+            sort: 'created_at',
+            direction: 'desc',
+          }),
         ])
         setDrafts(draftPageResponse)
         setSnapshots(snapshotPageResponse)
         setFreshness(freshnessResponse)
+        setLatestRun(runPageResponse.items[0] ?? null)
         setActiveDraftId(current => {
           if (current && draftPageResponse.items.some(item => item.id === current)) return current
           return draftPageResponse.items.find(item => item.status === 'ready_for_review')?.id ?? draftPageResponse.items[0]?.id ?? null
@@ -214,6 +228,44 @@ export function KYCAssistedReview({ account }: { account: Account }) {
     try {
       await rejectKycDraft(token, account.id, activeDraft.id, { reason: rejectionReason })
       toast.success('KYC rejected')
+      setRejectModalOpen(false)
+      await loadKyc('refresh')
+    } catch (requestError) {
+      handleMutationError(requestError)
+    } finally {
+      setLoading('')
+    }
+  }
+
+  async function runPendingNow() {
+    if (!token) return
+    setLoading('runPending')
+    setError(null)
+    try {
+      const result = await runPendingKycJobs(token, 1)
+      toast.success(result.processed_count ? 'Pending KYC job processed' : 'No pending KYC jobs found')
+      await loadKyc('refresh')
+    } catch (requestError) {
+      setError(errorMessage(requestError))
+    } finally {
+      setLoading('')
+    }
+  }
+
+  async function restoreSnapshotAsActive() {
+    if (!token || !restoreSnapshot) return
+    if (!restoreReason.trim()) {
+      setFieldErrors(['Restore reason is required.'])
+      return
+    }
+    setLoading('restore')
+    setFieldErrors([])
+    setError(null)
+    try {
+      const restored = await restoreKycSnapshot(token, account.id, restoreSnapshot.id, { reason: restoreReason })
+      toast.success(`KYC version ${restoreSnapshot.version} restored as version ${restored.version}`)
+      setRestoreSnapshot(null)
+      setRestoreReason('')
       await loadKyc('refresh')
     } catch (requestError) {
       handleMutationError(requestError)
@@ -250,7 +302,7 @@ export function KYCAssistedReview({ account }: { account: Account }) {
                 {loading === 'save' ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
                 Save edits
               </button>
-              <button type="button" className="tk-button-secondary bg-white" onClick={rejectDraft} disabled={!canEditDraft || Boolean(loading)}>
+              <button type="button" className="tk-button-secondary bg-white" onClick={() => setRejectModalOpen(true)} disabled={!canEditDraft || Boolean(loading)}>
                 {loading === 'reject' ? <Loader2 className="h-4 w-4 animate-spin" /> : <XCircle className="h-4 w-4" />}
                 Reject
               </button>
@@ -269,6 +321,29 @@ export function KYCAssistedReview({ account }: { account: Account }) {
           <KYCStat label="Missing fields" value={activeDraft?.missing_fields.length ?? freshness?.missing_fields.length ?? 0} tone={(activeDraft?.missing_fields.length ?? freshness?.missing_fields.length ?? 0) ? 'orange' : 'green'} />
         </div>
       </section>
+
+      {latestRun ? (
+        <section className="tk-card p-4">
+          <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+            <div>
+              <p className="text-[10px] font-semibold uppercase tracking-wider text-ink-secondary">Local AI run status</p>
+              <p className="mt-1 text-sm font-semibold text-ink">
+                {latestRun.status.replace(/_/g, ' ')}
+                {latestRun.model_name ? ` · ${latestRun.model_name}` : ''}
+              </p>
+              <p className="mt-1 text-xs leading-5 text-ink-secondary">
+                {providerText(latestRun)} Source coverage: {sourceCoverageSummary(latestRun)}.
+              </p>
+            </div>
+            {latestRun.status === 'pending' ? (
+              <button type="button" className="tk-button-secondary bg-white" onClick={runPendingNow} disabled={Boolean(loading)}>
+                {loading === 'runPending' ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCcw className="h-4 w-4" />}
+                Run pending job
+              </button>
+            ) : null}
+          </div>
+        </section>
+      ) : null}
 
       {error ? (
         <div className="flex items-start gap-2 rounded-lg border border-rag-red/20 bg-rag-red/10 p-3 text-sm text-rag-red">
@@ -450,10 +525,6 @@ export function KYCAssistedReview({ account }: { account: Account }) {
                   <span className="text-xs font-semibold uppercase tracking-wider text-ink-secondary">Review notes</span>
                   <textarea className="tk-input mt-2 min-h-[86px]" value={reviewNotes} onChange={event => setReviewNotes(event.target.value)} disabled={!canEditDraft} />
                 </label>
-                <label className="block">
-                  <span className="text-xs font-semibold uppercase tracking-wider text-ink-secondary">Rejection reason</span>
-                  <textarea className="tk-input mt-2 min-h-[86px]" value={rejectionReason} onChange={event => setRejectionReason(event.target.value)} disabled={!canEditDraft} />
-                </label>
               </div>
             </section>
           ) : null}
@@ -516,6 +587,13 @@ export function KYCAssistedReview({ account }: { account: Account }) {
                   </div>
                   <p className="mt-1 text-xs text-ink-secondary">Approved by {snapshot.approved_by_name}</p>
                   <p className="mt-1 text-xs text-ink-secondary">{formatDateTime(snapshot.approved_at)}</p>
+                  {snapshot.version !== freshness?.snapshot_version ? (
+                    <button type="button" className="tk-button-secondary mt-3 w-full bg-white text-xs" onClick={() => { setRestoreSnapshot(snapshot); setRestoreReason('') }} disabled={Boolean(loading)}>
+                      Restore as active
+                    </button>
+                  ) : (
+                    <p className="mt-3 rounded-md bg-rag-green/10 px-2 py-1 text-center text-[11px] font-semibold uppercase tracking-wider text-rag-green">Active version</p>
+                  )}
                 </div>
               ))}
               {snapshots && !snapshots.items.length ? <p className="rounded-lg border border-dashed border-surface-border p-4 text-sm text-ink-secondary">No approved snapshots yet.</p> : null}
@@ -524,6 +602,60 @@ export function KYCAssistedReview({ account }: { account: Account }) {
           </section>
         </aside>
       </div>
+
+      {rejectModalOpen && activeDraft ? (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-ink/40 p-4" role="dialog" aria-modal="true" aria-labelledby="kyc-reject-title">
+          <div className="w-full max-w-lg rounded-lg bg-white shadow-xl">
+            <div className="border-b border-surface-border p-5">
+              <h3 id="kyc-reject-title" className="text-base font-semibold text-ink">Reject KYC draft</h3>
+              <p className="mt-1 text-sm leading-6 text-ink-secondary">Record a clear reason so the rejection is visible in audit, timeline, and run history.</p>
+            </div>
+            <div className="p-5">
+              <label className="block">
+                <span className="text-xs font-semibold uppercase tracking-wider text-ink-secondary">Rejection reason</span>
+                <textarea className="tk-input mt-2 min-h-[120px]" value={rejectionReason} onChange={event => setRejectionReason(event.target.value)} />
+              </label>
+            </div>
+            <div className="flex flex-col-reverse gap-2 border-t border-surface-border p-5 sm:flex-row sm:justify-end">
+              <button type="button" className="tk-button-secondary bg-white" onClick={() => setRejectModalOpen(false)} disabled={Boolean(loading)}>
+                Cancel
+              </button>
+              <button type="button" className="tk-button-primary bg-rag-red hover:bg-rag-red/90" onClick={rejectDraft} disabled={Boolean(loading)}>
+                {loading === 'reject' ? <Loader2 className="h-4 w-4 animate-spin" /> : <XCircle className="h-4 w-4" />}
+                Reject KYC
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {restoreSnapshot ? (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-ink/40 p-4" role="dialog" aria-modal="true" aria-labelledby="kyc-restore-title">
+          <div className="w-full max-w-lg rounded-lg bg-white shadow-xl">
+            <div className="border-b border-surface-border p-5">
+              <h3 id="kyc-restore-title" className="text-base font-semibold text-ink">Restore KYC version {restoreSnapshot.version}</h3>
+              <p className="mt-1 text-sm leading-6 text-ink-secondary">
+                This will create a new immutable snapshot copied from version {restoreSnapshot.version}. The new version becomes the active KYC.
+              </p>
+            </div>
+            <div className="p-5">
+              <label className="block">
+                <span className="text-xs font-semibold uppercase tracking-wider text-ink-secondary">Restore reason</span>
+                <textarea className="tk-input mt-2 min-h-[120px]" value={restoreReason} onChange={event => setRestoreReason(event.target.value)} />
+              </label>
+            </div>
+            <div className="flex flex-col-reverse gap-2 border-t border-surface-border p-5 sm:flex-row sm:justify-end">
+              <button type="button" className="tk-button-secondary bg-white" onClick={() => setRestoreSnapshot(null)} disabled={Boolean(loading)}>
+                Cancel
+              </button>
+              <button type="button" className="tk-button-primary" onClick={restoreSnapshotAsActive} disabled={Boolean(loading)}>
+                {loading === 'restore' ? <Loader2 className="h-4 w-4 animate-spin" /> : <History className="h-4 w-4" />}
+                Restore as active
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </div>
   )
 }
@@ -616,4 +748,18 @@ function errorMessage(error: unknown) {
 
 function formatDateTime(value: string) {
   return new Intl.DateTimeFormat('en', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }).format(new Date(value))
+}
+
+function providerText(run: KycAgentRun) {
+  const provider = run.provider ?? {}
+  const adapter = typeof provider.adapter === 'string' ? provider.adapter : 'AI provider'
+  const baseUrl = typeof provider.base_url === 'string' && provider.base_url ? ` via ${provider.base_url}` : ''
+  return `${adapter}${baseUrl}`
+}
+
+function sourceCoverageSummary(run: KycAgentRun) {
+  const summary = run.retrieval_summary?.source_coverage
+  if (!summary || typeof summary !== 'object') return 'not calculated yet'
+  const record = summary as { documents_available?: number; documents_cited?: number; chunks_cited?: number }
+  return `${record.documents_cited ?? 0}/${record.documents_available ?? 0} documents cited, ${record.chunks_cited ?? 0} chunks cited`
 }

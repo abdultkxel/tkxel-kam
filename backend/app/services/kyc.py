@@ -28,8 +28,10 @@ from app.schemas import (
     KycDraftUpdateRequest,
     KycFieldRead,
     KycFreshnessRead,
+    KycJobRunPendingRead,
     KycSnapshotPageRead,
     KycSnapshotRead,
+    KycSnapshotRestoreRequest,
     KycWorkstreamRead,
 )
 from app.services.account_access import AccountAccessService, GLOBAL_EDIT_ROLES
@@ -85,6 +87,9 @@ class KycService:
         self.audit = AuditService(AuditRepository(db))
         self.timeline = TimelineService(TimelineRepository(db))
         self.gateway = gateway or DeterministicKycGatewayAdapter()
+        from app.config import get_settings
+
+        self.settings = get_settings()
 
     def list_drafts(
         self,
@@ -130,6 +135,55 @@ class KycService:
         source_documents = self._authorized_source_documents(account, payload.source_document_ids, current_user)
         latest_snapshot = self.kyc.latest_snapshot(account.id)
         research_sources = self._normalize_research_sources(payload.research_sources or list(config.research_sources))
+        if self._should_queue_ai_run():
+            agent_run = self._queue_agent_run(account, source_documents, research_sources, payload.trigger_source, current_user, latest_snapshot=latest_snapshot)
+            fields = self._pending_fields(latest_snapshot)
+            fields = self._apply_note_to_fields(fields, payload.notes)
+            draft = KycDraft(
+                account_id=account.id,
+                trigger_source=payload.trigger_source,
+                agent_run_id=agent_run.id,
+                previous_snapshot_id=latest_snapshot.id if latest_snapshot else None,
+                source_document_ids=[document.id for document in source_documents],
+                research_sources=research_sources,
+                fields_json=fields,
+                citations_json=[],
+                missing_fields=self._missing_required_fields(fields, config),
+                conflicts=["KYC generation is queued. Review and approve only after the AI run completes."],
+                difference_summary=self._difference_summary(fields, latest_snapshot),
+                source_context=self._source_context(source_documents, agent_run),
+                confidence=0,
+                completeness=0,
+                source_coverage=0,
+                freshness_status="fresh",
+                created_by_id=current_user.id,
+                created_by_name=current_user.full_name,
+                review_notes=payload.notes,
+            )
+            self.kyc.save_draft(draft)
+            self.audit.log(
+                module="kyc",
+                action="draft_create_queued",
+                entity_type="kyc_draft",
+                entity_id=draft.id,
+                actor=current_user,
+                after_value={"account_id": account.id, "agent_run_id": agent_run.id, "status": agent_run.status},
+            )
+            self.timeline.add_account_event(
+                account_id=account.id,
+                event_type="kyc_ai_extraction",
+                module="kyc",
+                title="AI KYC draft queued",
+                description="A local AI KYC run was queued. Previous approved KYC remains official until this draft is reviewed and approved.",
+                actor=current_user,
+                source_record_id=draft.id,
+                source_record_type="kyc_draft",
+                source_record_route=f"/accounts/{account.id}?tab=kyc",
+                metadata={"agent_run_id": agent_run.id, "research_sources": research_sources},
+            )
+            self.kyc.commit()
+            return self.get_draft(account.id, draft.id, current_user)
+
         agent_run = self._build_agent_run(account, source_documents, research_sources, payload.trigger_source, current_user, latest_snapshot=latest_snapshot)
         self._log_agent_run(account, agent_run, current_user, "kyc_ai_extraction")
         fields = self._fields_from_run(account, agent_run, latest_snapshot)
@@ -345,6 +399,88 @@ class KycService:
         self.kyc.commit()
         return self.get_draft(account.id, draft.id, current_user)
 
+    def restore_snapshot(self, account_id: str, snapshot_id: str, payload: KycSnapshotRestoreRequest, current_user: User) -> KycSnapshotRead:
+        account = self._require_account_approve(account_id, current_user)
+        snapshot = self.kyc.get_snapshot(snapshot_id)
+        if snapshot is None or snapshot.account_id != account.id:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="KYC snapshot was not found")
+        latest = self.kyc.latest_snapshot(account.id)
+        if latest is not None and latest.id == snapshot.id:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Selected KYC snapshot is already the active version")
+        version = (latest.version + 1) if latest else 1
+        now = datetime.now(timezone.utc)
+        source_context = dict(snapshot.source_context or {})
+        source_context["restore_metadata"] = {
+            "restored_from_snapshot_id": snapshot.id,
+            "restored_from_version": snapshot.version,
+            "previous_active_snapshot_id": latest.id if latest else None,
+            "previous_active_version": latest.version if latest else None,
+            "restore_reason": payload.reason,
+            "restored_by_id": current_user.id,
+            "restored_by_name": current_user.full_name,
+            "restored_at": now.isoformat(),
+        }
+        restored = KycSnapshot(
+            account_id=account.id,
+            version=version,
+            source_draft_id=snapshot.source_draft_id,
+            extraction_run_id=snapshot.extraction_run_id,
+            approved_by_id=current_user.id,
+            approved_by_name=current_user.full_name,
+            approved_at=now,
+            fields_json=list(snapshot.fields_json),
+            citations_json=list(snapshot.citations_json),
+            source_context=source_context,
+            source_document_ids=list(snapshot.source_document_ids),
+            research_sources=list(snapshot.research_sources),
+            confidence=snapshot.confidence,
+            completeness=snapshot.completeness,
+            source_coverage=snapshot.source_coverage,
+            freshness_status="fresh",
+            missing_fields=list(snapshot.missing_fields),
+            conflicts=list(snapshot.conflicts),
+            change_summary=[
+                f"Restored KYC snapshot v{snapshot.version} as v{version}.",
+                f"Restore reason: {payload.reason}",
+            ],
+        )
+        self.kyc.save_snapshot(restored)
+        self.audit.log(
+            module="kyc",
+            action="snapshot_restore",
+            entity_type="kyc_snapshot",
+            entity_id=restored.id,
+            actor=current_user,
+            before_value={"active_snapshot_id": latest.id if latest else None, "active_version": latest.version if latest else None},
+            after_value={"snapshot_id": restored.id, "version": version, "restored_from_snapshot_id": snapshot.id, "restored_from_version": snapshot.version},
+            reason=payload.reason,
+        )
+        self.audit.log(
+            module="kyc",
+            action="snapshot_create",
+            entity_type="kyc_snapshot",
+            entity_id=restored.id,
+            actor=current_user,
+            after_value={"account_id": account.id, "version": version, "restored_from_snapshot_id": snapshot.id},
+            reason="Restored KYC snapshot created as active version.",
+        )
+        self.timeline.add_account_event(
+            account_id=account.id,
+            event_type="kyc_restored",
+            module="kyc",
+            title=f"KYC snapshot v{snapshot.version} restored as v{version}",
+            description=payload.reason,
+            actor=current_user,
+            source_record_id=restored.id,
+            source_record_type="kyc_snapshot",
+            source_record_route=f"/accounts/{account.id}?tab=kyc",
+            before_value={"previous_active_snapshot_id": latest.id if latest else None, "previous_active_version": latest.version if latest else None},
+            after_value={"snapshot_id": restored.id, "version": version, "restored_from_snapshot_id": snapshot.id, "restored_from_version": snapshot.version},
+            metadata={"restore_reason": payload.reason},
+        )
+        self.kyc.commit()
+        return self.get_snapshot(account.id, restored.id, current_user)
+
     def list_snapshots(
         self,
         account_id: str,
@@ -502,8 +638,12 @@ class KycService:
         account = self._require_account_trigger(account_id, current_user)
         source_documents = self._authorized_source_documents(account, payload.source_document_ids, current_user)
         research_sources = self._normalize_research_sources(payload.research_sources or list(self._configuration().research_sources))
-        run = self._build_agent_run(account, source_documents, research_sources, payload.trigger_source, current_user, latest_snapshot=self.kyc.latest_snapshot(account.id))
-        self._log_agent_run(account, run, current_user, "kyc_agent_run_create")
+        latest_snapshot = self.kyc.latest_snapshot(account.id)
+        if self._should_queue_ai_run():
+            run = self._queue_agent_run(account, source_documents, research_sources, payload.trigger_source, current_user, latest_snapshot=latest_snapshot)
+        else:
+            run = self._build_agent_run(account, source_documents, research_sources, payload.trigger_source, current_user, latest_snapshot=latest_snapshot)
+            self._log_agent_run(account, run, current_user, "kyc_agent_run_create")
         self.kyc.commit()
         return self.get_agent_run(account.id, run.id, current_user)
 
@@ -520,18 +660,123 @@ class KycService:
         if previous is None or previous.account_id != account.id:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="KYC agent run was not found")
         source_documents = self._authorized_source_documents(account, previous.source_document_ids, current_user)
-        run = self._build_agent_run(
-            account,
-            source_documents,
-            self._normalize_research_sources(list(previous.research_sources)),
-            "kyc_page",
-            current_user,
-            previous_run_id=previous.id,
-            latest_snapshot=self.kyc.latest_snapshot(account.id),
-        )
-        self._log_agent_run(account, run, current_user, "kyc_agent_run_refresh")
+        research_sources = self._normalize_research_sources(list(previous.research_sources))
+        latest_snapshot = self.kyc.latest_snapshot(account.id)
+        if self._should_queue_ai_run():
+            run = self._queue_agent_run(
+                account,
+                source_documents,
+                research_sources,
+                "kyc_page",
+                current_user,
+                previous_run_id=previous.id,
+                latest_snapshot=latest_snapshot,
+            )
+        else:
+            run = self._build_agent_run(
+                account,
+                source_documents,
+                research_sources,
+                "kyc_page",
+                current_user,
+                previous_run_id=previous.id,
+                latest_snapshot=latest_snapshot,
+            )
+            self._log_agent_run(account, run, current_user, "kyc_agent_run_refresh")
         self.kyc.commit()
         return self.get_agent_run(account.id, run.id, current_user)
+
+    def retry_agent_run(self, account_id: str, run_id: str, current_user: User) -> KycAgentRunRead:
+        account = self._require_account_trigger(account_id, current_user)
+        run = self.kyc.get_agent_run(run_id)
+        if run is None or run.account_id != account.id:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="KYC agent run was not found")
+        if run.status not in {"failed", "partial", "cancelled"}:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Only failed, partial, or cancelled KYC runs can be retried")
+        run.status = "pending"
+        run.error_message = None
+        run.queued_at = datetime.now(timezone.utc)
+        run.started_at = None
+        run.completed_at = None
+        run.retry_count += 1
+        run.next_retry_at = None
+        for workstream in run.workstreams:
+            workstream.status = "pending"
+            workstream.error_message = None
+            workstream.started_at = None
+            workstream.completed_at = None
+        self.audit.log(
+            module="kyc",
+            action="agent_run_retry",
+            entity_type="kyc_agent_run",
+            entity_id=run.id,
+            actor=current_user,
+            after_value={"status": run.status, "retry_count": run.retry_count},
+        )
+        self.kyc.commit()
+        return self.get_agent_run(account.id, run.id, current_user)
+
+    def cancel_agent_run(self, account_id: str, run_id: str, current_user: User) -> KycAgentRunRead:
+        account = self._require_account_trigger(account_id, current_user)
+        run = self.kyc.get_agent_run(run_id)
+        if run is None or run.account_id != account.id:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="KYC agent run was not found")
+        if run.status != "pending":
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Only pending KYC runs can be cancelled")
+        now = datetime.now(timezone.utc)
+        run.status = "cancelled"
+        run.error_message = "Cancelled before processing."
+        run.completed_at = now
+        for workstream in run.workstreams:
+            workstream.status = "cancelled"
+            workstream.error_message = "Cancelled before processing."
+            workstream.completed_at = now
+        self._update_linked_drafts_from_run(account, run, current_user)
+        self.audit.log(
+            module="kyc",
+            action="agent_run_cancel",
+            entity_type="kyc_agent_run",
+            entity_id=run.id,
+            actor=current_user,
+            after_value={"status": run.status},
+        )
+        self.kyc.commit()
+        return self.get_agent_run(account.id, run.id, current_user)
+
+    def run_pending_jobs(self, current_user: User | None = None, *, limit: int | None = None) -> KycJobRunPendingRead:
+        if current_user is not None:
+            self.access.require_module_permission(current_user, "kyc", "configure")
+        processed: list[KycAgentRunRead] = []
+        failed: list[dict[str, str]] = []
+        batch_size = limit or self.settings.kyc_worker_batch_size
+        runs = self.kyc.due_agent_runs(limit=batch_size)
+        for run in runs:
+            try:
+                actor = self.kyc.db.get(User, run.triggered_by_id) if run.triggered_by_id else current_user
+                if actor is None:
+                    raise RuntimeError("KYC run actor was not found")
+                processed_run = self.process_agent_run(run.id, actor)
+                processed.append(self._agent_run_read(processed_run, actor))
+            except Exception as exc:  # pragma: no cover - defensive scheduled worker guard
+                failed.append({"run_id": run.id, "message": str(exc)[:300]})
+                logger.exception("KYC pending job failed for run %s", run.id)
+        self.kyc.commit()
+        return KycJobRunPendingRead(processed_count=len(processed), failed_count=len(failed), processed_runs=processed, failures=failed)
+
+    def process_agent_run(self, run_id: str, current_user: User) -> KycAgentRun:
+        run = self.kyc.get_agent_run(run_id)
+        if run is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="KYC agent run was not found")
+        account = self._account_or_404(run.account_id)
+        if run.status not in {"pending", "failed"}:
+            return run
+        source_documents = self._authorized_source_documents(account, list(run.source_document_ids), current_user)
+        latest_snapshot = self.kyc.latest_snapshot(account.id)
+        self._execute_agent_run(account, run, source_documents, list(run.research_sources), run.trigger_source, current_user, latest_snapshot)
+        self._update_linked_drafts_from_run(account, run, current_user)
+        self._log_agent_run(account, run, current_user, "kyc_agent_run_complete" if run.status in {"complete", "partial"} else "kyc_agent_run_failed")
+        self.kyc.commit()
+        return run
 
     def _require_account_view(self, account_id: str, current_user: User) -> Account:
         account = self._account_or_404(account_id)
@@ -553,8 +798,8 @@ class KycService:
     def _require_account_approve(self, account_id: str, current_user: User) -> Account:
         account = self._account_or_404(account_id)
         self.access.require_module_permission(current_user, "kyc", "approve")
-        if current_user.role not in GLOBAL_EDIT_ROLES and not any(owner.user_id == current_user.id and owner.is_active for owner in account.owners):
-            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Only KAM Head, Admin, or explicitly authorized account owners can approve KYC")
+        if current_user.role != "kam_head":
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Only KAM Head can approve or reject KYC drafts")
         return account
 
     def _account_or_404(self, account_id: str) -> Account:
@@ -790,60 +1035,165 @@ class KycService:
             started_at=now,
         )
         self.kyc.save_agent_run(run)
+        self._execute_agent_run(account, run, source_documents, research_sources, trigger_source, current_user, latest_snapshot)
+        return run
+
+    def _queue_agent_run(
+        self,
+        account: Account,
+        source_documents: list[SourceDocument],
+        research_sources: list[str],
+        trigger_source: str,
+        current_user: User,
+        previous_run_id: str | None = None,
+        latest_snapshot: KycSnapshot | None = None,
+    ) -> KycAgentRun:
+        active = self.kyc.active_agent_run(account.id)
+        if active is not None:
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="A KYC AI run is already pending or running for this account")
+        now = datetime.now(timezone.utc)
+        run = KycAgentRun(
+            account_id=account.id,
+            status="pending",
+            trigger_source=trigger_source,
+            previous_run_id=previous_run_id,
+            source_document_ids=[document.id for document in source_documents],
+            research_sources=research_sources,
+            triggered_by_id=current_user.id,
+            triggered_by_name=current_user.full_name,
+            queued_at=now,
+            max_retries=self.settings.ai_kyc_max_retries,
+            provider_json={
+                "adapter": getattr(self.gateway, "name", "unknown"),
+                "provider": self.settings.ai_kyc_provider,
+                "model": self.settings.ai_kyc_model,
+                "base_url": self._safe_base_url(),
+            },
+            model_name=self.settings.ai_kyc_model,
+            retrieval_summary_json={
+                "source_document_ids": [document.id for document in source_documents],
+                "status": "queued",
+                "latest_snapshot_id": latest_snapshot.id if latest_snapshot else None,
+            },
+        )
+        self.kyc.save_agent_run(run)
+        for workstream in WORKSTREAMS:
+            self.kyc.save_workstream(
+                KycWorkstreamOutput(
+                    run_id=run.id,
+                    account_id=account.id,
+                    workstream_key=str(workstream["key"]),
+                    title=str(workstream["title"]),
+                    status="pending",
+                    sort_order=int(workstream["sort_order"]),
+                    output_json={},
+                    citations_json=[],
+                    missing_fields=[],
+                    confidence=0,
+                )
+            )
+        self.audit.log(
+            module="kyc",
+            action="agent_run_queued",
+            entity_type="kyc_agent_run",
+            entity_id=run.id,
+            actor=current_user,
+            after_value={
+                "status": run.status,
+                "trigger_source": trigger_source,
+                "adapter": getattr(self.gateway, "name", "unknown"),
+                "model": self.settings.ai_kyc_model,
+                "source_document_ids": [document.id for document in source_documents],
+            },
+        )
+        self.timeline.add_account_event(
+            account_id=account.id,
+            event_type="kyc_ai_extraction",
+            module="kyc",
+            title="KYC AI run queued",
+            description="A local AI KYC run is queued for background processing.",
+            actor=current_user,
+            source_record_id=run.id,
+            source_record_type="kyc_agent_run",
+            source_record_route=f"/accounts/{account.id}?tab=kyc",
+            metadata={"model": self.settings.ai_kyc_model, "provider": self.settings.ai_kyc_provider},
+        )
+        return run
+
+    def _execute_agent_run(
+        self,
+        account: Account,
+        run: KycAgentRun,
+        source_documents: list[SourceDocument],
+        research_sources: list[str],
+        trigger_source: str,
+        current_user: User,
+        latest_snapshot: KycSnapshot | None,
+    ) -> None:
+        now = datetime.now(timezone.utc)
+        run.status = "running"
+        run.error_message = None
+        run.started_at = now
+        run.completed_at = None
+        for workstream in self._workstream_outputs_for_run(run):
+            workstream.status = "running"
+            workstream.error_message = None
+            workstream.started_at = now
+            workstream.completed_at = None
         try:
             gateway_response = self.gateway.run(self._gateway_request(account, source_documents, research_sources, trigger_source, current_user, latest_snapshot))
         except Exception as exc:  # pragma: no cover - adapter boundary guard
             error_message = f"AI/LLM Gateway failure: {str(exc)[:400]}"
             for workstream in WORKSTREAMS:
-                self.kyc.save_workstream(
-                    KycWorkstreamOutput(
-                        run_id=run.id,
-                        account_id=account.id,
-                        workstream_key=str(workstream["key"]),
-                        title=str(workstream["title"]),
-                        status="failed",
-                        sort_order=int(workstream["sort_order"]),
-                        output_json={},
-                        citations_json=[],
-                        missing_fields=self._field_labels_for_workstream(str(workstream["key"])),
-                        confidence=0,
-                        error_message=error_message,
-                        started_at=now,
-                        completed_at=datetime.now(timezone.utc),
-                    )
-                )
+                output = self._existing_or_new_workstream(run, account, workstream)
+                output.status = "failed"
+                output.output_json = {}
+                output.citations_json = []
+                output.missing_fields = self._field_labels_for_workstream(str(workstream["key"]))
+                output.confidence = 0
+                output.error_message = error_message
+                output.started_at = output.started_at or now
+                output.completed_at = datetime.now(timezone.utc)
             run.status = "failed"
             run.error_message = error_message
+            if run.retry_count < run.max_retries:
+                run.retry_count += 1
+                run.next_retry_at = datetime.now(timezone.utc) + timedelta(seconds=self.settings.ai_kyc_retry_backoff_seconds * max(run.retry_count, 1))
+            else:
+                run.next_retry_at = None
             run.completed_at = datetime.now(timezone.utc)
-            return run
+            return
         for workstream in gateway_response.workstreams:
             reviewer_notes = self._reviewer_notes_from_output(workstream.output)
             follow_up_questions = self._follow_up_questions_from_output(workstream.output)
             retrieved_chunk_ids = self._retrieved_chunk_ids_from_citations(workstream.citations)
-            self.kyc.save_workstream(
-                KycWorkstreamOutput(
-                    run_id=run.id,
-                    account_id=account.id,
-                    workstream_key=workstream.workstream_key,
-                    title=workstream.title,
-                    status=workstream.status,
-                    sort_order=workstream.sort_order,
-                    output_json=workstream.output,
-                    citations_json=workstream.citations,
-                    missing_fields=workstream.missing_fields,
-                    confidence=workstream.confidence,
-                    reviewer_notes_json=reviewer_notes,
-                    follow_up_questions_json=follow_up_questions,
-                    retrieved_chunk_ids=retrieved_chunk_ids,
-                    provider_response_id=gateway_response.metadata.get("provider_response_id"),
-                    error_message=workstream.error_message,
-                    started_at=workstream.started_at or now,
-                    completed_at=workstream.completed_at or datetime.now(timezone.utc),
-                )
+            output = self._existing_or_new_workstream(
+                run,
+                account,
+                {"key": workstream.workstream_key, "title": workstream.title, "sort_order": workstream.sort_order},
             )
+            output.status = workstream.status
+            output.title = workstream.title
+            output.sort_order = workstream.sort_order
+            output.output_json = workstream.output
+            output.citations_json = workstream.citations
+            output.missing_fields = workstream.missing_fields
+            output.confidence = workstream.confidence
+            output.reviewer_notes_json = reviewer_notes
+            output.follow_up_questions_json = follow_up_questions
+            output.retrieved_chunk_ids = retrieved_chunk_ids
+            output.provider_response_id = gateway_response.metadata.get("provider_response_id")
+            output.error_message = workstream.error_message
+            output.started_at = workstream.started_at or now
+            output.completed_at = workstream.completed_at or datetime.now(timezone.utc)
         run.status = gateway_response.status
         run.error_message = gateway_response.error_message
-        run.provider_json = {"adapter": gateway_response.metadata.get("adapter"), "model": gateway_response.metadata.get("model")}
+        run.provider_json = {
+            "adapter": gateway_response.metadata.get("adapter"),
+            "provider": self.settings.ai_kyc_provider,
+            "model": gateway_response.metadata.get("model"),
+            "base_url": self._safe_base_url(),
+        }
         run.usage_json = dict(gateway_response.metadata.get("usage") or {})
         run.cost_json = dict(gateway_response.metadata.get("cost") or {})
         run.provider_response_id = gateway_response.metadata.get("provider_response_id")
@@ -851,13 +1201,134 @@ class KycService:
         run.retrieval_summary_json = {
             "retrieved_context_count": gateway_response.metadata.get("retrieved_context_count"),
             "source_document_ids": [document.id for document in source_documents],
+            "source_coverage": self._source_coverage_summary(source_documents, gateway_response),
         }
         run.completed_at = datetime.now(timezone.utc)
-        return run
+
+    def _should_queue_ai_run(self) -> bool:
+        return bool(getattr(self.gateway, "is_async_preferred", False)) and self.settings.kyc_queue_backend == "local"
+
+    def _existing_or_new_workstream(self, run: KycAgentRun, account: Account, workstream: dict[str, Any]) -> KycWorkstreamOutput:
+        key = str(workstream["key"])
+        existing = next((item for item in run.workstreams if item.workstream_key == key), None)
+        if existing is not None:
+            return existing
+        output = KycWorkstreamOutput(
+            run_id=run.id,
+            account_id=account.id,
+            workstream_key=key,
+            title=str(workstream["title"]),
+            status="pending",
+            sort_order=int(workstream["sort_order"]),
+            output_json={},
+            citations_json=[],
+            missing_fields=[],
+            confidence=0,
+        )
+        self.kyc.save_workstream(output)
+        run.workstreams.append(output)
+        return output
+
+    @staticmethod
+    def _workstream_outputs_for_run(run: KycAgentRun) -> list[KycWorkstreamOutput]:
+        return list(run.workstreams)
+
+    def _pending_fields(self, latest_snapshot: KycSnapshot | None) -> list[dict[str, Any]]:
+        previous = {field.get("key"): field.get("value") for field in latest_snapshot.fields_json} if latest_snapshot else {}
+        return [
+            {
+                "key": item["key"],
+                "label": item["label"],
+                "workstream_key": item["workstream_key"],
+                "workstream_title": self._workstream_title(str(item["workstream_key"])),
+                "value": "",
+                "confidence": 0,
+                "is_required": bool(item.get("required", True)),
+                "is_sensitive": bool(item.get("sensitive", False)),
+                "reviewed": False,
+                "missing": True,
+                "conflict": False,
+                "previous_value": previous.get(item["key"]),
+                "citations": [],
+                "missing_evidence_note": "KYC AI generation is queued. This field will be populated when the run completes.",
+                "conflicts": [],
+                "reviewer_notes": [],
+                "suggested_follow_up_questions": [],
+            }
+            for item in FIELD_CATALOG
+        ]
+
+    def _update_linked_drafts_from_run(self, account: Account, run: KycAgentRun, current_user: User) -> None:
+        drafts = [draft for draft in self.kyc.drafts_for_run(run.id) if draft.status == "ready_for_review"]
+        if not drafts:
+            return
+        latest_snapshot = self.kyc.latest_snapshot(account.id)
+        source_documents = self._documents_by_ids(account, list(run.source_document_ids))
+        for draft in drafts:
+            fields = self._fields_from_run(account, run, latest_snapshot)
+            quality = self._quality(fields, source_documents, self._configuration())
+            draft.fields_json = fields
+            draft.citations_json = self._citations_from_run_or_documents(run, source_documents)
+            draft.missing_fields = quality["missing_fields"]
+            draft.conflicts = self._conflicts(source_documents, run)
+            draft.difference_summary = self._difference_summary(fields, latest_snapshot)
+            draft.source_context = self._source_context(source_documents, run)
+            draft.confidence = quality["confidence"]
+            draft.completeness = quality["completeness"]
+            draft.source_coverage = quality["source_coverage"]
+            flag_modified(draft, "fields_json")
+            flag_modified(draft, "citations_json")
+            flag_modified(draft, "missing_fields")
+            flag_modified(draft, "conflicts")
+            flag_modified(draft, "difference_summary")
+            flag_modified(draft, "source_context")
+            self.audit.log(
+                module="kyc",
+                action="draft_populated_from_agent_run",
+                entity_type="kyc_draft",
+                entity_id=draft.id,
+                actor=current_user,
+                after_value={"agent_run_id": run.id, "run_status": run.status, "confidence": draft.confidence, "completeness": draft.completeness},
+            )
+
+    @staticmethod
+    def _citations_from_run_or_documents(run: KycAgentRun, source_documents: list[SourceDocument]) -> list[dict[str, Any]]:
+        citations: list[dict[str, Any]] = []
+        for workstream in run.workstreams:
+            citations.extend(list(workstream.citations_json or []))
+        if citations:
+            return citations
+        return KycService._citations_from_documents(source_documents)
+
+    def _safe_base_url(self) -> str | None:
+        if self.settings.ai_kyc_provider not in {"local_openai_compatible", "ollama", "lm_studio", "lmstudio"}:
+            return None
+        return self.settings.ai_kyc_base_url or None
+
+    @staticmethod
+    def _source_coverage_summary(source_documents: list[SourceDocument], gateway_response) -> dict[str, Any]:  # noqa: ANN001
+        cited_document_ids = {
+            str(citation.get("source_document_id"))
+            for workstream in gateway_response.workstreams
+            for citation in workstream.citations
+            if citation.get("source_document_id")
+        }
+        cited_chunk_ids = {
+            str(citation.get("source_chunk_id"))
+            for workstream in gateway_response.workstreams
+            for citation in workstream.citations
+            if citation.get("source_chunk_id")
+        }
+        return {
+            "documents_available": len(source_documents),
+            "documents_cited": len(cited_document_ids),
+            "chunks_cited": len(cited_chunk_ids),
+            "source_types": sorted({document.source_type for document in source_documents}),
+        }
 
     def _fields_from_run(self, account: Account, run: KycAgentRun, latest_snapshot: KycSnapshot | None) -> list[dict[str, Any]]:
         output_by_key: dict[str, dict[str, Any]] = {}
-        failed_keys = {workstream.workstream_key for workstream in run.workstreams if workstream.status == "failed"}
+        failed_keys = {workstream.workstream_key for workstream in run.workstreams if workstream.status != "complete"}
         for workstream in run.workstreams:
             output_by_key.update(workstream.output_json or {})
         previous = {field.get("key"): field.get("value") for field in latest_snapshot.fields_json} if latest_snapshot else {}
@@ -960,6 +1431,7 @@ class KycService:
 
     @staticmethod
     def _source_context(source_documents: list[SourceDocument], run: KycAgentRun) -> dict[str, Any]:
+        provider = dict(run.provider_json or {})
         return {
             "source_documents": [
                 {
@@ -975,7 +1447,9 @@ class KycService:
             "workstream_status": run.status,
             "trigger_source": run.trigger_source,
             "research_sources": list(run.research_sources),
-            "gateway_adapter": "deterministic-local",
+            "gateway_adapter": provider.get("adapter") or "deterministic-local",
+            "provider": provider,
+            "retrieval_summary": dict(run.retrieval_summary_json or {}),
         }
 
     @staticmethod
@@ -1094,7 +1568,7 @@ class KycService:
                 "source_document_ids": list(run.source_document_ids),
                 "research_sources": list(run.research_sources),
                 "trigger_source": run.trigger_source,
-                "adapter": "deterministic-local",
+                "adapter": dict(run.provider_json or {}).get("adapter") or getattr(self.gateway, "name", "unknown"),
                 "error_message": run.error_message,
             },
         )
@@ -1127,7 +1601,7 @@ class KycService:
             missing_fields=list(draft.missing_fields),
             conflicts=list(draft.conflicts),
             difference_summary=list(draft.difference_summary),
-            source_context=dict(draft.source_context),
+            source_context=self._source_context_read(draft.source_context, current_user),
             confidence=draft.confidence,
             completeness=draft.completeness,
             source_coverage=draft.source_coverage,
@@ -1183,6 +1657,16 @@ class KycService:
             research_sources=list(run.research_sources),
             triggered_by_name=run.triggered_by_name,
             error_message=run.error_message,
+            queued_at=run.queued_at,
+            retry_count=run.retry_count,
+            max_retries=run.max_retries,
+            next_retry_at=run.next_retry_at,
+            provider=dict(run.provider_json or {}),
+            usage=dict(run.usage_json or {}),
+            cost=dict(run.cost_json or {}),
+            retrieval_summary=dict(run.retrieval_summary_json or {}),
+            provider_response_id=run.provider_response_id,
+            model_name=run.model_name,
             started_at=run.started_at,
             completed_at=run.completed_at,
             created_at=run.created_at,

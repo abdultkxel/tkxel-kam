@@ -1,6 +1,6 @@
 from datetime import datetime, timedelta, timezone
 
-from sqlalchemy import String, cast, func, or_, select
+from sqlalchemy import String, and_, cast, func, or_, select
 from sqlalchemy.orm import Session, selectinload
 
 from app.models import KycAgentRun, KycConfiguration, KycDraft, KycSnapshot, KycWorkstreamOutput
@@ -197,6 +197,33 @@ class KycRepository:
             .limit(1)
         )
 
+    def active_agent_run(self, account_id: str) -> KycAgentRun | None:
+        return self.db.scalar(
+            select(KycAgentRun)
+            .where(KycAgentRun.account_id == account_id, KycAgentRun.status.in_(("pending", "running")))
+            .options(selectinload(KycAgentRun.workstreams))
+            .order_by(KycAgentRun.created_at.desc())
+            .limit(1)
+        )
+
+    def due_agent_runs(self, *, limit: int = 1) -> list[KycAgentRun]:
+        now = datetime.now(timezone.utc)
+        return list(
+            self.db.scalars(
+                select(KycAgentRun)
+                .where(
+                    or_(
+                        KycAgentRun.status == "pending",
+                        and_(KycAgentRun.status == "failed", KycAgentRun.retry_count < KycAgentRun.max_retries),
+                    ),
+                    or_(KycAgentRun.next_retry_at.is_(None), KycAgentRun.next_retry_at <= now),
+                )
+                .options(selectinload(KycAgentRun.workstreams))
+                .order_by(KycAgentRun.queued_at.asc().nulls_last(), KycAgentRun.created_at.asc())
+                .limit(limit)
+            )
+        )
+
     def save_agent_run(self, run: KycAgentRun) -> KycAgentRun:
         self.db.add(run)
         self.db.flush()
@@ -206,6 +233,15 @@ class KycRepository:
         self.db.add(output)
         self.db.flush()
         return output
+
+    def drafts_for_run(self, run_id: str) -> list[KycDraft]:
+        return list(
+            self.db.scalars(
+                select(KycDraft)
+                .where(KycDraft.agent_run_id == run_id)
+                .options(selectinload(KycDraft.agent_run).selectinload(KycAgentRun.workstreams))
+            )
+        )
 
     def commit(self) -> None:
         self.db.commit()

@@ -20,9 +20,11 @@ from app.schemas import (
     KycDraftStatus,
     KycDraftUpdateRequest,
     KycFreshnessRead,
+    KycJobRunPendingRead,
     KycRunStatus,
     KycSnapshotPageRead,
     KycSnapshotRead,
+    KycSnapshotRestoreRequest,
 )
 from app.services.kyc import KycService
 
@@ -34,6 +36,7 @@ StaleStatus = Literal["fresh", "stale"]
 
 router = APIRouter(prefix="/api/accounts/{account_id}/kyc", tags=["KYC and AI Extraction"])
 config_router = APIRouter(prefix="/api/kyc", tags=["KYC and AI Extraction"])
+admin_jobs_router = APIRouter(prefix="/api/admin/kyc", tags=["KYC and AI Extraction"])
 
 
 @config_router.get(
@@ -235,6 +238,22 @@ def read_snapshot(
     return service.get_snapshot(account_id, snapshot_id, current_user)
 
 
+@router.post(
+    "/snapshots/{snapshot_id}/restore",
+    response_model=KycSnapshotRead,
+    summary="Restore KYC snapshot as active",
+    description="Creates a new immutable KYC snapshot copied from a previous approved version. The new snapshot becomes active because it is the latest version.",
+)
+def restore_snapshot(
+    account_id: str,
+    snapshot_id: str,
+    payload: KycSnapshotRestoreRequest,
+    current_user: Annotated[User, Depends(get_current_user)],
+    service: Annotated[KycService, Depends(get_kyc_service)],
+) -> KycSnapshotRead:
+    return service.restore_snapshot(account_id, snapshot_id, payload, current_user)
+
+
 @router.get(
     "/freshness",
     response_model=KycFreshnessRead,
@@ -330,3 +349,61 @@ def refresh_agent_run(
     service: Annotated[KycService, Depends(get_kyc_service)],
 ) -> KycAgentRunRead:
     return service.refresh_agent_run(account_id, run_id, current_user)
+
+
+@router.post(
+    "/agent-runs/{run_id}/retry",
+    response_model=KycAgentRunRead,
+    summary="Retry KYC agent run",
+    description="Moves a failed, partial, or cancelled KYC run back to pending so the local worker can process it without replacing approved snapshots.",
+)
+def retry_agent_run(
+    account_id: str,
+    run_id: str,
+    current_user: Annotated[User, Depends(get_current_user)],
+    service: Annotated[KycService, Depends(get_kyc_service)],
+) -> KycAgentRunRead:
+    return service.retry_agent_run(account_id, run_id, current_user)
+
+
+@router.post(
+    "/agent-runs/{run_id}/cancel",
+    response_model=KycAgentRunRead,
+    summary="Cancel KYC agent run",
+    description="Cancels a pending KYC agent run before the local worker starts processing it.",
+)
+def cancel_agent_run(
+    account_id: str,
+    run_id: str,
+    current_user: Annotated[User, Depends(get_current_user)],
+    service: Annotated[KycService, Depends(get_kyc_service)],
+) -> KycAgentRunRead:
+    return service.cancel_agent_run(account_id, run_id, current_user)
+
+
+@config_router.post(
+    "/jobs/run-pending",
+    response_model=KycJobRunPendingRead,
+    summary="Run pending KYC jobs",
+    description="Processes queued local KYC jobs manually for Admin/KAM Head controlled local worker execution.",
+)
+def run_pending_kyc_jobs(
+    current_user: Annotated[User, Depends(get_current_user)],
+    service: Annotated[KycService, Depends(get_kyc_service)],
+    limit: Annotated[int | None, Query(ge=1, le=10, description="Maximum queued KYC jobs to process.")] = None,
+) -> KycJobRunPendingRead:
+    return service.run_pending_jobs(current_user, limit=limit)
+
+
+@admin_jobs_router.post(
+    "/jobs/run-pending",
+    response_model=KycJobRunPendingRead,
+    summary="Run pending KYC jobs from Admin",
+    description="Admin/KAM Head manual trigger for queued local AI KYC jobs. This is useful when the local worker loop is disabled during demos.",
+)
+def run_pending_admin_kyc_jobs(
+    current_user: Annotated[User, Depends(get_current_user)],
+    service: Annotated[KycService, Depends(get_kyc_service)],
+    limit: Annotated[int | None, Query(ge=1, le=10, description="Maximum queued KYC jobs to process.")] = None,
+) -> KycJobRunPendingRead:
+    return service.run_pending_jobs(current_user, limit=limit)

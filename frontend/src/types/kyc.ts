@@ -1,16 +1,21 @@
 export type KycDraftStatus = 'ready_for_review' | 'approved' | 'rejected'
-export type KycRunStatus = 'pending' | 'running' | 'complete' | 'failed' | 'partial'
-export type KycWorkstreamStatus = 'pending' | 'running' | 'complete' | 'failed'
+export type KycRunStatus = 'pending' | 'running' | 'complete' | 'failed' | 'partial' | 'cancelled'
+export type KycWorkstreamStatus = 'pending' | 'running' | 'complete' | 'failed' | 'cancelled'
 export type KycTriggerSource = 'account_overview' | 'onboarding_draft' | 'source_documents' | 'kyc_page' | 'manual'
 export type KycConfidenceLevel = 'low' | 'medium' | 'high'
 
 export interface KycCitation {
   source_document_id?: string | null
+  source_chunk_id?: string | null
+  source_record_id?: string | null
   label: string
   page_number?: number | null
+  section_label?: string | null
   excerpt: string
   field_key?: string | null
   restricted: boolean
+  confidence?: number | null
+  source_route?: string | null
 }
 
 export interface KycField {
@@ -27,6 +32,10 @@ export interface KycField {
   conflict: boolean
   previous_value?: string | null
   citations: KycCitation[]
+  missing_evidence_note?: string | null
+  conflicts?: string[]
+  reviewer_notes?: string[]
+  suggested_follow_up_questions?: string[]
 }
 
 export interface KycDraft {
@@ -110,6 +119,10 @@ export interface KycWorkstreamOutputValue {
   value?: string | null
   confidence?: number
   citations?: KycCitation[]
+  missing_evidence_note?: string | null
+  conflicts?: string[]
+  reviewer_notes?: string[]
+  suggested_follow_up_questions?: string[]
 }
 
 export interface KycWorkstream {
@@ -122,6 +135,10 @@ export interface KycWorkstream {
   output: Record<string, string | KycWorkstreamOutputValue>
   citations: KycCitation[]
   missing_fields: string[]
+  reviewer_notes?: string[]
+  suggested_follow_up_questions?: string[]
+  retrieved_chunk_ids?: string[]
+  provider_response_id?: string | null
   error_message?: string | null
   started_at?: string | null
   completed_at?: string | null
@@ -139,10 +156,27 @@ export interface KycAgentRun {
   workstreams: KycWorkstream[]
   ai_disclaimer: string
   error_message?: string | null
+  queued_at?: string | null
+  retry_count?: number
+  max_retries?: number
+  next_retry_at?: string | null
+  provider?: Record<string, unknown>
+  usage?: Record<string, unknown>
+  cost?: Record<string, unknown>
+  retrieval_summary?: Record<string, unknown>
+  provider_response_id?: string | null
+  model_name?: string | null
   started_at?: string | null
   completed_at?: string | null
   created_at: string
   updated_at: string
+}
+
+export interface KycJobRunPendingResult {
+  processed_count: number
+  failed_count: number
+  processed_runs: KycAgentRun[]
+  failures: { run_id: string; message: string }[]
 }
 
 export interface KycConfigurationField {
