@@ -69,6 +69,7 @@ class DeterministicKycGatewayAdapter:
 
     name = "deterministic-local"
     requires_retrieval_context = False
+    is_async_preferred = False
 
     def run(self, request: KycGatewayRequest) -> KycGatewayResponse:
         started_at = datetime.now(timezone.utc)
@@ -254,6 +255,7 @@ class OpenAiKycGatewayAdapter:
 
     name = "openai"
     requires_retrieval_context = True
+    is_async_preferred = True
 
     def __init__(self) -> None:
         self.settings = get_settings()
@@ -333,7 +335,7 @@ class OpenAiKycGatewayAdapter:
             "Return only valid JSON. Do not wrap in markdown. Do not use web search or outside knowledge.\n"
             "Every field must include value, citations, confidence, missing_evidence_note, conflicts, reviewer_notes, and suggested_follow_up_questions.\n"
             "Citation objects must reference supplied source_document_id, source_chunk_id, or source_record_id.\n"
-            "Required JSON shape: {\"status\":\"complete|partial|failed\", \"workstreams\":[{\"workstream_key\":\"...\", \"title\":\"...\", \"status\":\"complete|failed\", \"fields\":[...], \"missing_fields\":[], \"conflicts\":[], \"reviewer_notes\":[], \"suggested_follow_up_questions\":[], \"confidence\":0}], \"global_conflicts\":[], \"global_missing_evidence\":[], \"model_metadata\":{}}.\n"
+            "Required JSON shape: {\"status\":\"complete|partial|failed\", \"workstreams\":[{\"workstream_key\":\"...\", \"title\":\"...\", \"status\":\"complete|failed\", \"fields\":[{\"key\":\"...\", \"value\":\"...\", \"citations\":[], \"confidence\":0, \"missing_evidence_note\":\"...\", \"conflicts\":[], \"reviewer_notes\":[], \"suggested_follow_up_questions\":[]}], \"missing_fields\":[], \"conflicts\":[], \"reviewer_notes\":[], \"suggested_follow_up_questions\":[], \"confidence\":0}], \"global_conflicts\":[], \"global_missing_evidence\":[], \"model_metadata\":{}}.\n"
             f"Source payload:\n{json.dumps(payload, default=str)}"
         )
 
@@ -385,7 +387,11 @@ class OpenAiKycGatewayAdapter:
             return usage.model_dump()
         if isinstance(usage, dict):
             return usage
-        return {key: getattr(usage, key) for key in ("input_tokens", "output_tokens", "total_tokens") if hasattr(usage, key)}
+        return {
+            key: getattr(usage, key)
+            for key in ("input_tokens", "output_tokens", "prompt_tokens", "completion_tokens", "total_tokens")
+            if hasattr(usage, key)
+        }
 
     def _estimated_cost(self, input_tokens: int) -> dict[str, Any]:
         input_rate = float(getattr(self.settings, "ai_kyc_estimated_input_cost_per_1k_usd", 0) or 0)
@@ -406,13 +412,26 @@ class OpenAiKycGatewayAdapter:
     def _parse_response(response_text: str) -> dict[str, Any]:
         text = response_text.strip()
         if text.startswith("```"):
-            text = text.strip("`")
+            lines = text.splitlines()
+            if lines and lines[0].strip().startswith("```"):
+                lines = lines[1:]
+            if lines and lines[-1].strip().startswith("```"):
+                lines = lines[:-1]
+            text = "\n".join(lines).strip()
             if text.lower().startswith("json"):
                 text = text[4:].strip()
         try:
             parsed = json.loads(text)
         except json.JSONDecodeError as exc:
-            raise KycGatewaySchemaError("OpenAI KYC response was not valid JSON.") from exc
+            start = text.find("{")
+            end = text.rfind("}")
+            if start >= 0 and end > start:
+                try:
+                    parsed = json.loads(text[start : end + 1])
+                except json.JSONDecodeError as nested_exc:
+                    raise KycGatewaySchemaError("OpenAI KYC response was not valid JSON.") from nested_exc
+            else:
+                raise KycGatewaySchemaError("OpenAI KYC response was not valid JSON.") from exc
         if not isinstance(parsed, dict) or not isinstance(parsed.get("workstreams"), list):
             raise KycGatewaySchemaError("OpenAI KYC response is missing workstreams.")
         return parsed
@@ -466,14 +485,15 @@ class OpenAiKycGatewayAdapter:
                 missing_note = missing_note or "No source-backed citation was returned for this field."
             if not value:
                 missing_fields.append(str(field_item.get("label") or key))
+                missing_note = missing_note or "No sufficient source evidence was available for this field."
             output[key] = {
                 "value": value,
                 "confidence": confidence,
                 "citations": field_citations,
                 "missing_evidence_note": missing_note,
-                "conflicts": field_item.get("conflicts") or [],
-                "reviewer_notes": field_item.get("reviewer_notes") or [],
-                "suggested_follow_up_questions": field_item.get("suggested_follow_up_questions") or [],
+                "conflicts": [str(item) for item in field_item.get("conflicts") or [] if str(item).strip()],
+                "reviewer_notes": [str(item) for item in field_item.get("reviewer_notes") or [] if str(item).strip()],
+                "suggested_follow_up_questions": [str(item) for item in field_item.get("suggested_follow_up_questions") or [] if str(item).strip()],
             }
             citations.extend(field_citations)
         return output, citations, missing_fields
@@ -514,8 +534,65 @@ class OpenAiKycGatewayAdapter:
         return round(sum(values) / len(values)) if values else 0
 
 
+class LocalOpenAiCompatibleKycGatewayAdapter(OpenAiKycGatewayAdapter):
+    """Local Qwen adapter for Ollama/LM Studio OpenAI-compatible chat endpoints."""
+
+    name = "local-openai-compatible"
+
+    def __init__(self) -> None:
+        self.settings = get_settings()
+        if not self.settings.ai_kyc_base_url:
+            raise KycGatewayConfigurationError("AI_KYC_BASE_URL is required for local OpenAI-compatible AI KYC.")
+
+    def _call_openai(self, prompt: str) -> tuple[str, dict[str, Any]]:
+        from openai import OpenAI
+
+        client = OpenAI(
+            api_key=self.settings.ai_kyc_api_key or "local-demo",
+            base_url=self.settings.ai_kyc_base_url,
+            timeout=self.settings.ai_kyc_timeout_seconds,
+        )
+        last_error: Exception | None = None
+        for attempt in range(self.settings.ai_kyc_max_retries + 1):
+            started = time.monotonic()
+            try:
+                response = client.chat.completions.create(
+                    model=self.settings.ai_kyc_model,
+                    messages=[
+                        {
+                            "role": "system",
+                            "content": (
+                                "You are a source-grounded KYC extraction engine. "
+                                "Return only valid JSON that matches the requested schema. "
+                                "Do not include markdown, analysis text, or unsupported facts."
+                            ),
+                        },
+                        {"role": "user", "content": prompt},
+                    ],
+                    temperature=self.settings.ai_kyc_temperature,
+                    max_tokens=self.settings.ai_kyc_max_output_tokens,
+                )
+                message = response.choices[0].message if response.choices else None
+                text = getattr(message, "content", "") if message is not None else ""
+                usage = getattr(response, "usage", None)
+                return text or "", {
+                    "response_id": getattr(response, "id", None),
+                    "usage": self._usage_dict(usage),
+                    "latency_ms": round((time.monotonic() - started) * 1000),
+                    "base_url": self.settings.ai_kyc_base_url,
+                }
+            except Exception as exc:  # pragma: no cover - provider boundary
+                last_error = exc
+                if attempt >= self.settings.ai_kyc_max_retries:
+                    break
+                time.sleep(self.settings.ai_kyc_retry_backoff_seconds * (attempt + 1))
+        raise RuntimeError(f"Local AI KYC request failed: {str(last_error)[:300]}") from last_error
+
+
 def build_kyc_gateway_adapter() -> KycGatewayAdapter:
     settings = get_settings()
     if settings.ai_kyc_provider == "openai":
         return OpenAiKycGatewayAdapter()
+    if settings.ai_kyc_provider in {"local_openai_compatible", "ollama", "lm_studio", "lmstudio"}:
+        return LocalOpenAiCompatibleKycGatewayAdapter()
     return DeterministicKycGatewayAdapter()

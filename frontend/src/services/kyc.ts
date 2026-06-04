@@ -6,6 +6,7 @@ import {
   KycDraft,
   KycDraftStatus,
   KycFreshness,
+  KycJobRunPendingResult,
   KycPage,
   KycRunStatus,
   KycSnapshot,
@@ -82,6 +83,10 @@ export interface KycDraftRejectPayload {
   reason: string
 }
 
+export interface KycSnapshotRestorePayload {
+  reason: string
+}
+
 export interface KycAgentRunCreatePayload {
   source_document_ids?: string[]
   research_sources?: string[]
@@ -155,6 +160,14 @@ export function getKycSnapshot(token: string, accountId: string, snapshotId: str
   return apiRequest<KycSnapshot>(`/api/accounts/${accountId}/kyc/snapshots/${snapshotId}`, { token })
 }
 
+export function restoreKycSnapshot(token: string, accountId: string, snapshotId: string, payload: KycSnapshotRestorePayload) {
+  return apiRequest<KycSnapshot>(`/api/accounts/${accountId}/kyc/snapshots/${snapshotId}/restore`, {
+    method: 'POST',
+    token,
+    body: JSON.stringify(payload),
+  })
+}
+
 export function getKycFreshness(token: string, accountId: string) {
   return apiRequest<KycFreshness>(`/api/accounts/${accountId}/kyc/freshness`, { token })
 }
@@ -177,6 +190,27 @@ export function getKycAgentRun(token: string, accountId: string, runId: string) 
 
 export function refreshKycAgentRun(token: string, accountId: string, runId: string) {
   return apiRequest<KycAgentRun>(`/api/accounts/${accountId}/kyc/agent-runs/${runId}/refresh`, {
+    method: 'POST',
+    token,
+  })
+}
+
+export function retryKycAgentRun(token: string, accountId: string, runId: string) {
+  return apiRequest<KycAgentRun>(`/api/accounts/${accountId}/kyc/agent-runs/${runId}/retry`, {
+    method: 'POST',
+    token,
+  })
+}
+
+export function cancelKycAgentRun(token: string, accountId: string, runId: string) {
+  return apiRequest<KycAgentRun>(`/api/accounts/${accountId}/kyc/agent-runs/${runId}/cancel`, {
+    method: 'POST',
+    token,
+  })
+}
+
+export function runPendingKycJobs(token: string, limit = 1) {
+  return apiRequest<KycJobRunPendingResult>(`/api/admin/kyc/jobs/run-pending?limit=${limit}`, {
     method: 'POST',
     token,
   })

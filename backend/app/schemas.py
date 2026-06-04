@@ -31,8 +31,8 @@ RenewalRisk = Literal["low", "medium", "high", "unknown"]
 RenewalStatus = Literal["expired", "renewal_due", "notice_due", "upcoming_notice_window", "not_due", "unknown"]
 SourceType = Literal["project_charter", "sow", "attachment", "source_link", "commercial_note", "research", "manual_import"]
 KycDraftStatus = Literal["ready_for_review", "approved", "rejected"]
-KycRunStatus = Literal["pending", "running", "complete", "failed", "partial"]
-KycWorkstreamStatus = Literal["pending", "running", "complete", "failed"]
+KycRunStatus = Literal["pending", "running", "complete", "failed", "partial", "cancelled"]
+KycWorkstreamStatus = Literal["pending", "running", "complete", "failed", "cancelled"]
 KycConfidenceLevel = Literal["low", "medium", "high"]
 KycTriggerSource = Literal["account_overview", "onboarding_draft", "source_documents", "kyc_page", "manual"]
 CustomFieldType = Literal["text", "textarea", "number", "currency", "date", "datetime", "boolean", "single_select", "multi_select", "email", "url", "phone"]
@@ -1168,6 +1168,15 @@ class KycDraftRejectRequest(BaseModel):
         return validate_short_text(value, "Rejection reason", 1000)
 
 
+class KycSnapshotRestoreRequest(BaseModel):
+    reason: str
+
+    @field_validator("reason")
+    @classmethod
+    def reason_is_valid(cls, value: str) -> str:
+        return validate_short_text(value, "Restore reason", 1000)
+
+
 class KycSnapshotRead(BaseModel):
     id: str
     account_id: str
@@ -1266,6 +1275,16 @@ class KycAgentRunRead(BaseModel):
     research_sources: list[str] = Field(default_factory=list)
     triggered_by_name: str
     error_message: str | None = None
+    queued_at: datetime | None = None
+    retry_count: int = 0
+    max_retries: int = 0
+    next_retry_at: datetime | None = None
+    provider: dict[str, Any] = Field(default_factory=dict)
+    usage: dict[str, Any] = Field(default_factory=dict)
+    cost: dict[str, Any] = Field(default_factory=dict)
+    retrieval_summary: dict[str, Any] = Field(default_factory=dict)
+    provider_response_id: str | None = None
+    model_name: str | None = None
     started_at: datetime | None = None
     completed_at: datetime | None = None
     created_at: datetime
@@ -1280,6 +1299,13 @@ class KycAgentRunPageRead(BaseModel):
     page: int
     page_size: int
     pages: int
+
+
+class KycJobRunPendingRead(BaseModel):
+    processed_count: int
+    failed_count: int
+    processed_runs: list[KycAgentRunRead] = Field(default_factory=list)
+    failures: list[dict[str, str]] = Field(default_factory=list)
 
 
 class KycAgentRunCreateRequest(BaseModel):

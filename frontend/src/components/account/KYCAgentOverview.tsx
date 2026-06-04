@@ -1,8 +1,8 @@
-import { AlertTriangle, CheckCircle2, ChevronDown, ChevronLeft, ChevronRight, FileSearch, Loader2, RefreshCcw, Search, SearchCheck } from 'lucide-react'
+import { AlertTriangle, CheckCircle2, ChevronDown, ChevronLeft, ChevronRight, FileSearch, Loader2, PlayCircle, RefreshCcw, RotateCcw, Search, SearchCheck, XCircle } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { toast } from 'sonner'
 import { useAuth } from '@/contexts/AuthContext'
-import { createKycAgentRun, getKycFreshness, listKycAgentRuns, refreshKycAgentRun } from '@/services/kyc'
+import { cancelKycAgentRun, createKycAgentRun, getKycFreshness, listKycAgentRuns, refreshKycAgentRun, retryKycAgentRun, runPendingKycJobs } from '@/services/kyc'
 import { KycAgentRun, KycRunStatus, KycWorkstream } from '@/types/kyc'
 import { EmptyState } from '@/components/ui/EmptyState'
 import { cn } from '@/utils/cn'
@@ -92,13 +92,14 @@ export function KYCAgentOverview({ accountId, compact = false, onReview }: { acc
   const [statusFilter, setStatusFilter] = useState<KycRunStatus | 'all'>('all')
   const [page, setPage] = useState(1)
   const [openStep, setOpenStep] = useState(kycAgentSteps[0].workstream_key)
-  const [loading, setLoading] = useState<'initial' | 'refresh' | ''>('initial')
+  const [loading, setLoading] = useState<'initial' | 'refresh' | 'retry' | 'cancel' | 'runPending' | ''>('initial')
   const [error, setError] = useState<string | null>(null)
 
   const latestRun = runs?.items[0] ?? null
   const workstreams = useMemo<(KycWorkstream | AgentStep)[]>(() => latestRun?.workstreams.length ? latestRun.workstreams : kycAgentSteps, [latestRun])
   const totalBlocks = useMemo(() => workstreams.reduce((sum, step) => sum + Object.keys(step.output).length, 0), [workstreams])
   const lastRefresh = latestRun ? formatDateTime(latestRun.completed_at ?? latestRun.updated_at) : 'Not run'
+  const providerLabel = latestRun ? providerText(latestRun) : 'Local provider not run yet'
 
   const loadRuns = useCallback(
     async (mode: 'initial' | 'refresh' = 'refresh') => {
@@ -157,6 +158,51 @@ export function KYCAgentOverview({ accountId, compact = false, onReview }: { acc
     }
   }
 
+  async function retryLatestRun() {
+    if (!token || !latestRun) return
+    setLoading('retry')
+    setError(null)
+    try {
+      await retryKycAgentRun(token, accountId, latestRun.id)
+      toast.success('KYC run queued for retry')
+      await loadRuns('refresh')
+    } catch (requestError) {
+      setError(requestError instanceof Error ? requestError.message : 'KYC retry failed')
+    } finally {
+      setLoading('')
+    }
+  }
+
+  async function cancelLatestRun() {
+    if (!token || !latestRun) return
+    setLoading('cancel')
+    setError(null)
+    try {
+      await cancelKycAgentRun(token, accountId, latestRun.id)
+      toast.success('KYC run cancelled')
+      await loadRuns('refresh')
+    } catch (requestError) {
+      setError(requestError instanceof Error ? requestError.message : 'KYC cancellation failed')
+    } finally {
+      setLoading('')
+    }
+  }
+
+  async function runPendingNow() {
+    if (!token) return
+    setLoading('runPending')
+    setError(null)
+    try {
+      const result = await runPendingKycJobs(token, 1)
+      toast.success(result.processed_count ? 'Pending KYC job processed' : 'No pending KYC jobs found')
+      await loadRuns('refresh')
+    } catch (requestError) {
+      setError(requestError instanceof Error ? requestError.message : 'Pending KYC job could not be processed')
+    } finally {
+      setLoading('')
+    }
+  }
+
   return (
     <section className="tk-card overflow-hidden">
       <div className="border-b border-surface-border bg-surface-secondary p-5">
@@ -164,11 +210,30 @@ export function KYCAgentOverview({ accountId, compact = false, onReview }: { acc
           <div className="min-w-0">
             <p className="text-[10px] font-extrabold uppercase tracking-widest text-brand-blue">AI KYC agent</p>
             <h3 className="mt-1 text-base font-semibold text-ink">KYC intelligence overview</h3>
-            <p className="mt-1 max-w-3xl text-sm leading-6 text-ink-secondary">
-              Latest run status: {latestRun ? latestRun.status.replace(/_/g, ' ') : 'not started'}; approved snapshot freshness: {freshnessStatus}.
-            </p>
-          </div>
+              <p className="mt-1 max-w-3xl text-sm leading-6 text-ink-secondary">
+                Latest run status: {latestRun ? latestRun.status.replace(/_/g, ' ') : 'not started'}; approved snapshot freshness: {freshnessStatus}.
+              </p>
+              <p className="mt-1 text-xs leading-5 text-ink-secondary">{providerLabel}</p>
+            </div>
           <div className="flex flex-wrap gap-2">
+            {latestRun?.status === 'pending' ? (
+              <>
+                <button type="button" className="tk-button-secondary bg-white" onClick={runPendingNow} disabled={Boolean(loading)}>
+                  {loading === 'runPending' ? <Loader2 className="h-4 w-4 animate-spin" /> : <PlayCircle className="h-4 w-4" />}
+                  Run pending
+                </button>
+                <button type="button" className="tk-button-secondary bg-white" onClick={cancelLatestRun} disabled={Boolean(loading)}>
+                  {loading === 'cancel' ? <Loader2 className="h-4 w-4 animate-spin" /> : <XCircle className="h-4 w-4" />}
+                  Cancel
+                </button>
+              </>
+            ) : null}
+            {latestRun && ['failed', 'partial', 'cancelled'].includes(latestRun.status) ? (
+              <button type="button" className="tk-button-secondary bg-white" onClick={retryLatestRun} disabled={Boolean(loading)}>
+                {loading === 'retry' ? <Loader2 className="h-4 w-4 animate-spin" /> : <RotateCcw className="h-4 w-4" />}
+                Retry
+              </button>
+            ) : null}
             <button type="button" className="tk-button-secondary bg-white" onClick={refreshData} disabled={Boolean(loading)}>
               {loading === 'refresh' ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCcw className="h-4 w-4" />}
               Refresh AI data
@@ -212,6 +277,7 @@ export function KYCAgentOverview({ accountId, compact = false, onReview }: { acc
           <option value="complete">Complete</option>
           <option value="partial">Partial</option>
           <option value="failed">Failed</option>
+          <option value="cancelled">Cancelled</option>
           <option value="pending">Pending</option>
           <option value="running">Running</option>
         </select>
@@ -270,6 +336,18 @@ export function KYCAgentOverview({ accountId, compact = false, onReview }: { acc
                         ))}
                         {step.error_message ? <p className="rounded-md bg-rag-red/10 p-2 text-xs leading-5 text-rag-red">{step.error_message}</p> : null}
                         {step.missing_fields.length ? <p className="rounded-md bg-brand-orange/10 p-2 text-xs leading-5 text-brand-orange">{step.missing_fields.length} missing field{step.missing_fields.length === 1 ? '' : 's'}</p> : null}
+                        {'citations' in step && step.citations?.length ? (
+                          <div className="rounded-md border border-blue-tint-20 bg-blue-tint-20 p-2">
+                            <p className="text-[10px] font-semibold uppercase tracking-wider text-brand-blue">Citations</p>
+                            <div className="mt-1 space-y-1">
+                              {step.citations.slice(0, 3).map(citation => (
+                                <p key={`${citation.source_document_id ?? citation.source_chunk_id ?? citation.label}-${citation.field_key ?? ''}`} className="text-xs leading-5 text-ink-secondary">
+                                  <span className="font-semibold text-ink">{citation.label}</span>: {citation.excerpt || 'Source reference recorded.'}
+                                </p>
+                              ))}
+                            </div>
+                          </div>
+                        ) : null}
                       </div>
                     </div>
                   ) : null}
@@ -328,13 +406,22 @@ function StatusBadge({ status }: { status: string }) {
   const tone =
     status === 'complete'
       ? 'border-rag-green/20 bg-rag-green/10 text-rag-green'
-      : status === 'failed'
+      : status === 'failed' || status === 'cancelled'
         ? 'border-rag-red/20 bg-rag-red/10 text-rag-red'
         : status === 'partial'
           ? 'border-brand-orange/20 bg-brand-orange/10 text-brand-orange'
           : 'border-blue-tint-20 bg-blue-tint-20 text-brand-blue'
 
   return <span className={cn('rounded-full border px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider', tone)}>{status.replace(/_/g, ' ')}</span>
+}
+
+function providerText(run: KycAgentRun) {
+  const provider = run.provider ?? {}
+  const adapter = typeof provider.adapter === 'string' ? provider.adapter : 'local AI'
+  const model = run.model_name ?? (typeof provider.model === 'string' ? provider.model : null)
+  const baseUrl = typeof provider.base_url === 'string' && provider.base_url ? ` via ${provider.base_url}` : ''
+  const retry = run.max_retries ? `; retries ${run.retry_count ?? 0}/${run.max_retries}` : ''
+  return `Provider: ${adapter}${model ? ` (${model})` : ''}${baseUrl}${retry}.`
 }
 
 function formatDateTime(value: string) {

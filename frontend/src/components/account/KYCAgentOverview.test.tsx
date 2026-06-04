@@ -2,7 +2,7 @@ import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { KYCAgentOverview } from '@/components/account/KYCAgentOverview'
-import { createKycAgentRun, getKycFreshness, listKycAgentRuns, refreshKycAgentRun } from '@/services/kyc'
+import { cancelKycAgentRun, createKycAgentRun, getKycFreshness, listKycAgentRuns, refreshKycAgentRun, retryKycAgentRun, runPendingKycJobs } from '@/services/kyc'
 import { KycAgentRun, KycFreshness } from '@/types/kyc'
 
 vi.mock('@/contexts/AuthContext', () => ({
@@ -16,10 +16,13 @@ vi.mock('sonner', () => ({
 }))
 
 vi.mock('@/services/kyc', () => ({
+  cancelKycAgentRun: vi.fn(),
   createKycAgentRun: vi.fn(),
   getKycFreshness: vi.fn(),
   listKycAgentRuns: vi.fn(),
   refreshKycAgentRun: vi.fn(),
+  retryKycAgentRun: vi.fn(),
+  runPendingKycJobs: vi.fn(),
 }))
 
 const freshness: KycFreshness = {
@@ -38,7 +41,7 @@ const freshness: KycFreshness = {
   required_fields_completed: 18,
 }
 
-function run(): KycAgentRun {
+function run(overrides: Partial<KycAgentRun> = {}): KycAgentRun {
   return {
     id: 'run-1',
     account_id: 'acct-1',
@@ -54,6 +57,16 @@ function run(): KycAgentRun {
     created_at: '2026-06-01T07:00:00Z',
     updated_at: '2026-06-01T07:01:00Z',
     ai_disclaimer: 'AI-assisted output generated from recorded platform data. Verify before use in client communication.',
+    queued_at: '2026-06-01T07:00:00Z',
+    retry_count: 0,
+    max_retries: 1,
+    next_retry_at: null,
+    provider: { adapter: 'local-openai-compatible', model: 'qwen3:8b', base_url: 'http://127.0.0.1:11434/v1' },
+    usage: {},
+    cost: {},
+    retrieval_summary: { source_coverage: { documents_available: 1, documents_cited: 1, chunks_cited: 1 } },
+    provider_response_id: 'resp-1',
+    model_name: 'qwen3:8b',
     workstreams: [
       {
         id: 'ws-1',
@@ -71,11 +84,16 @@ function run(): KycAgentRun {
         },
         citations: [],
         missing_fields: [],
+        reviewer_notes: [],
+        suggested_follow_up_questions: [],
+        retrieved_chunk_ids: [],
+        provider_response_id: 'resp-1',
         error_message: null,
         started_at: '2026-06-01T07:00:00Z',
         completed_at: '2026-06-01T07:01:00Z',
       },
     ],
+    ...overrides,
   }
 }
 
@@ -85,6 +103,9 @@ describe('KYCAgentOverview', () => {
     vi.mocked(getKycFreshness).mockResolvedValue(freshness)
     vi.mocked(refreshKycAgentRun).mockResolvedValue(run())
     vi.mocked(createKycAgentRun).mockResolvedValue(run())
+    vi.mocked(cancelKycAgentRun).mockResolvedValue(run({ status: 'cancelled' }))
+    vi.mocked(retryKycAgentRun).mockResolvedValue(run({ status: 'pending' }))
+    vi.mocked(runPendingKycJobs).mockResolvedValue({ processed_count: 1, failed_count: 0, processed_runs: [run()], failures: [] })
   })
 
   it('renders nested backend workstream values and refreshes the latest run', async () => {

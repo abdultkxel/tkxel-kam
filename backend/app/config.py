@@ -93,6 +93,11 @@ class Settings:
         self.kyc_ocr_enabled = os.getenv("KYC_OCR_ENABLED", "true").lower() == "true"
         self.kyc_ocr_engine = os.getenv("KYC_OCR_ENGINE", "tesseract").strip().lower()
         self.kyc_ocr_min_text_chars = int(os.getenv("KYC_OCR_MIN_TEXT_CHARS", "80"))
+        self.kyc_queue_backend = os.getenv("KYC_QUEUE_BACKEND", "local").strip().lower()
+        self.kyc_worker_enabled = os.getenv("KYC_WORKER_ENABLED", "false").lower() == "true"
+        self.kyc_worker_initial_delay_seconds = int(os.getenv("KYC_WORKER_INITIAL_DELAY_SECONDS", "5"))
+        self.kyc_worker_interval_seconds = int(os.getenv("KYC_WORKER_INTERVAL_SECONDS", "5"))
+        self.kyc_worker_batch_size = int(os.getenv("KYC_WORKER_BATCH_SIZE", "1"))
 
 
 @lru_cache
