@@ -1,9 +1,9 @@
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import false, func, or_, select
 from sqlalchemy.orm import Session, selectinload
 
-from app.models import Account, Engagement, Opportunity, OpportunityActionItem, OpportunityDecision, OpportunityStageDefinition, OpportunityStageHistory, OpportunityStageTransition, OpportunityType, User
+from app.models import Account, Engagement, Opportunity, OpportunityActionItem, OpportunityDecision, OpportunityStageDefinition, OpportunityStageHistory, OpportunityStageTransition, OpportunityType, Task, User
 
 
 class OpportunityRepository:
@@ -28,6 +28,9 @@ class OpportunityRepository:
         min_value: float | None = None,
         max_value: float | None = None,
         include_archived: bool = False,
+        open_only: bool = False,
+        stalled: bool = False,
+        stalled_after_days: int = 90,
         sort: str = "target_date",
         direction: str = "asc",
         page: int = 1,
@@ -49,6 +52,9 @@ class OpportunityRepository:
             min_value=min_value,
             max_value=max_value,
             include_archived=include_archived,
+            open_only=open_only,
+            stalled=stalled,
+            stalled_after_days=stalled_after_days,
         )
         total = self.db.scalar(
             select(func.count(Opportunity.id)).join(Account).join(OpportunityType).where(*conditions)
@@ -103,6 +109,9 @@ class OpportunityRepository:
         min_value: float | None = None,
         max_value: float | None = None,
         include_archived: bool = False,
+        open_only: bool = False,
+        stalled: bool = False,
+        stalled_after_days: int = 90,
     ) -> dict[str, float | int | dict[str, float | int]]:
         conditions = self._opportunity_conditions(
             account_id=account_id,
@@ -120,6 +129,9 @@ class OpportunityRepository:
             min_value=min_value,
             max_value=max_value,
             include_archived=include_archived,
+            open_only=open_only,
+            stalled=stalled,
+            stalled_after_days=stalled_after_days,
         )
         rows = self.db.execute(
             select(Opportunity.stage, func.count(Opportunity.id), func.coalesce(func.sum(Opportunity.value), 0))
@@ -293,6 +305,22 @@ class OpportunityRepository:
             .options(selectinload(OpportunityActionItem.opportunity).selectinload(Opportunity.account))
         )
 
+    def get_task(self, task_id: str) -> Task | None:
+        return self.db.get(Task, task_id)
+
+    def get_task_by_source(self, source_type: str, source_record_id: str) -> Task | None:
+        return self.db.scalar(
+            select(Task)
+            .where(Task.source_type == source_type, Task.source_record_id == source_record_id)
+            .order_by(Task.created_at.desc())
+            .limit(1)
+        )
+
+    def save_task(self, task: Task) -> Task:
+        self.db.add(task)
+        self.db.flush()
+        return task
+
     def list_action_items_page(self, opportunity_id: str, page: int, page_size: int) -> tuple[list[OpportunityActionItem], int]:
         conditions = [OpportunityActionItem.opportunity_id == opportunity_id]
         total = self.db.scalar(select(func.count(OpportunityActionItem.id)).where(*conditions)) or 0
@@ -349,6 +377,9 @@ class OpportunityRepository:
         min_value: float | None,
         max_value: float | None,
         include_archived: bool,
+        open_only: bool,
+        stalled: bool,
+        stalled_after_days: int,
     ) -> list:
         conditions = []
         if account_id:
@@ -380,6 +411,11 @@ class OpportunityRepository:
             conditions.append(Opportunity.value >= min_value)
         if max_value is not None:
             conditions.append(Opportunity.value <= max_value)
-        if not include_archived:
+        if open_only or stalled:
+            conditions.append(Opportunity.stage.notin_(("Won", "Lost")))
+            conditions.append(Opportunity.archived_at.is_(None))
+        if stalled:
+            conditions.append(Opportunity.updated_at < datetime.now(timezone.utc) - timedelta(days=max(1, stalled_after_days)))
+        if not include_archived and not (open_only or stalled):
             conditions.append(Opportunity.archived_at.is_(None))
         return conditions

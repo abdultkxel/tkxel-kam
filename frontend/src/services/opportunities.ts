@@ -320,16 +320,17 @@ export function buildUpdatePayload(payload: OpportunityUpdateInput) {
 }
 
 function buildActionItemPayload(payload: Partial<OpportunityActionItemInput>) {
-  return {
-    title: payload.title,
-    owner_id: payload.ownerId ?? null,
-    owner_name: payload.ownerName ?? null,
-    owner_email: payload.ownerEmail ?? null,
-    due_date: payload.dueDate,
-    status: payload.status,
-    priority: payload.priority,
-    notes: payload.notes,
-  }
+  const body: Record<string, unknown> = {}
+  if (payload.title !== undefined) body.title = payload.title
+  if (payload.ownerId !== undefined) body.owner_id = payload.ownerId || null
+  if (payload.ownerName !== undefined) body.owner_name = payload.ownerName || null
+  if (payload.ownerEmail !== undefined) body.owner_email = payload.ownerEmail || null
+  if (payload.dueDate !== undefined) body.due_date = payload.dueDate
+  if (payload.status !== undefined) body.status = payload.status
+  if (payload.priority !== undefined) body.priority = payload.priority
+  if (payload.notes !== undefined) body.notes = payload.notes
+  if (payload.createTask !== undefined) body.create_task = payload.createTask
+  return body
 }
 
 function queryString(params: OpportunityListParams) {
@@ -348,6 +349,9 @@ function queryString(params: OpportunityListParams) {
   setQuery(query, 'min_value', params.minValue)
   setQuery(query, 'max_value', params.maxValue)
   setQuery(query, 'include_archived', params.includeArchived ? 'true' : undefined)
+  setQuery(query, 'open_only', params.openOnly ? 'true' : undefined)
+  setQuery(query, 'stalled', params.stalled ? 'true' : undefined)
+  setQuery(query, 'stalled_after_days', params.stalledAfterDays)
   setQuery(query, 'sort', params.sort)
   setQuery(query, 'direction', params.direction)
   setQuery(query, 'page', params.page)

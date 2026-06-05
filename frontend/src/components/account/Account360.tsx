@@ -1,6 +1,5 @@
 import * as Tabs from '@radix-ui/react-tabs'
-import { differenceInCalendarDays } from 'date-fns'
-import { AlertTriangle, ArrowRight, BriefcaseBusiness, CalendarClock, CalendarPlus, CheckCircle2, Clock3, FileText, History, Loader2, PhoneCall, RefreshCcw, ShieldCheck, Sparkles, Target, TrendingUp } from 'lucide-react'
+import { AlertTriangle, BriefcaseBusiness, CalendarClock, CalendarPlus, FileText, Loader2, PhoneCall, RefreshCcw, Target } from 'lucide-react'
 import { nanoid } from 'nanoid'
 import { useEffect, useMemo, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
@@ -12,8 +11,8 @@ import { KYCAgentOverview } from '@/components/account/KYCAgentOverview'
 import { KYCAssistedReview } from '@/components/account/KYCAssistedReview'
 import { ScoreHistoryPanel } from '@/components/account/ScoreHistoryPanel'
 import { ScoreCalculators, ScoreCalculatorSummary } from '@/components/account/ScoreCalculators'
+import { GrowthWhitespacePanel, RetentionPlanPanel } from '@/components/account/RelationshipsPlanningGrowthRetention'
 import { StakeholderTab } from '@/components/account/StakeholderTab'
-import { AccountPlanPanel, GrowthWhitespacePanel, RenewalIntelligencePanel, RetentionPlanPanel } from '@/components/account/RelationshipsPlanningGrowthRetention'
 import { AIBriefCard } from '@/components/ai/AIBriefCard'
 import { OpportunityBoard } from '@/components/opportunities/OpportunityBoard'
 import { EmptyState } from '@/components/ui/EmptyState'
@@ -26,20 +25,41 @@ import { recalculateAccountScore, ScoreRead } from '@/services/scoringSignalsTas
 import { useAccountStore } from '@/stores/accountStore'
 import { useAlertStore } from '@/stores/alertStore'
 import { useGovernanceStore } from '@/stores/governanceStore'
-import { useNotificationStore } from '@/stores/notificationStore'
 import { useOpportunityStore } from '@/stores/opportunityStore'
 import { useScoreStore } from '@/stores/scoreStore'
 import { useTimelineStore } from '@/stores/timelineStore'
 import { useUIStore } from '@/stores/uiStore'
-import { useV3Store } from '@/stores/v3Store'
-import { Account, AccountStage } from '@/types/account'
+import { Account } from '@/types/account'
 import { canViewTimelineEntry } from '@/types/timeline'
-import { EngagementRecord, KYCDraft, SourceDocument } from '@/types/v3'
 import { emit } from '@/utils/emitTimelineEvent'
 import { emitTimelineEvent } from '@/utils/emitTimelineEvent'
-import { formatCompactCurrency, formatCurrency, formatDate, formatRelative } from '@/utils/formatters'
+import { formatCompactCurrency, formatCurrency, formatDate } from '@/utils/formatters'
 
-const tabs = ['Overview', 'Engagements', 'Stakeholders', 'Planning', 'Growth', 'Renewal', 'Retention', 'KYC', 'Health', 'Stage', 'Opportunities', 'Education', 'Escalation', 'Governance', 'Notes', 'Timeline', 'Documents']
+export const accountDetailTabs = ['Overview', 'Engagement', 'Stakeholders', 'KYC', 'Health', 'Stage', 'Opportunities', 'Governance', 'Education', 'Timeline', 'Notes', 'Documents'] as const
+
+type AccountDetailTab = typeof accountDetailTabs[number]
+type StageWorkspaceTab = 'Growth' | 'Retention'
+
+const accountDetailTabAliases: Record<string, AccountDetailTab> = {
+  engagements: 'Engagement',
+  growth: 'Stage',
+  retention: 'Stage',
+  renewal: 'Stage',
+  planning: 'Stage',
+  escalation: 'Overview',
+}
+
+export function resolveAccountDetailTab(value?: string | null): AccountDetailTab {
+  const normalized = value?.trim().toLowerCase()
+  if (!normalized) return 'Overview'
+  return accountDetailTabs.find(tab => tab.toLowerCase() === normalized) ?? accountDetailTabAliases[normalized] ?? 'Overview'
+}
+
+export function resolveStageWorkspaceTab(value?: string | null): StageWorkspaceTab {
+  const normalized = value?.trim().toLowerCase()
+  if (normalized === 'retention' || normalized === 'renewal') return 'Retention'
+  return 'Growth'
+}
 
 export function Account360({ account }: { account: Account }) {
   const { token } = useAuth()
@@ -47,11 +67,10 @@ export function Account360({ account }: { account: Account }) {
   const [searchParams, setSearchParams] = useSearchParams()
   const [handoverOpen, setHandoverOpen] = useState(false)
   const [savingHealth, setSavingHealth] = useState(false)
-  const [savingStage, setSavingStage] = useState(false)
   const requestedTab = searchParams.get('tab')
-  const [activeTab, setActiveTab] = useState(() => tabs.find(tab => tab.toLowerCase() === requestedTab?.toLowerCase()) ?? 'Overview')
+  const [activeTab, setActiveTab] = useState<AccountDetailTab>(() => resolveAccountDetailTab(requestedTab))
+  const [stageWorkspaceTab, setStageWorkspaceTab] = useState<StageWorkspaceTab>(() => resolveStageWorkspaceTab(requestedTab))
   const setHealth = useAccountStore(state => state.setHealth)
-  const addNotification = useNotificationStore(state => state.addNotification)
   const addScoreSnapshot = useScoreStore(state => state.addSnapshot)
   const evaluateAccount = useAlertStore(state => state.evaluateAccount)
   const alerts = useAlertStore(state => state.alerts)
@@ -61,9 +80,6 @@ export function Account360({ account }: { account: Account }) {
   const governanceEvents = useGovernanceStore(state => state.events)
   const entries = useTimelineStore(state => state.entries)
   const setActiveAccountId = useUIStore(state => state.setActiveAccountId)
-  const v3Engagements = useV3Store(state => state.engagements)
-  const sourceDocuments = useV3Store(state => state.sourceDocuments)
-  const onboardingDrafts = useV3Store(state => state.onboardingDrafts)
   const visibleEntries = useMemo(
     () =>
       entries
@@ -83,23 +99,6 @@ export function Account360({ account }: { account: Account }) {
   const openOpportunityValue = opportunities
     .filter(opportunity => opportunity.stage !== 'Won' && opportunity.stage !== 'Lost')
     .reduce((sum, opportunity) => sum + opportunity.estimatedValue, 0)
-  const latestEntry = visibleEntries[0]
-  const accountEngagements = useMemo(
-    () => v3Engagements.filter(engagement => engagement.accountId === account.id),
-    [account.id, v3Engagements],
-  )
-  const accountDocuments = useMemo(
-    () => sourceDocuments.filter(document => document.accountId === account.id),
-    [account.id, sourceDocuments],
-  )
-  const accountKYCDraft = useMemo(
-    () => onboardingDrafts.map(draft => draft.kycDraft).find(draft => draft.accountId === account.id),
-    [account.id, onboardingDrafts],
-  )
-  const stagePrediction = useMemo(
-    () => buildStagePrediction(account, accountEngagements, accountDocuments, visibleEntries, opportunities, accountKYCDraft),
-    [account, accountDocuments, accountEngagements, accountKYCDraft, opportunities, visibleEntries],
-  )
   const recentDecisions = visibleEntries.filter(entry => entry.eventType === 'approval_event' || entry.eventType === 'executive_event').length
   const privileged = user.role === 'leadership' || user.role === 'admin' || user.role === 'super_admin'
   const accountAlerts = useMemo(
@@ -143,15 +142,24 @@ export function Account360({ account }: { account: Account }) {
   }, [account.id, setActiveAccountId])
 
   useEffect(() => {
-    const nextTab = tabs.find(tab => tab.toLowerCase() === requestedTab?.toLowerCase())
-    if (nextTab) setActiveTab(nextTab)
+    setActiveTab(resolveAccountDetailTab(requestedTab))
+    if (resolveAccountDetailTab(requestedTab) === 'Stage') setStageWorkspaceTab(resolveStageWorkspaceTab(requestedTab))
   }, [requestedTab])
 
   function changeTab(value: string) {
-    setActiveTab(value)
+    const nextTab = resolveAccountDetailTab(value)
+    setActiveTab(nextTab)
     const next = new URLSearchParams(searchParams)
-    if (value === 'Overview') next.delete('tab')
-    else next.set('tab', value.toLowerCase())
+    if (nextTab === 'Overview') next.delete('tab')
+    else next.set('tab', nextTab.toLowerCase())
+    setSearchParams(next, { replace: true })
+  }
+
+  function changeStageWorkspace(value: string) {
+    const nextTab = resolveStageWorkspaceTab(value)
+    setStageWorkspaceTab(nextTab)
+    const next = new URLSearchParams(searchParams)
+    next.set('tab', nextTab.toLowerCase())
     setSearchParams(next, { replace: true })
   }
 
@@ -247,37 +255,6 @@ export function Account360({ account }: { account: Account }) {
     }
   }
 
-  async function transitionStage() {
-    setSavingStage(true)
-    const next: AccountStage = stagePrediction.predictedStage !== account.stage ? stagePrediction.predictedStage : account.stage === 'Expansion' ? 'Renewal' : 'Expansion'
-    await new Promise(resolve => window.setTimeout(resolve, 450))
-    const entry = emitTimelineEvent({
-      accountId: account.id,
-      eventType: 'ai_event',
-      module: 'stage',
-      title: `AI stage recommendation reviewed: ${next}`,
-      description: `Recommendation reviewed without changing official stage. ${stagePrediction.basis}`,
-      performedBy: user.id,
-      performedByName: user.name,
-      metadata: { currentStage: account.stage, recommendedStage: next, calculatorVersion: 'stage-v2.1', mutationApplied: false },
-      isSensitive: false,
-      isSystemGenerated: true,
-      isImmutable: true,
-    })
-    evaluateAccount(account, [entry, ...entries])
-    addNotification({
-      userId: account.ownerId,
-      trigger: 'account_stage_recommendation_reviewed',
-      sentence: `${account.name} stage recommendation reviewed`,
-      accountId: account.id,
-      accountName: account.name,
-      contentPreview: `AI recommended ${next}; no official stage change was applied.`,
-      route: `/accounts/${account.id}`,
-    })
-    setSavingStage(false)
-    toast.success('Stage recommendation reviewed')
-  }
-
   function handleAlertAction(action: string) {
     if (action === 'Log a check-in call') {
       emitTimelineEvent({
@@ -343,16 +320,16 @@ export function Account360({ account }: { account: Account }) {
           <label className="grid gap-1 rounded-lg border border-surface-border bg-white p-2 shadow-card md:hidden">
             <span className="px-1 text-[10px] font-extrabold uppercase tracking-widest text-brand-blue">Account section</span>
             <select className="tk-input" value={activeTab} onChange={event => changeTab(event.target.value)}>
-              {tabs.map(tab => (
+              {accountDetailTabs.map(tab => (
                 <option key={tab} value={tab}>{tab}</option>
               ))}
             </select>
           </label>
           <Tabs.List
-            className="hidden min-w-[1820px] gap-1 rounded-lg border border-surface-border bg-white p-1 shadow-card md:grid"
-            style={{ gridTemplateColumns: `repeat(${tabs.length}, minmax(104px, 1fr))` }}
+            className="hidden min-w-[1320px] gap-1 rounded-lg border border-surface-border bg-white p-1 shadow-card md:grid"
+            style={{ gridTemplateColumns: `repeat(${accountDetailTabs.length}, minmax(104px, 1fr))` }}
           >
-            {tabs.map(tab => (
+            {accountDetailTabs.map(tab => (
               <Tabs.Trigger
                 key={tab}
                 value={tab}
@@ -386,11 +363,10 @@ export function Account360({ account }: { account: Account }) {
                   ) : null}
                 </div>
               </div>
-              <div className="grid gap-0 divide-y divide-surface-border md:grid-cols-4 md:divide-x md:divide-y-0">
+              <div className="grid gap-0 divide-y divide-surface-border md:grid-cols-3 md:divide-x md:divide-y-0">
                 <OverviewMetric icon={BriefcaseBusiness} label="ARR" value={formatCurrency(account.arr)} detail={`${formatCompactCurrency(openOpportunityValue)} open pipeline`} />
                 <OverviewMetric icon={Target} label="Open opportunities" value={opportunities.length} detail={`${opportunities.filter(item => item.stage !== 'Won' && item.stage !== 'Lost').length} active pursuits`} />
                 <OverviewMetric icon={CalendarClock} label="Next governance" value={nextGovernance ? formatDate(nextGovernance.date) : 'Not set'} detail={nextGovernance ? nextGovernance.type : 'Schedule from Governance'} />
-                <OverviewMetric icon={History} label="Timeline" value={visibleEntries.length} detail={latestEntry ? `Last event ${formatRelative(latestEntry.timestamp)}` : 'No events yet'} />
               </div>
               {accountAlerts.length ? (
                 <div className="m-5 rounded-lg border border-brand-orange/20 bg-brand-orange/10 p-4">
@@ -438,23 +414,11 @@ export function Account360({ account }: { account: Account }) {
             <KYCAssistedReview account={account} />
           </div>
         </Tabs.Content>
-        <Tabs.Content value="Engagements">
+        <Tabs.Content value="Engagement">
           <EngagementsPanel account={account} />
         </Tabs.Content>
         <Tabs.Content value="Stakeholders">
           <StakeholderTab account={account} />
-        </Tabs.Content>
-        <Tabs.Content value="Planning">
-          <AccountPlanPanel account={account} />
-        </Tabs.Content>
-        <Tabs.Content value="Growth">
-          <GrowthWhitespacePanel account={account} />
-        </Tabs.Content>
-        <Tabs.Content value="Renewal">
-          <RenewalIntelligencePanel account={account} />
-        </Tabs.Content>
-        <Tabs.Content value="Retention">
-          <RetentionPlanPanel account={account} />
         </Tabs.Content>
         <Tabs.Content value="Health">
           <div className="space-y-4">
@@ -496,44 +460,25 @@ export function Account360({ account }: { account: Account }) {
           </div>
         </Tabs.Content>
         <Tabs.Content value="Stage">
-          <section className="tk-card overflow-hidden">
-            <div className="border-b border-surface-border bg-surface-secondary p-5">
-              <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
-                <div>
-                  <p className="text-[10px] font-extrabold uppercase tracking-widest text-brand-blue">Stage control</p>
-                  <h3 className="mt-1 font-display text-3xl font-bold text-ink">{account.stage}</h3>
-                  <p className="mt-2 max-w-2xl text-sm leading-6 text-ink-secondary">
-                    Stage changes are immutable timeline events. Review AI prediction, source evidence, and governance context before transition.
-                  </p>
-                </div>
-                <button className="tk-button-primary shrink-0" disabled={savingStage} onClick={transitionStage}>
-                  {savingStage ? <Loader2 className="h-4 w-4 animate-spin" /> : <ArrowRight className="h-4 w-4" />}
-                  Record AI review
-                </button>
-              </div>
-            </div>
-            <div className="grid gap-5 p-5">
-              <div>
-                <h4 className="text-sm font-semibold text-ink">Lifecycle path</h4>
-                <StagePath current={account.stage} />
-              </div>
-              <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_360px]">
-                <StagePredictionCard prediction={stagePrediction} />
-                <div className="rounded-lg border border-surface-border bg-white p-4">
-                  <div className="flex items-center gap-2">
-                    <ShieldCheck className="h-4 w-4 text-brand-blue" />
-                    <h4 className="text-sm font-semibold text-ink">Transition checklist</h4>
-                  </div>
-                  <div className="mt-4 grid gap-3">
-                    <StageCheck label="Health evidence reviewed" done={account.health.overall >= 70} />
-                    <StageCheck label="Governance cadence available" done={Boolean(nextGovernance)} />
-                    <StageCheck label="Recent timeline activity present" done={Boolean(latestEntry)} />
-                    <StageCheck label="Source documents reviewed" done={accountDocuments.length > 0} />
-                  </div>
-                </div>
-              </div>
-            </div>
-          </section>
+          <Tabs.Root value={stageWorkspaceTab} onValueChange={changeStageWorkspace} className="space-y-4">
+            <Tabs.List aria-label="Stage workspace sections" className="inline-grid w-full max-w-md grid-cols-2 gap-1 rounded-lg border border-surface-border bg-white p-1 shadow-card">
+              {(['Growth', 'Retention'] as const).map(tab => (
+                <Tabs.Trigger
+                  key={tab}
+                  value={tab}
+                  className="flex min-h-[44px] items-center justify-center rounded-md px-3 text-sm font-semibold text-ink-secondary transition-colors hover:bg-surface-tertiary hover:text-ink data-[state=active]:bg-brand-blue data-[state=active]:text-white"
+                >
+                  {tab}
+                </Tabs.Trigger>
+              ))}
+            </Tabs.List>
+            <Tabs.Content value="Growth">
+              <GrowthWhitespacePanel account={account} />
+            </Tabs.Content>
+            <Tabs.Content value="Retention">
+              <RetentionPlanPanel account={account} />
+            </Tabs.Content>
+          </Tabs.Root>
         </Tabs.Content>
         <Tabs.Content value="Opportunities">
           <section className="mb-4 flex flex-wrap items-center justify-between gap-3">
@@ -612,179 +557,4 @@ function AccountFlag({ label, tone }: { label: string; tone: 'blue' | 'green' | 
   }[tone]
 
   return <span className={`rounded-full border px-3 py-1 text-[11px] font-semibold uppercase tracking-wider ${toneClass}`}>{label}</span>
-}
-
-type StagePrediction = {
-  predictedStage: AccountStage
-  confidence: number
-  basis: string
-  factors: { label: string; value: string; tone: 'blue' | 'green' | 'orange' | 'red' }[]
-  evidence: { label: string; detail: string; tone: 'blue' | 'green' | 'orange' | 'red' }[]
-  nextActions: string[]
-}
-
-function StagePredictionCard({ prediction }: { prediction: StagePrediction }) {
-  return (
-    <section className="rounded-lg border border-blue-tint-20 bg-blue-tint-20 p-4">
-      <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
-        <div className="min-w-0">
-          <div className="flex items-center gap-2">
-            <Sparkles className="h-4 w-4 text-brand-blue" />
-            <p className="text-[10px] font-extrabold uppercase tracking-widest text-brand-blue">AI stage prediction</p>
-          </div>
-          <h4 className="mt-2 text-xl font-semibold text-ink">{prediction.predictedStage}</h4>
-          <p className="mt-2 max-w-3xl text-sm leading-6 text-ink-secondary">{prediction.basis}</p>
-        </div>
-        <div className="min-w-[180px] rounded-lg border border-surface-border bg-white p-3">
-          <p className="text-[10px] font-semibold uppercase tracking-wider text-ink-secondary">Confidence</p>
-          <p className="mt-1 font-display text-3xl font-bold leading-none text-brand-blue">{prediction.confidence}%</p>
-          <div className="mt-3 h-2 overflow-hidden rounded-full bg-surface-tertiary">
-            <div className="h-full rounded-full bg-brand-blue" style={{ width: `${prediction.confidence}%` }} />
-          </div>
-        </div>
-      </div>
-
-      <div className="mt-4 grid gap-3 md:grid-cols-4">
-        {prediction.factors.map(factor => (
-          <div key={factor.label} className="rounded-lg border border-surface-border bg-white p-3">
-            <p className="text-[10px] font-semibold uppercase tracking-wider text-ink-secondary">{factor.label}</p>
-            <p className={`mt-1 text-sm font-semibold ${stageToneText(factor.tone)}`}>{factor.value}</p>
-          </div>
-        ))}
-      </div>
-
-      <div className="mt-4 grid gap-3 xl:grid-cols-[minmax(0,1fr)_300px]">
-        <div className="rounded-lg border border-surface-border bg-white p-4">
-          <div className="flex items-center gap-2">
-            <TrendingUp className="h-4 w-4 text-brand-blue" />
-            <h5 className="text-sm font-semibold text-ink">Prediction evidence</h5>
-          </div>
-          <div className="mt-3 grid gap-2 md:grid-cols-2">
-            {prediction.evidence.map(item => (
-              <div key={item.label} className="rounded-md bg-surface-secondary p-3">
-                <p className={`text-xs font-semibold uppercase tracking-wider ${stageToneText(item.tone)}`}>{item.label}</p>
-                <p className="mt-1 text-sm leading-5 text-ink-secondary">{item.detail}</p>
-              </div>
-            ))}
-          </div>
-        </div>
-        <div className="rounded-lg border border-surface-border bg-white p-4">
-          <h5 className="text-sm font-semibold text-ink">Recommended next actions</h5>
-          <div className="mt-3 space-y-2">
-            {prediction.nextActions.map(action => (
-              <div key={action} className="flex items-start gap-2 rounded-md bg-surface-secondary p-3">
-                <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-brand-blue" />
-                <p className="text-sm leading-5 text-ink-secondary">{action}</p>
-              </div>
-            ))}
-          </div>
-        </div>
-      </div>
-    </section>
-  )
-}
-
-function buildStagePrediction(
-  account: Account,
-  engagements: EngagementRecord[],
-  documents: SourceDocument[],
-  entries: ReturnType<typeof useTimelineStore.getState>['entries'],
-  opportunities: ReturnType<typeof useOpportunityStore.getState>['opportunities'],
-  kycDraft?: KYCDraft,
-): StagePrediction {
-  const today = new Date()
-  const openPipeline = opportunities
-    .filter(opportunity => opportunity.stage !== 'Won' && opportunity.stage !== 'Lost')
-    .reduce((sum, opportunity) => sum + opportunity.estimatedValue, 0)
-  const recentChanges = entries.filter(entry => differenceInCalendarDays(today, new Date(entry.timestamp)) <= 45)
-  const sowDocuments = documents.filter(document => document.type === 'sow')
-  const soonestRenewal = engagements
-    .map(engagement => ({
-      engagement,
-      noticeDays: differenceInCalendarDays(new Date(engagement.renewalTerms.noticeDeadline), today),
-      expiryDays: differenceInCalendarDays(new Date(engagement.renewalTerms.endDate), today),
-    }))
-    .sort((a, b) => a.noticeDays - b.noticeDays)[0]
-  const kycConfidence = kycDraft?.confidence ?? (documents.length ? Math.round(documents.reduce((sum, document) => sum + document.confidence, 0) / documents.length) : 58)
-  const fundingText = kycDraft?.sections.funding ?? account.risks.find(risk => /fund|payment|commercial|pricing|finance/i.test(risk)) ?? 'No verified funding note attached yet.'
-
-  let predictedStage: AccountStage = account.stage
-  if (account.riskStatus === 'critical' || account.health.overall < 58) predictedStage = 'At Risk'
-  else if (soonestRenewal && soonestRenewal.noticeDays <= 60) predictedStage = soonestRenewal.noticeDays <= 30 ? 'Renewal Focus' : 'Renewal'
-  else if (openPipeline >= Math.max(account.arr * 0.2, 250000) && account.health.relationship >= 70) predictedStage = 'Expansion'
-  else if (account.stage === 'Onboarding' && kycConfidence >= 80 && documents.length >= 2) predictedStage = 'Adoption'
-  else if (account.stage === 'Onboarding') predictedStage = 'Onboarding'
-  else if (account.health.overall >= 74 && recentChanges.length >= 2) predictedStage = 'Active'
-
-  const renewalDetail = soonestRenewal
-    ? `${soonestRenewal.engagement.name}: notice ${soonestRenewal.noticeDays}d, expiry ${soonestRenewal.expiryDays}d.`
-    : 'No SOW renewal terms detected for this account.'
-  const basis = `Prediction uses ${documents.length} source document${documents.length === 1 ? '' : 's'}, ${sowDocuments.length} SOW${sowDocuments.length === 1 ? '' : 's'}, ${recentChanges.length} recent timeline change${recentChanges.length === 1 ? '' : 's'}, KYC confidence ${kycConfidence}%, and ${formatCompactCurrency(openPipeline)} open pipeline.`
-  const confidence = Math.min(94, Math.max(58, Math.round((kycConfidence * 0.36) + (documents.length ? 22 : 8) + (recentChanges.length ? 12 : 4) + (openPipeline ? 10 : 4) + (soonestRenewal ? 12 : 5))))
-
-  return {
-    predictedStage,
-    confidence,
-    basis,
-    factors: [
-      { label: 'KYC', value: `${kycConfidence}% confidence`, tone: kycConfidence >= 80 ? 'green' : 'orange' },
-      { label: 'SOW posture', value: soonestRenewal ? `${soonestRenewal.noticeDays}d notice` : 'Not detected', tone: soonestRenewal && soonestRenewal.noticeDays <= 60 ? 'orange' : 'blue' },
-      { label: 'Recent changes', value: `${recentChanges.length} events`, tone: recentChanges.length ? 'blue' : 'orange' },
-      { label: 'Pipeline', value: formatCompactCurrency(openPipeline), tone: openPipeline ? 'green' : 'blue' },
-    ],
-    evidence: [
-      { label: 'KYC research', detail: kycDraft ? kycDraft.sections.market : 'KYC enrichment is not yet fully source-backed for this account.', tone: kycDraft ? 'green' : 'orange' },
-      { label: 'SOW renewal', detail: renewalDetail, tone: soonestRenewal && soonestRenewal.noticeDays <= 60 ? 'orange' : 'blue' },
-      { label: 'Recent changes', detail: recentChanges[0] ? `${recentChanges[0].title}: ${recentChanges[0].description}` : 'No recent timeline change found in the visible account history.', tone: recentChanges[0] ? 'blue' : 'orange' },
-      { label: 'Funding context', detail: fundingText, tone: /missing|risk|delay|not verified|No verified/i.test(fundingText) ? 'orange' : 'green' },
-    ],
-    nextActions: [
-      predictedStage === account.stage ? `Keep ${account.stage} and review again after the next governance or score update.` : `Review transition from ${account.stage} to ${predictedStage}.`,
-      soonestRenewal && soonestRenewal.noticeDays <= 60 ? 'Confirm renewal owner, notice deadline, and commercial exposure from the SOW.' : 'Confirm the latest SOW and renewal terms are attached.',
-      kycDraft ? 'Review AI-enriched KYC citations before approving the stage change.' : 'Refresh KYC research so funding and stakeholder assumptions are source-backed.',
-    ],
-  }
-}
-
-function stageToneText(tone: 'blue' | 'green' | 'orange' | 'red') {
-  if (tone === 'green') return 'text-rag-green'
-  if (tone === 'orange') return 'text-brand-orange'
-  if (tone === 'red') return 'text-rag-red'
-  return 'text-brand-blue'
-}
-
-function StagePath({ current }: { current: AccountStage }) {
-  const stages: AccountStage[] = ['Onboarding', 'Adoption', 'Active', 'Expansion', 'Expansion Focus', 'Renewal', 'Renewal Focus', 'At Risk']
-  const currentIndex = Math.max(0, stages.indexOf(current))
-
-  return (
-    <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4 2xl:grid-cols-8">
-      {stages.map((stage, index) => {
-        const active = stage === current
-        const complete = index < currentIndex
-        return (
-          <div key={stage} className={`rounded-lg border p-4 ${active ? 'border-brand-blue bg-blue-tint-20' : 'border-surface-border bg-white'}`}>
-            <div className="flex items-center justify-between gap-2">
-              <span className={`flex h-8 w-8 items-center justify-center rounded-full text-xs font-bold ${active || complete ? 'bg-brand-blue text-white' : 'bg-surface-tertiary text-ink-secondary'}`}>
-                {complete ? <CheckCircle2 className="h-4 w-4" /> : index + 1}
-              </span>
-              {active ? <span className="text-[10px] font-semibold uppercase tracking-wider text-brand-blue">Current</span> : null}
-            </div>
-            <p className="mt-3 text-sm font-semibold text-ink">{stage}</p>
-          </div>
-        )
-      })}
-    </div>
-  )
-}
-
-function StageCheck({ label, done }: { label: string; done: boolean }) {
-  return (
-    <div className="flex items-center justify-between gap-3 rounded-md bg-surface-secondary p-3">
-      <span className="text-sm font-medium text-ink">{label}</span>
-      <span className={`flex h-8 w-8 items-center justify-center rounded-full ${done ? 'bg-rag-green/10 text-rag-green' : 'bg-brand-orange/10 text-brand-orange'}`}>
-        {done ? <CheckCircle2 className="h-4 w-4" /> : <Clock3 className="h-4 w-4" />}
-      </span>
-    </div>
-  )
 }

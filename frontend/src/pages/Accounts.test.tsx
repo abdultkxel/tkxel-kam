@@ -58,13 +58,51 @@ function jsonResponse(body: unknown) {
   })
 }
 
-function paginated(page = 1, pageSize = 12) {
+const onboardingDraft = {
+  id: 'draft-1',
+  status: 'ready_for_review',
+  extraction_status: 'completed',
+  account_name: 'Draft Workspace',
+  project_name: 'Draft customer launch',
+  company_url: 'https://draft.example.com',
+  linkedin_url: 'https://www.linkedin.com/company/draft-workspace',
+  lifecycle_status: 'Draft',
+  segment: 'Growth',
+  region: 'Global',
+  commercial_value: 0,
+  currency: 'USD',
+  primary_owner_id: 'usr-am',
+  primary_owner_name: 'Account Manager KAM',
+  primary_owner_email: 'account.manager.user@tkxel.com',
+  confidence: 82,
+  missing_fields: [],
+  conflicts: [],
+  source_citation: 'Charter p1: source-backed intake.',
+  created_by_name: 'Admin',
+  approved_account_id: null,
+  created_at: '2026-05-30T00:00:00Z',
+  updated_at: '2026-05-30T00:00:00Z',
+  source_documents: [],
+  engagement_drafts: [],
+}
+
+function paginated(page = 1, pageSize = 12, items = [account]) {
   return {
-    items: [account],
-    total: 13,
+    items,
+    total: items.length === 1 ? 13 : items.length,
     page,
     page_size: pageSize,
-    pages: 2,
+    pages: items.length === 1 ? 2 : items.length ? 1 : 0,
+  }
+}
+
+function draftPage(items = [] as typeof onboardingDraft[]) {
+  return {
+    items,
+    total: items.length,
+    page: 1,
+    page_size: 25,
+    pages: items.length ? 1 : 0,
   }
 }
 
@@ -82,6 +120,7 @@ describe('Accounts', () => {
   it('renders account cards and sends search, filters, sorting, and pagination to the API', async () => {
     const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
       const url = new URL(String(input))
+      if (url.pathname.endsWith('/api/onboarding/drafts')) return jsonResponse(draftPage())
       const page = Number(url.searchParams.get('page') ?? '1')
       const pageSize = Number(url.searchParams.get('page_size') ?? '12')
       return jsonResponse(paginated(page, pageSize))
@@ -127,6 +166,7 @@ describe('Accounts', () => {
   it('saves and reapplies account sorting and layout in saved views', async () => {
     const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
       const url = new URL(String(input))
+      if (url.pathname.endsWith('/api/onboarding/drafts')) return jsonResponse(draftPage())
       const page = Number(url.searchParams.get('page') ?? '1')
       const pageSize = Number(url.searchParams.get('page_size') ?? '12')
       return jsonResponse(paginated(page, pageSize))
@@ -170,6 +210,7 @@ describe('Accounts', () => {
   it('uses server-side sorting when sortable table headers are clicked', async () => {
     const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
       const url = new URL(String(input))
+      if (url.pathname.endsWith('/api/onboarding/drafts')) return jsonResponse(draftPage())
       const page = Number(url.searchParams.get('page') ?? '1')
       const pageSize = Number(url.searchParams.get('page_size') ?? '12')
       return jsonResponse(paginated(page, pageSize))
@@ -198,5 +239,31 @@ describe('Accounts', () => {
         url.includes('page=1')
       )
     })).toBe(true))
+  })
+
+  it('shows ready-for-review onboarding drafts in the account list for portfolio reviewers', async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = new URL(String(input))
+      if (url.pathname.endsWith('/api/onboarding/drafts')) return jsonResponse(draftPage([onboardingDraft]))
+      return jsonResponse(paginated(1, 12, []))
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    render(
+      <MemoryRouter initialEntries={['/accounts']}>
+        <Routes>
+          <Route path="/accounts" element={<Accounts />} />
+          <Route path="/accounts/onboarding" element={<div>Onboarding review loaded</div>} />
+        </Routes>
+      </MemoryRouter>,
+    )
+
+    await userEvent.click(await screen.findByText('Draft Workspace'))
+
+    expect(await screen.findByText('Onboarding review loaded')).toBeInTheDocument()
+    expect(fetchMock.mock.calls.some(call => {
+      const url = String(call[0])
+      return url.includes('/api/onboarding/drafts') && url.includes('status=ready_for_review')
+    })).toBe(true)
   })
 })

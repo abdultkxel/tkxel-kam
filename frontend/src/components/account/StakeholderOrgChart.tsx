@@ -1,4 +1,4 @@
-import { AlertTriangle, GitBranch, Network, RefreshCcw, UserRound } from 'lucide-react'
+import { AlertTriangle, GitBranch, Linkedin, Network, RefreshCcw, UserRound } from 'lucide-react'
 import { useMemo } from 'react'
 import { EmptyState } from '@/components/ui/EmptyState'
 import { Skeleton } from '@/components/ui/Skeleton'
@@ -77,15 +77,13 @@ function OrgTreeItem({ item, level, onSelectStakeholder }: { item: OrgTreeNode; 
           <p className="mt-1 text-xs text-ink-secondary">Stakeholders without a mapped reporting line.</p>
         </div>
       ) : (
-        <button
-          type="button"
+        <div
           className={cn(
             'block w-full rounded-lg border bg-white p-3 text-left transition-colors hover:bg-surface-tertiary focus:outline-none focus:ring-2 focus:ring-brand-blue/30',
             unmapped ? 'border-dashed border-brand-orange/40' : 'border-surface-border',
           )}
-          onClick={() => onSelectStakeholder(node.id)}
         >
-          <div className="flex items-start gap-3">
+          <button type="button" className="flex w-full items-start gap-3 text-left" onClick={() => onSelectStakeholder(node.id)}>
             <span className={cn('mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-lg', unmapped ? 'bg-brand-orange/10 text-brand-orange' : 'bg-blue-tint-20 text-brand-blue')}>
               <UserRound className="h-4 w-4" />
             </span>
@@ -101,8 +99,19 @@ function OrgTreeItem({ item, level, onSelectStakeholder }: { item: OrgTreeNode; 
                 {node.sensitiveFieldsRedacted ? <Badge tone="gray">Redacted</Badge> : null}
               </span>
             </span>
-          </div>
-        </button>
+          </button>
+          {node.linkedinUrl ? (
+            <a
+              href={node.linkedinUrl}
+              target="_blank"
+              rel="noreferrer"
+              className="ml-12 mt-3 inline-flex items-center gap-1.5 rounded-md border border-brand-blue/20 bg-blue-tint-20 px-2.5 py-1 text-xs font-semibold text-brand-blue transition-colors hover:border-brand-blue/40 hover:bg-brand-blue/10"
+            >
+              <Linkedin className="h-3.5 w-3.5" />
+              LinkedIn
+            </a>
+          ) : null}
+        </div>
       )}
       {hasChildren ? (
         <ul role="group" className={cn('mt-3 space-y-3 border-l pl-4', unmapped ? 'border-brand-orange/30' : 'border-surface-border')}>

@@ -41,6 +41,7 @@ KAM users work from Account 360 tabs for stakeholders, planning, growth, renewal
 ## Frontend Plan
 
 - Pages/components: Account 360 planning, growth, renewal, and retention tabs; Admin planning configuration panel.
+- Stakeholder tab UI shows role, influence, relationship, sentiment, status, optional LinkedIn URL, coverage, activity fields, and LinkedIn links in the hierarchy; political risk is not exposed in the tab, form, or detail drawer.
 - Services: `frontend/src/services/relationshipsPlanning.ts`.
 - Form behavior: no HTML `required`; backend errors surface through field-level error components.
 - Backend error display: `ApiError` field errors map into form fields.

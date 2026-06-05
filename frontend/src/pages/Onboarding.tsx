@@ -8,7 +8,16 @@ import { PageHeader } from '@/components/ui/PageHeader'
 import { Skeleton } from '@/components/ui/Skeleton'
 import { useAuth } from '@/contexts/AuthContext'
 import { useRole } from '@/hooks/useRole'
-import { approveOnboardingDraft, createOnboardingDraft, listOnboardingDrafts, OnboardingDraftView, rejectOnboardingDraft } from '@/services/accountWorkspace'
+import {
+  approveOnboardingDraft,
+  createOnboardingDraft,
+  listOnboardingAccountManagers,
+  listOnboardingDrafts,
+  OnboardingAccountManager,
+  OnboardingDraftView,
+  rejectOnboardingDraft,
+  updateOnboardingDraft,
+} from '@/services/accountWorkspace'
 import { SourceDocument } from '@/types/v3'
 import { cn } from '@/utils/cn'
 import { formatCompactCurrency, formatDate, formatRelative } from '@/utils/formatters'
@@ -19,12 +28,20 @@ export function Onboarding() {
   const [drafts, setDrafts] = useState<OnboardingDraftView[]>([])
   const [selectedId, setSelectedId] = useState('')
   const [fileNames, setFileNames] = useState<string[]>([])
+  const [accountManagers, setAccountManagers] = useState<OnboardingAccountManager[]>([])
+  const [selectedManagerId, setSelectedManagerId] = useState('')
+  const [loadingManagers, setLoadingManagers] = useState(false)
+  const [assignmentUpdating, setAssignmentUpdating] = useState(false)
   const [extracting, setExtracting] = useState(false)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
 
   const selected = drafts.find(draft => draft.id === selectedId) ?? drafts[0]
   const selectedDocs = useMemo(() => selected?.sourceDocuments ?? [], [selected])
+  const assignableManagers = assignableAccountManagers(accountManagers, user)
+  const intakeManager = assignableManagers.find(manager => manager.id === selectedManagerId)
+  const selectedOwnerId = selected?.accountDraft.ownerId && selected.accountDraft.ownerId !== 'pending-owner' ? selected.accountDraft.ownerId : ''
+  const selectedOwnerMissing = selected?.status === 'ready_for_review' && !selectedOwnerId
 
   useEffect(() => {
     if (!token) return
@@ -49,10 +66,35 @@ export function Onboarding() {
     }
   }, [token])
 
+  useEffect(() => {
+    if (!token) return
+    let active = true
+    setLoadingManagers(true)
+    listOnboardingAccountManagers(token)
+      .then(managers => {
+        if (!active) return
+        setAccountManagers(managers)
+        setSelectedManagerId(current => current || defaultAccountManagerId(assignableAccountManagers(managers, user), user))
+      })
+      .catch(() => {
+        if (active) setAccountManagers([])
+      })
+      .finally(() => {
+        if (active) setLoadingManagers(false)
+      })
+    return () => {
+      active = false
+    }
+  }, [token, user])
+
   async function runMockExtraction() {
     const names = fileNames.length ? fileNames : ['New Client Project Charter.pdf', 'New Client SOW.pdf']
     if (!token) {
       toast.error('Please log in again before creating a draft')
+      return
+    }
+    if (!intakeManager) {
+      toast.error('Select an account manager before creating a draft')
       return
     }
     setExtracting(true)
@@ -61,8 +103,10 @@ export function Onboarding() {
         accountName: cleanDocumentName(names[0]),
         projectName: cleanProjectName(names.find(name => /sow|statement/i.test(name)) ?? names[0]),
         companyUrl: `https://${slugify(cleanDocumentName(names[0]))}.com`,
-        managerEmail: user.email,
-        managerName: user.name,
+        linkedinUrl: `https://www.linkedin.com/company/${slugify(cleanDocumentName(names[0]))}`,
+        managerId: intakeManager.id,
+        managerEmail: intakeManager.email,
+        managerName: intakeManager.name,
         fileNames: names,
       })
       setDrafts(current => [draft, ...current.filter(item => item.id !== draft.id)])
@@ -77,12 +121,36 @@ export function Onboarding() {
 
   async function approve(selectedDraft: OnboardingDraftView) {
     if (!token) return
+    if (!selectedDraft.accountDraft.ownerId || selectedDraft.accountDraft.ownerId === 'pending-owner') {
+      toast.error('Assign an account manager before approving this draft')
+      return
+    }
     try {
       const approved = await approveOnboardingDraft(token, selectedDraft.id)
       setDrafts(current => current.map(item => (item.id === approved.id ? approved : item)))
       toast.success('Draft approved and Account Overview created')
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Draft could not be approved')
+    }
+  }
+
+  async function assignDraftManager(draft: OnboardingDraftView, managerId: string) {
+    if (!token || !managerId) return
+    const manager = assignableManagers.find(item => item.id === managerId)
+    if (!manager) return
+    setAssignmentUpdating(true)
+    try {
+      const updated = await updateOnboardingDraft(token, draft.id, {
+        managerId: manager.id,
+        managerName: manager.name,
+        managerEmail: manager.email,
+      })
+      setDrafts(current => current.map(item => (item.id === updated.id ? updated : item)))
+      toast.success('Account manager assignment updated')
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Assignment could not be updated')
+    } finally {
+      setAssignmentUpdating(false)
     }
   }
 
@@ -138,6 +206,20 @@ export function Onboarding() {
                 ))}
               </div>
             ) : null}
+            <label className="mt-4 block space-y-1">
+              <span className="tk-label text-xs">Account Manager <span className="text-brand-orange">*</span></span>
+              <select
+                className="tk-input"
+                value={selectedManagerId}
+                onChange={event => setSelectedManagerId(event.target.value)}
+                disabled={loadingManagers}
+              >
+                <option value="">{loadingManagers ? 'Loading account managers...' : 'Select account manager'}</option>
+                {assignableManagers.map(manager => (
+                  <option key={manager.id} value={manager.id}>{manager.name} - {manager.email}</option>
+                ))}
+              </select>
+            </label>
             <button className="tk-button-primary mt-4 w-full" onClick={runMockExtraction} disabled={extracting}>
               {extracting ? <Loader2 className="h-4 w-4 animate-spin" /> : <FileSearch className="h-4 w-4" />}
               Run AI extraction
@@ -196,7 +278,7 @@ export function Onboarding() {
                     <XCircle className="h-4 w-4" />
                     Reject
                   </button>
-                  <button className="tk-button-primary" onClick={() => approve(selected)} disabled={selected.status !== 'ready_for_review'}>
+                  <button className="tk-button-primary" onClick={() => approve(selected)} disabled={selected.status !== 'ready_for_review' || selectedOwnerMissing}>
                     <CheckCircle2 className="h-4 w-4" />
                     Approve draft
                   </button>
@@ -214,6 +296,21 @@ export function Onboarding() {
             <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_360px]">
               <section className="space-y-4">
                 <ReviewCard title="Draft account">
+                  <label className="mb-3 block space-y-1">
+                    <span className="tk-label text-xs">Assigned Account Manager <span className="text-brand-orange">*</span></span>
+                    <select
+                      className={cn('tk-input', selectedOwnerMissing ? 'border-brand-orange focus:border-brand-orange focus:ring-brand-orange/30' : '')}
+                      value={selectedOwnerId}
+                      onChange={event => assignDraftManager(selected, event.target.value)}
+                      disabled={selected.status !== 'ready_for_review' || loadingManagers || assignmentUpdating}
+                    >
+                      <option value="">{loadingManagers ? 'Loading account managers...' : 'Select account manager'}</option>
+                      {assignableManagers.map(manager => (
+                        <option key={manager.id} value={manager.id}>{manager.name} - {manager.email}</option>
+                      ))}
+                    </select>
+                    {selectedOwnerMissing ? <p className="text-xs text-brand-orange">Assign an account manager before approval.</p> : null}
+                  </label>
                   <div className="grid gap-3 md:grid-cols-2">
                     <Field label="Lifecycle" value={selected.accountDraft.stage} />
                     <Field label="Segment" value={selected.accountDraft.segment} />
@@ -242,6 +339,7 @@ export function Onboarding() {
                   <div className="grid gap-3 md:grid-cols-2">
                     <Field label="Project" value={selected.accountDraft.projectName ?? 'Not provided'} />
                     <Field label="Company URL" value={selected.accountDraft.companyUrl ?? 'Not provided'} />
+                    <Field label="LinkedIn URL" value={selected.accountDraft.linkedinUrl ?? 'Not provided'} />
                     <Field label="Evidence" value={selected.sourceDocuments[0]?.citations[0]?.excerpt ?? 'No citation excerpt recorded'} multiline />
                     <Field label="Created by" value={selected.createdByName} />
                   </div>
@@ -366,4 +464,15 @@ function toTitleCase(value: string) {
 
 function slugify(value: string) {
   return value.trim().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'new-client'
+}
+
+function defaultAccountManagerId(managers: OnboardingAccountManager[], currentUser: { id: string; email: string; role: string }) {
+  if (!['account_manager', 'am'].includes(currentUser.role)) return ''
+  const self = managers.find(manager => manager.id === currentUser.id || manager.email.toLowerCase() === currentUser.email.toLowerCase())
+  return self?.id ?? ''
+}
+
+function assignableAccountManagers(managers: OnboardingAccountManager[], currentUser: { id: string; email: string; role: string }) {
+  if (!['account_manager', 'am'].includes(currentUser.role)) return managers
+  return managers.filter(manager => manager.id === currentUser.id || manager.email.toLowerCase() === currentUser.email.toLowerCase())
 }

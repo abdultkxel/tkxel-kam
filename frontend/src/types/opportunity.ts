@@ -128,6 +128,9 @@ export interface OpportunityListParams {
   minValue?: number | string
   maxValue?: number | string
   includeArchived?: boolean
+  openOnly?: boolean
+  stalled?: boolean
+  stalledAfterDays?: number
   sort?: 'name' | 'account_name' | 'stage' | 'value' | 'target_date' | 'updated_at' | 'created_at'
   direction?: 'asc' | 'desc'
   page?: number
@@ -181,6 +184,7 @@ export interface OpportunityActionItemInput {
   status?: OpportunityActionItem['status']
   priority?: OpportunityActionItem['priority']
   notes?: string | null
+  createTask?: boolean
 }
 
 export interface OpportunityDecisionInput {

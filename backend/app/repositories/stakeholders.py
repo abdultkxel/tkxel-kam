@@ -40,6 +40,7 @@ class StakeholderRepository:
                     Stakeholder.title.ilike(term),
                     Stakeholder.company.ilike(term),
                     Stakeholder.email.ilike(term),
+                    Stakeholder.linkedin_url.ilike(term),
                 )
             )
 

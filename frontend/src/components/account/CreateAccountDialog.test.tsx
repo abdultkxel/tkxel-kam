@@ -31,6 +31,7 @@ function apiDraft(status: 'ready_for_review' | 'approved' = 'ready_for_review') 
     account_name: 'Acme Corp',
     project_name: 'Customer intelligence',
     company_url: 'https://acme.example.com',
+    linkedin_url: 'https://www.linkedin.com/company/acme-corp',
     lifecycle_status: 'Onboarding',
     segment: 'Growth',
     region: 'Global',
@@ -69,6 +70,23 @@ function apiDraft(status: 'ready_for_review' | 'approved' = 'ready_for_review') 
   }
 }
 
+function apiManagers() {
+  return [
+    {
+      id: 'usr-am',
+      email: 'account.manager.user@tkxel.com',
+      full_name: 'Account Manager KAM',
+      role: 'account_manager',
+      title: 'Account Manager / KAM',
+      avatar_initials: 'AM',
+      primary_google_calendar_id: 'account.manager.user@tkxel.com',
+      is_active: true,
+      created_at: '2026-05-30T00:00:00Z',
+      updated_at: '2026-05-30T00:00:00Z',
+    },
+  ]
+}
+
 const customFields = [
   {
     id: 'field-1',
@@ -93,6 +111,8 @@ async function fillForm() {
   await userEvent.type(screen.getByLabelText(/name of account/i), 'Acme Corp')
   await userEvent.type(screen.getByLabelText(/name of project/i), 'Customer intelligence')
   await userEvent.type(screen.getByLabelText(/company url/i), 'https://acme.example.com')
+  await userEvent.type(screen.getByLabelText(/linkedin url/i), 'https://www.linkedin.com/company/acme-corp')
+  await userEvent.selectOptions(await screen.findByLabelText(/account manager/i), 'usr-am')
 }
 
 describe('CreateAccountDialog', () => {
@@ -101,6 +121,7 @@ describe('CreateAccountDialog', () => {
       const url = String(input)
       const method = init?.method ?? 'GET'
       if (url.endsWith('/api/accounts/custom-fields') && method === 'GET') return jsonResponse([])
+      if (url.endsWith('/api/onboarding/account-managers') && method === 'GET') return jsonResponse(apiManagers())
       if (url.endsWith('/api/onboarding/drafts') && method === 'POST') return jsonResponse(apiDraft())
       return jsonResponse({})
     })
@@ -128,10 +149,43 @@ describe('CreateAccountDialog', () => {
         Array.isArray(payload.engagement_drafts) &&
         payload.engagement_drafts.length === 1 &&
         payload.engagement_drafts[0].name === 'Customer intelligence' &&
-        payload.engagement_drafts[0].service_lines?.[0] === 'Account onboarding'
+        payload.engagement_drafts[0].service_lines?.[0] === 'Account onboarding' &&
+        payload.primary_owner_id === 'usr-am' &&
+        payload.linkedin_url === 'https://www.linkedin.com/company/acme-corp'
       )
     })).toBe(true)
     expect(toast.success).toHaveBeenCalledWith('Account draft created for onboarding review.')
+  })
+
+  it('requires a LinkedIn URL before creating the onboarding draft', async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input)
+      const method = init?.method ?? 'GET'
+      if (url.endsWith('/api/accounts/custom-fields') && method === 'GET') return jsonResponse([])
+      if (url.endsWith('/api/onboarding/account-managers') && method === 'GET') return jsonResponse(apiManagers())
+      if (url.endsWith('/api/onboarding/drafts') && method === 'POST') return jsonResponse(apiDraft())
+      return jsonResponse({})
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    render(
+      <MemoryRouter>
+        <CreateAccountDialog />
+      </MemoryRouter>,
+    )
+
+    await userEvent.click(screen.getByRole('button', { name: /create account/i }))
+    await userEvent.type(screen.getByLabelText(/name of account/i), 'Acme Corp')
+    await userEvent.type(screen.getByLabelText(/name of project/i), 'Customer intelligence')
+    await userEvent.type(screen.getByLabelText(/company url/i), 'https://acme.example.com')
+    await userEvent.click(screen.getByRole('button', { name: /create draft/i }))
+
+    expect(await screen.findByText('LinkedIn URL is required')).toBeInTheDocument()
+    expect(fetchMock.mock.calls.some(call => String(call[0]).endsWith('/api/onboarding/drafts'))).toBe(false)
+
+    await userEvent.type(screen.getByLabelText(/linkedin url/i), 'https://acme.example.com')
+    await userEvent.click(screen.getByRole('button', { name: /create draft/i }))
+    expect(await screen.findByText('Enter a valid LinkedIn URL')).toBeInTheDocument()
   })
 
   it('shows backend validation errors at matching account fields', async () => {
@@ -141,6 +195,7 @@ describe('CreateAccountDialog', () => {
         const url = String(input)
         const method = init?.method ?? 'GET'
         if (url.endsWith('/api/accounts/custom-fields') && method === 'GET') return jsonResponse([])
+        if (url.endsWith('/api/onboarding/account-managers') && method === 'GET') return jsonResponse(apiManagers())
         return jsonResponse(
           {
             detail: {
@@ -174,6 +229,7 @@ describe('CreateAccountDialog', () => {
       const url = String(input)
       const method = init?.method ?? 'GET'
       if (url.endsWith('/api/accounts/custom-fields') && method === 'GET') return jsonResponse(customFields)
+      if (url.endsWith('/api/onboarding/account-managers') && method === 'GET') return jsonResponse(apiManagers())
       if (url.endsWith('/api/onboarding/drafts') && method === 'POST') return jsonResponse(apiDraft())
       return jsonResponse({})
     })
@@ -200,5 +256,36 @@ describe('CreateAccountDialog', () => {
       const payload = JSON.parse(String(init.body))
       return payload.custom_field_values?.customer_tier === 'Gold'
     })).toBe(true)
+  })
+
+  it('requires selecting an account manager from system users', async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input)
+      const method = init?.method ?? 'GET'
+      if (url.endsWith('/api/accounts/custom-fields') && method === 'GET') return jsonResponse([])
+      if (url.endsWith('/api/onboarding/account-managers') && method === 'GET') return jsonResponse(apiManagers())
+      if (url.endsWith('/api/onboarding/drafts') && method === 'POST') return jsonResponse(apiDraft())
+      return jsonResponse({})
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    render(
+      <MemoryRouter>
+        <CreateAccountDialog />
+      </MemoryRouter>,
+    )
+
+    await userEvent.click(screen.getByRole('button', { name: /create account/i }))
+    await userEvent.type(screen.getByLabelText(/name of account/i), 'Acme Corp')
+    await userEvent.type(screen.getByLabelText(/name of project/i), 'Customer intelligence')
+    await userEvent.type(screen.getByLabelText(/company url/i), 'https://acme.example.com')
+    await userEvent.type(screen.getByLabelText(/linkedin url/i), 'https://www.linkedin.com/company/acme-corp')
+    await userEvent.click(screen.getByRole('button', { name: /create draft/i }))
+
+    expect(await screen.findByText('Select an account manager')).toBeInTheDocument()
+    expect(fetchMock.mock.calls.some(call => {
+      const [url, init] = call
+      return String(url).endsWith('/api/onboarding/drafts') && init?.method === 'POST'
+    })).toBe(false)
   })
 })

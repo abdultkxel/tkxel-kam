@@ -607,6 +607,7 @@ class AccountService:
             name=account.name,
             project_name=account.project_name,
             company_url=account.company_url,
+            linkedin_url=account.linkedin_url,
             segment=account.segment,
             region=account.region,
             lifecycle_status=account.lifecycle_status,

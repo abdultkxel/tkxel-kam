@@ -1,9 +1,11 @@
 import { apiRequest } from '@/services/api'
 import type { Page } from '@/services/accountWorkspace'
 
-export interface UserFathomConnection {
+export type MeetingCaptureProvider = 'fathom' | 'fireflies'
+
+export interface UserMeetingConnection {
   id?: string | null
-  provider: 'fathom'
+  provider: MeetingCaptureProvider
   enabled: boolean
   status: string
   authType: string
@@ -17,10 +19,12 @@ export interface UserFathomConnection {
   lastError?: string | null
 }
 
+export type UserFathomConnection = UserMeetingConnection
+
 export interface MeetingArtifact {
   id: string
   ownerId: string
-  provider: 'fathom'
+  provider: MeetingCaptureProvider
   externalId?: string | null
   title: string
   summary?: string | null
@@ -40,6 +44,7 @@ export interface MeetingArtifact {
 }
 
 export interface MeetingArtifactCreateInput {
+  provider?: MeetingCaptureProvider
   title?: string
   meetingUrl?: string
   summary?: string
@@ -52,8 +57,18 @@ export interface MeetingArtifactCreateInput {
   linkedObjectId?: string | null
 }
 
+export interface MeetingResolveInput {
+  identifier: string
+  accountId?: string | null
+  engagementId?: string | null
+  linkedObjectType?: string | null
+  linkedObjectId?: string | null
+}
+
+export type FathomMeetingResolveInput = MeetingResolveInput
+
 export interface MeetingArtifactListParams {
-  provider?: 'fathom'
+  provider?: MeetingCaptureProvider
   status?: string
   accountId?: string
   linkedObjectType?: string
@@ -65,13 +80,13 @@ export interface MeetingArtifactListParams {
   pageSize?: number
 }
 
-interface ApiUserFathomConnection {
+interface ApiUserMeetingConnection {
   id?: string | null
-  provider: 'fathom'
+  provider: MeetingCaptureProvider
   enabled: boolean
   status: string
   auth_type: string
-  credential_status: UserFathomConnection['credentialStatus']
+  credential_status: UserMeetingConnection['credentialStatus']
   settings_json: Record<string, unknown>
   last_synced_at?: string | null
   last_error?: string | null
@@ -80,7 +95,7 @@ interface ApiUserFathomConnection {
 interface ApiMeetingArtifact {
   id: string
   owner_id: string
-  provider: 'fathom'
+  provider: MeetingCaptureProvider
   external_id?: string | null
   title: string
   summary?: string | null
@@ -100,19 +115,51 @@ interface ApiMeetingArtifact {
 }
 
 export function readPersonalFathomConnection(token: string) {
-  return apiRequest<ApiUserFathomConnection>('/api/meeting-capture/fathom/connection', { token }).then(mapConnection)
+  return readPersonalMeetingConnection(token, 'fathom')
 }
 
-export function updatePersonalFathomConnection(token: string, payload: { enabled: boolean; apiKey?: string }) {
-  return apiRequest<ApiUserFathomConnection>('/api/meeting-capture/fathom/connection', {
+export function updatePersonalFathomConnection(token: string, payload: { enabled: boolean; apiKey?: string; clearApiKey?: boolean }) {
+  return updatePersonalMeetingConnection(token, 'fathom', payload)
+}
+
+export function readPersonalFirefliesConnection(token: string) {
+  return readPersonalMeetingConnection(token, 'fireflies')
+}
+
+export function updatePersonalFirefliesConnection(token: string, payload: { enabled: boolean; apiKey?: string; clearApiKey?: boolean }) {
+  return updatePersonalMeetingConnection(token, 'fireflies', payload)
+}
+
+export function readPersonalMeetingConnection(token: string, provider: MeetingCaptureProvider) {
+  return apiRequest<ApiUserMeetingConnection>(`/api/meeting-capture/${provider}/connection`, { token }).then(mapConnection)
+}
+
+export function updatePersonalMeetingConnection(token: string, provider: MeetingCaptureProvider, payload: { enabled: boolean; apiKey?: string; clearApiKey?: boolean }) {
+  return apiRequest<ApiUserMeetingConnection>(`/api/meeting-capture/${provider}/connection`, {
     method: 'PATCH',
     token,
-    body: JSON.stringify({ enabled: payload.enabled, api_key: payload.apiKey || undefined }),
+    body: JSON.stringify({ enabled: payload.enabled, api_key: payload.apiKey || undefined, clear_api_key: payload.clearApiKey || undefined }),
   }).then(mapConnection)
 }
 
 export function syncPersonalFathomMeetings(token: string) {
   return apiRequest<{ provider: string; status: string; created: number; updated: number; skipped: number; errors: number; message: string }>('/api/meeting-capture/fathom/sync', { method: 'POST', token })
+}
+
+export function resolveFathomMeeting(token: string, payload: FathomMeetingResolveInput) {
+  return resolveMeetingProvider(token, 'fathom', payload)
+}
+
+export function resolveFirefliesMeeting(token: string, payload: MeetingResolveInput) {
+  return resolveMeetingProvider(token, 'fireflies', payload)
+}
+
+export function resolveMeetingProvider(token: string, provider: MeetingCaptureProvider, payload: MeetingResolveInput) {
+  return apiRequest<ApiMeetingArtifact>(`/api/meeting-capture/${provider}/resolve`, {
+    method: 'POST',
+    token,
+    body: JSON.stringify(buildMeetingResolvePayload(payload)),
+  }).then(mapMeetingArtifact)
 }
 
 export async function listMeetingArtifacts(token: string, params: MeetingArtifactListParams = {}) {
@@ -130,7 +177,7 @@ export function createMeetingArtifact(token: string, payload: MeetingArtifactCre
 
 export function buildMeetingPayload(payload: MeetingArtifactCreateInput) {
   return {
-    provider: 'fathom',
+    provider: payload.provider ?? 'fathom',
     title: payload.title?.trim() || undefined,
     meeting_url: payload.meetingUrl?.trim() || undefined,
     summary: payload.summary?.trim() || undefined,
@@ -144,7 +191,21 @@ export function buildMeetingPayload(payload: MeetingArtifactCreateInput) {
   }
 }
 
-function mapConnection(connection: ApiUserFathomConnection): UserFathomConnection {
+export function buildFathomResolvePayload(payload: FathomMeetingResolveInput) {
+  return buildMeetingResolvePayload(payload)
+}
+
+export function buildMeetingResolvePayload(payload: MeetingResolveInput) {
+  return {
+    identifier: payload.identifier.trim(),
+    account_id: payload.accountId || null,
+    engagement_id: payload.engagementId || null,
+    linked_object_type: payload.linkedObjectType || null,
+    linked_object_id: payload.linkedObjectId || null,
+  }
+}
+
+function mapConnection(connection: ApiUserMeetingConnection): UserMeetingConnection {
   return {
     id: connection.id ?? null,
     provider: connection.provider,

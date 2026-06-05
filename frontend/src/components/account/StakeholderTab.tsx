@@ -1,4 +1,4 @@
-import { AlertTriangle, Archive, Crown, Network, Pencil, Plus, RefreshCcw, Search, ShieldAlert, Sparkles, UserRound, UsersRound } from 'lucide-react'
+import { AlertTriangle, Archive, Crown, Network, Pencil, Plus, RefreshCcw, Search, Sparkles, UserRound, UsersRound } from 'lucide-react'
 import { useCallback, useMemo, useState } from 'react'
 import { toast } from 'sonner'
 import { StakeholderDetailPanel } from '@/components/account/StakeholderDetailPanel'
@@ -21,7 +21,6 @@ import type { Account } from '@/types/account'
 import type {
   Stakeholder,
   StakeholderFilters,
-  StakeholderPoliticalRisk,
   StakeholderRole,
   StakeholderSentiment,
   StakeholderStatus,
@@ -33,7 +32,6 @@ type BadgeTone = 'green' | 'amber' | 'red' | 'blue' | 'gray' | 'purple'
 const stakeholderRoles: StakeholderRole[] = ['executive_sponsor', 'economic_buyer', 'technical_decision_maker', 'operational_poc', 'commercial_owner', 'influencer']
 const statusOptions: StakeholderStatus[] = ['active', 'inactive', 'left_company', 'do_not_contact']
 const sentimentOptions: StakeholderSentiment[] = ['negative', 'neutral', 'positive', 'champion']
-const politicalRiskOptions: StakeholderPoliticalRisk[] = ['unknown', 'low', 'medium', 'high']
 const relationshipScore: Record<string, number> = { unknown: 0, weak: 1, developing: 2, strong: 3, champion: 4 }
 const relationshipLabels = ['Unknown', 'Weak', 'Developing', 'Strong', 'Champion']
 
@@ -43,7 +41,6 @@ export function StakeholderTab({ account }: { account: Account }) {
   const [role, setRole] = useState('')
   const [status, setStatus] = useState('')
   const [sentiment, setSentiment] = useState('')
-  const [politicalRisk, setPoliticalRisk] = useState('')
   const [drawerOpen, setDrawerOpen] = useState(false)
   const [editingStakeholder, setEditingStakeholder] = useState<Stakeholder | null>(null)
   const [selectedStakeholderId, setSelectedStakeholderId] = useState<string | null>(null)
@@ -58,12 +55,11 @@ export function StakeholderTab({ account }: { account: Account }) {
       role: role || undefined,
       status: status || undefined,
       sentiment: sentiment || undefined,
-      political_risk: politicalRisk || undefined,
     }),
-    [politicalRisk, role, search, sentiment, status],
+    [role, search, sentiment, status],
   )
 
-  const hasFilters = Boolean(search.trim() || role || status || sentiment || politicalRisk)
+  const hasFilters = Boolean(search.trim() || role || status || sentiment)
   const summaryQuery = useStakeholders(account.id, { page: 1, page_size: 100 })
   const listQuery = useStakeholders(account.id, filters)
   const coverageQuery = useStakeholderCoverageGaps(account.id)
@@ -79,7 +75,6 @@ export function StakeholderTab({ account }: { account: Account }) {
 
   const activeStakeholders = summaryStakeholders.filter(stakeholder => stakeholder.status === 'active')
   const averageRelationship = averageRelationshipStrength(activeStakeholders)
-  const highPoliticalRiskCount = activeStakeholders.filter(stakeholder => stakeholder.politicalRisk === 'high' || stakeholder.politicalRisk === 'critical').length
   const executiveSponsors = activeStakeholders.filter(stakeholder => stakeholder.role === 'executive_sponsor').length
   const selectedStakeholder = selectedStakeholderId
     ? summaryStakeholders.find(stakeholder => stakeholder.id === selectedStakeholderId) ?? stakeholders.find(stakeholder => stakeholder.id === selectedStakeholderId) ?? null
@@ -144,12 +139,6 @@ export function StakeholderTab({ account }: { account: Account }) {
         render: stakeholder => <Badge tone={sentimentTone(stakeholder.sentiment)}>{titleize(stakeholder.sentiment)}</Badge>,
       },
       {
-        key: 'politicalRisk',
-        header: 'Political Risk',
-        sortable: true,
-        render: stakeholder => <Badge tone={politicalRiskTone(stakeholder.politicalRisk)}>{titleize(stakeholder.politicalRisk)}</Badge>,
-      },
-      {
         key: 'lastInteractionAt',
         header: 'Last Touch',
         sortable: true,
@@ -200,7 +189,6 @@ export function StakeholderTab({ account }: { account: Account }) {
     setRole('')
     setStatus('')
     setSentiment('')
-    setPoliticalRisk('')
   }
 
   async function refreshData() {
@@ -238,7 +226,7 @@ export function StakeholderTab({ account }: { account: Account }) {
             <div className="min-w-0">
               <p className="text-[10px] font-extrabold uppercase tracking-widest text-brand-blue">Stakeholder map</p>
               <h2 className="mt-1 text-xl font-semibold text-ink">Stakeholders and relationships</h2>
-              <p className="mt-2 max-w-3xl text-sm leading-6 text-ink-secondary">Track decision ownership, influence, relationship health, sentiment, political risk, and coverage gaps for this account.</p>
+              <p className="mt-2 max-w-3xl text-sm leading-6 text-ink-secondary">Track decision ownership, influence, relationship health, sentiment, and coverage gaps for this account.</p>
             </div>
             <button className="tk-button-primary shrink-0" onClick={openCreate} disabled={!canManage}>
               <Plus className="h-4 w-4" />
@@ -246,16 +234,15 @@ export function StakeholderTab({ account }: { account: Account }) {
             </button>
           </div>
         </div>
-        <div className="grid gap-0 divide-y divide-surface-border md:grid-cols-5 md:divide-x md:divide-y-0">
+        <div className="grid gap-0 divide-y divide-surface-border md:grid-cols-4 md:divide-x md:divide-y-0">
           <SummaryMetric icon={UsersRound} label="Active" value={summaryLoading ? '...' : activeStakeholders.length} />
           <SummaryMetric icon={Crown} label="Executive Sponsors" value={summaryLoading ? '...' : executiveSponsors} />
           <SummaryMetric icon={Sparkles} label="Avg Relationship" value={summaryLoading ? '...' : averageRelationship.label} detail={summaryLoading ? undefined : averageRelationship.detail} />
-          <SummaryMetric icon={ShieldAlert} label="High Political Risk" value={summaryLoading ? '...' : highPoliticalRiskCount} tone={highPoliticalRiskCount ? 'orange' : 'blue'} />
           <SummaryMetric icon={AlertTriangle} label="Coverage Gaps" value={coverageLoading ? '...' : openCoverageGaps.length} tone={openCoverageGaps.length ? 'orange' : 'blue'} />
         </div>
       </section>
 
-      <FilterBar onClear={clearFilters} contentClassName="md:grid-cols-[minmax(180px,1.4fr)_repeat(4,minmax(150px,1fr))_auto]">
+      <FilterBar onClear={clearFilters} contentClassName="md:grid-cols-[minmax(180px,1.4fr)_repeat(3,minmax(150px,1fr))_auto]">
         <label className="space-y-1">
           <span className="tk-label">Search</span>
           <div className="relative">
@@ -266,7 +253,6 @@ export function StakeholderTab({ account }: { account: Account }) {
         <FilterSelect label="Role" value={role} onChange={setRole} options={stakeholderRoles.map(value => ({ value, label: titleize(value) }))} />
         <FilterSelect label="Status" value={status} onChange={setStatus} options={statusOptions.map(value => ({ value, label: titleize(value) }))} />
         <FilterSelect label="Sentiment" value={sentiment} onChange={setSentiment} options={sentimentOptions.map(value => ({ value, label: titleize(value) }))} />
-        <FilterSelect label="Risk" value={politicalRisk} onChange={setPoliticalRisk} options={politicalRiskOptions.map(value => ({ value, label: titleize(value) }))} />
       </FilterBar>
 
       <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_360px]">
@@ -490,13 +476,6 @@ function relationshipTone(relationship: string): BadgeTone {
 function sentimentTone(sentiment: string): BadgeTone {
   if (sentiment === 'champion' || sentiment === 'positive') return 'green'
   if (sentiment === 'negative') return 'red'
-  return 'gray'
-}
-
-function politicalRiskTone(risk: string): BadgeTone {
-  if (risk === 'high' || risk === 'critical') return 'red'
-  if (risk === 'medium') return 'amber'
-  if (risk === 'low') return 'green'
   return 'gray'
 }
 

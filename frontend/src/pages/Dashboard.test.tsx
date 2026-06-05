@@ -1,5 +1,4 @@
 import { render, screen, waitFor } from '@testing-library/react'
-import userEvent from '@testing-library/user-event'
 import { MemoryRouter } from 'react-router-dom'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { Dashboard } from '@/pages/Dashboard'
@@ -103,6 +102,154 @@ function calendarPage() {
   }
 }
 
+function accountManagerDashboard() {
+  return dashboard({
+    dashboard: 'am_home',
+    display_name: 'AM Home',
+    role_group: 'account_manager',
+    read_only: false,
+    data_scope: 'assigned_accounts',
+    metadata: {},
+    widgets: [
+      {
+        key: 'summary',
+        title: 'Manager attention summary',
+        status: 'complete',
+        generated_at: '2026-06-03T10:00:00Z',
+        data_scope: 'assigned_accounts',
+        primary_route: '/dashboard',
+        value: { my_accounts: 5, at_risk: 2, signals_critical_tasks: 4, upcoming_governance: 3 },
+        items: [],
+        metadata: {
+          tiles: [
+            { key: 'my_accounts', label: 'My Accounts', value: 5, route: '/accounts', detail: 'Assigned account portfolio.' },
+            { key: 'at_risk', label: 'At risk', value: 2, route: '/accounts?risk=critical', detail: 'Warning and critical accounts.' },
+            { key: 'signals_critical_tasks', label: 'Signals / Critical tasks', value: 4, route: '/tasks', detail: 'Signals and critical blockers.' },
+            { key: 'upcoming_governance', label: 'Upcoming governance', value: 3, route: '/governance', detail: 'Scheduled governance reviews.' },
+          ],
+        },
+        error: null,
+      },
+      {
+        key: 'tasks',
+        title: 'Tasks summary',
+        status: 'complete',
+        generated_at: '2026-06-03T10:00:00Z',
+        data_scope: 'assigned_accounts',
+        primary_route: '/tasks',
+        value: { open: 14, accounts_with_open_tasks: 5, in_progress: 6, assigned_to_me: 6, overdue: 3, due_this_week: 7 },
+        items: [{ id: 'task-1', title: 'Follow up on blocker', account_id: 'acc-1', account_name: 'Acme', priority: 'critical', status: 'open', due_at: '2026-06-05T10:00:00Z', route: '/tasks?account_id=acc-1' }],
+        metadata: { data_source: 'Task records filtered to: owner = AM or account in assigned list' },
+        error: null,
+      },
+      {
+        key: 'opportunities',
+        title: 'Opportunities & pipeline',
+        status: 'complete',
+        generated_at: '2026-06-03T10:00:00Z',
+        data_scope: 'assigned_accounts',
+        primary_route: '/opportunities',
+        value: { open_opportunities: 9, pipeline_value: 840000, stalled: 2, series: [{ label: 'Qualified', value: 300000, display_value: 300000 }] },
+        items: [{ id: 'opp-1', title: 'Platform expansion', account_id: 'acc-1', account_name: 'Acme', value: 300000, target_date: '2026-06-20T10:00:00Z', route: '/accounts/acc-1?tab=opportunities' }],
+        metadata: { masked: false, stalled_after_days: 90 },
+        error: null,
+      },
+      {
+        key: 'account_portfolio',
+        title: 'Account portfolio table',
+        status: 'complete',
+        generated_at: '2026-06-03T10:00:00Z',
+        data_scope: 'assigned_accounts',
+        primary_route: '/accounts',
+        value: null,
+        items: [{ id: 'acc-1', account_id: 'acc-1', name: 'Acme', account_name: 'Acme', risk_status: 'warning', health_score: 68, segment: 'Growth', owner: 'Account Manager', next_governance_at: '2026-06-15T10:00:00Z', route: '/accounts/acc-1' }],
+        metadata: {},
+        error: null,
+      },
+      {
+        key: 'forecast_chart',
+        title: 'Forecast chart',
+        status: 'complete',
+        generated_at: '2026-06-03T10:00:00Z',
+        data_scope: 'assigned_accounts',
+        primary_route: '/dashboard',
+        value: { open_opportunities: 9, pipeline_value: 840000, weighted_forecast: 420000, series: [{ label: 'Qualified', value: 300000, display_value: 300000 }] },
+        items: [],
+        metadata: { masked: false },
+        error: null,
+      },
+      {
+        key: 'governance_calendar',
+        title: 'Global / Governance Calendar',
+        status: 'complete',
+        generated_at: '2026-06-03T10:00:00Z',
+        data_scope: 'assigned_accounts',
+        primary_route: '/governance',
+        value: { upcoming: 1, overdue: 0 },
+        items: [],
+        metadata: { read_only: false },
+        error: null,
+      },
+    ],
+  })
+}
+
+function portfolioDashboard() {
+  return dashboard({
+    dashboard: 'kam_head_portfolio',
+    display_name: 'KAM Head Portfolio',
+    role_group: 'kam_head',
+    read_only: false,
+    data_scope: 'portfolio',
+    metadata: {},
+    widgets: [
+      {
+        key: 'summary',
+        title: 'Portfolio attention summary',
+        status: 'complete',
+        generated_at: '2026-06-03T10:00:00Z',
+        data_scope: 'portfolio',
+        primary_route: '/dashboard',
+        value: { accounts: 12, at_risk_accounts: 3, open_signals: 4, open_escalations: 2, upcoming_governance: 5 },
+        items: [],
+        metadata: {},
+        error: null,
+      },
+      {
+        key: 'ai_task_summary',
+        title: 'AI Task Summary',
+        status: 'complete',
+        generated_at: '2026-06-03T10:00:00Z',
+        data_scope: 'portfolio',
+        primary_route: '/tasks',
+        value: {
+          headline: 'Portfolio work queue is active.',
+          narrative: 'Open work is visible across the portfolio.',
+          top_blockers: ['Review overdue blockers.'],
+          recommended_focus: 'Start with overdue tasks.',
+          source_counts: { tasks: 6, signals: 2 },
+          refreshed_at: '2026-06-03T10:00:00Z',
+        },
+        items: [],
+        metadata: { manual_refresh: true },
+        error: null,
+      },
+      {
+        key: 'opportunities',
+        title: 'Opportunities / pipeline',
+        status: 'complete',
+        generated_at: '2026-06-03T10:00:00Z',
+        data_scope: 'portfolio',
+        primary_route: '/opportunities',
+        value: { open_opportunities: 8, pipeline_value: 640000, stalled: 1, series: [{ label: 'Qualified', value: 240000, display_value: 240000 }] },
+        items: [],
+        metadata: { masked: false, stalled_after_days: 90 },
+        error: null,
+      },
+    ],
+  })
+}
+
 describe('Dashboard', () => {
   beforeEach(() => {
     authState.user = {
@@ -142,7 +289,7 @@ describe('Dashboard', () => {
     await waitFor(() => expect(fetchMock.mock.calls.some(call => String(call[0]).includes('/api/governance-events/calendar'))).toBe(true))
   })
 
-  it('refreshes the AM task summary only when the returned widget allows refresh', async () => {
+  it('renders the account manager task breakdown and pipeline without duplicate task panels', async () => {
     authState.user = {
       id: 'usr-am',
       name: 'Account Manager',
@@ -150,61 +297,10 @@ describe('Dashboard', () => {
       role: 'account_manager',
       avatarInitials: 'AM',
     }
-    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input)
-      if (url.includes('/api/dashboards/am-home/task-summary/refresh') && init?.method === 'POST') {
-        return jsonResponse({
-          widget: {
-            key: 'ai_task_summary',
-            title: 'AI Task Summary',
-            status: 'complete',
-            generated_at: '2026-06-03T10:01:00Z',
-            data_scope: 'assigned_accounts',
-            primary_route: '/tasks',
-            value: {
-              headline: 'Updated queue',
-              narrative: 'One task needs attention.',
-              top_blockers: [],
-              recommended_focus: 'Review active work.',
-              source_counts: { tasks: 1, signals: 0 },
-              refreshed_at: '2026-06-03T10:01:00Z',
-            },
-            items: [],
-            metadata: { manual_refresh: true },
-            error: null,
-          },
-        })
-      }
-      if (url.includes('/api/dashboards/me')) {
-        return jsonResponse(dashboard({
-          dashboard: 'am_home',
-          display_name: 'AM Home',
-          role_group: 'account_manager',
-          read_only: false,
-          data_scope: 'assigned_accounts',
-          widgets: [
-            {
-              key: 'ai_task_summary',
-              title: 'AI Task Summary',
-              status: 'complete',
-              generated_at: '2026-06-03T10:00:00Z',
-              data_scope: 'assigned_accounts',
-              primary_route: '/tasks',
-              value: {
-                headline: 'Review active work',
-                narrative: 'One task needs attention.',
-                top_blockers: [],
-                recommended_focus: 'Review active work.',
-                source_counts: { tasks: 1, signals: 0 },
-                refreshed_at: '2026-06-03T10:00:00Z',
-              },
-              items: [],
-              metadata: { manual_refresh: true },
-              error: null,
-            },
-          ],
-        }))
-      }
+      if (url.includes('/api/governance-events/calendar')) return jsonResponse(calendarPage())
+      if (url.includes('/api/dashboards/me')) return jsonResponse(accountManagerDashboard())
       return jsonResponse({})
     })
     vi.stubGlobal('fetch', fetchMock)
@@ -216,9 +312,62 @@ describe('Dashboard', () => {
     )
 
     await screen.findByText('AM Home')
-    await userEvent.click(screen.getByRole('button', { name: /refresh ai data/i }))
-    await waitFor(() => expect(fetchMock.mock.calls.some(call => String(call[0]).includes('/api/dashboards/am-home/task-summary/refresh'))).toBe(true))
-    expect(await screen.findByText('Updated queue')).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: /my accounts/i })).toHaveAttribute('href', '/accounts')
+    expect(screen.getByRole('link', { name: /at risk/i })).toHaveAttribute('href', '/accounts?risk=critical')
+    expect(screen.getByText('Full task status breakdown across assigned accounts')).toBeInTheDocument()
+    expect(screen.getByText('Task records filtered to: owner = AM or account in assigned list')).toBeInTheDocument()
+    expect(screen.getByText('Task completion does NOT improve health scores; only underlying account data changes do.')).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: /open 14 across 5 accounts/i })).toHaveAttribute('href', '/tasks?status=open')
+    expect(screen.getByRole('link', { name: /in progress 6 assigned to me/i })).toHaveAttribute('href', '/tasks?status=in_progress&my_items=true')
+    expect(screen.getByRole('link', { name: /overdue 3 needs action today/i })).toHaveAttribute('href', '/tasks?due=overdue')
+    expect(screen.getByRole('link', { name: /due this week 7 across all accounts/i })).toHaveAttribute('href', '/tasks?due=next7')
+    expect(screen.getByText('Active opportunities across assigned accounts')).toBeInTheDocument()
+    expect(screen.getByText('Opportunities & pipeline')).toBeInTheDocument()
+    expect(screen.getByText('Opportunity records filtered to assigned accounts; stage not Won/Lost')).toBeInTheDocument()
+    expect(screen.getByText('Opportunity with no recorded update > 90 days surfaces as a signal')).toBeInTheDocument()
+    expect(screen.getByText('Open opps')).toBeInTheDocument()
+    expect(screen.getByText('Total value')).toBeInTheDocument()
+    expect(screen.getByText('Stalled')).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: /open opps 9/i })).toHaveAttribute('href', '/opportunities?openOnly=true')
+    expect(screen.getByRole('link', { name: /total value \$840/i })).toHaveAttribute('href', '/opportunities?openOnly=true')
+    expect(screen.getByRole('link', { name: /stalled 2 >90 days no move/i })).toHaveAttribute('href', '/opportunities?stalled=true')
+    expect(screen.queryByText('Pipeline by stage')).not.toBeInTheDocument()
+    expect(screen.queryByText('Stale KYC')).not.toBeInTheDocument()
+    expect(screen.queryByText('Renewal focus')).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /refresh ai data/i })).not.toBeInTheDocument()
+  })
+
+  it('makes generic dashboard summary, task summary, and opportunity tiles clickable', async () => {
+    authState.user = {
+      id: 'usr-kam',
+      name: 'KAM Head',
+      email: 'kam@tkxel.com',
+      role: 'kam_head',
+      avatarInitials: 'KH',
+    }
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input)
+      if (url.includes('/api/dashboards/me')) return jsonResponse(portfolioDashboard())
+      return jsonResponse({})
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    render(
+      <MemoryRouter>
+        <Dashboard />
+      </MemoryRouter>,
+    )
+
+    await screen.findByText('KAM Head Portfolio')
+    expect(screen.getByRole('link', { name: /accounts 12/i })).toHaveAttribute('href', '/accounts')
+    expect(screen.getByRole('link', { name: /at risk accounts 3/i })).toHaveAttribute('href', '/accounts?risk=critical')
+    expect(screen.getByRole('link', { name: /open signals 4/i })).toHaveAttribute('href', '/tasks')
+    expect(screen.getByRole('link', { name: /open escalations 2/i })).toHaveAttribute('href', '/escalations')
+    expect(screen.getByRole('link', { name: /tasks 6/i })).toHaveAttribute('href', '/tasks')
+    expect(screen.getByRole('link', { name: /signals 2/i })).toHaveAttribute('href', '/tasks')
+    expect(screen.getByRole('link', { name: /open opps 8/i })).toHaveAttribute('href', '/opportunities?openOnly=true')
+    expect(screen.getByRole('link', { name: /total value \$640/i })).toHaveAttribute('href', '/opportunities?openOnly=true')
+    expect(screen.getByRole('link', { name: /stalled 1 >90 days no move/i })).toHaveAttribute('href', '/opportunities?stalled=true')
   })
 
   it('shows the no-widgets empty state without fetching calendar data', async () => {

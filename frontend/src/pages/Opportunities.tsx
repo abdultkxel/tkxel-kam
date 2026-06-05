@@ -84,6 +84,9 @@ export function Opportunities() {
   const to = params.get('to') ?? ''
   const minValue = params.get('minValue') ?? ''
   const maxValue = params.get('maxValue') ?? ''
+  const openOnly = params.get('openOnly') === 'true' || params.get('open_only') === 'true'
+  const stalled = params.get('stalled') === 'true'
+  const stalledAfterDays = Math.max(1, Number(params.get('stalledAfterDays') ?? params.get('stalled_after_days') ?? '90') || 90)
   const view = (params.get('view') === 'list' ? 'list' : 'board') as 'board' | 'list'
   const requestedPage = Math.max(1, Number(params.get('page') ?? '1') || 1)
   const includeArchived = params.get('archived') === 'true'
@@ -112,12 +115,15 @@ export function Opportunities() {
       minValue,
       maxValue,
       includeArchived,
+      openOnly,
+      stalled,
+      stalledAfterDays,
       page: view === 'list' ? requestedPage : 1,
       pageSize: view === 'list' ? LIST_PAGE_SIZE : BOARD_PAGE_SIZE,
       sort: 'target_date',
       direction: 'asc',
     })
-  }, [accountId, from, includeArchived, loadOpportunities, maxValue, minValue, ownerId, requestedPage, search, serviceLine, sourceContext, stage, to, token, typeId, view])
+  }, [accountId, from, includeArchived, loadOpportunities, maxValue, minValue, openOnly, ownerId, requestedPage, search, serviceLine, sourceContext, stage, stalled, stalledAfterDays, to, token, typeId, view])
 
   function setFilter(key: string, value: string) {
     const next = new URLSearchParams(params)
@@ -222,6 +228,14 @@ export function Opportunities() {
         <label className="flex min-h-[64px] items-center gap-2 self-end rounded-lg border border-surface-border bg-white px-3 py-2 text-sm font-semibold text-ink-secondary">
           <input type="checkbox" checked={includeArchived} onChange={event => setFilter('archived', event.target.checked ? 'true' : '')} />
           Archived
+        </label>
+        <label className="flex min-h-[64px] items-center gap-2 self-end rounded-lg border border-surface-border bg-white px-3 py-2 text-sm font-semibold text-ink-secondary">
+          <input type="checkbox" checked={openOnly} onChange={event => setFilter('openOnly', event.target.checked ? 'true' : '')} />
+          Open only
+        </label>
+        <label className="flex min-h-[64px] items-center gap-2 self-end rounded-lg border border-surface-border bg-white px-3 py-2 text-sm font-semibold text-ink-secondary">
+          <input type="checkbox" checked={stalled} onChange={event => setFilter('stalled', event.target.checked ? 'true' : '')} />
+          Stalled
         </label>
       </FilterBar>
 
@@ -454,6 +468,10 @@ export function AddOpportunityDialog({ accounts, types, ownerOptions, initialAcc
                   <FormInput label="Action title" value={form.actionTitle} onChange={value => update('actionTitle', value)} error={fieldErrors.actionTitle} placeholder="Send discovery summary" />
                   <FormInput type="date" label="Due date" value={form.actionDueDate} onChange={value => update('actionDueDate', value)} error={fieldErrors.actionDueDate} />
                 </div>
+                <label className="mt-3 flex min-h-[44px] items-center gap-2 rounded-md border border-surface-border bg-white px-3 text-sm font-semibold text-ink-secondary">
+                  <input type="checkbox" checked={form.actionCreateTask} onChange={event => setForm(current => ({ ...current, actionCreateTask: event.target.checked }))} />
+                  Create task for this action item
+                </label>
               </div>
               {formError ? <p className="md:col-span-2 rounded-lg bg-rag-red/10 px-3 py-2 text-sm font-semibold text-rag-red">{formError}</p> : null}
             </div>
@@ -497,6 +515,7 @@ export function OpportunityDetailDialog({
   const [decisionText, setDecisionText] = useState('')
   const [actionTitle, setActionTitle] = useState('')
   const [actionDueDate, setActionDueDate] = useState('')
+  const [actionCreateTask, setActionCreateTask] = useState(true)
 
   useEffect(() => {
     setEdit(detailForm(opportunity))
@@ -507,6 +526,7 @@ export function OpportunityDetailDialog({
     setDecisionText('')
     setActionTitle('')
     setActionDueDate('')
+    setActionCreateTask(true)
   }, [opportunity?.id])
 
   useEffect(() => {
@@ -576,9 +596,10 @@ export function OpportunityDetailDialog({
     if (!token || !actionTitle.trim() || !actionDueDate) return
     setSideError('')
     try {
-      await addActionItem(token, opportunity!.id, { title: actionTitle.trim(), dueDate: dateToNoonIso(actionDueDate), priority: 'medium' })
+      await addActionItem(token, opportunity!.id, { title: actionTitle.trim(), dueDate: dateToNoonIso(actionDueDate), priority: 'medium', createTask: actionCreateTask })
       setActionTitle('')
       setActionDueDate('')
+      setActionCreateTask(true)
       toast.success('Action item added')
     } catch (err) {
       setSideError(err instanceof Error ? err.message : 'Unable to add action item')
@@ -687,6 +708,7 @@ export function OpportunityDetailDialog({
                         <span className="min-w-0">
                           <span className="block text-sm font-semibold text-ink">{item.title}</span>
                           <span className="block text-xs text-ink-secondary">{item.ownerName ?? item.ownerEmail ?? 'Unassigned'} · due {formatDate(item.dueDate)}</span>
+                          {item.futureTaskId ? <span className="mt-1 inline-flex rounded-full bg-blue-tint-20 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-brand-blue">Task linked</span> : null}
                           <span className="mt-1 block text-[11px] font-semibold text-brand-blue">{item.status === 'completed' ? 'Click to reopen' : 'Click to complete'}</span>
                         </span>
                       </button>
@@ -695,6 +717,10 @@ export function OpportunityDetailDialog({
                   <form onSubmit={submitAction} className="mt-3 grid gap-2">
                     <input className="tk-input" value={actionTitle} onChange={event => setActionTitle(event.target.value)} placeholder="Add action item" />
                     <input type="date" className="tk-input" value={actionDueDate} onChange={event => setActionDueDate(event.target.value)} />
+                    <label className="flex min-h-[44px] items-center gap-2 rounded-md border border-surface-border bg-white px-3 text-sm font-semibold text-ink-secondary">
+                      <input type="checkbox" checked={actionCreateTask} onChange={event => setActionCreateTask(event.target.checked)} />
+                      Create task for this action item
+                    </label>
                     <button type="submit" className="tk-button-secondary justify-center" disabled={!actionTitle.trim() || !actionDueDate}>Add action</button>
                   </form>
                 </section>
@@ -755,6 +781,7 @@ interface CreateFormState {
   sourceContext: string
   actionTitle: string
   actionDueDate: string
+  actionCreateTask: boolean
 }
 
 interface DetailFormState {
@@ -789,6 +816,7 @@ function emptyCreateForm(accounts: Account[], types: OpportunityTypeRecord[], cu
     sourceContext: 'manual',
     actionTitle: '',
     actionDueDate: '',
+    actionCreateTask: true,
   }
 }
 
@@ -823,7 +851,7 @@ function createPayload(form: CreateFormState): OpportunityCreateInput {
     nextStep: form.nextStep,
     targetDate: dateToNoonIso(form.targetDate),
     sourceContext: form.sourceContext || 'manual',
-    actionItems: form.actionTitle.trim() ? [{ title: form.actionTitle.trim(), dueDate: dateToNoonIso(form.actionDueDate), priority: 'medium' }] : [],
+    actionItems: form.actionTitle.trim() ? [{ title: form.actionTitle.trim(), dueDate: dateToNoonIso(form.actionDueDate), priority: 'medium', createTask: form.actionCreateTask }] : [],
   }
 }
 

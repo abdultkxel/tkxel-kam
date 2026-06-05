@@ -10,6 +10,8 @@ from app.models import (
     Account,
     AccountOwner,
     Engagement,
+    GovernanceActionItem,
+    OpportunityActionItem,
     PlaybookExecution,
     PlaybookTemplate,
     PlaybookTemplateActivity,
@@ -362,6 +364,8 @@ class PlaybooksTasksService:
         for field, value in updates.items():
             setattr(task, field, value)
         task.updated_by_id = current_user.id
+        if updates.get("status") == "done":
+            self._sync_source_action_item_from_task(task, current_user)
         if custom_values is not None:
             self.custom_fields.replace_record_values(MODULE, task.id, custom_values, current_user, audit_module=MODULE)
         if task.status in {"done", "cancelled"}:
@@ -373,6 +377,21 @@ class PlaybooksTasksService:
         self.audit.log(module=MODULE, action="update_task", entity_type="task", entity_id=task.id, actor=current_user, before_value=before, after_value=self._task_snapshot(task))
         self.repository.commit()
         return self._task_read(task)
+
+    def _sync_source_action_item_from_task(self, task: Task, current_user: User) -> None:
+        if task.status != "done" or not task.source_record_id:
+            return
+        if task.source_type == "governance_action_item":
+            action_item = self.repository.db.get(GovernanceActionItem, task.source_record_id)
+        elif task.source_type == "opportunity_action_item":
+            action_item = self.repository.db.get(OpportunityActionItem, task.source_record_id)
+        else:
+            action_item = None
+        if action_item is None or action_item.status == "completed":
+            return
+        action_item.status = "completed"
+        action_item.completed_at = task.completed_at or datetime.now(timezone.utc)
+        action_item.completed_by_id = current_user.id
 
     async def add_task_evidence(
         self,

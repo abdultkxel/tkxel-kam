@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timezone
+import re
 from typing import Any
 from urllib import parse
 
@@ -18,6 +19,7 @@ from app.schemas import (
     MeetingArtifactPageRead,
     MeetingArtifactRead,
     MeetingArtifactUpdateRequest,
+    MeetingProviderResolveRequest,
     UserFathomConnectionRead,
     UserFathomConnectionUpdateRequest,
 )
@@ -37,23 +39,37 @@ class MeetingCaptureService:
         self.settings = get_settings()
 
     def read_fathom_connection(self, current_user: User) -> UserFathomConnectionRead:
-        connection = self.repository.get_user_connection(user_id=current_user.id, provider="fathom")
-        return self._connection_read(connection)
+        return self._read_provider_connection("fathom", current_user)
 
     def update_fathom_connection(self, payload: UserFathomConnectionUpdateRequest, current_user: User) -> UserFathomConnectionRead:
-        connection = self._get_or_create_user_connection(current_user, "fathom")
+        return self._update_provider_connection("fathom", payload, current_user)
+
+    def read_fireflies_connection(self, current_user: User) -> UserFathomConnectionRead:
+        return self._read_provider_connection("fireflies", current_user)
+
+    def update_fireflies_connection(self, payload: UserFathomConnectionUpdateRequest, current_user: User) -> UserFathomConnectionRead:
+        return self._update_provider_connection("fireflies", payload, current_user)
+
+    def _read_provider_connection(self, provider: str, current_user: User) -> UserFathomConnectionRead:
+        connection = self.repository.get_user_connection(user_id=current_user.id, provider=provider)
+        return self._connection_read(connection, provider=provider)
+
+    def _update_provider_connection(self, provider: str, payload: UserFathomConnectionUpdateRequest, current_user: User) -> UserFathomConnectionRead:
+        connection = self._get_or_create_user_connection(current_user, provider)
         credentials = self._credentials(connection)
+        if payload.clear_api_key:
+            credentials.pop("api_key", None)
         if payload.api_key is not None:
             credentials["api_key"] = payload.api_key
         connection.credentials_json = encrypt_credentials(credentials)
         connection.enabled = payload.enabled
         if payload.settings_json is not None:
-            connection.settings_json = self._validated_settings(payload.settings_json)
+            connection.settings_json = self._validated_settings(payload.settings_json, provider=provider)
         connection.status = "connected" if payload.enabled and credentials.get("api_key") else "configuration_required"
-        connection.last_error = None if connection.status == "connected" else "Personal Fathom API key is required."
+        connection.last_error = None if connection.status == "connected" else f"Personal {self._provider_label(provider)} API key is required."
         self.repository.save_user_connection(connection)
         self.repository.commit()
-        return self._connection_read(connection)
+        return self._connection_read(connection, provider=provider)
 
     def list_meetings(
         self,
@@ -92,11 +108,11 @@ class MeetingCaptureService:
         artifact = MeetingArtifact(
             owner_id=current_user.id,
             provider=payload.provider,
-            title=payload.title or "Fathom meeting",
+            title=payload.title or f"{self._provider_label(payload.provider)} meeting",
             summary=payload.summary,
             action_items=payload.action_items,
             meeting_url=payload.meeting_url,
-            source_link=payload.meeting_url if self._looks_like_fathom_link(payload.meeting_url) else None,
+            source_link=payload.meeting_url if self._looks_like_provider_link(payload.provider, payload.meeting_url) else None,
             occurred_at=payload.occurred_at,
             scheduled_at=payload.scheduled_at,
             account_id=payload.account_id,
@@ -150,10 +166,108 @@ class MeetingCaptureService:
             self.repository.commit()
             raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
 
+    def resolve_fathom_meeting(self, payload: MeetingProviderResolveRequest, current_user: User) -> MeetingArtifactRead:
+        self._validate_account_link(current_user, payload.account_id, payload.engagement_id)
+        connection = self.repository.get_user_connection(user_id=current_user.id, provider="fathom")
+        if connection is None or not connection.enabled or not self._credentials(connection).get("api_key"):
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Connect your personal Fathom API key before fetching meeting details.")
+
+        recording_id, source_url = self._parse_fathom_identifier(payload.identifier)
+        if source_url and not recording_id:
+            existing = self._existing_fathom_artifact(current_user, source_url=source_url)
+            if existing:
+                self._apply_resolve_context(existing, payload)
+                self.repository.save_meeting_artifact(existing)
+                self.repository.commit()
+                return self._artifact_read(existing)
+
+        if recording_id:
+            try:
+                record = self._fetch_fathom_summary_record(connection, recording_id, source_url)
+            except ValueError as exc:
+                self._mark_connection_error(connection, str(exc))
+                raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
+
+            try:
+                enriched = self._find_fathom_record_by_recording_id(connection, recording_id)
+            except ValueError:
+                enriched = None
+            if enriched:
+                if not IntegrationService._record_description("fathom", enriched):
+                    enriched["default_summary"] = record.get("default_summary")
+                if source_url and not IntegrationService._record_source_link("fathom", enriched):
+                    enriched["share_url"] = source_url
+                record = enriched
+
+            artifact, _ = self._upsert_fathom_record(record, current_user)
+            self._apply_resolve_context(artifact, payload)
+            connection.status = "connected"
+            connection.last_error = None
+            self.repository.save_user_connection(connection)
+            self.repository.save_meeting_artifact(artifact)
+            self.repository.commit()
+            return self._artifact_read(artifact)
+
+        if source_url:
+            try:
+                record = self._find_fathom_record_by_source_url(connection, source_url)
+            except ValueError as exc:
+                self._mark_connection_error(connection, str(exc))
+                raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
+            if record is None:
+                raise field_validation_error("identifier", "Fathom meeting was not found. Paste the Fathom recording ID or a share URL from a meeting your API key can access.")
+            artifact, _ = self._upsert_fathom_record(record, current_user)
+            self._apply_resolve_context(artifact, payload)
+            connection.status = "connected"
+            connection.last_error = None
+            self.repository.save_user_connection(connection)
+            self.repository.save_meeting_artifact(artifact)
+            self.repository.commit()
+            return self._artifact_read(artifact)
+
+        raise field_validation_error("identifier", "Enter a Fathom recording ID or share URL.")
+
+    def resolve_fireflies_meeting(self, payload: MeetingProviderResolveRequest, current_user: User) -> MeetingArtifactRead:
+        self._validate_account_link(current_user, payload.account_id, payload.engagement_id)
+        connection = self.repository.get_user_connection(user_id=current_user.id, provider="fireflies")
+        if connection is None or not connection.enabled or not self._credentials(connection).get("api_key"):
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Connect your personal Fireflies API key before fetching meeting details.")
+
+        transcript_id, source_url = self._parse_fireflies_identifier(payload.identifier)
+        if source_url:
+            existing = self._existing_provider_artifact("fireflies", current_user, source_url=source_url, external_id=transcript_id)
+            if existing:
+                self._apply_resolve_context(existing, payload)
+                self.repository.save_meeting_artifact(existing)
+                self.repository.commit()
+                return self._artifact_read(existing)
+            if transcript_id is None:
+                raise field_validation_error("identifier", "Fireflies transcript URL could not be resolved. Paste the Fireflies transcript ID instead.")
+
+        if not transcript_id:
+            raise field_validation_error("identifier", "Enter a Fireflies transcript ID or transcript URL.")
+
+        try:
+            record = self._fetch_fireflies_transcript_record(connection, transcript_id)
+        except LookupError as exc:
+            raise field_validation_error("identifier", str(exc)) from exc
+        except ValueError as exc:
+            self._mark_connection_error(connection, str(exc))
+            raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
+
+        artifact, _ = self._upsert_fireflies_record(record, current_user)
+        self._apply_resolve_context(artifact, payload)
+        connection.status = "connected"
+        connection.last_error = None
+        self.repository.save_user_connection(connection)
+        self.repository.save_meeting_artifact(artifact)
+        self.repository.commit()
+        return self._artifact_read(artifact)
+
     def get_owned_artifact(self, meeting_id: str, current_user: User) -> MeetingArtifact:
         return self._artifact_or_404(meeting_id, current_user)
 
-    def _fetch_fathom_records(self, connection: UserIntegrationConnection) -> list[dict[str, Any]]:
+    def _fetch_fathom_records(self, connection: UserIntegrationConnection, *, max_pages: int | None = None, limit: int | None = None) -> list[dict[str, Any]]:
         credentials = self._credentials(connection)
         api_key = credentials.get("api_key")
         if not api_key:
@@ -161,13 +275,15 @@ class MeetingCaptureService:
         settings = connection.settings_json or {}
         base_url = settings.get("base_url") or self.settings.fathom_base_url
         recordings_path = settings.get("recordings_path") or self.settings.fathom_recordings_path
-        page_limit = max(1, min(int(settings.get("max_pages") or 5), 25))
+        page_limit = max(1, min(int(max_pages if max_pages is not None else settings.get("max_pages") or 5), 25))
         params = {
             "include_summary": "true",
             "include_action_items": "true",
             "include_transcript": "false",
         }
-        if settings.get("limit"):
+        if limit is not None:
+            params["limit"] = str(max(1, min(limit, 100)))
+        elif settings.get("limit"):
             params["limit"] = str(settings["limit"])
         records: list[dict[str, Any]] = []
         cursor = None
@@ -184,6 +300,86 @@ class MeetingCaptureService:
             if not cursor:
                 break
         return records
+
+    def _fetch_fathom_summary_record(self, connection: UserIntegrationConnection, recording_id: str, source_url: str | None) -> dict[str, Any]:
+        credentials = self._credentials(connection)
+        api_key = credentials.get("api_key")
+        if not api_key:
+            raise ValueError("Fathom API key is required.")
+        settings = connection.settings_json or {}
+        base_url = str(settings.get("base_url") or self.settings.fathom_base_url).rstrip("/")
+        encoded_recording_id = parse.quote(recording_id, safe="")
+        url = f"{base_url}/external/v1/recordings/{encoded_recording_id}/summary"
+        payload = IntegrationService._json_get(url, {"X-Api-Key": str(api_key)})
+        summary = payload.get("summary") if isinstance(payload, dict) else None
+        if isinstance(summary, dict):
+            default_summary = summary
+        elif isinstance(summary, str):
+            default_summary = {"markdown_formatted": summary}
+        else:
+            default_summary = {"markdown_formatted": ""}
+        record: dict[str, Any] = {
+            "recording_id": recording_id,
+            "meeting_title": f"Fathom recording {recording_id}",
+            "default_summary": default_summary,
+            "resolve_source": "recording_summary",
+        }
+        if source_url:
+            record["share_url"] = source_url
+        return record
+
+    def _find_fathom_record_by_recording_id(self, connection: UserIntegrationConnection, recording_id: str) -> dict[str, Any] | None:
+        for record in self._fetch_fathom_records(connection, max_pages=1, limit=25):
+            if str(record.get("recording_id") or record.get("id") or "").strip() == recording_id:
+                return record
+        return None
+
+    def _find_fathom_record_by_source_url(self, connection: UserIntegrationConnection, source_url: str) -> dict[str, Any] | None:
+        expected = self._url_key(source_url)
+        for record in self._fetch_fathom_records(connection, max_pages=1, limit=25):
+            for value in (record.get("share_url"), record.get("url"), record.get("source_link"), record.get("meeting_url")):
+                if self._url_key(value) == expected:
+                    return record
+        return None
+
+    def _fetch_fireflies_transcript_record(self, connection: UserIntegrationConnection, transcript_id: str) -> dict[str, Any]:
+        credentials = self._credentials(connection)
+        api_key = credentials.get("api_key")
+        if not api_key:
+            raise ValueError("Fireflies API key is required.")
+        settings = connection.settings_json or {}
+        url = str(settings.get("base_url") or "https://api.fireflies.ai/graphql").rstrip("/")
+        query = """
+        query Transcript($transcriptId: String!) {
+          transcript(id: $transcriptId) {
+            id
+            title
+            transcript_url
+            meeting_link
+            date
+            summary {
+              notes
+              overview
+              short_summary
+              action_items
+            }
+          }
+        }
+        """
+        payload = IntegrationService._json_post(
+            url,
+            {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+            {"query": query, "variables": {"transcriptId": transcript_id}},
+        )
+        errors = payload.get("errors") if isinstance(payload, dict) else None
+        if isinstance(errors, list) and errors:
+            message = str(errors[0].get("message") if isinstance(errors[0], dict) else errors[0])
+            raise LookupError(message or "Fireflies transcript was not found or is not accessible.")
+        transcript = payload.get("data", {}).get("transcript") if isinstance(payload, dict) and isinstance(payload.get("data"), dict) else None
+        if not isinstance(transcript, dict):
+            raise LookupError("Fireflies transcript was not found or is not accessible.")
+        transcript.setdefault("id", transcript_id)
+        return transcript
 
     def _upsert_fathom_record(self, record: dict[str, Any], current_user: User) -> tuple[MeetingArtifact, bool]:
         external_id = IntegrationService._record_external_id("fathom", record)
@@ -227,6 +423,95 @@ class MeetingCaptureService:
         self.repository.save_meeting_artifact(artifact)
         return artifact, True
 
+    def _upsert_fireflies_record(self, record: dict[str, Any], current_user: User) -> tuple[MeetingArtifact, bool]:
+        external_id = str(record.get("id") or record.get("external_id") or "").strip()
+        if not external_id:
+            raise ValueError("Fireflies transcript ID is required.")
+        source_link = str(record.get("transcript_url") or record.get("source_link") or "").strip() or None
+        meeting_url = str(record.get("meeting_link") or record.get("meeting_url") or "").strip() or None
+        existing = self.repository.get_meeting_by_external_id(owner_id=current_user.id, provider="fireflies", external_id=external_id)
+        if existing is None and source_link:
+            existing = self.repository.get_meeting_by_source_link(owner_id=current_user.id, provider="fireflies", source_link=source_link)
+
+        title = str(record.get("title") or "Fireflies transcript")
+        summary = self._fireflies_summary(record)
+        action_items = self._fireflies_action_items(record)
+        occurred_at = self._fireflies_record_datetime(record)
+        metadata = sanitize_payload(record)
+        if not isinstance(metadata, dict):
+            metadata = {"payload": metadata}
+
+        if existing:
+            existing.external_id = external_id
+            existing.title = title[:255]
+            existing.summary = summary
+            existing.action_items = action_items
+            existing.source_link = source_link or existing.source_link
+            existing.meeting_url = meeting_url or existing.meeting_url
+            existing.occurred_at = occurred_at or existing.occurred_at
+            existing.status = "ready"
+            existing.metadata_json = metadata
+            self.repository.save_meeting_artifact(existing)
+            return existing, False
+
+        artifact = MeetingArtifact(
+            owner_id=current_user.id,
+            provider="fireflies",
+            external_id=external_id,
+            title=title[:255],
+            summary=summary,
+            action_items=action_items,
+            source_link=source_link,
+            meeting_url=meeting_url,
+            occurred_at=occurred_at,
+            status="ready",
+            metadata_json=metadata,
+        )
+        self.repository.save_meeting_artifact(artifact)
+        return artifact, True
+
+    def _existing_fathom_artifact(self, current_user: User, *, source_url: str | None = None, recording_id: str | None = None) -> MeetingArtifact | None:
+        if recording_id:
+            existing = self.repository.get_meeting_by_external_id(owner_id=current_user.id, provider="fathom", external_id=recording_id)
+            if existing:
+                return existing
+        if not source_url:
+            return None
+        for url in self._url_variants(source_url):
+            existing = self.repository.get_meeting_by_source_link(owner_id=current_user.id, provider="fathom", source_link=url)
+            if existing:
+                return existing
+        return None
+
+    def _existing_provider_artifact(self, provider: str, current_user: User, *, source_url: str | None = None, external_id: str | None = None) -> MeetingArtifact | None:
+        if external_id:
+            existing = self.repository.get_meeting_by_external_id(owner_id=current_user.id, provider=provider, external_id=external_id)
+            if existing:
+                return existing
+        if not source_url:
+            return None
+        for url in self._url_variants(source_url):
+            existing = self.repository.get_meeting_by_source_link(owner_id=current_user.id, provider=provider, source_link=url)
+            if existing:
+                return existing
+        return None
+
+    def _apply_resolve_context(self, artifact: MeetingArtifact, payload: MeetingProviderResolveRequest) -> None:
+        if payload.account_id:
+            artifact.account_id = payload.account_id
+        if payload.engagement_id:
+            artifact.engagement_id = payload.engagement_id
+        if payload.linked_object_type:
+            artifact.linked_object_type = payload.linked_object_type
+        if payload.linked_object_id:
+            artifact.linked_object_id = payload.linked_object_id
+
+    def _mark_connection_error(self, connection: UserIntegrationConnection, message: str) -> None:
+        connection.status = "error"
+        connection.last_error = message
+        self.repository.save_user_connection(connection)
+        self.repository.commit()
+
     def _validate_account_link(self, current_user: User, account_id: str | None, engagement_id: str | None) -> None:
         if not account_id:
             if engagement_id:
@@ -262,9 +547,9 @@ class MeetingCaptureService:
         return decrypt_credentials(connection.credentials_json)
 
     @staticmethod
-    def _connection_read(connection: UserIntegrationConnection | None) -> UserFathomConnectionRead:
+    def _connection_read(connection: UserIntegrationConnection | None, *, provider: str = "fathom") -> UserFathomConnectionRead:
         if connection is None:
-            return UserFathomConnectionRead(credential_status={"configured": False, "fields": [], "masked": False})
+            return UserFathomConnectionRead(provider=provider, credential_status={"configured": False, "fields": [], "masked": False})
         credentials = decrypt_credentials(connection.credentials_json)
         configured = bool(credentials.get("api_key"))
         return UserFathomConnectionRead(
@@ -296,6 +581,86 @@ class MeetingCaptureService:
         return bool(value and "fathom" in value.lower())
 
     @staticmethod
+    def _looks_like_provider_link(provider: str, value: str | None) -> bool:
+        if provider == "fireflies":
+            return bool(value and "fireflies.ai" in value.lower())
+        return MeetingCaptureService._looks_like_fathom_link(value)
+
+    @staticmethod
+    def _parse_fathom_identifier(identifier: str) -> tuple[str | None, str | None]:
+        value = identifier.strip()
+        if value.isdigit():
+            return value, None
+        parsed = parse.urlparse(value)
+        if not parsed.scheme and not parsed.netloc:
+            raise field_validation_error("identifier", "Enter a Fathom recording ID or share URL.")
+        if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+            raise field_validation_error("identifier", "Fathom meeting URL must be a valid HTTP or HTTPS URL.")
+        if "fathom" not in parsed.netloc.lower():
+            raise field_validation_error("identifier", "Enter a Fathom recording ID or Fathom share URL.")
+
+        query = parse.parse_qs(parsed.query)
+        for key in ("recording_id", "recordingId", "recording", "id"):
+            for candidate in query.get(key, []):
+                if str(candidate).strip().isdigit():
+                    return str(candidate).strip(), value
+
+        for segment in reversed([part for part in parsed.path.split("/") if part]):
+            clean = re.sub(r"\D", "", segment)
+            if clean and clean == segment:
+                return clean, value
+        return None, value
+
+    @staticmethod
+    def _parse_fireflies_identifier(identifier: str) -> tuple[str | None, str | None]:
+        value = identifier.strip()
+        if MeetingCaptureService._looks_like_fireflies_id(value):
+            return value, None
+        parsed = parse.urlparse(value)
+        if not parsed.scheme and not parsed.netloc:
+            raise field_validation_error("identifier", "Enter a Fireflies transcript ID or transcript URL.")
+        if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+            raise field_validation_error("identifier", "Fireflies transcript URL must be a valid HTTP or HTTPS URL.")
+        if "fireflies.ai" not in parsed.netloc.lower():
+            raise field_validation_error("identifier", "Enter a Fireflies transcript ID or Fireflies transcript URL.")
+
+        query = parse.parse_qs(parsed.query)
+        for key in ("transcript_id", "transcriptId", "id"):
+            for candidate in query.get(key, []):
+                candidate_value = str(candidate).strip()
+                if MeetingCaptureService._looks_like_fireflies_id(candidate_value):
+                    return candidate_value, value
+
+        for segment in reversed([parse.unquote(part).strip() for part in parsed.path.split("/") if part]):
+            candidate = segment.split("::")[-1].strip()
+            if candidate.lower() in {"app", "meeting", "meetings", "transcript", "transcripts", "view"}:
+                continue
+            if MeetingCaptureService._looks_like_fireflies_id(candidate):
+                return candidate, value
+        return None, value
+
+    @staticmethod
+    def _looks_like_fireflies_id(value: str) -> bool:
+        return bool(re.fullmatch(r"[A-Za-z0-9:_-]{4,255}", value.strip()))
+
+    @classmethod
+    def _url_variants(cls, value: str) -> list[str]:
+        variants = [value.strip()]
+        without_trailing = variants[0].rstrip("/")
+        if without_trailing and without_trailing not in variants:
+            variants.append(without_trailing)
+        with_trailing = f"{without_trailing}/" if without_trailing else ""
+        if with_trailing and with_trailing not in variants:
+            variants.append(with_trailing)
+        return variants
+
+    @classmethod
+    def _url_key(cls, value: Any) -> str:
+        if not value:
+            return ""
+        return str(value).strip().rstrip("/").lower()
+
+    @staticmethod
     def _fathom_action_items(record: dict[str, Any]) -> list[str]:
         action_items = record.get("action_items") or record.get("actions") or []
         if isinstance(action_items, str):
@@ -317,11 +682,71 @@ class MeetingCaptureService:
         return items[:50]
 
     @staticmethod
-    def _validated_settings(settings: dict[str, Any]) -> dict[str, Any]:
-        allowed = {"base_url", "recordings_path", "limit", "max_pages"}
+    def _fireflies_summary(record: dict[str, Any]) -> str | None:
+        summary = record.get("summary") if isinstance(record.get("summary"), dict) else {}
+        for key in ("notes", "overview", "short_summary"):
+            value = summary.get(key)
+            if isinstance(value, str) and value.strip():
+                return value.strip()[:8000]
+        return None
+
+    @staticmethod
+    def _fireflies_action_items(record: dict[str, Any]) -> list[str]:
+        summary = record.get("summary") if isinstance(record.get("summary"), dict) else {}
+        action_items = summary.get("action_items")
+        raw_items: list[Any]
+        if isinstance(action_items, str):
+            raw_items = action_items.splitlines()
+        elif isinstance(action_items, list):
+            raw_items = action_items
+        else:
+            raw_items = []
+
+        items: list[str] = []
+        seen: set[str] = set()
+        for action in raw_items:
+            if isinstance(action, dict):
+                title = str(action.get("title") or action.get("description") or action.get("text") or "").strip()
+            else:
+                title = str(action).strip()
+            title = re.sub(r"^\s*(?:[-*•]|\d+[.)])\s*", "", title).strip()
+            if not title:
+                continue
+            title = title[:220]
+            key = title.lower()
+            if key in seen:
+                continue
+            seen.add(key)
+            items.append(title)
+        return items[:50]
+
+    @staticmethod
+    def _fireflies_record_datetime(record: dict[str, Any]) -> datetime | None:
+        value = record.get("date")
+        if value is None:
+            return None
+        if isinstance(value, int | float):
+            timestamp = float(value) / 1000 if float(value) > 9999999999 else float(value)
+            return datetime.fromtimestamp(timestamp, tz=timezone.utc)
+        if isinstance(value, str):
+            stripped = value.strip()
+            if not stripped:
+                return None
+            if re.fullmatch(r"\d+(?:\.\d+)?", stripped):
+                timestamp = float(stripped) / 1000 if float(stripped) > 9999999999 else float(stripped)
+                return datetime.fromtimestamp(timestamp, tz=timezone.utc)
+            try:
+                return datetime.fromisoformat(stripped.replace("Z", "+00:00"))
+            except ValueError:
+                return None
+        return None
+
+    @staticmethod
+    def _validated_settings(settings: dict[str, Any], *, provider: str = "fathom") -> dict[str, Any]:
+        allowed = {"base_url"} if provider == "fireflies" else {"base_url", "recordings_path", "limit", "max_pages"}
         unknown = sorted(set(settings) - allowed)
         if unknown:
-            raise field_validation_error("settings_json", f"Unsupported Fathom setting(s): {', '.join(unknown)}.")
+            raise field_validation_error("settings_json", f"Unsupported {MeetingCaptureService._provider_label(provider)} setting(s): {', '.join(unknown)}.")
         base_url = settings.get("base_url")
         if base_url and not str(base_url).startswith(("http://", "https://")):
             raise field_validation_error("settings_json.base_url", "Base URL must be an HTTP or HTTPS URL.")
@@ -329,3 +754,7 @@ class MeetingCaptureService:
         if recordings_path and not str(recordings_path).startswith("/"):
             raise field_validation_error("settings_json.recordings_path", "Fathom meetings path must start with /.")
         return settings
+
+    @staticmethod
+    def _provider_label(provider: str) -> str:
+        return "Fireflies" if provider == "fireflies" else "Fathom"

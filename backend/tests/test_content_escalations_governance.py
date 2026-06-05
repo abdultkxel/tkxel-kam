@@ -678,6 +678,257 @@ def test_personal_fathom_connection_syncs_private_meeting_artifacts(client: Test
     assert manager_list.json()["total"] == 0
 
 
+def test_personal_fathom_connection_can_disconnect_and_clear_api_key(client: TestClient) -> None:
+    headers = auth_headers(client)
+
+    connected = client.patch("/api/meeting-capture/fathom/connection", headers=headers, json={"enabled": True, "api_key": "personal-fathom-key"})
+    assert connected.status_code == 200
+    assert connected.json()["enabled"] is True
+    assert connected.json()["credential_status"]["configured"] is True
+
+    disconnected = client.patch("/api/meeting-capture/fathom/connection", headers=headers, json={"enabled": False, "clear_api_key": True})
+    assert disconnected.status_code == 200
+    body = disconnected.json()
+    assert body["enabled"] is False
+    assert body["status"] == "configuration_required"
+    assert body["credential_status"]["configured"] is False
+    assert body["credential_status"]["masked"] is False
+
+    resolve = client.post("/api/meeting-capture/fathom/resolve", headers=headers, json={"identifier": "123456789"})
+    assert resolve.status_code == 400
+    assert resolve.json()["detail"] == "Connect your personal Fathom API key before fetching meeting details."
+
+
+def test_personal_fathom_resolve_fetches_single_recording_and_enriches_action_items(client: TestClient, db_session: Session, monkeypatch: pytest.MonkeyPatch) -> None:
+    headers = auth_headers(client)
+    requested_urls: list[str] = []
+
+    def fathom_get(url: str, request_headers: dict[str, str]) -> dict:
+        requested_urls.append(url)
+        assert request_headers["X-Api-Key"] == "personal-fathom-key"
+        if url == "https://api.fathom.ai/external/v1/recordings/123456789/summary":
+            return {"summary": {"template_name": "general", "markdown_formatted": "## Summary\nExecutive governance decisions."}}
+        assert url.startswith("https://api.fathom.ai/external/v1/meetings/?")
+        assert "include_transcript=false" in url
+        assert "limit=25" in url
+        return {
+            "items": [
+                {
+                    "recording_id": 123456789,
+                    "meeting_title": "Executive governance call",
+                    "share_url": "https://fathom.video/share/executive-governance",
+                    "scheduled_start_time": "2026-06-03T10:00:00Z",
+                    "default_summary": {"markdown_formatted": "## Summary\nExecutive governance decisions."},
+                    "action_items": [{"description": "Send executive follow-up"}],
+                }
+            ]
+        }
+
+    monkeypatch.setattr(IntegrationService, "_json_get", staticmethod(fathom_get))
+
+    connection = client.patch("/api/meeting-capture/fathom/connection", headers=headers, json={"enabled": True, "api_key": "personal-fathom-key"})
+    assert connection.status_code == 200
+
+    resolved = client.post(
+        "/api/meeting-capture/fathom/resolve",
+        headers=headers,
+        json={
+            "identifier": "123456789",
+            "account_id": "account-cafe-zupas",
+            "linked_object_type": "governance_event",
+            "linked_object_id": "gov-1",
+        },
+    )
+    assert resolved.status_code == 200
+    body = resolved.json()
+    assert body["external_id"] == "123456789"
+    assert body["title"] == "Executive governance call"
+    assert body["summary"] == "## Summary\nExecutive governance decisions."
+    assert body["action_items"] == ["Send executive follow-up"]
+    assert body["source_link"] == "https://fathom.video/share/executive-governance"
+    assert body["account_id"] == "account-cafe-zupas"
+    assert body["linked_object_type"] == "governance_event"
+    assert body["linked_object_id"] == "gov-1"
+    assert requested_urls[0] == "https://api.fathom.ai/external/v1/recordings/123456789/summary"
+    assert len(list(db_session.scalars(select(MeetingArtifact)))) == 1
+
+
+def test_personal_fathom_resolve_accepts_share_url_without_global_sync(client: TestClient, db_session: Session, monkeypatch: pytest.MonkeyPatch) -> None:
+    headers = auth_headers(client)
+    requested_urls: list[str] = []
+
+    def fathom_get(url: str, request_headers: dict[str, str]) -> dict:
+        requested_urls.append(url)
+        assert "/external/v1/meetings/?" in url
+        assert "limit=25" in url
+        assert request_headers["X-Api-Key"] == "personal-fathom-key"
+        return {
+            "items": [
+                {
+                    "recording_id": 987654321,
+                    "meeting_title": "URL matched governance call",
+                    "share_url": "https://fathom.video/share/url-match",
+                    "default_summary": {"markdown_formatted": "URL matched summary."},
+                    "action_items": [{"description": "Confirm URL match"}],
+                },
+                {
+                    "recording_id": 111,
+                    "meeting_title": "Different call",
+                    "share_url": "https://fathom.video/share/other",
+                },
+            ]
+        }
+
+    monkeypatch.setattr(IntegrationService, "_json_get", staticmethod(fathom_get))
+
+    connection = client.patch("/api/meeting-capture/fathom/connection", headers=headers, json={"enabled": True, "api_key": "personal-fathom-key"})
+    assert connection.status_code == 200
+
+    resolved = client.post("/api/meeting-capture/fathom/resolve", headers=headers, json={"identifier": "https://fathom.video/share/url-match"})
+    assert resolved.status_code == 200
+    assert resolved.json()["external_id"] == "987654321"
+    assert resolved.json()["action_items"] == ["Confirm URL match"]
+    assert all("/recordings/" not in url for url in requested_urls)
+    assert len(list(db_session.scalars(select(MeetingArtifact)))) == 1
+
+
+def test_personal_fathom_resolve_reports_missing_key_and_bad_identifier(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
+    headers = auth_headers(client)
+
+    missing_key = client.post("/api/meeting-capture/fathom/resolve", headers=headers, json={"identifier": "123456789"})
+    assert missing_key.status_code == 400
+    assert missing_key.json()["detail"] == "Connect your personal Fathom API key before fetching meeting details."
+
+    connection = client.patch("/api/meeting-capture/fathom/connection", headers=headers, json={"enabled": True, "api_key": "personal-fathom-key"})
+    assert connection.status_code == 200
+
+    invalid = client.post("/api/meeting-capture/fathom/resolve", headers=headers, json={"identifier": "not-a-recording-id"})
+    assert invalid.status_code == 422
+    assert invalid.json()["detail"]["errors"][0]["field"] == "identifier"
+
+    monkeypatch.setattr(IntegrationService, "_json_get", staticmethod(lambda _url, _headers: {"items": []}))
+    not_found = client.post("/api/meeting-capture/fathom/resolve", headers=headers, json={"identifier": "https://fathom.video/share/not-found"})
+    assert not_found.status_code == 422
+    assert not_found.json()["detail"]["errors"][0]["field"] == "identifier"
+
+
+def test_personal_fireflies_connection_can_disconnect_and_clear_api_key(client: TestClient) -> None:
+    headers = auth_headers(client)
+
+    initial = client.get("/api/meeting-capture/fireflies/connection", headers=headers)
+    assert initial.status_code == 200
+    assert initial.json()["provider"] == "fireflies"
+    assert initial.json()["credential_status"]["configured"] is False
+
+    connected = client.patch("/api/meeting-capture/fireflies/connection", headers=headers, json={"enabled": True, "api_key": "personal-fireflies-key"})
+    assert connected.status_code == 200
+    assert connected.json()["provider"] == "fireflies"
+    assert connected.json()["enabled"] is True
+    assert connected.json()["credential_status"]["configured"] is True
+    assert "personal-fireflies-key" not in connected.text
+
+    disconnected = client.patch("/api/meeting-capture/fireflies/connection", headers=headers, json={"enabled": False, "clear_api_key": True})
+    assert disconnected.status_code == 200
+    body = disconnected.json()
+    assert body["provider"] == "fireflies"
+    assert body["enabled"] is False
+    assert body["status"] == "configuration_required"
+    assert body["credential_status"]["configured"] is False
+
+    resolve = client.post("/api/meeting-capture/fireflies/resolve", headers=headers, json={"identifier": "transcript-123"})
+    assert resolve.status_code == 400
+    assert resolve.json()["detail"] == "Connect your personal Fireflies API key before fetching meeting details."
+
+
+def test_personal_fireflies_resolve_fetches_transcript_summary_and_action_items(client: TestClient, db_session: Session, monkeypatch: pytest.MonkeyPatch) -> None:
+    headers = auth_headers(client)
+    requests: list[dict[str, object]] = []
+
+    def fireflies_post(url: str, request_headers: dict[str, str], body: dict) -> dict:
+        requests.append({"url": url, "headers": request_headers, "body": body})
+        assert url == "https://api.fireflies.ai/graphql"
+        assert request_headers["Authorization"] == "Bearer personal-fireflies-key"
+        assert "sentences" not in body["query"]
+        assert body["variables"]["transcriptId"] == "transcript-123"
+        return {
+            "data": {
+                "transcript": {
+                    "id": "transcript-123",
+                    "title": "Fireflies governance call",
+                    "transcript_url": "https://app.fireflies.ai/view/transcript-123",
+                    "meeting_link": "https://meet.example.com/governance",
+                    "date": "2026-06-03T10:00:00Z",
+                    "summary": {
+                        "notes": "Fireflies governance summary.",
+                        "overview": "Fallback overview.",
+                        "short_summary": "Fallback short summary.",
+                        "action_items": "- Send Fireflies recap\n- Confirm action owner",
+                    },
+                }
+            }
+        }
+
+    monkeypatch.setattr(IntegrationService, "_json_post", staticmethod(fireflies_post))
+
+    connection = client.patch("/api/meeting-capture/fireflies/connection", headers=headers, json={"enabled": True, "api_key": "personal-fireflies-key"})
+    assert connection.status_code == 200
+
+    resolved = client.post(
+        "/api/meeting-capture/fireflies/resolve",
+        headers=headers,
+        json={
+            "identifier": "transcript-123",
+            "account_id": "account-cafe-zupas",
+            "linked_object_type": "governance_event",
+            "linked_object_id": "gov-fireflies-1",
+        },
+    )
+    assert resolved.status_code == 200
+    body = resolved.json()
+    assert body["provider"] == "fireflies"
+    assert body["external_id"] == "transcript-123"
+    assert body["title"] == "Fireflies governance call"
+    assert body["summary"] == "Fireflies governance summary."
+    assert body["action_items"] == ["Send Fireflies recap", "Confirm action owner"]
+    assert body["source_link"] == "https://app.fireflies.ai/view/transcript-123"
+    assert body["meeting_url"] == "https://meet.example.com/governance"
+    assert body["account_id"] == "account-cafe-zupas"
+    assert body["linked_object_type"] == "governance_event"
+    assert body["linked_object_id"] == "gov-fireflies-1"
+
+    artifact = db_session.scalar(select(MeetingArtifact).where(MeetingArtifact.provider == "fireflies", MeetingArtifact.external_id == "transcript-123"))
+    assert artifact is not None
+    assert artifact.summary == "Fireflies governance summary."
+    assert artifact.metadata_json["summary"]["notes"] == "Fireflies governance summary."
+    assert "sentences" not in json.dumps(artifact.metadata_json).lower()
+    assert len(list(db_session.scalars(select(MeetingArtifact).where(MeetingArtifact.provider == "fireflies")))) == 1
+
+    resolved_again = client.post("/api/meeting-capture/fireflies/resolve", headers=headers, json={"identifier": "https://app.fireflies.ai/view/transcript-123"})
+    assert resolved_again.status_code == 200
+    assert resolved_again.json()["id"] == body["id"]
+    assert len(requests) == 1
+
+
+def test_personal_fireflies_resolve_reports_missing_key_bad_identifier_and_inaccessible_transcript(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
+    headers = auth_headers(client)
+
+    missing_key = client.post("/api/meeting-capture/fireflies/resolve", headers=headers, json={"identifier": "transcript-123"})
+    assert missing_key.status_code == 400
+    assert missing_key.json()["detail"] == "Connect your personal Fireflies API key before fetching meeting details."
+
+    connection = client.patch("/api/meeting-capture/fireflies/connection", headers=headers, json={"enabled": True, "api_key": "personal-fireflies-key"})
+    assert connection.status_code == 200
+
+    invalid = client.post("/api/meeting-capture/fireflies/resolve", headers=headers, json={"identifier": "https://app.fireflies.ai/view/"})
+    assert invalid.status_code == 422
+    assert invalid.json()["detail"]["errors"][0]["field"] == "identifier"
+
+    monkeypatch.setattr(IntegrationService, "_json_post", staticmethod(lambda _url, _headers, _body: {"errors": [{"message": "Transcript not found"}]}))
+    not_found = client.post("/api/meeting-capture/fireflies/resolve", headers=headers, json={"identifier": "transcript-404"})
+    assert not_found.status_code == 422
+    assert not_found.json()["detail"]["errors"][0]["field"] == "identifier"
+
+
 def test_timeline_ai_search_writes_unified_ai_gateway_run(client: TestClient, db_session: Session) -> None:
     headers = auth_headers(client)
     note = client.post(
