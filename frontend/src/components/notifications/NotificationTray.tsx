@@ -3,7 +3,7 @@ import { Bell, Check, ExternalLink, Loader2, X } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { useAuth } from '@/contexts/AuthContext'
-import { getNotifications, markAllNotificationsRead, markNotificationRead, NotificationRecord } from '@/services/notificationsReporting'
+import { getNotificationSummary, markAllNotificationsRead, markNotificationRead, NotificationRecord } from '@/services/notificationsReporting'
 import { formatRelative } from '@/utils/formatters'
 
 export function NotificationTray() {
@@ -13,25 +13,29 @@ export function NotificationTray() {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
 
-  useEffect(() => {
+  function loadSummary(activeRef?: { active: boolean }) {
     if (!token) return
-    let active = true
     setLoading(true)
     setError('')
-    getNotifications(token, { page: 1, page_size: 8 })
-      .then(page => {
-        if (!active) return
-        setNotifications(page.items)
-        setUnread(page.unread_count)
+    getNotificationSummary(token)
+      .then(summary => {
+        if (activeRef && !activeRef.active) return
+        setNotifications(summary.latest)
+        setUnread(summary.unread_count)
       })
       .catch(err => {
-        if (active) setError(err instanceof Error ? err.message : 'Notifications could not be loaded')
+        if (!activeRef || activeRef.active) setError(err instanceof Error ? err.message : 'Notifications could not be loaded')
       })
       .finally(() => {
-        if (active) setLoading(false)
+        if (!activeRef || activeRef.active) setLoading(false)
       })
+  }
+
+  useEffect(() => {
+    const activeRef = { active: true }
+    loadSummary(activeRef)
     return () => {
-      active = false
+      activeRef.active = false
     }
   }, [token])
 
@@ -50,7 +54,7 @@ export function NotificationTray() {
   }
 
   return (
-    <Dialog.Root>
+    <Dialog.Root onOpenChange={open => { if (open) loadSummary() }}>
       <Dialog.Trigger asChild>
         <button className="tk-icon-button relative" aria-label="Notifications">
           <Bell className="h-5 w-5" />
@@ -105,7 +109,7 @@ export function NotificationTray() {
                   {notification.source_record_route ? (
                     <Link to={notification.source_record_route} className="tk-button-primary">
                       <ExternalLink className="h-4 w-4" />
-                      View
+                      {notification.action_label || 'View'}
                     </Link>
                   ) : null}
                 </div>

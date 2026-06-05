@@ -6739,6 +6739,10 @@ NotificationMode = Literal["in_app", "in_app_email", "off"]
 DigestCadence = Literal["immediate", "daily", "weekly", "monthly"]
 NotificationChannel = Literal["in_app", "email"]
 NotificationPriority = Literal["low", "medium", "high", "critical"]
+NotificationTimingMode = Literal["immediate", "before_due", "after_pending", "scheduled"]
+NotificationTimingUnit = Literal["business_days", "calendar_days", "weeks", "months"]
+NotificationLeadDirection = Literal["before", "after"]
+NotificationPriority = Literal["low", "medium", "high", "critical"]
 SlaItemType = Literal["signal", "task", "kyc", "escalation"]
 SlaState = Literal["escalated", "resolved"]
 ScheduleCadence = Literal["daily", "weekly", "monthly"]
@@ -6782,10 +6786,28 @@ class NotificationTriggerConfigRead(BaseModel):
     trigger: str
     label: str
     description: str | None = None
+    workflow: str
+    priority: str
+    recipient_policy: str
+    action_label: str | None = None
     default_mode: str
     default_digest_cadence: str
     supported_channels: list[str] = Field(default_factory=list)
     mandatory: bool
+    timing_mode: str
+    timing_unit: str
+    lead_time_value: int | None = None
+    lead_time_direction: str | None = None
+    pending_threshold_value: int | None = None
+    repeat_enabled: bool
+    repeat_every_value: int | None = None
+    repeat_limit: int | None = None
+    escalation_enabled: bool
+    escalation_after_value: int | None = None
+    escalation_recipient_policy: str | None = None
+    quiet_hours_start: str | None = None
+    quiet_hours_end: str | None = None
+    template_json: dict[str, Any] = Field(default_factory=dict)
     is_active: bool
     created_at: datetime
     updated_at: datetime
@@ -6795,10 +6817,28 @@ class NotificationTriggerConfigRequest(BaseModel):
     trigger: str
     label: str
     description: str | None = None
+    workflow: str = "general"
+    priority: NotificationPriority = "medium"
+    recipient_policy: str = "explicit"
+    action_label: str | None = None
     default_mode: NotificationMode = "in_app"
     default_digest_cadence: DigestCadence = "daily"
     supported_channels: list[NotificationChannel] = Field(default_factory=lambda: ["in_app"])
     mandatory: bool = False
+    timing_mode: NotificationTimingMode = "immediate"
+    timing_unit: NotificationTimingUnit = "business_days"
+    lead_time_value: int | None = None
+    lead_time_direction: NotificationLeadDirection | None = None
+    pending_threshold_value: int | None = None
+    repeat_enabled: bool = False
+    repeat_every_value: int | None = None
+    repeat_limit: int | None = None
+    escalation_enabled: bool = False
+    escalation_after_value: int | None = None
+    escalation_recipient_policy: str | None = None
+    quiet_hours_start: str | None = None
+    quiet_hours_end: str | None = None
+    template_json: dict[str, Any] = Field(default_factory=dict)
     is_active: bool = True
 
     @field_validator("trigger")
@@ -6815,6 +6855,35 @@ class NotificationTriggerConfigRequest(BaseModel):
     @classmethod
     def description_is_valid(cls, value: str | None) -> str | None:
         return validate_optional_long_text(value, "Trigger description", 1000)
+
+    @field_validator("workflow", "recipient_policy")
+    @classmethod
+    def slugs_are_valid(cls, value: str) -> str:
+        return validate_slug(value, "Notification configuration")
+
+    @field_validator("action_label")
+    @classmethod
+    def action_label_is_valid(cls, value: str | None) -> str | None:
+        return validate_optional_long_text(value, "Action label", 120)
+
+    @field_validator("lead_time_value", "pending_threshold_value", "repeat_every_value", "repeat_limit", "escalation_after_value")
+    @classmethod
+    def optional_positive_int_is_valid(cls, value: int | None) -> int | None:
+        if value is None:
+            return value
+        return validate_positive_int(value, "Timing value", 365)
+
+    @field_validator("quiet_hours_start", "quiet_hours_end")
+    @classmethod
+    def quiet_hours_are_valid(cls, value: str | None) -> str | None:
+        if value is None or not value.strip():
+            return None
+        if not __import__("re").match(r"^\d{2}:\d{2}$", value.strip()):
+            raise ValueError("Quiet hours must use HH:MM format.")
+        hour, minute = [int(part) for part in value.strip().split(":")]
+        if hour > 23 or minute > 59:
+            raise ValueError("Quiet hours must use a valid 24-hour time.")
+        return value.strip()
 
 
 class NotificationDefaultsRead(BaseModel):
@@ -6878,6 +6947,7 @@ class NotificationRecordRead(BaseModel):
     recipient_name: str
     recipient_email: str | None = None
     trigger: str
+    workflow: str | None = None
     title: str
     body: str
     account_id: str | None = None
@@ -6886,6 +6956,7 @@ class NotificationRecordRead(BaseModel):
     source_record_id: str | None = None
     source_record_route: str | None = None
     priority: str
+    action_label: str | None = None
     channel: str
     delivery_status: str
     delivery_metadata_json: dict[str, Any] = Field(default_factory=dict)
@@ -6893,6 +6964,7 @@ class NotificationRecordRead(BaseModel):
     retry_count: int
     error_message: str | None = None
     read_at: datetime | None = None
+    archived_at: datetime | None = None
     delivered_at: datetime | None = None
     created_at: datetime
 
@@ -6904,6 +6976,98 @@ class NotificationPageRead(BaseModel):
     page_size: int
     pages: int
     unread_count: int
+
+
+class NotificationSummaryRead(BaseModel):
+    unread_count: int
+    total_count: int
+    latest: list[NotificationRecordRead] = Field(default_factory=list)
+
+
+class NotificationTriggerUpdateRequest(BaseModel):
+    label: str | None = None
+    description: str | None = None
+    priority: NotificationPriority | None = None
+    recipient_policy: str | None = None
+    action_label: str | None = None
+    default_mode: NotificationMode | None = None
+    default_digest_cadence: DigestCadence | None = None
+    supported_channels: list[NotificationChannel] | None = None
+    mandatory: bool | None = None
+    timing_mode: NotificationTimingMode | None = None
+    timing_unit: NotificationTimingUnit | None = None
+    lead_time_value: int | None = None
+    lead_time_direction: NotificationLeadDirection | None = None
+    pending_threshold_value: int | None = None
+    repeat_enabled: bool | None = None
+    repeat_every_value: int | None = None
+    repeat_limit: int | None = None
+    escalation_enabled: bool | None = None
+    escalation_after_value: int | None = None
+    escalation_recipient_policy: str | None = None
+    quiet_hours_start: str | None = None
+    quiet_hours_end: str | None = None
+    is_active: bool | None = None
+
+    @field_validator("label")
+    @classmethod
+    def optional_label_is_valid(cls, value: str | None) -> str | None:
+        return validate_short_text(value, "Trigger label", 160) if value is not None else None
+
+    @field_validator("description")
+    @classmethod
+    def optional_description_is_valid(cls, value: str | None) -> str | None:
+        return validate_optional_long_text(value, "Trigger description", 1000)
+
+    @field_validator("recipient_policy", "escalation_recipient_policy")
+    @classmethod
+    def optional_slug_is_valid(cls, value: str | None) -> str | None:
+        return validate_slug(value, "Recipient policy") if value is not None else None
+
+    @field_validator("lead_time_value", "pending_threshold_value", "repeat_every_value", "repeat_limit", "escalation_after_value")
+    @classmethod
+    def optional_timing_value_is_valid(cls, value: int | None) -> int | None:
+        if value is None:
+            return None
+        return validate_positive_int(value, "Timing value", 365)
+
+
+class NotificationTriggerTestRequest(BaseModel):
+    recipient_user_id: str | None = None
+    title: str | None = None
+    body: str | None = None
+
+
+class NotificationSchedulerDryRunRead(BaseModel):
+    evaluated_triggers: int
+    due_triggers: int
+    message: str
+
+
+class ScheduledWorkerRunRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    job_type: str
+    mode: str
+    status: str
+    matched_count: int
+    affected_count: int
+    actor_id: str | None = None
+    actor_name: str
+    error_message: str | None = None
+    metadata_json: dict[str, Any] = Field(default_factory=dict)
+    started_at: datetime
+    finished_at: datetime | None = None
+    created_at: datetime
+
+
+class ScheduledWorkerRunPageRead(BaseModel):
+    items: list[ScheduledWorkerRunRead]
+    total: int
+    page: int
+    page_size: int
+    pages: int
 
 
 class SlaRuleRead(BaseModel):
