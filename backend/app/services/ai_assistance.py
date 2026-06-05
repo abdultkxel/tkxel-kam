@@ -1,5 +1,4 @@
 import logging
-from calendar import month_abbr
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
@@ -19,7 +18,6 @@ from app.schemas import (
     AiAssistanceSearchRequest,
     AiAssistanceSearchResponse,
     AiAssistanceSourceRead,
-    AiForecastPointRead,
     AiForecastRequest,
     AiForecastResponse,
     AiHandoffRequest,
@@ -36,6 +34,7 @@ from app.schemas import (
 )
 from app.services.account_access import AccountAccessService, GLOBAL_VIEW_ROLES
 from app.services.audit import AuditService
+from app.services.forecasting import ForecastingService
 from app.services.notifications import NotificationsService
 from app.services.timeline import TimelineService
 from app.services.user_management import page_count
@@ -57,6 +56,7 @@ class AiAssistanceService:
         self.audit = AuditService(AuditRepository(db))
         self.timeline_service = TimelineService(TimelineRepository(db))
         self.notifications = NotificationsService(db)
+        self.forecasting = ForecastingService(db)
 
     def search(self, payload: AiAssistanceSearchRequest, current_user: User) -> AiAssistanceSearchResponse:
         self.access.require_module_permission(current_user, AI_MODULE, "view")
@@ -175,35 +175,8 @@ class AiAssistanceService:
     def forecast(self, payload: AiForecastRequest, current_user: User) -> AiForecastResponse:
         self.access.require_module_permission(current_user, AI_MODULE, "view")
         accounts = self._accounts_for_scope(current_user, payload.account_id)
-        now = datetime.now(timezone.utc)
-        base_value = sum(float(account.commercial_value or 0) for account in accounts)
-        base_health = round(sum(account.health_overall for account in accounts) / len(accounts)) if accounts else 0
-        open_opportunities = [item for account in accounts for item in self._open_opportunities(account.id, limit=100)]
-        pipeline = sum(float(item.value or 0) for item in open_opportunities)
-        points: list[AiForecastPointRead] = []
-        for offset in range(payload.months):
-            month_index = (now.month + offset - 1) % 12 + 1
-            month_label = f"{month_abbr[month_index]} {now.year + ((now.month + offset - 1) // 12)}"
-            conversion = min(0.45, 0.08 * (offset + 1))
-            health_adjustment = min(8, offset * 2) if base_health >= 75 else -min(8, offset * 2) if base_health < 60 else 0
-            points.append(
-                AiForecastPointRead(
-                    month=month_label,
-                    commercial_value=round(base_value + pipeline * conversion, 2),
-                    health=max(0, min(100, base_health + health_adjustment)),
-                    open_opportunities=len(open_opportunities),
-                )
-            )
-        citations = [{"type": "account", "id": account.id, "label": account.name} for account in accounts] + [{"type": "opportunity", "id": item.id, "label": item.name} for item in open_opportunities[:10]]
-        response = AiForecastResponse(
-            title="Directional account forecast" if payload.account_id else "Directional portfolio forecast",
-            summary="Forecast uses current commercial value, open opportunity pipeline, and health trend as a deterministic planning aid.",
-            points=points,
-            highlights=[f"Base value: {round(base_value, 2)}", f"Open pipeline: {round(pipeline, 2)}", f"Average health: {base_health}"],
-            citations=citations,
-            disclaimer=AI_DISCLAIMER,
-        )
-        run_id = self._log_ai_run("portfolio_forecast", current_user, account_id=payload.account_id, source_context=citations, prompt=payload.model_dump(mode="json"), response=response.model_dump(mode="json"), usage={"months": payload.months, "account_count": len(accounts)})
+        response = self.forecasting.generate(accounts, months=payload.months)
+        run_id = self._log_ai_run("portfolio_forecast", current_user, account_id=payload.account_id, source_context=response.citations, prompt=payload.model_dump(mode="json"), response=response.model_dump(mode="json"), usage={"months": payload.months, "account_count": len(accounts)})
         response.run_id = run_id
         self.audit.log(module=AI_MODULE, action="forecast", entity_type="ai_assistance", entity_id=run_id or "advisory", actor=current_user, after_value={"months": payload.months, "account_count": len(accounts)})
         self.db.commit()
