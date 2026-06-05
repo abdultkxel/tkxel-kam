@@ -144,7 +144,7 @@ function accountManagerDashboard() {
       },
       {
         key: 'opportunities',
-        title: 'Opportunities / pipeline',
+        title: 'Opportunities & pipeline',
         status: 'complete',
         generated_at: '2026-06-03T10:00:00Z',
         data_scope: 'assigned_accounts',
@@ -188,6 +188,62 @@ function accountManagerDashboard() {
         value: { upcoming: 1, overdue: 0 },
         items: [],
         metadata: { read_only: false },
+        error: null,
+      },
+    ],
+  })
+}
+
+function portfolioDashboard() {
+  return dashboard({
+    dashboard: 'kam_head_portfolio',
+    display_name: 'KAM Head Portfolio',
+    role_group: 'kam_head',
+    read_only: false,
+    data_scope: 'portfolio',
+    metadata: {},
+    widgets: [
+      {
+        key: 'summary',
+        title: 'Portfolio attention summary',
+        status: 'complete',
+        generated_at: '2026-06-03T10:00:00Z',
+        data_scope: 'portfolio',
+        primary_route: '/dashboard',
+        value: { accounts: 12, at_risk_accounts: 3, open_signals: 4, open_escalations: 2, upcoming_governance: 5 },
+        items: [],
+        metadata: {},
+        error: null,
+      },
+      {
+        key: 'ai_task_summary',
+        title: 'AI Task Summary',
+        status: 'complete',
+        generated_at: '2026-06-03T10:00:00Z',
+        data_scope: 'portfolio',
+        primary_route: '/tasks',
+        value: {
+          headline: 'Portfolio work queue is active.',
+          narrative: 'Open work is visible across the portfolio.',
+          top_blockers: ['Review overdue blockers.'],
+          recommended_focus: 'Start with overdue tasks.',
+          source_counts: { tasks: 6, signals: 2 },
+          refreshed_at: '2026-06-03T10:00:00Z',
+        },
+        items: [],
+        metadata: { manual_refresh: true },
+        error: null,
+      },
+      {
+        key: 'opportunities',
+        title: 'Opportunities / pipeline',
+        status: 'complete',
+        generated_at: '2026-06-03T10:00:00Z',
+        data_scope: 'portfolio',
+        primary_route: '/opportunities',
+        value: { open_opportunities: 8, pipeline_value: 640000, stalled: 1, series: [{ label: 'Qualified', value: 240000, display_value: 240000 }] },
+        items: [],
+        metadata: { masked: false, stalled_after_days: 90 },
         error: null,
       },
     ],
@@ -261,12 +317,57 @@ describe('Dashboard', () => {
     expect(screen.getByText('Full task status breakdown across assigned accounts')).toBeInTheDocument()
     expect(screen.getByText('Task records filtered to: owner = AM or account in assigned list')).toBeInTheDocument()
     expect(screen.getByText('Task completion does NOT improve health scores; only underlying account data changes do.')).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: /open 14 across 5 accounts/i })).toHaveAttribute('href', '/tasks?status=open')
+    expect(screen.getByRole('link', { name: /in progress 6 assigned to me/i })).toHaveAttribute('href', '/tasks?status=in_progress&my_items=true')
+    expect(screen.getByRole('link', { name: /overdue 3 needs action today/i })).toHaveAttribute('href', '/tasks?due=overdue')
+    expect(screen.getByRole('link', { name: /due this week 7 across all accounts/i })).toHaveAttribute('href', '/tasks?due=next7')
     expect(screen.getByText('Active opportunities across assigned accounts')).toBeInTheDocument()
+    expect(screen.getByText('Opportunities & pipeline')).toBeInTheDocument()
     expect(screen.getByText('Opportunity records filtered to assigned accounts; stage not Won/Lost')).toBeInTheDocument()
     expect(screen.getByText('Opportunity with no recorded update > 90 days surfaces as a signal')).toBeInTheDocument()
+    expect(screen.getByText('Open opps')).toBeInTheDocument()
+    expect(screen.getByText('Total value')).toBeInTheDocument()
+    expect(screen.getByText('Stalled')).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: /open opps 9/i })).toHaveAttribute('href', '/opportunities?openOnly=true')
+    expect(screen.getByRole('link', { name: /total value \$840/i })).toHaveAttribute('href', '/opportunities?openOnly=true')
+    expect(screen.getByRole('link', { name: /stalled 2 >90 days no move/i })).toHaveAttribute('href', '/opportunities?stalled=true')
+    expect(screen.queryByText('Pipeline by stage')).not.toBeInTheDocument()
     expect(screen.queryByText('Stale KYC')).not.toBeInTheDocument()
     expect(screen.queryByText('Renewal focus')).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: /refresh ai data/i })).not.toBeInTheDocument()
+  })
+
+  it('makes generic dashboard summary, task summary, and opportunity tiles clickable', async () => {
+    authState.user = {
+      id: 'usr-kam',
+      name: 'KAM Head',
+      email: 'kam@tkxel.com',
+      role: 'kam_head',
+      avatarInitials: 'KH',
+    }
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input)
+      if (url.includes('/api/dashboards/me')) return jsonResponse(portfolioDashboard())
+      return jsonResponse({})
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    render(
+      <MemoryRouter>
+        <Dashboard />
+      </MemoryRouter>,
+    )
+
+    await screen.findByText('KAM Head Portfolio')
+    expect(screen.getByRole('link', { name: /accounts 12/i })).toHaveAttribute('href', '/accounts')
+    expect(screen.getByRole('link', { name: /at risk accounts 3/i })).toHaveAttribute('href', '/accounts?risk=critical')
+    expect(screen.getByRole('link', { name: /open signals 4/i })).toHaveAttribute('href', '/tasks')
+    expect(screen.getByRole('link', { name: /open escalations 2/i })).toHaveAttribute('href', '/escalations')
+    expect(screen.getByRole('link', { name: /tasks 6/i })).toHaveAttribute('href', '/tasks')
+    expect(screen.getByRole('link', { name: /signals 2/i })).toHaveAttribute('href', '/tasks')
+    expect(screen.getByRole('link', { name: /open opps 8/i })).toHaveAttribute('href', '/opportunities?openOnly=true')
+    expect(screen.getByRole('link', { name: /total value \$640/i })).toHaveAttribute('href', '/opportunities?openOnly=true')
+    expect(screen.getByRole('link', { name: /stalled 1 >90 days no move/i })).toHaveAttribute('href', '/opportunities?stalled=true')
   })
 
   it('shows the no-widgets empty state without fetching calendar data', async () => {

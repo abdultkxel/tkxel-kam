@@ -10,6 +10,7 @@ from app.schemas import (
     MeetingArtifactCreateRequest,
     MeetingArtifactPageRead,
     MeetingArtifactRead,
+    MeetingProviderResolveRequest,
     MeetingArtifactUpdateRequest,
     UserFathomConnectionRead,
     UserFathomConnectionUpdateRequest,
@@ -50,6 +51,37 @@ def update_fathom_connection(
     return service.update_fathom_connection(payload, current_user)
 
 
+@router.get(
+    "/fireflies/connection",
+    response_model=UserFathomConnectionRead,
+    summary="Read personal Fireflies connection",
+    description="Returns the logged-in user's personal Fireflies.ai connection status without exposing stored credentials.",
+    response_description="Personal Fireflies connection status.",
+    responses={401: {"description": "Authentication is required."}},
+)
+def read_fireflies_connection(
+    current_user: Annotated[User, Depends(get_current_user)],
+    service: Annotated[MeetingCaptureService, Depends(get_meeting_capture_service)],
+) -> UserFathomConnectionRead:
+    return service.read_fireflies_connection(current_user)
+
+
+@router.patch(
+    "/fireflies/connection",
+    response_model=UserFathomConnectionRead,
+    summary="Update personal Fireflies connection",
+    description="Stores, updates, or clears the logged-in user's personal Fireflies.ai API key and connection settings.",
+    response_description="Updated personal Fireflies connection status.",
+    responses={401: {"description": "Authentication is required."}, 422: {"description": "Field-level validation errors."}},
+)
+def update_fireflies_connection(
+    payload: UserFathomConnectionUpdateRequest,
+    current_user: Annotated[User, Depends(get_current_user)],
+    service: Annotated[MeetingCaptureService, Depends(get_meeting_capture_service)],
+) -> UserFathomConnectionRead:
+    return service.update_fireflies_connection(payload, current_user)
+
+
 @router.post(
     "/fathom/sync",
     response_model=IntegrationSyncResponse,
@@ -69,11 +101,55 @@ def sync_fathom_meetings(
     return service.sync_fathom_meetings(current_user)
 
 
+@router.post(
+    "/fathom/resolve",
+    response_model=MeetingArtifactRead,
+    summary="Resolve a Fathom meeting",
+    description="Fetches one specific Fathom recording by recording ID or share URL using the logged-in user's personal Fathom API key and stores it as a private meeting artifact.",
+    response_description="Resolved personal meeting artifact.",
+    responses={
+        400: {"description": "Personal Fathom credentials are missing."},
+        401: {"description": "Authentication is required."},
+        403: {"description": "Linked account access is denied."},
+        422: {"description": "Field-level validation errors."},
+        502: {"description": "Fathom API request failed."},
+    },
+)
+def resolve_fathom_meeting(
+    payload: MeetingProviderResolveRequest,
+    current_user: Annotated[User, Depends(get_current_user)],
+    service: Annotated[MeetingCaptureService, Depends(get_meeting_capture_service)],
+) -> MeetingArtifactRead:
+    return service.resolve_fathom_meeting(payload, current_user)
+
+
+@router.post(
+    "/fireflies/resolve",
+    response_model=MeetingArtifactRead,
+    summary="Resolve a Fireflies meeting",
+    description="Fetches one specific Fireflies.ai transcript by transcript ID or transcript URL using the logged-in user's personal Fireflies API key and stores it as a private meeting artifact.",
+    response_description="Resolved personal meeting artifact.",
+    responses={
+        400: {"description": "Personal Fireflies credentials are missing."},
+        401: {"description": "Authentication is required."},
+        403: {"description": "Linked account access is denied."},
+        422: {"description": "Field-level validation errors."},
+        502: {"description": "Fireflies API request failed."},
+    },
+)
+def resolve_fireflies_meeting(
+    payload: MeetingProviderResolveRequest,
+    current_user: Annotated[User, Depends(get_current_user)],
+    service: Annotated[MeetingCaptureService, Depends(get_meeting_capture_service)],
+) -> MeetingArtifactRead:
+    return service.resolve_fireflies_meeting(payload, current_user)
+
+
 @router.get(
     "/meetings",
     response_model=MeetingArtifactPageRead,
     summary="List personal meeting artifacts",
-    description="Lists the logged-in user's Fathom or manually captured meeting notes with optional account, status, linked-object, date, and search filters.",
+    description="Lists the logged-in user's personal Fathom, Fireflies, or manually captured meeting notes with optional account, status, linked-object, date, and search filters.",
     response_description="Paginated personal meeting artifacts.",
     responses={401: {"description": "Authentication is required."}, 403: {"description": "Linked account access is denied."}},
 )
@@ -111,7 +187,7 @@ def list_meetings(
     response_model=MeetingArtifactRead,
     status_code=status.HTTP_201_CREATED,
     summary="Create personal meeting artifact",
-    description="Creates a user-owned meeting note or Fathom reference that can later be used by governance completion.",
+    description="Creates a user-owned meeting note or meeting-provider reference that can later be used by governance completion.",
     response_description="Created meeting artifact.",
     responses={401: {"description": "Authentication is required."}, 403: {"description": "Linked account access is denied."}, 422: {"description": "Field-level validation errors."}},
 )

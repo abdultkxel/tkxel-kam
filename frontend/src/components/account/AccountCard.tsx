@@ -33,18 +33,19 @@ function GhostAction({ label, icon: Icon, onClick }: { label: string; icon: type
 
 export function AccountCard({ account, className, style }: { account: Account; className?: string; style?: CSSProperties }) {
   const navigate = useNavigate()
+  const detailPath = account.detailPath ?? `/accounts/${account.id}`
 
   return (
     <Tooltip.Provider>
       <article style={style} className={cn('group relative tk-card p-5 transition-[border-color,box-shadow] hover:border-brand-blue/40 hover:shadow-panel', className)}>
         <div className="absolute right-3 top-3 flex items-center gap-1 opacity-100 transition-opacity duration-150 md:opacity-0 md:group-hover:opacity-100 md:group-focus-within:opacity-100">
-          <GhostAction label="View account" icon={ExternalLink} onClick={() => navigate(`/accounts/${account.id}`)} />
+          <GhostAction label={account.recordType === 'onboarding_draft' ? 'Review draft' : 'View account'} icon={ExternalLink} onClick={() => navigate(detailPath)} />
           <GhostAction label="Add note" icon={PenLine} />
           <GhostAction label="Flag for attention" icon={Flag} />
         </div>
         <div className="pr-28">
           <p className="text-[10px] font-extrabold uppercase tracking-widest text-brand-blue">{account.segment}</p>
-          <Link to={`/accounts/${account.id}`} className="mt-1 flex min-h-[44px] items-center rounded-md text-base font-semibold text-ink hover:text-brand-blue">
+          <Link to={detailPath} className="mt-1 flex min-h-[44px] items-center rounded-md text-base font-semibold text-ink hover:text-brand-blue">
             {account.name}
           </Link>
           <p className="mt-1 text-xs text-ink-secondary">
@@ -68,6 +69,7 @@ export function AccountCard({ account, className, style }: { account: Account; c
         </div>
         <div className="mt-4 flex flex-wrap items-center gap-2">
           <RAGBadge tone={tone[account.riskStatus]}>{account.riskStatus}</RAGBadge>
+          {account.recordType === 'onboarding_draft' ? <span className="rounded-full border border-brand-orange/30 bg-brand-orange/10 px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wider text-brand-orange">Draft</span> : null}
           <span className="rounded-full border border-surface-border px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wider text-ink-secondary">{account.stage}</span>
         </div>
       </article>

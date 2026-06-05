@@ -252,6 +252,17 @@ class AccountRepository:
             .limit(1)
         )
 
+    def list_active_users_by_roles(self, roles: set[str]) -> list[User]:
+        if not roles:
+            return []
+        return list(
+            self.db.scalars(
+                select(User)
+                .where(User.role.in_(roles), User.is_active.is_(True))
+                .order_by(User.full_name, User.email)
+            )
+        )
+
     def count_open_opportunities(self, account_id: str) -> int:
         return self.db.scalar(
             select(func.count(Opportunity.id)).where(

@@ -11,6 +11,7 @@ from app.models import (
     OpportunityStageHistory,
     OpportunityStageTransition,
     OpportunityType,
+    Task,
     User,
 )
 from app.repositories.accounts import AccountRepository
@@ -51,6 +52,7 @@ from app.services.timeline import TimelineService
 from app.services.user_management import page_count
 
 OPPORTUNITY_MODULE = "opportunity_management"
+OPPORTUNITY_ACTION_TASK_SOURCE = "opportunity_action_item"
 
 
 def field_error(field: str, message: str, status_code: int = status.HTTP_422_UNPROCESSABLE_ENTITY) -> HTTPException:
@@ -83,6 +85,9 @@ class OpportunityService:
         min_value: float | None = None,
         max_value: float | None = None,
         include_archived: bool = False,
+        open_only: bool = False,
+        stalled: bool = False,
+        stalled_after_days: int = 90,
         sort: str = "target_date",
         direction: str = "asc",
         page: int = 1,
@@ -108,6 +113,9 @@ class OpportunityService:
             min_value=min_value,
             max_value=max_value,
             include_archived=include_archived,
+            open_only=open_only,
+            stalled=stalled,
+            stalled_after_days=max(1, stalled_after_days),
             sort=sort,
             direction=direction,
             page=page,
@@ -129,6 +137,9 @@ class OpportunityService:
             min_value=min_value,
             max_value=max_value,
             include_archived=include_archived,
+            open_only=open_only,
+            stalled=stalled,
+            stalled_after_days=max(1, stalled_after_days),
         )
         return OpportunityPageRead(
             items=[self._opportunity_read(item) for item in items],
@@ -179,7 +190,9 @@ class OpportunityService:
         )
         self.repository.save_opportunity(opportunity)
         for action_payload in payload.action_items:
-            self.repository.add_action_item(self._action_item_from_payload(opportunity, action_payload, current_user))
+            action_item = self.repository.add_action_item(self._action_item_from_payload(opportunity, action_payload, current_user))
+            if action_payload.create_task:
+                self._sync_opportunity_action_task(opportunity, action_item, current_user)
 
         timeline_entry = self._write_opportunity_timeline(
             opportunity,
@@ -456,6 +469,8 @@ class OpportunityService:
         opportunity = self._get_opportunity_or_404(opportunity_id)
         self._require_opportunity_update(current_user, opportunity)
         action_item = self.repository.add_action_item(self._action_item_from_payload(opportunity, payload, current_user))
+        if payload.create_task:
+            self._sync_opportunity_action_task(opportunity, action_item, current_user)
         self.audit.log(module=OPPORTUNITY_MODULE, action="action_item_create", entity_type="opportunity_action_item", entity_id=action_item.id, actor=current_user, after_value={"title": action_item.title, "due_at": action_item.due_at.isoformat()})
         self.repository.commit()
         return self._action_item_read(action_item)
@@ -467,6 +482,7 @@ class OpportunityService:
         self._require_opportunity_update(current_user, action_item.opportunity)
         before = self._action_item_snapshot(action_item)
         updates = payload.model_dump(exclude_unset=True)
+        create_task = updates.pop("create_task", None)
         if "owner_id" in updates and updates["owner_id"]:
             owner = self._get_active_user(updates["owner_id"], "owner_id")
             action_item.owner_id = owner.id
@@ -484,9 +500,68 @@ class OpportunityService:
         if action_item.status != "completed":
             action_item.completed_at = None
             action_item.completed_by_id = None
+        if create_task or action_item.future_task_id:
+            self._sync_opportunity_action_task(action_item.opportunity, action_item, current_user)
         self.audit.log(module=OPPORTUNITY_MODULE, action="action_item_update", entity_type="opportunity_action_item", entity_id=action_item.id, actor=current_user, before_value=before, after_value=self._action_item_snapshot(action_item))
         self.repository.commit()
         return self._action_item_read(action_item)
+
+    def _sync_opportunity_action_task(self, opportunity: Opportunity, action_item: OpportunityActionItem, actor: User) -> None:
+        existing = self.repository.get_task_by_source(OPPORTUNITY_ACTION_TASK_SOURCE, action_item.id)
+        if existing is None and action_item.future_task_id:
+            existing = self.repository.get_task(action_item.future_task_id)
+        owner_id = action_item.owner_id or opportunity.owner_id or actor.id
+        owner_name = action_item.owner_name or opportunity.owner_name or actor.full_name
+        if existing is None:
+            existing = Task(
+                account_id=opportunity.account_id,
+                engagement_id=opportunity.engagement_id,
+                source_type=OPPORTUNITY_ACTION_TASK_SOURCE,
+                source_record_id=action_item.id,
+                title=action_item.title,
+                description=f"Opportunity follow-up for {opportunity.name}.",
+                owner_id=owner_id,
+                owner_name=owner_name,
+                due_at=action_item.due_at,
+                status="done" if action_item.status == "completed" else "open",
+                priority=action_item.priority,
+                notes=action_item.notes,
+                success_criteria=[],
+                requires_evidence=False,
+                created_by_id=actor.id,
+                updated_by_id=actor.id,
+            )
+            if action_item.status == "completed":
+                existing.outcome = existing.outcome or "Opportunity action item completed."
+                existing.completed_at = action_item.completed_at or datetime.now(timezone.utc)
+                existing.completed_by_id = action_item.completed_by_id or actor.id
+            self.repository.save_task(existing)
+            action_item.future_task_id = existing.id
+            return
+        existing.account_id = opportunity.account_id
+        existing.engagement_id = opportunity.engagement_id
+        existing.source_type = OPPORTUNITY_ACTION_TASK_SOURCE
+        existing.source_record_id = action_item.id
+        existing.title = action_item.title
+        existing.description = existing.description or f"Opportunity follow-up for {opportunity.name}."
+        existing.owner_id = owner_id
+        existing.owner_name = owner_name
+        existing.due_at = action_item.due_at
+        existing.priority = action_item.priority
+        existing.notes = action_item.notes
+        existing.updated_by_id = actor.id
+        if action_item.status == "completed":
+            existing.status = "done"
+            existing.outcome = existing.outcome or "Opportunity action item completed."
+            existing.completed_at = existing.completed_at or action_item.completed_at or datetime.now(timezone.utc)
+            existing.completed_by_id = existing.completed_by_id or action_item.completed_by_id or actor.id
+        elif existing.status in {"done", "cancelled"}:
+            existing.status = "open"
+            existing.completed_at = None
+            existing.completed_by_id = None
+            existing.skipped_reason = None
+        self.repository.save_task(existing)
+        action_item.future_task_id = existing.id
 
     def _transition_stage(self, opportunity: Opportunity, stage: str, current_user: User, reason: str | None, outcome_reason: str | None) -> OpportunityStageHistory:
         stage_definition = self._ensure_active_stage(stage)

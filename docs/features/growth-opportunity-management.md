@@ -2,7 +2,7 @@
 
 ## Summary
 
-Build opportunity management as a fully functional account and engagement growth workflow. The feature covers opportunity creation, assignment, value/target tracking, board and list pipeline views, stage movement, filtering, totals, soft archive behavior, and timeline-backed history for stage changes, wins, losses, archived records, and decisions.
+Build opportunity management as a fully functional account and engagement growth workflow. The feature covers opportunity creation, assignment, value/target tracking, board and list pipeline views, stage movement, filtering, totals, soft archive behavior, timeline-backed history for stage changes, wins, losses, archived records, decisions, and task-linked opportunity action items.
 
 ## Scope
 
@@ -14,7 +14,8 @@ Build opportunity management as a fully functional account and engagement growth
   - Board view grouped by stage.
   - List view with search, filters, sorting, and pagination.
   - Pipeline totals by stage and value.
-  - Detail dialog with field values, opportunity action items, decisions, history, and future task-linking context.
+  - Detail dialog with field values, opportunity action items, decisions, history, and optional linked task context.
+  - Optional first-class Task creation from opportunity action items using source type `opportunity_action_item`.
   - Soft archive/delete behavior that preserves timeline and source-link integrity.
   - Timeline events for creation, stage changes, wins, losses, archives, and source-linked decisions.
   - Audit events for material opportunity and taxonomy changes.
@@ -22,7 +23,7 @@ Build opportunity management as a fully functional account and engagement growth
 - Out of scope:
   - Full service catalog, whitespace, and adjacency recommendation workflow.
   - Retention/stabilization plan workflow.
-  - First-class Task creation from opportunity next actions/action items.
+  - Automatic task creation from free-text opportunity `next_step` without an action item.
   - AI forecasting and stage prediction changes beyond consuming opportunity data.
   - Replacement of pre-sales CRM or sales pipeline tooling.
 
@@ -66,7 +67,7 @@ Build opportunity management as a fully functional account and engagement growth
 5. User moves an opportunity between stages.
 6. System validates the transition and writes before/after timeline and audit records.
 7. If stage is won/lost, user may provide outcome reason; required outcome reasons can be enforced later when configuration exists.
-8. User opens the detail dialog to inspect field values, local action items, stage history, decisions, source-linked timeline entries, and future task linkage.
+8. User opens the detail dialog to inspect field values, action items, linked task state, stage history, decisions, and source-linked timeline entries.
 
 ## Detailed User Flows By Breakdown Task
 
@@ -127,11 +128,11 @@ Build opportunity management as a fully functional account and engagement growth
 #### Track Next Actions
 
 1. KAM enters a next step while creating or editing the opportunity.
-2. KAM may add one or more opportunity-local action items with title, owner, owner email, due date, status, and notes.
+2. KAM may add one or more opportunity action items with title, owner, owner email, due date, status, notes, and a create-task checkbox.
 3. Backend stores `next_step` as execution context and stores action items under the opportunity.
-4. UI displays the next step in the card/detail/list and action items in the detail dialog.
-5. Action items remain opportunity-local for now.
-6. This feature does not create first-class Tasks from next steps/action items; future Task work can convert or link these records using `opportunity_id`, owner, due date, and source route.
+4. When `create_task` is true, backend creates or updates a linked first-class Task with source type `opportunity_action_item`, source record ID set to the action item ID, and `future_task_id` stored on the action item.
+5. UI displays the next step in the card/detail/list and action items in the detail dialog, including whether a task is linked.
+6. Completing the linked Task marks the source opportunity action item as completed.
 
 ### 10.2 Opportunity Pipeline Tracking
 
@@ -231,21 +232,22 @@ Build opportunity management as a fully functional account and engagement growth
    - Editable fields for users with update permission.
    - Stage history with before/after values.
    - Win/loss outcome reason where present.
-   - Opportunity action items.
+   - Opportunity action items and linked task state.
    - Decision history.
    - Source-linked timeline references.
-   - Future linked-task section or placeholder.
+   - Linked-task indicator where an action item created a Task.
 4. User can edit, change stage, add decision, or close the dialog.
 5. Detail save sends field edits and stage changes through a single backend update so the user does not get a partial stage move when another field fails validation.
 6. Dialog supports archive confirmation, restore for archived records, inline side-panel errors, and expandable stage history.
 7. Dialog refreshes the parent board/list after successful changes.
 
-#### Future Task Linking Readiness
+#### Task-Linked Action Items
 
-1. Opportunity records keep `next_step`, opportunity-local action items, `target_date`, `owner_id`, and stable source route fields so future Tasks can link back to the opportunity.
-2. Detail dialog can show a linked-task section once the Task feature exists.
-3. This feature should not create or manage first-class tasks directly.
-4. Future Task implementation should convert or attach tasks to opportunities through an opportunity source reference or `opportunity_id`, then surface them in this dialog.
+1. Opportunity records keep `next_step`, action items, `target_date`, `owner_id`, and stable source route fields.
+2. Users can choose whether each new action item creates a first-class Task.
+3. Linked Tasks use source type `opportunity_action_item` so the Tasks module can filter and badge them separately from manual and governance tasks.
+4. The opportunity action item stores the linked task ID in `future_task_id`.
+5. Completing the linked Task updates the opportunity action item to `completed`, setting completion metadata from the task actor/time.
 
 ## Affected Surfaces And Current Design Inventory
 
@@ -392,7 +394,7 @@ The goal is to make opportunities complete without taking ownership of adjacent 
 - Key columns:
   - Opportunities: account, optional engagement, type, service line, owner, name, value, currency, stage, next step, target date, source context, outcome reason, status metadata, archive metadata, created/updated fields.
   - Stage history: before stage, after stage, actor, reason, decision metadata, timestamp, timeline entry.
-  - Action items: opportunity, title, owner, owner email, due date, status, notes, completion metadata, future task link placeholder, created/updated fields.
+  - Action items: opportunity, title, owner, owner email, due date, status, notes, completion metadata, optional linked task ID, created/updated fields.
   - Types/stages: slug, name, active state, display order, configuration flags.
 - Migrations:
   - Current local setup uses `Base.metadata.create_all`; add model tables and any needed schema sync only for legacy compatibility.
@@ -477,7 +479,7 @@ The goal is to make opportunities complete without taking ownership of adjacent 
   - `docker compose run --rm --no-deps frontend npm run build`
   - `docker compose run --rm --no-deps frontend npm run test`
 - Known code smells or tradeoffs:
-  - Opportunity action items are intentionally local to opportunities until the Task feature owns first-class task conversion/linking.
+  - Free-text opportunity `next_step` remains execution context only; task creation is available from structured action items.
   - Demo opportunity records are seeded only for fresh non-SQLite local databases with no existing accounts/opportunities so existing customer-like local data is not polluted.
 
 ## Resolved Product Decisions
@@ -488,8 +490,8 @@ The goal is to make opportunities complete without taking ownership of adjacent 
 - Opportunity delete behavior is soft archive because PRD/user-story language protects timeline history and source-link continuity.
 - Outcome reason follows PRD wording of "where configured"; it is optional now because admin outcome-reason configuration is not part of this feature.
 - Opportunity detail should be implemented as a dialog/modal.
-- Opportunity action items are local records now and should be future-ready for conversion/linking to first-class Tasks.
-- First-class task creation/management belongs to the separate Task feature.
+- Opportunity action items can optionally create linked first-class Tasks with source type `opportunity_action_item`.
+- First-class task execution remains owned by the Tasks module; opportunity action items only create and sync the linked task.
 
 ## Open Questions
 

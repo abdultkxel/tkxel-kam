@@ -49,8 +49,12 @@ export interface SavedAccountFilter {
 export interface Account {
   id: string
   name: string
+  recordType?: 'account' | 'onboarding_draft'
+  draftStatus?: 'ready_for_review' | 'approved' | 'rejected' | 'linked'
+  detailPath?: string
   projectName?: string
   companyUrl?: string
+  linkedinUrl?: string
   segment: 'Strategic' | 'Enterprise' | 'Growth'
   tags: string[]
   ownerId: string

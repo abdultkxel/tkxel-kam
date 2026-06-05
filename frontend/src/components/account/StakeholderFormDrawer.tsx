@@ -10,7 +10,6 @@ import type {
   Stakeholder,
   StakeholderCreatePayload,
   StakeholderInfluence,
-  StakeholderPoliticalRisk,
   StakeholderRelationshipStrength,
   StakeholderRole,
   StakeholderSentiment,
@@ -27,13 +26,13 @@ type StakeholderFormField =
   | 'company'
   | 'email'
   | 'phone'
+  | 'linkedinUrl'
   | 'engagementId'
   | 'reportsToStakeholderId'
   | 'role'
   | 'influence'
   | 'relationshipStrength'
   | 'sentiment'
-  | 'politicalRisk'
   | 'status'
   | 'notes'
   | 'lastInteractionAt'
@@ -44,13 +43,13 @@ interface StakeholderFormState {
   company: string
   email: string
   phone: string
+  linkedinUrl: string
   engagementId: string
   reportsToStakeholderId: string
   role: StakeholderRole
   influence: StakeholderInfluence
   relationshipStrength: StakeholderRelationshipStrength
   sentiment: StakeholderSentiment
-  politicalRisk: StakeholderPoliticalRisk
   status: StakeholderStatus
   notes: string
   lastInteractionAt: string
@@ -70,14 +69,13 @@ const stakeholderRoles: StakeholderRole[] = ['executive_sponsor', 'economic_buye
 const influenceOptions: StakeholderInfluence[] = ['low', 'medium', 'high', 'critical']
 const relationshipOptions: StakeholderRelationshipStrength[] = ['unknown', 'weak', 'developing', 'strong', 'champion']
 const sentimentOptions: StakeholderSentiment[] = ['negative', 'neutral', 'positive', 'champion']
-const politicalRiskOptions: StakeholderPoliticalRisk[] = ['unknown', 'low', 'medium', 'high']
 const statusOptions: StakeholderStatus[] = ['active', 'inactive', 'left_company', 'do_not_contact']
 
 const fieldAliases = {
   engagement_id: 'engagementId',
   reports_to_stakeholder_id: 'reportsToStakeholderId',
+  linkedin_url: 'linkedinUrl',
   relationship_strength: 'relationshipStrength',
-  political_risk: 'politicalRisk',
   last_interaction_at: 'lastInteractionAt',
   is_sensitive: 'isSensitive',
 }
@@ -167,6 +165,7 @@ export function StakeholderFormDrawer({ account, stakeholder, stakeholders, open
                     <TextField label="Company" field="company" value={form.company} error={fieldErrors.company} onChange={updateField} />
                     <TextField label="Email" field="email" type="email" value={form.email} error={fieldErrors.email} onChange={updateField} />
                     <TextField label="Phone" field="phone" value={form.phone} error={fieldErrors.phone} onChange={updateField} />
+                    <TextField label="LinkedIn URL" field="linkedinUrl" type="url" value={form.linkedinUrl} error={fieldErrors.linkedinUrl} onChange={updateField} placeholder="https://www.linkedin.com/in/contact" />
                     <label className="block">
                       <span className="tk-label">Engagement</span>
                       <select className={fieldClass(fieldErrors.engagementId)} value={form.engagementId} onChange={event => updateField('engagementId', event.target.value)} aria-invalid={Boolean(fieldErrors.engagementId)}>
@@ -185,7 +184,6 @@ export function StakeholderFormDrawer({ account, stakeholder, stakeholders, open
                     <SelectField label="Influence" field="influence" value={form.influence} options={influenceOptions} error={fieldErrors.influence} onChange={updateField} />
                     <SelectField label="Relationship" field="relationshipStrength" value={form.relationshipStrength} options={relationshipOptions} error={fieldErrors.relationshipStrength} onChange={updateField} />
                     <SelectField label="Sentiment" field="sentiment" value={form.sentiment} options={sentimentOptions} error={fieldErrors.sentiment} onChange={updateField} />
-                    <SelectField label="Political risk" field="politicalRisk" value={form.politicalRisk} options={politicalRiskOptions} error={fieldErrors.politicalRisk} onChange={updateField} />
                     <SelectField label="Status" field="status" value={form.status} options={statusOptions} error={fieldErrors.status} onChange={updateField} />
                     <TextField label="Last interaction" field="lastInteractionAt" type="datetime-local" value={form.lastInteractionAt} error={fieldErrors.lastInteractionAt} onChange={updateField} />
                   </section>
@@ -205,7 +203,7 @@ export function StakeholderFormDrawer({ account, stakeholder, stakeholders, open
                       <UserRound className="h-4 w-4 text-brand-blue" />
                       <h3 className="text-sm font-semibold text-ink">Stakeholder profile</h3>
                     </div>
-                    <p className="mt-3 text-sm leading-6 text-ink-secondary">Role, influence, relationship, sentiment, and risk values power coverage gaps and org chart views.</p>
+                    <p className="mt-3 text-sm leading-6 text-ink-secondary">Role, influence, relationship, and sentiment values power coverage gaps and org chart views.</p>
                   </div>
 
                   <label className="flex cursor-pointer items-start gap-3 rounded-lg border border-surface-border bg-white p-4">
@@ -316,13 +314,13 @@ function initialForm(stakeholder?: Stakeholder | null): StakeholderFormState {
     company: stakeholder?.company ?? '',
     email: stakeholder?.email ?? '',
     phone: stakeholder?.phone ?? '',
+    linkedinUrl: stakeholder?.linkedinUrl ?? '',
     engagementId: stakeholder?.engagementId ?? '',
     reportsToStakeholderId: stakeholder?.reportsToStakeholderId ?? '',
     role: normalizeRole(stakeholder?.role) ?? 'operational_poc',
     influence: normalizeInfluence(stakeholder?.influence) ?? 'medium',
     relationshipStrength: normalizeRelationship(stakeholder?.relationshipStrength) ?? 'developing',
     sentiment: normalizeSentiment(stakeholder?.sentiment) ?? 'neutral',
-    politicalRisk: normalizePoliticalRisk(stakeholder?.politicalRisk) ?? 'low',
     status: normalizeStatus(stakeholder?.status) ?? 'active',
     notes: stakeholder?.notes ?? '',
     lastInteractionAt: toDateTimeInput(stakeholder?.lastInteractionAt),
@@ -335,6 +333,7 @@ function validateForm(form: StakeholderFormState) {
   if (!form.name.trim()) fieldErrors.name = 'Name is required'
   if (!form.role) fieldErrors.role = 'Role is required'
   if (form.email.trim() && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.email.trim())) fieldErrors.email = 'Enter a valid email address'
+  if (form.linkedinUrl.trim() && !isLinkedinUrl(form.linkedinUrl)) fieldErrors.linkedinUrl = 'Enter a valid LinkedIn URL'
   return { fieldErrors, formError: '' }
 }
 
@@ -345,13 +344,13 @@ function buildPayload(form: StakeholderFormState) {
     company: emptyToNull(form.company),
     email: emptyToNull(form.email),
     phone: emptyToNull(form.phone),
+    linkedinUrl: form.linkedinUrl.trim() ? normalizeLinkedinUrl(form.linkedinUrl) : null,
     engagementId: emptyToNull(form.engagementId),
     reportsToStakeholderId: emptyToNull(form.reportsToStakeholderId),
     role: form.role,
     influence: form.influence,
     relationshipStrength: form.relationshipStrength,
     sentiment: form.sentiment,
-    politicalRisk: form.politicalRisk,
     status: form.status,
     notes: emptyToNull(form.notes),
     lastInteractionAt: form.lastInteractionAt ? new Date(form.lastInteractionAt).toISOString() : null,
@@ -362,6 +361,21 @@ function buildPayload(form: StakeholderFormState) {
 function emptyToNull(value: string) {
   const trimmed = value.trim()
   return trimmed ? trimmed : null
+}
+
+function normalizeLinkedinUrl(value: string) {
+  const trimmed = value.trim()
+  if (!trimmed) return ''
+  return /^https?:\/\//i.test(trimmed) ? trimmed : `https://${trimmed}`
+}
+
+function isLinkedinUrl(value: string) {
+  try {
+    const host = new URL(normalizeLinkedinUrl(value)).hostname.toLowerCase()
+    return host === 'linkedin.com' || host.endsWith('.linkedin.com')
+  } catch {
+    return false
+  }
 }
 
 function toDateTimeInput(value?: string | null) {
@@ -393,10 +407,6 @@ function normalizeRelationship(value?: string): StakeholderRelationshipStrength 
 
 function normalizeSentiment(value?: string): StakeholderSentiment | undefined {
   return sentimentOptions.find(option => option === value)
-}
-
-function normalizePoliticalRisk(value?: string): StakeholderPoliticalRisk | undefined {
-  return politicalRiskOptions.find(option => option === value)
 }
 
 function normalizeStatus(value?: string): StakeholderStatus | undefined {

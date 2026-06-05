@@ -34,6 +34,7 @@ from app.schemas import (
     OnboardingDraftRead,
     OnboardingDraftRejectRequest,
     OnboardingDraftUpdateRequest,
+    UserRead,
 )
 from app.services.account_access import AccountAccessService
 from app.services.accounts import AccountService
@@ -43,6 +44,10 @@ from app.services.engagements import calculate_notice_deadline
 from app.services.engagement_health_rollup import notify_account_health_impacted_by_engagement_change
 from app.services.timeline import TimelineService
 from app.services.user_management import page_count
+
+
+PRIMARY_ACCOUNT_MANAGER_ROLES = {"account_manager", "am"}
+ONBOARDING_GLOBAL_VIEW_ROLES = {"super_admin", "admin", "kam_head"}
 
 
 class OnboardingService:
@@ -74,6 +79,7 @@ class OnboardingService:
         page_size: int = 10,
     ) -> OnboardingDraftPageRead:
         self.access.require_module_permission(current_user, "account_onboarding_workspace", "view")
+        visibility = self._draft_visibility_filter(current_user)
         items, total = self.onboarding.list_drafts(
             search=search,
             status_filter=status_filter,
@@ -82,6 +88,8 @@ class OnboardingService:
             region=region,
             uploader=uploader,
             owner=owner,
+            visible_to_user_id=visibility[0],
+            visible_to_user_email=visibility[1],
             created_from=created_from,
             created_to=created_to,
             sort=sort,
@@ -98,12 +106,19 @@ class OnboardingService:
 
     def get_draft(self, draft_id: str, current_user: User) -> OnboardingDraftRead:
         self.access.require_module_permission(current_user, "account_onboarding_workspace", "view")
-        return OnboardingDraftRead.model_validate(self._get_draft_or_404(draft_id))
+        draft = self._get_draft_or_404(draft_id)
+        self._ensure_draft_visible(draft, current_user)
+        return OnboardingDraftRead.model_validate(draft)
+
+    def list_account_manager_candidates(self, current_user: User) -> list[UserRead]:
+        self.access.require_module_permission(current_user, "account_onboarding_workspace", "create")
+        return [UserRead.model_validate(user) for user in self.accounts.list_active_users_by_roles(PRIMARY_ACCOUNT_MANAGER_ROLES)]
 
     def create_draft(self, payload: OnboardingDraftCreateRequest, current_user: User) -> OnboardingDraftRead:
         self.access.require_module_permission(current_user, "account_onboarding_workspace", "create")
         duplicate = self.accounts.find_duplicate_by_name(payload.account_name)
-        primary_owner = self._resolve_owner_from_payload(payload)
+        primary_owner = self._resolve_owner_from_payload(payload, current_user)
+        self._ensure_owner_selection_allowed(current_user, primary_owner)
         conflicts = list(payload.conflicts)
         if duplicate:
             conflicts.append(f"Possible duplicate account: {duplicate.name}")
@@ -112,6 +127,7 @@ class OnboardingService:
             account_name=payload.account_name,
             project_name=payload.project_name,
             company_url=payload.company_url,
+            linkedin_url=payload.linkedin_url,
             lifecycle_status=payload.lifecycle_status,
             segment=payload.segment,
             region=payload.region,
@@ -149,15 +165,26 @@ class OnboardingService:
     def update_draft(self, draft_id: str, payload: OnboardingDraftUpdateRequest, current_user: User) -> OnboardingDraftRead:
         draft = self._get_draft_or_404(draft_id)
         self.access.require_module_permission(current_user, "account_onboarding_workspace", "update")
+        self._ensure_draft_visible(draft, current_user)
         self._ensure_open_draft(draft)
         before = self._draft_audit_value(draft)
         updates = payload.model_dump(exclude_unset=True)
+        if "primary_owner_id" in updates or "primary_owner_email" in updates:
+            owner = self._resolve_owner_from_values(
+                updates.get("primary_owner_id"),
+                updates.get("primary_owner_email"),
+            )
+            self._ensure_owner_selection_allowed(current_user, owner, draft)
+            if owner:
+                updates["primary_owner_id"] = owner.id
+                updates["primary_owner_name"] = owner.full_name
+                updates["primary_owner_email"] = owner.email
+            else:
+                updates["primary_owner_id"] = None
+                updates["primary_owner_name"] = None
+                updates["primary_owner_email"] = None
         for field, value in updates.items():
             setattr(draft, field, value)
-        if payload.primary_owner_id:
-            owner = self._get_active_user(payload.primary_owner_id)
-            draft.primary_owner_name = owner.full_name
-            draft.primary_owner_email = owner.email
         self.audit.log(
             module="account_onboarding_workspace",
             action="draft_update",
@@ -182,6 +209,7 @@ class OnboardingService:
             name=draft.account_name,
             project_name=draft.project_name,
             company_url=draft.company_url,
+            linkedin_url=draft.linkedin_url,
             segment=draft.segment,
             region=draft.region,
             lifecycle_status=self._official_lifecycle_for_draft(draft.lifecycle_status),
@@ -390,6 +418,7 @@ class OnboardingService:
                 "account_name": account_name or "",
                 "project_name": project_name,
                 "company_url": self._clean(row.company_url),
+                "linkedin_url": self._clean(row.linkedin_url),
                 "lifecycle_status": lifecycle_status,
                 "segment": self._clean(row.segment) or "Growth",
                 "region": self._clean(row.region) or "Global",
@@ -449,6 +478,7 @@ class OnboardingService:
         account.name = draft.account_name
         account.project_name = draft.project_name
         account.company_url = draft.company_url
+        account.linkedin_url = draft.linkedin_url
         account.segment = draft.segment
         account.region = draft.region
         account.lifecycle_status = self._official_lifecycle_for_draft(draft.lifecycle_status)
@@ -597,6 +627,8 @@ class OnboardingService:
 
     @staticmethod
     def _engagement_approval_errors(draft: OnboardingDraft) -> list[dict[str, str]]:
+        if not draft.engagement_drafts:
+            return [{"field": "engagement_drafts", "message": "At least one engagement is required before approval."}]
         errors: list[dict[str, str]] = []
         for index, engagement in enumerate(draft.engagement_drafts):
             prefix = f"engagement_drafts.{index}"
@@ -609,28 +641,34 @@ class OnboardingService:
             errors.extend({"field": f"{prefix}.{field}", "message": message} for field, passed, message in required_checks if not passed)
         return errors
 
-    def _resolve_owner_from_payload(self, payload: OnboardingDraftCreateRequest) -> User | None:
-        if payload.primary_owner_id:
-            return self._get_active_user(payload.primary_owner_id)
-        if payload.primary_owner_email:
-            user = self.accounts.get_user_by_email(str(payload.primary_owner_email))
-            return user if user and user.is_active else None
+    def _resolve_owner_from_payload(self, payload: OnboardingDraftCreateRequest, current_user: User) -> User | None:
+        owner = self._resolve_owner_from_values(payload.primary_owner_id, str(payload.primary_owner_email) if payload.primary_owner_email else None)
+        if owner:
+            return owner
+        if self._is_primary_am_eligible(current_user):
+            return current_user
         return None
 
     def _resolve_primary_owner_for_approval(self, draft: OnboardingDraft, current_user: User) -> User:
-        candidates = [
-            self._get_user_if_active(draft.primary_owner_id),
-            self.accounts.get_user_by_email(draft.primary_owner_email) if draft.primary_owner_email else None,
-            self.accounts.get_first_active_user_by_role("account_manager"),
-            current_user if current_user.is_active and self._is_primary_am_eligible(current_user) else None,
-        ]
-        owner = next((candidate for candidate in candidates if candidate and self._is_primary_am_eligible(candidate)), None)
+        owner = self._resolve_owner_from_values(draft.primary_owner_id, draft.primary_owner_email)
         if owner is None:
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="An active primary Account Manager is required before approval")
+            self._raise_owner_validation("Assign an account manager before approving this draft.")
         draft.primary_owner_id = owner.id
         draft.primary_owner_name = owner.full_name
         draft.primary_owner_email = owner.email
         return owner
+
+    def _resolve_owner_from_values(self, owner_id: str | None, owner_email: str | None) -> User | None:
+        if owner_id:
+            return self._get_active_account_manager(owner_id, "primary_owner_id")
+        if owner_email:
+            user = self.accounts.get_user_by_email(owner_email)
+            if user is None or not user.is_active:
+                self._raise_owner_validation("Selected account manager is inactive or does not exist.", "primary_owner_email")
+            if not self._is_primary_am_eligible(user):
+                self._raise_owner_validation("Selected owner must be an Account Manager.", "primary_owner_email")
+            return user
+        return None
 
     def _get_user_if_active(self, user_id: str | None) -> User | None:
         if not user_id:
@@ -638,15 +676,54 @@ class OnboardingService:
         user = self.accounts.get_user(user_id)
         return user if user and user.is_active else None
 
-    def _get_active_user(self, user_id: str) -> User:
+    def _get_active_account_manager(self, user_id: str, field: str = "primary_owner_id") -> User:
         user = self._get_user_if_active(user_id)
         if user is None:
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Selected owner is inactive or does not exist")
+            self._raise_owner_validation("Selected account manager is inactive or does not exist.", field)
+        if not self._is_primary_am_eligible(user):
+            self._raise_owner_validation("Selected owner must be an Account Manager.", field)
         return user
 
     @staticmethod
     def _is_primary_am_eligible(user: User) -> bool:
-        return user.role in {"account_manager", "am", "kam_head", "admin", "super_admin"}
+        return user.role in PRIMARY_ACCOUNT_MANAGER_ROLES
+
+    @staticmethod
+    def _raise_owner_validation(message: str, field: str = "primary_owner_id") -> None:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={"message": "Validation failed", "errors": [{"field": field, "message": message}]},
+        )
+
+    @staticmethod
+    def _draft_visibility_filter(current_user: User) -> tuple[str | None, str | None]:
+        if current_user.role in ONBOARDING_GLOBAL_VIEW_ROLES:
+            return None, None
+        return current_user.id, current_user.email
+
+    def _ensure_draft_visible(self, draft: OnboardingDraft, current_user: User) -> None:
+        if current_user.role in ONBOARDING_GLOBAL_VIEW_ROLES:
+            return
+        if draft.created_by_id == current_user.id:
+            return
+        if draft.primary_owner_id == current_user.id:
+            return
+        if draft.primary_owner_email and draft.primary_owner_email.strip().lower() == current_user.email.strip().lower():
+            return
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="You do not have access to this onboarding draft")
+
+    def _ensure_owner_selection_allowed(self, current_user: User, owner: User | None, draft: OnboardingDraft | None = None) -> None:
+        if owner is None:
+            if self.access.rbac.role_has_permission(current_user.role, "account_onboarding_workspace", "assign") and current_user.role in ONBOARDING_GLOBAL_VIEW_ROLES:
+                return
+            if draft is None:
+                return
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Only Admin or KAM Head can clear account manager assignment")
+        if self.access.rbac.role_has_permission(current_user.role, "account_onboarding_workspace", "assign") and current_user.role in ONBOARDING_GLOBAL_VIEW_ROLES:
+            return
+        if self._is_primary_am_eligible(current_user) and owner.id == current_user.id and (draft is None or draft.created_by_id == current_user.id):
+            return
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Only Admin or KAM Head can assign onboarding drafts to other account managers")
 
     def _add_source_documents(self, draft: OnboardingDraft, source_documents, current_user: User) -> None:
         for document_payload in source_documents:

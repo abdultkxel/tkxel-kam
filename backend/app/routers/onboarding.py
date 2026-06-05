@@ -12,6 +12,7 @@ from app.schemas import (
     OnboardingDraftRead,
     OnboardingDraftRejectRequest,
     OnboardingDraftUpdateRequest,
+    UserRead,
 )
 from app.services.onboarding import OnboardingService
 
@@ -19,6 +20,27 @@ DraftStatusFilter = Literal["ready_for_review", "approved", "rejected", "linked"
 DraftSort = Literal["newest", "oldest", "account_name", "extraction_status"]
 
 router = APIRouter(prefix="/api/onboarding", tags=["Account Onboarding"])
+
+
+@router.get(
+    "/account-managers",
+    response_model=list[UserRead],
+    summary="List account manager assignment candidates",
+    description=(
+        "Returns active Account Manager/KAM users that can be assigned as the primary owner of an onboarding draft. "
+        "Used by manual and upload-based intake before draft approval."
+    ),
+    response_description="Active account managers available for onboarding draft assignment.",
+    responses={
+        401: {"description": "Missing, invalid, or expired bearer token."},
+        403: {"description": "Authenticated user cannot create onboarding drafts."},
+    },
+)
+def list_account_managers(
+    current_user: Annotated[User, Depends(get_current_user)],
+    service: Annotated[OnboardingService, Depends(get_onboarding_service)],
+) -> list[UserRead]:
+    return service.list_account_manager_candidates(current_user)
 
 
 @router.get(

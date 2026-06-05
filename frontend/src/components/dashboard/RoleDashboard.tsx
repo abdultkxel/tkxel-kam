@@ -184,8 +184,6 @@ export function RoleDashboard({
               widgetByKey.get('high_risk_accounts'),
               widgetByKey.get('signals'),
               taskPanel?.key === 'tasks' ? undefined : widgetByKey.get('tasks'),
-              widgetByKey.get('stale_kyc'),
-              widgetByKey.get('renewal_focus'),
               widgetByKey.get('escalations') ?? widgetByKey.get('major_escalations'),
               widgetByKey.get('am_workload'),
               widgetByKey.get('engagement_health'),
@@ -304,14 +302,14 @@ function MetricGrid({ summary }: { summary?: DashboardWidget }) {
       key: getString(tile.key) || getString(tile.label),
       label: getString(tile.label) || labelize(getString(tile.key)),
       value: tile.value,
-      route: getString(tile.route),
+      route: getString(tile.route) || dashboardMetricRoute(getString(tile.key) || getString(tile.label)),
       detail: getString(tile.detail),
     }))
     : Object.entries(value).slice(0, 4).map(([key, item]) => ({
       key,
       label: labelize(key),
       value: item,
-      route: '',
+      route: dashboardMetricRoute(key),
       detail: metricDetail(key, item),
     }))
   if (!metrics.length) return null
@@ -379,7 +377,7 @@ function TaskSummaryPanel({ widget, refreshing, canRefresh, onRefresh }: { widge
           <p className="mt-2 max-w-3xl text-sm leading-6 text-ink-secondary">{String(value.narrative ?? '')}</p>
         </div>
         <div className="grid min-w-0 grid-cols-2 gap-2 rounded-lg border border-surface-border bg-surface-secondary p-2 sm:grid-cols-4 2xl:grid-cols-2">
-          {Object.entries(sourceCounts).map(([key, count]) => <MiniMetric key={key} label={key} value={count} />)}
+          {Object.entries(sourceCounts).map(([key, count]) => <MiniMetric key={key} label={key} value={count} route={dashboardMetricRoute(key)} />)}
           {canRefresh ? (
             <button className="tk-button-secondary col-span-2 min-h-[44px] sm:col-span-4 2xl:col-span-2" type="button" onClick={onRefresh} disabled={refreshing}>
               <RefreshCw className={refreshing ? 'h-4 w-4 animate-spin' : 'h-4 w-4'} />
@@ -411,10 +409,10 @@ function TaskSummaryPanel({ widget, refreshing, canRefresh, onRefresh }: { widge
 function TaskBreakdownPanel({ widget }: { widget: DashboardWidget }) {
   const value = isRecord(widget.value) ? widget.value : {}
   const cards = [
-    { key: 'open', label: 'Open', value: value.open, detail: `across ${formatValue(value.accounts_with_open_tasks)} accounts`, tone: 'text-ink' },
-    { key: 'in_progress', label: 'In progress', value: value.in_progress, detail: 'assigned to me', tone: 'text-brand-blue' },
-    { key: 'overdue', label: 'Overdue', value: value.overdue, detail: 'needs action today', tone: 'text-rag-red' },
-    { key: 'due_this_week', label: 'Due this week', value: value.due_this_week, detail: 'across all accounts', tone: 'text-brand-orange' },
+    { key: 'open', label: 'Open', value: value.open, detail: `across ${formatValue(value.accounts_with_open_tasks)} accounts`, tone: 'text-ink', route: '/tasks?status=open' },
+    { key: 'in_progress', label: 'In progress', value: value.in_progress, detail: 'assigned to me', tone: 'text-brand-blue', route: '/tasks?status=in_progress&my_items=true' },
+    { key: 'overdue', label: 'Overdue', value: value.overdue, detail: 'needs action today', tone: 'text-rag-red', route: '/tasks?due=overdue' },
+    { key: 'due_this_week', label: 'Due this week', value: value.due_this_week, detail: 'across all accounts', tone: 'text-brand-orange', route: '/tasks?due=next7' },
   ]
 
   return (
@@ -434,11 +432,11 @@ function TaskBreakdownPanel({ widget }: { widget: DashboardWidget }) {
 
       <div className="mt-5 grid gap-3 md:grid-cols-2">
         {cards.map(card => (
-          <div key={card.key} className="rounded-lg bg-surface-secondary p-5">
+          <Link key={card.key} to={card.route} className="rounded-lg bg-surface-secondary p-5 transition hover:-translate-y-0.5 hover:bg-blue-tint-20/60 hover:shadow-sm">
             <p className="text-xs font-semibold uppercase tracking-wider text-ink-secondary">{card.label}</p>
             <p className={cn('mt-4 font-display text-4xl font-bold leading-none', card.tone)}>{formatValue(card.value)}</p>
             <p className="mt-3 text-sm font-medium text-ink-secondary">{card.detail}</p>
-          </div>
+          </Link>
         ))}
       </div>
 
@@ -462,11 +460,20 @@ function TaskBreakdownPanel({ widget }: { widget: DashboardWidget }) {
   )
 }
 
-function MiniMetric({ label, value }: { label: string; value: unknown }) {
-  return (
-    <div className="min-w-0 rounded-md bg-white p-3">
+function MiniMetric({ label, value, route }: { label: string; value: unknown; route?: string }) {
+  const content = (
+    <>
       <p className="truncate text-[10px] font-semibold uppercase tracking-wider text-ink-secondary" title={label}>{labelize(label)}</p>
       <p className="mt-1 font-display text-2xl font-bold leading-none text-ink">{formatValue(value)}</p>
+    </>
+  )
+  return route ? (
+    <Link to={route} className="min-w-0 rounded-md bg-white p-3 transition hover:-translate-y-0.5 hover:bg-blue-tint-20/60 hover:shadow-sm">
+      {content}
+    </Link>
+  ) : (
+    <div className="min-w-0 rounded-md bg-white p-3">
+      {content}
     </div>
   )
 }
@@ -477,6 +484,9 @@ function PipelinePanel({ widget }: { widget: DashboardWidget }) {
   const max = Math.max(1, ...series.map(item => Number(item.value) || 0))
   const masked = Boolean(widget.metadata.masked)
   const stalledDays = Number(widget.metadata.stalled_after_days) || 90
+  const referenceLayout = widget.data_scope === 'assigned_accounts'
+  const openRoute = '/opportunities?openOnly=true'
+  const stalledRoute = '/opportunities?stalled=true'
 
   return (
     <section className="tk-card overflow-hidden p-5">
@@ -494,19 +504,19 @@ function PipelinePanel({ widget }: { widget: DashboardWidget }) {
       </div>
 
       <div className="mt-5 grid gap-3 lg:grid-cols-3">
-        <div className="rounded-lg bg-surface-secondary p-5">
+        <Link to={openRoute} className="rounded-lg bg-surface-secondary p-5 transition hover:-translate-y-0.5 hover:bg-rag-green/10 hover:shadow-sm">
           <p className="text-xs font-semibold uppercase tracking-wider text-ink-secondary">Open opps</p>
           <p className="mt-4 font-display text-4xl font-bold leading-none text-rag-green">{formatValue(value.open_opportunities)}</p>
-        </div>
-        <div className="rounded-lg bg-surface-secondary p-5">
+        </Link>
+        <Link to={openRoute} className="rounded-lg bg-surface-secondary p-5 transition hover:-translate-y-0.5 hover:bg-blue-tint-20/60 hover:shadow-sm">
           <p className="text-xs font-semibold uppercase tracking-wider text-ink-secondary">Total value</p>
           <p className="mt-4 font-display text-4xl font-bold leading-none text-ink">{formatValue(value.pipeline_value, 'pipeline_value')}</p>
-        </div>
-        <div className="rounded-lg bg-surface-secondary p-5">
+        </Link>
+        <Link to={stalledRoute} className="rounded-lg bg-surface-secondary p-5 transition hover:-translate-y-0.5 hover:bg-brand-orange/10 hover:shadow-sm">
           <p className="text-xs font-semibold uppercase tracking-wider text-ink-secondary">Stalled</p>
           <p className="mt-4 font-display text-4xl font-bold leading-none text-brand-orange">{formatValue(value.stalled)}</p>
           <p className="mt-3 text-sm font-medium text-ink-secondary">&gt;{stalledDays} days no move</p>
-        </div>
+        </Link>
       </div>
 
       <div className="mt-5 divide-y divide-surface-border border-y border-surface-border">
@@ -520,6 +530,7 @@ function PipelinePanel({ widget }: { widget: DashboardWidget }) {
         </div>
       </div>
 
+      {referenceLayout ? null : (
       <div className="mt-5 grid gap-5 xl:grid-cols-[minmax(0,0.95fr)_minmax(0,1.05fr)]">
         <div>
           <p className="text-xs font-semibold uppercase tracking-wider text-ink-secondary">Pipeline by stage</p>
@@ -546,6 +557,7 @@ function PipelinePanel({ widget }: { widget: DashboardWidget }) {
           </div>
         </div>
       </div>
+      )}
     </section>
   )
 }
@@ -995,6 +1007,20 @@ function staggerClass(index: number) {
 
 function metricFormatter(key: string) {
   return key.includes('value') || key.includes('revenue') || key.includes('pipeline') ? formatCompactCurrency : undefined
+}
+
+function dashboardMetricRoute(key: string) {
+  const normalized = key.toLowerCase().replace(/\s+/g, '_')
+  if (['my_accounts', 'accounts', 'authorized_accounts', 'account_portfolio'].includes(normalized)) return '/accounts'
+  if (normalized.includes('risk') || normalized.includes('critical_accounts')) return '/accounts?risk=critical'
+  if (normalized.includes('escalation')) return '/escalations'
+  if (normalized.includes('governance')) return '/governance'
+  if (normalized.includes('task')) return '/tasks'
+  if (normalized.includes('signal')) return '/tasks'
+  if (normalized.includes('opportunit') || normalized.includes('pipeline') || normalized.includes('forecast')) return '/opportunities?openOnly=true'
+  if (normalized.includes('revenue')) return '/accounts?risk=critical'
+  if (normalized.includes('sla')) return '/reports'
+  return ''
 }
 
 function metricDetail(key: string, value: unknown) {

@@ -2,22 +2,23 @@
 
 ## Summary
 
-Adds a user-owned meeting capture layer for Fathom. Each user can connect a personal Fathom API key, sync their own meeting summaries/action items, manually save meeting notes or links, and use a selected meeting as draft input when completing a governance event.
+Adds a user-owned Fathom meeting layer. Each user connects or disconnects a personal Fathom API key from the Profile Meeting Integrations tab, then enters a specific Fathom recording ID or share URL when a workflow needs meeting details. Governance completion is the first consumer: it fetches one meeting on demand, stores only that private meeting artifact, and uses the returned summary/action items as editable draft input.
 
 ## Scope
 
 - In scope:
   - Personal Fathom connection status and encrypted API-key storage per user.
+  - Profile disconnect action that disables Fathom and removes the stored personal API key.
   - User-owned `meeting_artifacts` with summary, action items, Fathom/source links, optional account linkage, and linked object metadata.
-  - Personal Fathom sync without transcript storage.
-  - Global meeting capture drawer from the app top bar for title/link/account reference capture.
-  - Governance completion prefill from a selected meeting artifact.
+  - On-demand Fathom resolve by recording ID or share URL without broad meeting-list management.
+  - Governance completion prefill from the resolved meeting artifact.
   - Governance completion creates owner-assigned tasks only for selected governance action items.
 - Out of scope:
   - Programmatically adding the Fathom bot to a Zoom/Meet call.
   - Generic task creation from standalone Fathom meetings.
   - Object-specific insert buttons outside governance completion.
   - Full Fathom OAuth.
+  - Global top-bar meeting capture drawer and user-managed synced meeting list.
 
 ## Requirement Links
 
@@ -29,31 +30,32 @@ Adds a user-owned meeting capture layer for Fathom. Each user can connect a pers
 
 ## User Flow
 
-1. User opens Meeting Capture from the top bar.
-2. User saves a personal Fathom API key, or manually saves a meeting title/link/account reference for an in-flight or scheduled meeting.
-3. User syncs Fathom meetings; summaries and action items are stored as private meeting artifacts and shown read-only/copyable in the drawer.
-4. User can copy a meeting summary/action list anywhere in the app.
-5. During governance completion, user selects a meeting, imports its summary/action items, edits the draft, chooses due dates, and saves completion.
+1. User opens Profile, selects Meeting Integrations, and saves a personal Fathom API key.
+2. User can disconnect Fathom from Profile, which disables the connection and clears the stored API key.
+3. During governance completion, user selects Fathom and enters a Fathom recording ID or share URL.
+4. Backend fetches only that specific meeting using the user's personal API key and stores/updates one private meeting artifact.
+5. Governance completion imports the summary/action items as editable draft content.
 6. Selected governance action items create owner-assigned task records; standalone meeting artifacts do not create tasks directly.
 
 ## Backend Plan
 
 - Routers:
-  - `backend/app/routers/meeting_capture.py` exposes personal Fathom connection, sync, meeting list, create, and update routes.
+  - `backend/app/routers/meeting_capture.py` exposes personal Fathom connection, on-demand resolve, and compatibility routes for sync/list/create/update.
   - `backend/app/routers/governance.py` keeps completion route thin while accepting `meeting_artifact_id`.
 - Services:
-  - `backend/app/services/meeting_capture.py` owns personal Fathom sync and meeting artifact behavior.
+  - `backend/app/services/meeting_capture.py` owns personal Fathom resolve and meeting artifact behavior.
   - `backend/app/services/governance.py` owns meeting artifact attachment and governance action task creation.
 - Repositories:
   - `backend/app/repositories/meeting_capture.py` persists user integration connections and meeting artifacts.
   - `backend/app/repositories/governance.py` persists linked tasks through existing task helpers.
 - Schemas/validation:
-  - `UserFathomConnectionUpdateRequest`, `MeetingArtifactCreateRequest`, `MeetingArtifactUpdateRequest`, and `GovernanceEventCompleteRequest`.
+  - `UserFathomConnectionUpdateRequest` supports saving a key and `clear_api_key` disconnects/removes it. `FathomMeetingResolveRequest`, `MeetingArtifactCreateRequest`, `MeetingArtifactUpdateRequest`, and `GovernanceEventCompleteRequest` remain workflow schemas.
 
 ## API Documentation
 
 - Added Swagger summaries, descriptions, response descriptions, and error responses for:
   - `GET/PATCH /api/meeting-capture/fathom/connection`
+  - `POST /api/meeting-capture/fathom/resolve`
   - `POST /api/meeting-capture/fathom/sync`
   - `GET/POST /api/meeting-capture/meetings`
   - `PATCH /api/meeting-capture/meetings/{meeting_id}`
@@ -67,40 +69,43 @@ Adds a user-owned meeting capture layer for Fathom. Each user can connect a pers
 - Migration:
   - `backend/migrations/20260604_fathom_meeting_capture.sql`
 - Transcript policy:
-  - Fathom sync requests `include_transcript=false`.
+  - Fathom resolve/list enrichment requests `include_transcript=false`.
   - If a provider still returns transcript data, the stored metadata keeps only transcript metadata and omits the full transcript.
 
 ## Frontend Plan
 
 - Components:
-  - `frontend/src/components/meeting/MeetingCapturePanel.tsx` captures only meeting reference fields manually and displays synced Fathom output.
-  - `frontend/src/components/governance/CompleteGovernanceEventDialog.tsx`
-  - `frontend/src/components/layout/Topbar.tsx`
+  - `frontend/src/pages/Profile.tsx` stores the personal Fathom API key under Meeting Integrations and displays masked connection status.
+  - `frontend/src/components/governance/CompleteGovernanceEventDialog.tsx` selects Fathom or Fireflies before resolving a meeting artifact.
 - Services:
   - `frontend/src/services/meetingCapture.ts`
   - `frontend/src/services/governance.ts`
 - Form behavior:
   - No native `required` attributes.
   - Backend field errors are displayed beside matching fields where applicable.
-  - Meeting summaries/action items can be copied from the drawer.
+  - Governance completion fetches one provider meeting by ID/URL on demand and never lists all personal meetings.
 
 ## Validation And Errors
 
-- Personal Fathom sync returns a clear 400 when the user has not connected an API key.
+- Personal Fathom resolve returns a clear 400 when the user has not connected an API key.
+- Fathom identifier accepts numeric recording IDs and Fathom HTTP/HTTPS URLs only.
 - Meeting creation requires a title, URL, or summary.
 - Meeting URLs must be valid HTTP/HTTPS URLs.
 - Meeting action items are deduped, capped, and length-limited.
 - Account-linked meeting artifacts validate account access and engagement ownership.
-- Governance completion rejects a selected meeting artifact owned by another user or linked to another account.
+- Governance completion rejects a resolved meeting artifact owned by another user or linked to another account.
 
 ## Tests
 
 - Backend:
   - Personal Fathom connection sync stores private meeting artifacts and omits transcripts.
+  - Fathom resolve by recording ID or share URL stores only the matched private artifact.
   - Other users cannot list another user's meeting artifacts.
   - Governance completion attaches a meeting artifact and creates a task for the governance action item owner.
 - Frontend:
   - Meeting capture service payload mapping.
+  - Profile Fathom key save/status behavior.
+  - Governance completion on-demand Fathom resolve behavior.
   - Governance completion payload mapping for meeting artifact and task flag.
 
 ## Linting And Quality

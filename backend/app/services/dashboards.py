@@ -235,8 +235,6 @@ class DashboardsService:
             self._widget("governance", "Upcoming governance", None, [self._governance_item(item) for item in governance[:page_size]], "portfolio", {"total": len(governance)}, primary_route="/governance"),
             self._governance_calendar_widget(governance, data_scope="portfolio", read_only=False),
             self._widget("health_distribution", "Health distribution", self._health_distribution(accounts), [], "portfolio", primary_route="/accounts"),
-            self._widget("stale_kyc", "Stale KYC", None, self._stale_kyc_items(accounts), "portfolio", primary_route="/accounts"),
-            self._widget("renewal_focus", "Renewal focus", None, [self._opportunity_item(item, mask_value=mask_commercial) for item in opportunities if item.stage.lower() != "won"][:page_size], "portfolio", {"total": len(opportunities), "masked": mask_commercial}, primary_route="/opportunities"),
             self._pipeline_widget(opportunities, data_scope="portfolio", masked=mask_commercial, page=page, page_size=page_size),
             self._widget("am_workload", "AM workload", None, workload, "portfolio", primary_route="/accounts"),
             self._widget("overdue_actions", "Overdue actions", None, [self._task_item(task, now) for task in tasks if self._is_before(task.due_at, now)][:page_size], "portfolio", primary_route="/tasks"),
@@ -381,7 +379,6 @@ class DashboardsService:
             "account_portfolio": "account_overview",
             "high_risk_accounts": "account_overview",
             "health_distribution": "account_overview",
-            "stale_kyc": "kyc",
             "tasks": "playbooks_tasks_calendar",
             "ai_task_summary": "playbooks_tasks_calendar",
             "signals": "signals_attention",
@@ -392,7 +389,6 @@ class DashboardsService:
             "escalations": "escalation_management",
             "major_escalations": "escalation_management",
             "opportunities": "opportunity_management",
-            "renewal_focus": "retention_stability",
             "growth": "opportunity_management",
             "forecast_chart": "analytics_portfolio",
             "revenue_risk": "analytics_portfolio",
@@ -408,6 +404,9 @@ class DashboardsService:
         }
         filtered: list[DashboardWidgetRead] = []
         for widget in widgets:
+            if widget.key == "opportunities" and user.role in AM_ROLES:
+                filtered.append(widget)
+                continue
             if widget.key == "forecast_chart" and user.role in AM_ROLES and self._can(user, "opportunity_management", "view"):
                 filtered.append(widget)
                 continue
@@ -487,7 +486,7 @@ class DashboardsService:
         }
         return self._widget(
             "opportunities",
-            "Opportunities / pipeline",
+            "Opportunities & pipeline" if data_scope == "assigned_accounts" else "Opportunities / pipeline",
             value,
             [self._opportunity_item(item, mask_value=masked) for item in self._slice(opportunities, page, page_size)],
             data_scope,
@@ -757,15 +756,6 @@ class DashboardsService:
             "route": "/admin?tab=integrations",
         }
 
-    def _stale_kyc_items(self, accounts: list) -> list[dict[str, Any]]:
-        items = []
-        for account in accounts:
-            snapshot = self.repository.latest_kyc_snapshot(account.id)
-            if snapshot and snapshot.freshness_status == "fresh":
-                continue
-            items.append({"account_id": account.id, "account": account.name, "account_name": account.name, "freshness_status": snapshot.freshness_status if snapshot else "missing", "approved_at": snapshot.approved_at.isoformat() if snapshot else None, "route": f"/accounts/{account.id}?tab=kyc"})
-        return items[:20]
-
     @staticmethod
     def _health_distribution(accounts: list) -> dict[str, int]:
         result = {"healthy": 0, "warning": 0, "critical": 0}
@@ -785,4 +775,6 @@ class DashboardsService:
     def _mask_commercial_values(self, user: User) -> bool:
         if user.role in LEADERSHIP_ROLES:
             return True
+        if user.role in AM_ROLES and self._can(user, "opportunity_management", "view"):
+            return False
         return not self._can(user, "analytics_portfolio", "view")

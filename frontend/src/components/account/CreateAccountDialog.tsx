@@ -1,49 +1,53 @@
 import * as Dialog from '@radix-ui/react-dialog'
-import { Building2, FileSearch, FileText, Globe2, Loader2, Mail, Plus, Sparkles, Upload, UserRound, X } from 'lucide-react'
+import { Building2, FileSearch, FileText, Globe2, Linkedin, Loader2, Plus, Sparkles, Upload, UserRound, X } from 'lucide-react'
 import { nanoid } from 'nanoid'
 import { FormEvent, forwardRef, useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { toast } from 'sonner'
 import { useAuth } from '@/contexts/AuthContext'
-import { users } from '@/data/mock'
+import { useRole } from '@/hooks/useRole'
 import { ApiError } from '@/services/api'
-import { AccountCustomFieldDefinition, createOnboardingDraft, listAccountCustomFields } from '@/services/accountWorkspace'
+import { AccountCustomFieldDefinition, createOnboardingDraft, listAccountCustomFields, listOnboardingAccountManagers, OnboardingAccountManager } from '@/services/accountWorkspace'
 import { cn } from '@/utils/cn'
 
-type CreateAccountField = 'accountName' | 'projectName' | 'companyUrl' | 'managerName' | 'managerEmail'
+type CreateAccountField = 'accountName' | 'projectName' | 'companyUrl' | 'linkedinUrl' | 'managerId'
 
 export function CreateAccountDialog({ label = 'Create account' }: { label?: string }) {
   const { token } = useAuth()
+  const currentUser = useRole()
   const navigate = useNavigate()
-  const firstAm = users.find(item => item.role === 'am') ?? users[0]
   const [open, setOpen] = useState(false)
   const [accountName, setAccountName] = useState('')
   const [projectName, setProjectName] = useState('')
   const [companyUrl, setCompanyUrl] = useState('')
-  const [managerName, setManagerName] = useState(firstAm.name)
-  const [managerEmail, setManagerEmail] = useState(firstAm.email)
+  const [linkedinUrl, setLinkedinUrl] = useState('')
+  const [managerId, setManagerId] = useState('')
+  const [accountManagers, setAccountManagers] = useState<OnboardingAccountManager[]>([])
   const [errors, setErrors] = useState<Partial<Record<CreateAccountField, string>>>({})
   const [customFields, setCustomFields] = useState<AccountCustomFieldDefinition[]>([])
   const [customValues, setCustomValues] = useState<Record<string, unknown>>({})
   const [customErrors, setCustomErrors] = useState<Record<string, string>>({})
   const [loadingCustomFields, setLoadingCustomFields] = useState(false)
+  const [loadingManagers, setLoadingManagers] = useState(false)
   const [fileNames, setFileNames] = useState<string[]>([])
   const [extracting, setExtracting] = useState(false)
   const [creating, setCreating] = useState(false)
+  const assignableManagers = assignableAccountManagers(accountManagers, currentUser)
+  const selectedManager = assignableManagers.find(manager => manager.id === managerId)
   const refs = {
     accountName: useRef<HTMLInputElement>(null),
     projectName: useRef<HTMLInputElement>(null),
     companyUrl: useRef<HTMLInputElement>(null),
-    managerName: useRef<HTMLInputElement>(null),
-    managerEmail: useRef<HTMLInputElement>(null),
+    linkedinUrl: useRef<HTMLInputElement>(null),
+    managerId: useRef<HTMLSelectElement>(null),
   }
 
   function reset() {
     setAccountName('')
     setProjectName('')
     setCompanyUrl('')
-    setManagerName(firstAm.name)
-    setManagerEmail(firstAm.email)
+    setLinkedinUrl('')
+    setManagerId(defaultAccountManagerId(assignableManagers, currentUser))
     setErrors({})
     setCustomValues({})
     setCustomErrors({})
@@ -61,16 +65,8 @@ export function CreateAccountDialog({ label = 'Create account' }: { label?: stri
     if (field === 'accountName') setAccountName(value)
     if (field === 'projectName') setProjectName(value)
     if (field === 'companyUrl') setCompanyUrl(value)
-    if (field === 'managerName') {
-      setManagerName(value)
-      const matched = users.find(item => item.name.toLowerCase() === value.toLowerCase())
-      if (matched?.email) setManagerEmail(matched.email)
-    }
-    if (field === 'managerEmail') {
-      setManagerEmail(value)
-      const matched = users.find(item => item.email.toLowerCase() === value.toLowerCase())
-      if (matched?.name) setManagerName(matched.name)
-    }
+    if (field === 'linkedinUrl') setLinkedinUrl(value)
+    if (field === 'managerId') setManagerId(value)
     setErrors(current => ({ ...current, [field]: undefined }))
   }
 
@@ -90,9 +86,9 @@ export function CreateAccountDialog({ label = 'Create account' }: { label?: stri
     if (!accountName.trim()) nextErrors.accountName = 'Account name is required'
     if (!projectName.trim()) nextErrors.projectName = 'Project name is required'
     if (!companyUrl.trim()) nextErrors.companyUrl = 'Company URL is required'
-    if (!managerName.trim()) nextErrors.managerName = 'Account manager name is required'
-    if (!managerEmail.trim()) nextErrors.managerEmail = 'Email is required'
-    else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(managerEmail.trim())) nextErrors.managerEmail = 'Enter a valid email'
+    if (!linkedinUrl.trim()) nextErrors.linkedinUrl = 'LinkedIn URL is required'
+    else if (!isLinkedinUrl(linkedinUrl)) nextErrors.linkedinUrl = 'Enter a valid LinkedIn URL'
+    if (!managerId || !selectedManager) nextErrors.managerId = 'Select an account manager'
     for (const field of customFields) {
       const value = customValues[field.field_key]
       if (field.is_required && isEmptyCustomValue(value)) nextCustomErrors[field.field_key] = `${field.label} is required`
@@ -131,14 +127,21 @@ export function CreateAccountDialog({ label = 'Create account' }: { label?: stri
       toast.error('Please log in again before creating an account')
       return
     }
+    if (!selectedManager) {
+      setErrors(current => ({ ...current, managerId: 'Select an account manager' }))
+      refs.managerId.current?.focus()
+      return
+    }
     setCreating(true)
     try {
       const draft = await createOnboardingDraft(token, {
         accountName: accountName.trim(),
         projectName: projectName.trim(),
         companyUrl: normalizeCompanyUrl(companyUrl),
-        managerEmail: managerEmail.trim(),
-        managerName: managerName.trim(),
+        linkedinUrl: normalizeLinkedinUrl(linkedinUrl),
+        managerId: selectedManager.id,
+        managerEmail: selectedManager.email,
+        managerName: selectedManager.name,
         fileNames,
         customFieldValues: customValuesForSubmit(customFields, customValues),
       })
@@ -188,6 +191,28 @@ export function CreateAccountDialog({ label = 'Create account' }: { label?: stri
       active = false
     }
   }, [open, token])
+
+  useEffect(() => {
+    if (!open || !token) return
+    let active = true
+    setLoadingManagers(true)
+    listOnboardingAccountManagers(token)
+      .then(managers => {
+        if (!active) return
+        setAccountManagers(managers)
+        setManagerId(current => current || defaultAccountManagerId(assignableAccountManagers(managers, currentUser), currentUser))
+      })
+      .catch(() => {
+        if (!active) return
+        setAccountManagers([])
+      })
+      .finally(() => {
+        if (active) setLoadingManagers(false)
+      })
+    return () => {
+      active = false
+    }
+  }, [currentUser, open, token])
 
   return (
     <Dialog.Root open={open} onOpenChange={handleOpenChange}>
@@ -254,14 +279,15 @@ export function CreateAccountDialog({ label = 'Create account' }: { label?: stri
               <RequiredInput ref={refs.accountName} label="Name of Account" value={accountName} error={errors.accountName} onChange={value => updateField('accountName', value)} placeholder="Signal" icon={Building2} />
               <RequiredInput ref={refs.projectName} label="Name of Project" value={projectName} error={errors.projectName} onChange={value => updateField('projectName', value)} placeholder="Predictive analytics modernization" icon={FileText} />
               <RequiredInput ref={refs.companyUrl} label="Company URL" value={companyUrl} error={errors.companyUrl} onChange={value => updateField('companyUrl', value)} placeholder="https://signal.example.com" icon={Globe2} />
-              <RequiredInput ref={refs.managerName} label="Account Manager Name" value={managerName} error={errors.managerName} onChange={value => updateField('managerName', value)} placeholder="Ali Khan" icon={UserRound} list="account-manager-names" />
-              <RequiredInput ref={refs.managerEmail} label="Email" value={managerEmail} error={errors.managerEmail} onChange={value => updateField('managerEmail', value)} placeholder="ali.khan@tkxel.com" icon={Mail} list="account-manager-emails" className="md:col-span-2" />
-              <datalist id="account-manager-names">
-                {users.map(item => <option key={item.id} value={item.name} />)}
-              </datalist>
-              <datalist id="account-manager-emails">
-                {users.map(item => <option key={item.id} value={item.email} />)}
-              </datalist>
+              <RequiredInput ref={refs.linkedinUrl} label="LinkedIn URL" value={linkedinUrl} error={errors.linkedinUrl} onChange={value => updateField('linkedinUrl', value)} placeholder="https://www.linkedin.com/company/signal" icon={Linkedin} />
+              <AccountManagerSelect
+                ref={refs.managerId}
+                value={managerId}
+                error={errors.managerId}
+                managers={assignableManagers}
+                loading={loadingManagers}
+                onChange={value => updateField('managerId', value)}
+              />
             </div>
 
             {loadingCustomFields || customFields.length ? (
@@ -325,6 +351,49 @@ type RequiredInputProps = {
   list?: string
   className?: string
 }
+
+type AccountManagerSelectProps = {
+  value: string
+  error?: string
+  managers: OnboardingAccountManager[]
+  loading: boolean
+  onChange: (value: string) => void
+}
+
+const AccountManagerSelect = forwardRef<HTMLSelectElement, AccountManagerSelectProps>(function AccountManagerSelect({
+  value,
+  error,
+  managers,
+  loading,
+  onChange,
+}, ref) {
+  return (
+    <label className="space-y-1 md:col-span-2">
+      <span className={cn('tk-label flex items-center gap-1 text-xs', error ? 'text-rag-red' : '')}>
+        Account Manager <span className="text-brand-orange">*</span>
+      </span>
+      <div className="relative">
+        <UserRound className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-ink-tertiary" />
+        <select
+          ref={ref}
+          className={cn('tk-input pl-10', error ? 'border-rag-red focus:border-rag-red focus:ring-rag-red/30' : '')}
+          value={value}
+          onChange={event => onChange(event.target.value)}
+          disabled={loading}
+        >
+          <option value="">{loading ? 'Loading account managers...' : 'Select account manager'}</option>
+          {managers.map(manager => (
+            <option key={manager.id} value={manager.id}>
+              {manager.name} - {manager.email}
+            </option>
+          ))}
+        </select>
+      </div>
+      {error ? <p className="text-xs text-rag-red">{error}</p> : null}
+      {!loading && managers.length === 0 ? <p className="text-xs text-rag-red">No active account managers are available.</p> : null}
+    </label>
+  )
+})
 
 const RequiredInput = forwardRef<HTMLInputElement, RequiredInputProps>(function RequiredInput({
   label,
@@ -505,13 +574,39 @@ function normalizeCompanyUrl(value: string) {
   return /^https?:\/\//i.test(trimmed) ? trimmed : `https://${trimmed}`
 }
 
+function normalizeLinkedinUrl(value: string) {
+  return normalizeCompanyUrl(value)
+}
+
+function defaultAccountManagerId(managers: OnboardingAccountManager[], currentUser: { id: string; email: string; role: string }) {
+  if (!['account_manager', 'am'].includes(currentUser.role)) return ''
+  const self = managers.find(manager => manager.id === currentUser.id || manager.email.toLowerCase() === currentUser.email.toLowerCase())
+  return self?.id ?? ''
+}
+
+function assignableAccountManagers(managers: OnboardingAccountManager[], currentUser: { id: string; email: string; role: string }) {
+  if (!['account_manager', 'am'].includes(currentUser.role)) return managers
+  return managers.filter(manager => manager.id === currentUser.id || manager.email.toLowerCase() === currentUser.email.toLowerCase())
+}
+
+function isLinkedinUrl(value: string) {
+  try {
+    const host = new URL(normalizeLinkedinUrl(value)).hostname.toLowerCase()
+    return host === 'linkedin.com' || host.endsWith('.linkedin.com')
+  } catch {
+    return false
+  }
+}
+
 function mapApiField(field: string): CreateAccountField | undefined {
   const fieldMap: Record<string, CreateAccountField> = {
     account_name: 'accountName',
     project_name: 'projectName',
     company_url: 'companyUrl',
-    primary_owner_name: 'managerName',
-    primary_owner_email: 'managerEmail',
+    linkedin_url: 'linkedinUrl',
+    primary_owner_id: 'managerId',
+    primary_owner_name: 'managerId',
+    primary_owner_email: 'managerId',
     source_citation: 'accountName',
   }
   return fieldMap[field]

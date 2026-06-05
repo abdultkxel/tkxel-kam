@@ -41,7 +41,7 @@ Admins configure one of the four approved adapters from Admin Settings, test/syn
 
 ## Frontend Plan
 
-- Pages/components: `frontend/src/components/admin/IntegrationsPanel.tsx`, `frontend/src/components/meeting/MeetingCapturePanel.tsx`, `frontend/src/pages/HealthScores.tsx`, `frontend/src/pages/Profile.tsx`, `frontend/src/components/admin/AdminUsersPanel.tsx`.
+- Pages/components: `frontend/src/components/admin/IntegrationsPanel.tsx`, `frontend/src/pages/Profile.tsx`, `frontend/src/components/governance/CompleteGovernanceEventDialog.tsx`, `frontend/src/pages/HealthScores.tsx`, `frontend/src/components/admin/AdminUsersPanel.tsx`.
 - Services: `frontend/src/services/integrations.ts`, `frontend/src/services/meetingCapture.ts`, `frontend/src/services/csat.ts`, updated auth/admin user services.
 - Form behavior: backend-backed loading, empty, error, save success, field-level validation display, secret masking, and responsive layouts.
 
@@ -87,8 +87,8 @@ Admins configure one of the four approved adapters from Admin Settings, test/syn
 - Google Calendar OAuth callbacks exchange tokens in the backend and redirect to a frontend completion screen at `/admin/integrations/google-calendar/callback`.
 - Google Calendar OAuth requests only the Calendar events scope used for outbound governance event create/update pushes.
 - Fathom API key and webhook secret can be provided through ignored local environment files or Admin integration configuration. The Admin Integrations panel shows recent imported Fathom meetings with openable meeting/share links.
-- Personal Fathom API keys are saved from the Meeting Capture drawer and stored in `user_integration_connections`; they are masked in responses.
-- Personal Fathom meeting sync stores summaries/action items in `meeting_artifacts` and does not store full transcripts.
+- Personal Fathom API keys are saved from Profile and stored in `user_integration_connections`; they are masked in responses.
+- Personal Fathom on-demand resolve stores only the requested summary/action items in `meeting_artifacts` and does not store full transcripts.
 - Fathom redirect reference for future OAuth work: development `http://127.0.0.1:8001/api/integrations/fathom/oauth/callback`; production `https://<production-api-domain>/api/integrations/fathom/oauth/callback` or the same path on the app domain when `/api` is reverse-proxied.
 - Local scheduled sync is controlled by integration worker settings in `backend/app/config.py`; Google Calendar inbound sync is skipped because governance now pushes outbound only.
 - Outbound Google Calendar writes never send invitees. Governance attendee emails remain in-app metadata only.

@@ -64,7 +64,7 @@ export function AccountDetail() {
 
   return (
     <div>
-      <PageHeader eyebrow="Accounts -> Account Overview" title={account.name} description="Overview, health, stage, opportunities, governance, notes, timeline, and documents in one workspace." />
+      <PageHeader eyebrow="Accounts -> Account Overview" title={account.name} description="Overview, engagement, KYC, health, stage, opportunities, governance, education, timeline, notes, and documents in one workspace." />
       <Account360 account={account} />
     </div>
   )

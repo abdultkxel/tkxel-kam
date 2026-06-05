@@ -203,6 +203,16 @@ def validate_http_url(value: str | None, field_label: str = "URL") -> str | None
     return url
 
 
+def validate_linkedin_url(value: str | None, field_label: str = "LinkedIn URL") -> str | None:
+    url = validate_http_url(value, field_label)
+    if url is None:
+        return None
+    hostname = (urlparse(url).hostname or "").lower()
+    if hostname != "linkedin.com" and not hostname.endswith(".linkedin.com"):
+        raise ValueError(f"{field_label} must be a linkedin.com URL.")
+    return url
+
+
 def validate_percent(value: int, field_label: str) -> int:
     if value < 0 or value > 100:
         raise ValueError(f"{field_label} must be between 0 and 100.")
@@ -1455,6 +1465,7 @@ class OnboardingDraftRead(BaseModel):
     account_name: str
     project_name: str | None = None
     company_url: str | None = None
+    linkedin_url: str | None = None
     lifecycle_status: str
     segment: str
     region: str | None = None
@@ -1493,6 +1504,7 @@ class OnboardingDraftCreateRequest(BaseModel):
     account_name: str
     project_name: str | None = None
     company_url: str | None = None
+    linkedin_url: str | None = None
     lifecycle_status: LifecycleStatus = "Draft"
     segment: str = "Growth"
     region: str | None = None
@@ -1526,6 +1538,11 @@ class OnboardingDraftCreateRequest(BaseModel):
     @classmethod
     def company_url_is_valid(cls, value: str | None) -> str | None:
         return optional_text(value, "Company URL", max_length=500)
+
+    @field_validator("linkedin_url")
+    @classmethod
+    def linkedin_url_is_valid(cls, value: str | None) -> str | None:
+        return validate_linkedin_url(value)
 
     @field_validator("segment")
     @classmethod
@@ -1567,6 +1584,7 @@ class AccountCsvImportRow(BaseModel):
     account_name: str | None = Field(default=None, description="Account name from the CSV row.")
     project_name: str | None = Field(default=None, description="Optional project or engagement name.")
     company_url: str | None = Field(default=None, description="Optional company website.")
+    linkedin_url: str | None = Field(default=None, description="Optional company LinkedIn profile URL.")
     industry: str | None = Field(default=None, description="Optional industry value stored as account context.")
     arr: Any = Field(default=None, description="Annual recurring revenue from the CSV row.")
     commercial_value: Any = Field(default=None, description="Commercial value alias for ARR.")
@@ -1595,6 +1613,7 @@ class OnboardingDraftUpdateRequest(BaseModel):
     account_name: str | None = None
     project_name: str | None = None
     company_url: str | None = None
+    linkedin_url: str | None = None
     lifecycle_status: LifecycleStatus | None = None
     segment: str | None = None
     region: str | None = None
@@ -1620,6 +1639,11 @@ class OnboardingDraftUpdateRequest(BaseModel):
     @classmethod
     def optional_text_is_valid(cls, value: str | None) -> str | None:
         return optional_text(value, "Field", max_length=500)
+
+    @field_validator("linkedin_url")
+    @classmethod
+    def optional_linkedin_url_is_valid(cls, value: str | None) -> str | None:
+        return validate_linkedin_url(value)
 
     @field_validator("service_context", "commercial_summary", "initial_notes", "source_citation")
     @classmethod
@@ -1748,6 +1772,7 @@ class AccountRead(BaseModel):
     name: str
     project_name: str | None = None
     company_url: str | None = None
+    linkedin_url: str | None = None
     segment: str
     region: str | None = None
     lifecycle_status: str
@@ -2721,6 +2746,7 @@ class StakeholderRead(BaseModel):
     company: str | None = None
     email: EmailStr | None = None
     phone: str | None = None
+    linkedin_url: str | None = None
     role: str
     influence: str
     relationship_strength: str
@@ -2818,6 +2844,7 @@ class StakeholderOrgChartNodeRead(BaseModel):
     id: str
     name: str
     title: str | None = None
+    linkedin_url: str | None = None
     role: str | None = None
     influence_level: str | None = None
     relationship_strength: str | None = None
@@ -2846,6 +2873,7 @@ class StakeholderCreateRequest(BaseModel):
     company: str | None = None
     email: EmailStr | None = None
     phone: str | None = None
+    linkedin_url: str | None = None
     role: StakeholderRole
     influence: StakeholderInfluence = "medium"
     relationship_strength: StakeholderRelationshipStrength = "unknown"
@@ -2871,6 +2899,11 @@ class StakeholderCreateRequest(BaseModel):
     def phone_is_valid(cls, value: str | None) -> str | None:
         return validate_phone(value)
 
+    @field_validator("linkedin_url")
+    @classmethod
+    def linkedin_url_is_valid(cls, value: str | None) -> str | None:
+        return validate_linkedin_url(value)
+
     @field_validator("role")
     @classmethod
     def role_is_valid(cls, value: str) -> str:
@@ -2895,6 +2928,7 @@ class StakeholderUpdateRequest(BaseModel):
     company: str | None = None
     email: EmailStr | None = None
     phone: str | None = None
+    linkedin_url: str | None = None
     role: StakeholderRole | None = None
     influence: StakeholderInfluence | None = None
     relationship_strength: StakeholderRelationshipStrength | None = None
@@ -2919,6 +2953,11 @@ class StakeholderUpdateRequest(BaseModel):
     @classmethod
     def phone_is_valid(cls, value: str | None) -> str | None:
         return validate_phone(value)
+
+    @field_validator("linkedin_url")
+    @classmethod
+    def linkedin_url_is_valid(cls, value: str | None) -> str | None:
+        return validate_linkedin_url(value)
 
     @field_validator("role")
     @classmethod
@@ -4686,6 +4725,7 @@ class OpportunityActionItemCreateRequest(BaseModel):
     status: OpportunityActionItemStatus = "open"
     priority: EscalationPriority = "medium"
     notes: str | None = None
+    create_task: bool = True
 
     @field_validator("title")
     @classmethod
@@ -4719,6 +4759,7 @@ class OpportunityActionItemUpdateRequest(BaseModel):
     status: OpportunityActionItemStatus | None = None
     priority: EscalationPriority | None = None
     notes: str | None = None
+    create_task: bool | None = None
 
     @field_validator("title")
     @classmethod
@@ -5464,9 +5505,12 @@ class IntegrationConnectionRead(BaseModel):
     updated_at: datetime
 
 
+MeetingCaptureProvider = Literal["fathom", "fireflies"]
+
+
 class UserFathomConnectionRead(BaseModel):
     id: str | None = None
-    provider: str = "fathom"
+    provider: MeetingCaptureProvider = "fathom"
     enabled: bool = False
     status: str = "configuration_required"
     auth_type: str = "api_key"
@@ -5480,13 +5524,36 @@ class UserFathomConnectionRead(BaseModel):
 
 class UserFathomConnectionUpdateRequest(BaseModel):
     enabled: bool = True
-    api_key: str | None = Field(default=None, description="Personal Fathom API key. Existing key is preserved when omitted.")
+    api_key: str | None = Field(default=None, description="Personal meeting provider API key. Existing key is preserved when omitted.")
+    clear_api_key: bool = Field(default=False, description="Remove the stored personal meeting provider API key.")
     settings_json: dict[str, Any] | None = None
 
     @field_validator("api_key")
     @classmethod
     def api_key_is_valid(cls, value: str | None) -> str | None:
-        return optional_text(value, "Fathom API key", max_length=1000)
+        return optional_text(value, "Meeting provider API key", max_length=1000)
+
+
+class MeetingProviderResolveRequest(BaseModel):
+    identifier: str = Field(description="Meeting provider recording/transcript ID or share URL.")
+    account_id: str | None = None
+    engagement_id: str | None = None
+    linked_object_type: str | None = None
+    linked_object_id: str | None = None
+
+    @field_validator("identifier")
+    @classmethod
+    def identifier_is_valid(cls, value: str) -> str:
+        return validate_short_text(value, "Meeting identifier", 1000)
+
+    @field_validator("linked_object_type", "linked_object_id")
+    @classmethod
+    def linked_object_field_is_valid(cls, value: str | None) -> str | None:
+        return optional_text(value, "Meeting link field", max_length=255)
+
+
+FathomMeetingResolveRequest = MeetingProviderResolveRequest
+FirefliesMeetingResolveRequest = MeetingProviderResolveRequest
 
 
 class MeetingArtifactRead(BaseModel):
@@ -5522,7 +5589,7 @@ class MeetingArtifactPageRead(BaseModel):
 
 
 class MeetingArtifactCreateRequest(BaseModel):
-    provider: Literal["fathom"] = "fathom"
+    provider: MeetingCaptureProvider = "fathom"
     title: str | None = None
     meeting_url: str | None = None
     summary: str | None = None
