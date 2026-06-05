@@ -2526,51 +2526,15 @@ class AiForecastRequest(BaseModel):
 
 class AiForecastPointRead(BaseModel):
     month: str
-    baseline_revenue: float = 0
-    weighted_opportunity: float = 0
-    growth_adjustment: float = 0
-    risk_adjustment: float = 0
-    forecast_revenue: float = 0
-    commercial_value: float = 0
-    health: int = 0
-    open_opportunities: int = 0
-
-
-class AiForecastTotalsRead(BaseModel):
-    account_count: int = 0
-    active_sow_count: int = 0
-    open_opportunities: int = 0
-    at_risk_accounts: int = 0
-    contracted_baseline: float = 0
-    baseline_revenue: float = 0
-    pipeline_value: float = 0
-    weighted_opportunity: float = 0
-    growth_adjustment: float = 0
-    risk_adjustment: float = 0
-    forecast_revenue: float = 0
-
-
-class AiForecastWaterfallItemRead(BaseModel):
-    label: str
-    value: float
-    kind: Literal["baseline", "opportunity", "growth", "risk", "forecast"]
+    commercial_value: float
+    health: int
+    open_opportunities: int
 
 
 class AiForecastResponse(BaseModel):
     title: str
     summary: str
     points: list[AiForecastPointRead]
-    months: int = 6
-    scope: Literal["account", "portfolio", "empty"] = "portfolio"
-    forecast_type: Literal["monthly_revenue"] = "monthly_revenue"
-    confidence: Literal["high", "medium", "low", "not_available"] = "low"
-    trend_label: Literal["positive", "stable", "declining", "insufficient_data"] = "stable"
-    totals: AiForecastTotalsRead = Field(default_factory=AiForecastTotalsRead)
-    waterfall: list[AiForecastWaterfallItemRead] = Field(default_factory=list)
-    basis: list[str] = Field(default_factory=list)
-    assumptions: list[str] = Field(default_factory=list)
-    missing_data: list[str] = Field(default_factory=list)
-    recommended_actions: list[str] = Field(default_factory=list)
     highlights: list[str] = Field(default_factory=list)
     citations: list[dict[str, Any]] = Field(default_factory=list)
     disclaimer: str

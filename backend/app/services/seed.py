@@ -1,16 +1,11 @@
-from datetime import datetime, timedelta, timezone
-from typing import Any
+from datetime import timedelta
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.config import get_settings
 from app.models import (
-    Account,
-    AccountOwner,
-    Engagement,
     KycConfiguration,
-    Opportunity,
     OpportunityStageDefinition,
     OpportunityStageTransition,
     OpportunityType,
@@ -18,10 +13,8 @@ from app.models import (
     PlaybookTemplateActivity,
     ScoringMetricDefinition,
     ScoringMetricVersion,
-    ScoreSnapshot,
     ServiceAdjacencyRule,
     ServiceCatalogItem,
-    Signal,
     SignalRule,
     StakeholderGapRule,
     StakeholderRoleConfig,
@@ -39,16 +32,6 @@ from app.services.rbac import RbacService
 from app.services.users import initials_for_name, normalize_email
 
 DEFAULT_ROLE_USER_EMAIL_DOMAIN = "tkxel.com"
-FORECAST_DEMO_ACCOUNT_ID = "forecast-demo-account"
-FORECAST_DEMO_ACCOUNT_OWNER_ID = "forecast-demo-account-owner"
-FORECAST_DEMO_ENGAGEMENT_ID = "forecast-demo-active-sow"
-FORECAST_DEMO_SCORE_ID = "forecast-demo-score"
-FORECAST_DEMO_SIGNAL_ID = "forecast-demo-growth-signal"
-FORECAST_DEMO_OPPORTUNITY_IDS = (
-    "forecast-demo-analytics-expansion",
-    "forecast-demo-automation-expansion",
-    "forecast-demo-platform-expansion",
-)
 
 
 def seed_default_data(db: Session) -> User:
@@ -69,224 +52,6 @@ def seed_base_data(db: Session) -> User:
     seed_allowed_email_domains(db, super_admin)
     seed_default_role_users(db)
     return super_admin
-
-
-def seed_forecast_demo_data(db: Session, *, now: datetime | None = None) -> dict[str, Any]:
-    actor = seed_base_data(db)
-    seed_opportunity_reference_data(db)
-    owner = db.scalar(select(User).where(User.email == normalize_email("account.manager.user@tkxel.com")))
-    if owner is None:
-        owner = db.scalar(select(User).where(User.role == "account_manager").order_by(User.created_at.asc()))
-    if owner is None:
-        raise RuntimeError("No account_manager user is available for forecast demo ownership.")
-
-    current = _aware(now or utc_now())
-    window_start = _first_day_next_month(current)
-    contract_start = _add_months(window_start, -1)
-    contract_end = _add_months(window_start, 6) - timedelta(days=1)
-    account = db.get(Account, FORECAST_DEMO_ACCOUNT_ID)
-    if account is None:
-        account = Account(id=FORECAST_DEMO_ACCOUNT_ID, name="Forecast Demo Account", created_by_id=actor.id)
-        db.add(account)
-    account.name = "Forecast Demo Account"
-    account.project_name = "Demo Forecast Workspace"
-    account.company_url = "https://example.com/forecast-demo"
-    account.segment = "Growth"
-    account.region = "US"
-    account.lifecycle_status = "Active"
-    account.risk_status = "healthy"
-    account.commercial_value = 240000
-    account.currency = "USD"
-    account.service_context = "Demo source-backed account used only for local forecast chart QA."
-    account.commercial_summary = "Demo account with active SOW baseline and staged expansion opportunities."
-    account.initial_notes = "Seeded by the opt-in forecast demo command. Safe to remove with clear-forecast-demo."
-    account.source_citation = "Forecast demo seed data."
-    account.health_overall = 82
-    account.health_relationship = 80
-    account.health_usage = 84
-    account.health_delivery = 81
-    account.health_commercial = 85
-    account.next_governance_at = window_start + timedelta(days=21)
-    account.archived_at = None
-
-    owner_record = db.get(AccountOwner, FORECAST_DEMO_ACCOUNT_OWNER_ID)
-    if owner_record is None:
-        owner_record = AccountOwner(id=FORECAST_DEMO_ACCOUNT_OWNER_ID, account_id=account.id, user_name=owner.full_name, ownership_role="primary_am")
-        db.add(owner_record)
-    owner_record.account_id = account.id
-    owner_record.user_id = owner.id
-    owner_record.user_name = owner.full_name
-    owner_record.user_email = owner.email
-    owner_record.ownership_role = "primary_am"
-    owner_record.is_primary = True
-    owner_record.is_active = True
-    owner_record.rationale = "Opt-in demo owner for source-backed forecast chart validation."
-    owner_record.created_by_id = actor.id
-    owner_record.ended_at = None
-
-    engagement = db.get(Engagement, FORECAST_DEMO_ENGAGEMENT_ID)
-    if engagement is None:
-        engagement = Engagement(
-            id=FORECAST_DEMO_ENGAGEMENT_ID,
-            account_id=account.id,
-            name="Forecast Demo Active SOW",
-            owner_name=owner.full_name,
-            start_date=contract_start,
-            created_by_id=actor.id,
-        )
-        db.add(engagement)
-    engagement.account_id = account.id
-    engagement.name = "Forecast Demo Active SOW"
-    engagement.description = "Demo active SOW used to produce a visible six-month dashboard forecast."
-    engagement.status = "active"
-    engagement.owner_id = owner.id
-    engagement.owner_name = owner.full_name
-    engagement.service_lines = ["Engineering", "Data Analytics"]
-    engagement.source_links = [{"label": "Forecast demo seed", "source_type": "demo"}]
-    engagement.value = 240000
-    engagement.currency = "USD"
-    engagement.delivery_status = "active"
-    engagement.commercial_status = "healthy"
-    engagement.delivery_health = 82
-    engagement.health_status = "green"
-    engagement.renewal_risk = "low"
-    engagement.start_date = contract_start
-    engagement.end_date = contract_end
-    engagement.renewal_date = contract_end
-    engagement.notice_deadline = contract_end - timedelta(days=45)
-    engagement.notice_period_days = 45
-    engagement.auto_renewal = False
-    engagement.commercial_context = "Demo baseline contract for dashboard forecast visualization."
-    engagement.resource_dependency = "Demo staffed team is stable."
-    engagement.risks = []
-    engagement.source_citation = "Forecast demo active SOW."
-    engagement.updated_by_id = actor.id
-    engagement.archived_at = None
-
-    opportunity_type = db.scalar(select(OpportunityType).where(OpportunityType.slug == "expansion"))
-    if opportunity_type is None:
-        opportunity_type = OpportunityType(slug="expansion", name="Expansion", description="Expansion opportunity.", is_active=True, created_by_id=actor.id)
-        db.add(opportunity_type)
-        db.flush()
-
-    opportunity_specs = (
-        (FORECAST_DEMO_OPPORTUNITY_IDS[0], "Forecast Demo Analytics Expansion", "Data Analytics", 90000, "Qualified", _add_months(window_start, 1) + timedelta(days=14)),
-        (FORECAST_DEMO_OPPORTUNITY_IDS[1], "Forecast Demo QA Automation Expansion", "Automation & QA", 75000, "Proposal Sent", _add_months(window_start, 2) + timedelta(days=10)),
-        (FORECAST_DEMO_OPPORTUNITY_IDS[2], "Forecast Demo Platform Pods Expansion", "Product Engineering", 110000, "Negotiation", _add_months(window_start, 4) + timedelta(days=8)),
-    )
-    for opportunity_id, name, service_line, value, stage, target_date in opportunity_specs:
-        opportunity = db.get(Opportunity, opportunity_id)
-        if opportunity is None:
-            opportunity = Opportunity(
-                id=opportunity_id,
-                account_id=account.id,
-                type_id=opportunity_type.id,
-                owner_name=owner.full_name,
-                name=name,
-                service_line=service_line,
-                next_step="Review demo expansion plan.",
-                target_date=target_date,
-                created_by_id=actor.id,
-                created_by_name=actor.full_name,
-            )
-            db.add(opportunity)
-        opportunity.account_id = account.id
-        opportunity.engagement_id = engagement.id
-        opportunity.type_id = opportunity_type.id
-        opportunity.owner_id = owner.id
-        opportunity.owner_name = owner.full_name
-        opportunity.owner_email = owner.email
-        opportunity.name = name
-        opportunity.service_line = service_line
-        opportunity.value = value
-        opportunity.currency = "USD"
-        opportunity.stage = stage
-        opportunity.next_step = "Review demo expansion plan and validate next milestone."
-        opportunity.target_date = target_date
-        opportunity.source_context = "forecast_demo_seed"
-        opportunity.source_record_id = engagement.id
-        opportunity.source_record_type = "engagement"
-        opportunity.source_record_route = f"/accounts/{account.id}?tab=opportunities"
-        opportunity.outcome_reason = None
-        opportunity.archived_at = None
-        opportunity.archived_by_id = None
-        opportunity.archived_by_name = None
-        opportunity.archive_reason = None
-        opportunity.updated_by_id = actor.id
-        opportunity.updated_by_name = actor.full_name
-
-    score = db.get(ScoreSnapshot, FORECAST_DEMO_SCORE_ID)
-    if score is None:
-        score = ScoreSnapshot(id=FORECAST_DEMO_SCORE_ID, account_id=account.id, overall=84, rag_status="green")
-        db.add(score)
-    score.account_id = account.id
-    score.engagement_id = None
-    score.scope = "account"
-    score.overall = 84
-    score.rag_status = "green"
-    score.drivers = ["Demo account health is green across relationship, delivery, usage, and commercial posture."]
-    score.reason_codes = [{"code": "forecast_demo_health", "label": "Demo healthy account"}]
-    score.metric_version = "forecast-demo-v1"
-    score.freshness_status = "fresh"
-    score.is_dirty = False
-    score.trend = 6
-    score.status = "complete"
-    score.source_context = {"source": "forecast_demo_seed"}
-    score.calculated_by_id = actor.id
-    score.calculated_by_name = actor.full_name
-    score.calculated_at = current
-
-    signal = db.get(Signal, FORECAST_DEMO_SIGNAL_ID)
-    if signal is None:
-        signal = Signal(
-            id=FORECAST_DEMO_SIGNAL_ID,
-            account_id=account.id,
-            signal_type="growth_signal",
-            severity="info",
-            title="Forecast demo growth signal",
-            detail="Client budget, funding, hiring, and new-region launch signals support expansion.",
-        )
-        db.add(signal)
-    signal.account_id = account.id
-    signal.engagement_id = engagement.id
-    signal.rule_id = None
-    signal.signal_type = "growth_signal"
-    signal.severity = "info"
-    signal.status = "new"
-    signal.owner_id = owner.id
-    signal.owner_name = owner.full_name
-    signal.title = "Forecast demo growth signal"
-    signal.detail = "Client budget, funding, hiring, and new-region launch signals support expansion."
-    signal.reason_codes = [{"code": "growth_expansion", "label": "Demo expansion signal"}]
-    signal.evidence_json = [{"label": "Demo source", "excerpt": "Budget and hiring increased for platform expansion."}]
-    signal.citations_json = [{"label": "Forecast demo seed", "source_type": "demo"}]
-    signal.source_record_type = "demo_seed"
-    signal.source_record_id = account.id
-    signal.source_record_route = f"/accounts/{account.id}"
-    signal.confidence = 90
-    signal.condition_key = "forecast-demo-growth-signal"
-    signal.due_at = window_start + timedelta(days=7)
-    signal.resolved_at = None
-    signal.dismissed_at = None
-    signal.updated_at = current
-
-    db.commit()
-    return {
-        "account_id": account.id,
-        "account_name": account.name,
-        "owner_email": owner.email,
-        "engagement_id": engagement.id,
-        "opportunities": len(opportunity_specs),
-    }
-
-
-def clear_forecast_demo_data(db: Session) -> int:
-    account = db.get(Account, FORECAST_DEMO_ACCOUNT_ID)
-    if account is None:
-        return 0
-    db.delete(account)
-    db.commit()
-    return 1
 
 
 def seed_allowed_email_domains(db: Session, super_admin: User) -> None:
@@ -953,25 +718,3 @@ def _seed_playbook_activities(activities: list[dict]) -> list[PlaybookTemplateAc
             )
         )
     return seeded
-
-
-def _aware(value: datetime) -> datetime:
-    if value.tzinfo is None:
-        return value.replace(tzinfo=timezone.utc)
-    return value.astimezone(timezone.utc)
-
-
-def _first_day_next_month(value: datetime) -> datetime:
-    month = value.month + 1
-    year = value.year
-    if month == 13:
-        month = 1
-        year += 1
-    return datetime(year, month, 1, tzinfo=timezone.utc)
-
-
-def _add_months(value: datetime, months: int) -> datetime:
-    month_index = value.month - 1 + months
-    year = value.year + month_index // 12
-    month = month_index % 12 + 1
-    return datetime(year, month, 1, tzinfo=timezone.utc)

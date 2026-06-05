@@ -241,9 +241,8 @@ def apply_account_stage_prediction(
 @router.post(
     "/ai/forecast",
     response_model=AiForecastResponse,
-    summary="Generate six-month KAM AI revenue forecast",
-    description="Creates the shared advisory account or portfolio forecast used by KAM AI and dashboard charts from active SOWs, historical fallback revenue, stage-weighted opportunities, growth signals, renewal risk, and authorized source citations.",
-    response_description="Shared forecast chart payload with monthly baseline, weighted opportunity, growth, risk, totals, assumptions, confidence, and citations.",
+    summary="Generate directional AI forecast",
+    description="Creates an advisory account or portfolio forecast from commercial value, open opportunities, and health records.",
 )
 def ai_forecast(
     payload: AiForecastRequest,

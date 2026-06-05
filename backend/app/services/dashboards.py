@@ -7,9 +7,8 @@ from app.models import AccountOwner, User
 from app.repositories.accounts import AccountRepository
 from app.repositories.dashboards import DashboardRepository
 from app.repositories.rbac import RbacRepository
-from app.schemas import AiForecastResponse, DashboardRead, DashboardWidgetRead, TaskSummaryRefreshRead
+from app.schemas import DashboardRead, DashboardWidgetRead, TaskSummaryRefreshRead
 from app.services.account_access import AccountAccessService, GLOBAL_VIEW_ROLES
-from app.services.forecasting import ForecastingService
 
 
 ADMIN_ROLES = {"super_admin", "admin"}
@@ -19,6 +18,18 @@ LEADERSHIP_ROLES = {"leadership_viewer", "leadership", "executive", "executive_v
 OPS_ROLES = {"ops_lead"}
 DELIVERY_ROLES = {"delivery_lead", "delivery_stakeholder"}
 
+STAGE_WEIGHTS = {
+    "identified": 0.2,
+    "qualified": 0.35,
+    "proposal sent": 0.5,
+    "proposal_sent": 0.5,
+    "proposal": 0.5,
+    "negotiation": 0.7,
+    "won": 1.0,
+    "lost": 0.0,
+}
+
+
 class DashboardsService:
     def __init__(self, db: Session) -> None:
         self.db = db
@@ -26,7 +37,6 @@ class DashboardsService:
         self.accounts = AccountRepository(db)
         self.rbac = RbacRepository(db)
         self.access = AccountAccessService(self.accounts, self.rbac)
-        self.forecasting = ForecastingService(db)
 
     def for_current_user(
         self,
@@ -153,7 +163,6 @@ class DashboardsService:
         mask_commercial = self._mask_commercial_values(current_user)
         widgets = [
             self._widget("summary", "Attention summary", {"assigned_accounts": len(accounts), "at_risk_accounts": len([item for item in accounts if item.risk_status in {"warning", "critical"}]), "open_signals": len(signals), "open_tasks": len(tasks), "stale_kyc": len(stale_kyc), "open_escalations": len(escalations), "open_opportunities": len(opportunities)}, [], "assigned_accounts", primary_route="/dashboard"),
-            self._forecast_widget(opportunities, accounts, data_scope="assigned_accounts", masked=False),
             self._widget("accounts", "My accounts", None, [self._account_item(account, include_commercial=not mask_commercial) for account in self._slice(accounts, page, page_size)], "assigned_accounts", {"page": page, "page_size": page_size, "total": len(accounts)}, primary_route="/accounts"),
             self._widget("signals", "Signals / critical tasks", None, [self._signal_item(signal) for signal in self._slice(signals, page, page_size)], "assigned_accounts", {"page": page, "page_size": page_size, "total": len(signals)}, primary_route="/tasks"),
             self._widget("tasks", "Tasks summary", None, [self._task_item(task, now) for task in self._slice(tasks, page, page_size)], "assigned_accounts", {"page": page, "page_size": page_size, "total": len(tasks)}, primary_route="/tasks"),
@@ -198,7 +207,6 @@ class DashboardsService:
         mask_commercial = self._mask_commercial_values(current_user)
         widgets = [
             self._widget("summary", "Portfolio attention summary", {"accounts": len(accounts), "at_risk_accounts": len([item for item in accounts if item.risk_status in {"warning", "critical"}]), "open_signals": len(signals), "open_escalations": len(escalations), "upcoming_governance": len(governance)}, [], "portfolio", primary_route="/dashboard"),
-            self._forecast_widget(opportunities, accounts, data_scope="portfolio", masked=mask_commercial),
             self._widget("account_portfolio", "Account portfolio table", None, [self._account_item(account, include_commercial=not mask_commercial) for account in self._slice(accounts, page, page_size)], "portfolio", {"page": page, "page_size": page_size, "total": len(accounts), "masked": mask_commercial}, primary_route="/accounts"),
             self._widget("high_risk_accounts", "At-risk accounts", None, [self._account_item(account, include_commercial=not mask_commercial) for account in self._slice([account for account in accounts if account.risk_status in {"warning", "critical"}], page, page_size)], "portfolio", {"page": page, "page_size": page_size, "total": len(accounts), "masked": mask_commercial}, primary_route="/accounts?risk=critical"),
             self._widget("signals", "Signals / critical tasks", None, [self._signal_item(item) for item in self._slice(signals, page, page_size)], "portfolio", {"total": len(signals)}, primary_route="/tasks"),
@@ -365,7 +373,7 @@ class DashboardsService:
             "opportunities": "opportunity_management",
             "renewal_focus": "retention_stability",
             "growth": "opportunity_management",
-            "forecast_chart": "dashboards_reporting",
+            "forecast_chart": "analytics_portfolio",
             "revenue_risk": "analytics_portfolio",
             "retention": "retention_stability",
             "strategic_health": "account_overview",
@@ -443,82 +451,34 @@ class DashboardsService:
         )
 
     def _forecast_widget(self, opportunities: list, accounts: list, *, data_scope: str, masked: bool) -> DashboardWidgetRead:
-        forecast = self.forecasting.generate(accounts, months=6)
-        value = self._forecast_dashboard_value(forecast, masked=masked)
-        value["open_opportunities"] = len(opportunities)
-        return self._widget(
-            "forecast_chart",
-            "6-Month Revenue Forecast",
-            value,
-            [],
-            data_scope,
-            {"masked": masked, "chart_type": "line", "source": "shared_forecasting_service", "months": forecast.months},
-            primary_route="/dashboard",
-        )
-
-    def _forecast_dashboard_value(self, forecast: AiForecastResponse, *, masked: bool) -> dict[str, Any]:
-        payload = forecast.model_dump(mode="json")
-        payload["open_opportunities"] = forecast.totals.open_opportunities
-        payload["at_risk_accounts"] = forecast.totals.at_risk_accounts
-        payload["pipeline_value"] = forecast.totals.pipeline_value
-        payload["weighted_forecast"] = forecast.totals.forecast_revenue
-        payload["series"] = [
+        stage_totals: dict[str, dict[str, Any]] = {}
+        weighted = 0.0
+        pipeline = 0.0
+        for item in opportunities:
+            stage = item.stage or "Unstaged"
+            value = float(item.value)
+            weight = STAGE_WEIGHTS.get(stage.lower(), 0.25)
+            pipeline += value
+            weighted += value * weight
+            row = stage_totals.setdefault(stage, {"stage": stage, "count": 0, "value": 0.0})
+            row["count"] += 1
+            row["value"] += value
+        series = [
             {
-                "label": point.month,
-                "value": point.forecast_revenue,
-                "display_value": point.forecast_revenue,
-                "baseline_revenue": point.baseline_revenue,
-                "weighted_opportunity": point.weighted_opportunity,
-                "growth_adjustment": point.growth_adjustment,
-                "risk_adjustment": point.risk_adjustment,
-                "forecast_revenue": point.forecast_revenue,
+                "label": row["stage"],
+                "value": row["count"] if masked else round(row["value"], 2),
+                "display_value": "Restricted" if masked else round(row["value"], 2),
             }
-            for point in forecast.points
+            for row in stage_totals.values()
         ]
-        if masked:
-            return self._mask_forecast_payload(payload)
-        return payload
-
-    def _mask_forecast_payload(self, payload: dict[str, Any]) -> dict[str, Any]:
-        commercial_keys = {
-            "baseline_revenue",
-            "weighted_opportunity",
-            "growth_adjustment",
-            "risk_adjustment",
-            "forecast_revenue",
-            "commercial_value",
-            "contracted_baseline",
-            "pipeline_value",
-            "weighted_forecast",
-            "value",
-            "display_value",
+        value: dict[str, Any] = {
+            "open_opportunities": len(opportunities),
+            "at_risk_accounts": len([account for account in accounts if account.risk_status in {"warning", "critical"}]),
+            "pipeline_value": "Restricted" if masked else round(pipeline, 2),
+            "weighted_forecast": "Restricted" if masked else round(weighted, 2),
+            "series": series,
         }
-
-        def mask(value: Any, key: str | None = None) -> Any:
-            if key in commercial_keys and isinstance(value, (int, float)):
-                return "Restricted"
-            if isinstance(value, list):
-                return [mask(item) for item in value]
-            if isinstance(value, dict):
-                return {child_key: mask(child_value, child_key) for child_key, child_value in value.items()}
-            return value
-
-        masked = mask(payload)
-        if isinstance(masked, dict):
-            masked["summary"] = "Forecast calculated with the shared KAM AI logic. Commercial values are restricted for this role."
-            masked["highlights"] = [
-                f"{payload.get('open_opportunities', 0)} open opportunity/opportunities in scope.",
-                f"{payload.get('at_risk_accounts', 0)} at-risk account(s) influence the risk adjustment.",
-                "Commercial forecast values are masked by role-based access.",
-            ]
-            series = masked.get("series")
-            if isinstance(series, list):
-                for item in series:
-                    if isinstance(item, dict):
-                        item["value"] = 1
-                        item["display_value"] = "Restricted"
-            return masked
-        return payload
+        return self._widget("forecast_chart", "Forecast chart", value, [], data_scope, {"masked": masked, "chart_type": "bar"}, primary_route="/dashboard")
 
     def _governance_calendar_widget(self, governance: list, *, data_scope: str, read_only: bool) -> DashboardWidgetRead:
         now = self.repository.now()

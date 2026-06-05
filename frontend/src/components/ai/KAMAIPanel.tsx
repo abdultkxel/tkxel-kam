@@ -5,7 +5,7 @@ import { FormEvent, useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { useAuth } from '@/contexts/AuthContext'
 import { useRole } from '@/hooks/useRole'
-import { runKamAiForecast, runKamAiSearch, type KamAiForecastResult } from '@/services/aiAssistance'
+import { runKamAiSearch } from '@/services/aiAssistance'
 import { AISearchResult, AISearchScope, AISearchState, runAISearch } from '@/services/aiSearch'
 import { searchDocumentChunks, SemanticDocumentChunk } from '@/services/semanticDocumentSearch'
 import { useAccountStore } from '@/stores/accountStore'
@@ -14,6 +14,7 @@ import { useOpportunityStore } from '@/stores/opportunityStore'
 import { useTimelineStore } from '@/stores/timelineStore'
 import { useUIStore } from '@/stores/uiStore'
 import { Account } from '@/types/account'
+import { Opportunity } from '@/types/opportunity'
 import { TimelineEntry, UserRole } from '@/types/timeline'
 import { cn } from '@/utils/cn'
 import { formatCompactCurrency, formatRelative, titleize } from '@/utils/formatters'
@@ -34,7 +35,19 @@ const ASK_FIRST_PROMPTS = [
   { label: 'Forecast next 6 months', query: 'Forecast the next 6 months as a chart for my assigned projects' },
 ]
 
-type ForecastResult = KamAiForecastResult
+type ForecastPoint = {
+  month: string
+  arr: number
+  health: number
+  pipeline: number
+}
+
+type ForecastResult = {
+  title: string
+  summary: string
+  points: ForecastPoint[]
+  highlights: string[]
+}
 
 export function KAMAIPanel() {
   const open = useUIStore(state => state.aiOpen)
@@ -44,7 +57,6 @@ export function KAMAIPanel() {
   const [scopes, setScopes] = useState<AISearchScope[]>(['timeline', 'opportunities', 'governance', 'notes', 'kyc'])
   const [searchDocuments, setSearchDocuments] = useState(true)
   const [loading, setLoading] = useState(false)
-  const [error, setError] = useState('')
   const [result, setResult] = useState<AISearchResult | null>(null)
   const [docResults, setDocResults] = useState<SemanticDocumentChunk[]>([])
   const [forecastResult, setForecastResult] = useState<ForecastResult | null>(null)
@@ -77,7 +89,6 @@ export function KAMAIPanel() {
     setResult(null)
     setDocResults([])
     setForecastResult(null)
-    setError('')
   }, [bookKey])
 
   function toggleScope(scope: AISearchScope) {
@@ -89,17 +100,9 @@ export function KAMAIPanel() {
 
   async function runQuery(nextQuery = input) {
     const trimmed = nextQuery.trim()
-    if (!trimmed) return
+    if (!trimmed || !assignedAccounts.length) return
     setInput(trimmed)
-    if (!token && !assignedAccounts.length) {
-      setResult(null)
-      setDocResults([])
-      setForecastResult(null)
-      setError('No assigned project data is loaded locally. Sign in or refresh the dashboard, then try again.')
-      return
-    }
     setLoading(true)
-    setError('')
     setSourcesOpen(false)
     setDocumentsOpen(false)
 
@@ -108,12 +111,8 @@ export function KAMAIPanel() {
       const targetAccounts = accountsMatchingQuery(trimmed, assignedAccounts)
       const targetAccountIds = new Set(targetAccounts.map(account => account.id))
       const targetTimeline = timelineEntries.filter(entry => targetAccountIds.has(entry.accountId))
-      const forecast = shouldRenderForecast(trimmed)
-        ? await runBackendForecast({
-            token,
-            targetAccounts,
-          })
-        : null
+      const targetOpportunities = opportunities.filter(opportunity => targetAccountIds.has(opportunity.accountId))
+      const forecast = shouldRenderForecast(trimmed) ? buildAssignedBookForecastResult(targetAccounts, targetOpportunities) : null
       const answer = forecast
         ? buildForecastAISearchResult(forecast, targetTimeline)
         : await runBackendOrLocalAISearch({
@@ -151,11 +150,6 @@ export function KAMAIPanel() {
         documentSourceIds: documentMatches.map(chunk => chunk.id),
         createdAt: new Date().toISOString(),
       })
-    } catch (err) {
-      setResult(null)
-      setDocResults([])
-      setForecastResult(null)
-      setError(err instanceof Error ? err.message : 'KAM AI forecast could not be generated')
     } finally {
       setLoading(false)
     }
@@ -276,12 +270,6 @@ export function KAMAIPanel() {
 
             {loading ? <KAMAILoading /> : null}
 
-            {error && !loading ? (
-              <section className="rounded-xl border border-rag-red/20 bg-rag-red/10 p-4 text-sm font-medium text-rag-red">
-                {error}
-              </section>
-            ) : null}
-
             {result && !loading ? (
               <section className="rounded-xl border border-brand-blue/20 bg-white p-4 shadow-card">
                 <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
@@ -292,7 +280,7 @@ export function KAMAIPanel() {
                     </p>
                     {forecastResult ? <ForecastChart forecast={forecastResult} /> : null}
                   </div>
-                  <button className="tk-icon-button bg-white" onClick={() => { setResult(null); setForecastResult(null); setError('') }} aria-label="Clear KAM AI answer">
+                  <button className="tk-icon-button bg-white" onClick={() => { setResult(null); setForecastResult(null) }} aria-label="Clear KAM AI answer">
                     <X className="h-4 w-4" />
                   </button>
                 </div>
@@ -371,22 +359,6 @@ async function runBackendOrLocalAISearch({
   return runAssignedBookAISearch(query, targetAccounts, scopes, user, state)
 }
 
-async function runBackendForecast({
-  token,
-  targetAccounts,
-}: {
-  token: string | null
-  targetAccounts: Account[]
-}) {
-  if (!token) {
-    throw new Error('Sign in is required to generate the shared forecast.')
-  }
-  return runKamAiForecast(token, {
-    accountId: targetAccounts.length === 1 ? targetAccounts[0].id : undefined,
-    months: 6,
-  })
-}
-
 function KAMAILoading() {
   return (
     <div className="overflow-hidden rounded-xl border border-surface-border bg-surface-tertiary p-4">
@@ -463,29 +435,20 @@ function uniqueTimelineEntries(entries: TimelineEntry[]) {
 }
 
 function ForecastChart({ forecast }: { forecast: ForecastResult }) {
-  const hasRevenue = forecast.totals.forecastRevenue > 0
-  const maxRevenue = Math.max(
-    1,
-    ...forecast.points.map(point => Math.max(point.forecastRevenue, point.baselineRevenue + point.weightedOpportunity + point.growthAdjustment)),
-  )
-  const chartWidth = 620
-  const chartHeight = 260
-  const left = 48
-  const right = 28
+  const maxArr = Math.max(1, ...forecast.points.map(point => point.arr))
+  const chartWidth = 560
+  const chartHeight = 220
+  const left = 42
+  const right = 24
   const top = 30
-  const bottom = 48
+  const bottom = 44
   const plotWidth = chartWidth - left - right
   const plotHeight = chartHeight - top - bottom
-  const plotBottom = top + plotHeight
   const xFor = (index: number) => left + (plotWidth / Math.max(1, forecast.points.length - 1)) * index
-  const yFor = (value: number) => top + plotHeight - (Math.max(0, value) / maxRevenue) * plotHeight
-  const forecastLine = forecast.points.map((point, index) => `${xFor(index)},${yFor(point.forecastRevenue)}`).join(' ')
-  const metricCards = [
-    ['Forecast', forecast.totals.forecastRevenue],
-    ['Baseline', forecast.totals.baselineRevenue],
-    ['Weighted opps', forecast.totals.weightedOpportunity],
-    ['Risk drag', -forecast.totals.riskAdjustment],
-  ]
+  const arrY = (value: number) => top + plotHeight - (value / maxArr) * plotHeight
+  const healthY = (value: number) => top + plotHeight - (Math.max(0, Math.min(100, value)) / 100) * plotHeight
+  const arrLine = forecast.points.map((point, index) => `${xFor(index)},${arrY(point.arr)}`).join(' ')
+  const healthLine = forecast.points.map((point, index) => `${xFor(index)},${healthY(point.health)}`).join(' ')
 
   return (
     <div className="mt-4 rounded-xl border border-surface-border bg-white p-4">
@@ -495,81 +458,49 @@ function ForecastChart({ forecast }: { forecast: ForecastResult }) {
             <BarChart3 className="h-4 w-4 text-brand-blue" />
             <h3 className="text-sm font-semibold text-ink">{forecast.title}</h3>
           </div>
-          <p className="mt-1 text-xs leading-5 text-ink-secondary">{forecast.summary}</p>
+          <p className="mt-1 text-xs leading-5 text-ink-secondary">Directional prototype forecast based on current ARR, open pipeline, and account health.</p>
         </div>
-        <div className="flex flex-wrap gap-2 text-xs font-medium text-ink-secondary">
-          <span className="rounded-full border border-surface-border bg-surface-secondary px-2 py-1 capitalize">{forecast.confidence.replace('_', ' ')} confidence</span>
-          <span className="rounded-full border border-surface-border bg-surface-secondary px-2 py-1 capitalize">{forecast.trendLabel.replace('_', ' ')}</span>
+        <div className="flex flex-wrap gap-3 text-xs font-medium text-ink-secondary">
+          <span className="inline-flex items-center gap-1.5"><span className="h-2.5 w-2.5 rounded-full bg-brand-blue" />Projected ARR</span>
+          <span className="inline-flex items-center gap-1.5"><span className="h-2.5 w-2.5 rounded-full bg-brand-orange" />Health trend</span>
         </div>
       </div>
 
-      {hasRevenue ? (
-        <div className="mt-4 overflow-x-auto">
-          <svg viewBox={`0 0 ${chartWidth} ${chartHeight}`} className="h-[280px] min-w-[620px] text-ink-secondary" role="img" aria-label="Six-month revenue forecast chart">
-            {[0, 1, 2, 3].map(index => {
-              const y = top + (plotHeight / 3) * index
-              return <line key={index} x1={left} x2={chartWidth - right} y1={y} y2={y} className="stroke-surface-border" strokeWidth="1" />
-            })}
-            {forecast.points.map((point, index) => {
-              const x = xFor(index)
-              const segments = [
-                { key: 'baseline', value: point.baselineRevenue, className: 'fill-blue-tint-40' },
-                { key: 'opportunity', value: point.weightedOpportunity, className: 'fill-brand-orange/45' },
-                { key: 'growth', value: point.growthAdjustment, className: 'fill-rag-green/45' },
-              ]
-              let cursor = plotBottom
-              return (
-                <g key={point.month}>
-                  {segments.map(segment => {
-                    const height = (Math.max(0, segment.value) / maxRevenue) * plotHeight
-                    cursor -= height
-                    return <rect key={segment.key} x={x - 15} y={cursor} width="30" height={height} rx="4" className={segment.className} />
-                  })}
-                  {point.riskAdjustment > 0 ? (
-                    <rect x={x - 15} y={Math.min(plotBottom, yFor(point.forecastRevenue))} width="30" height={Math.max(3, (point.riskAdjustment / maxRevenue) * plotHeight)} rx="4" className="fill-rag-red/35" />
-                  ) : null}
-                  <text x={x} y={chartHeight - 18} textAnchor="middle" className="fill-ink-secondary text-[11px] font-semibold">{point.month.split(' ')[0]}</text>
-                </g>
-              )
-            })}
-            <polyline points={forecastLine} fill="none" className="stroke-brand-blue" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" />
-            {forecast.points.map((point, index) => (
-              <circle key={`${point.month}-forecast`} cx={xFor(index)} cy={yFor(point.forecastRevenue)} r="4" className="fill-brand-blue" />
-            ))}
-            <text x={left} y="18" className="fill-ink-secondary text-[11px] font-semibold">Revenue</text>
-          </svg>
-        </div>
-      ) : (
-        <p className="mt-4 rounded-lg border border-surface-border bg-surface-secondary p-4 text-sm text-ink-secondary">No reliable revenue chart is available for this source scope.</p>
-      )}
+      <div className="mt-4 overflow-x-auto">
+        <svg viewBox={`0 0 ${chartWidth} ${chartHeight}`} className="h-[240px] min-w-[560px] text-ink-secondary">
+          {[0, 1, 2, 3].map(index => {
+            const y = top + (plotHeight / 3) * index
+            return <line key={index} x1={left} x2={chartWidth - right} y1={y} y2={y} className="stroke-surface-border" strokeWidth="1" />
+          })}
+          {forecast.points.map((point, index) => {
+            const x = xFor(index)
+            const y = arrY(point.arr)
+            const height = top + plotHeight - y
+            return (
+              <g key={point.month}>
+                <rect x={x - 13} y={y} width="26" height={height} rx="6" className="fill-blue-tint-40" />
+                <text x={x} y={chartHeight - 18} textAnchor="middle" className="fill-ink-secondary text-[11px] font-semibold">{point.month}</text>
+              </g>
+            )
+          })}
+          <polyline points={arrLine} fill="none" className="stroke-brand-blue" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" />
+          <polyline points={healthLine} fill="none" className="stroke-brand-orange" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" />
+          {forecast.points.map((point, index) => (
+            <g key={`${point.month}-dots`}>
+              <circle cx={xFor(index)} cy={arrY(point.arr)} r="4" className="fill-brand-blue" />
+              <circle cx={xFor(index)} cy={healthY(point.health)} r="4" className="fill-brand-orange" />
+            </g>
+          ))}
+          <text x={left} y="18" className="fill-ink-secondary text-[11px] font-semibold">ARR</text>
+          <text x={chartWidth - right - 42} y="18" className="fill-ink-secondary text-[11px] font-semibold">Health</text>
+        </svg>
+      </div>
 
       <div className="mt-3 grid gap-2 md:grid-cols-3">
-        {metricCards.map(([label, value]) => (
-          <p key={String(label)} className="rounded-md bg-surface-secondary px-3 py-2 text-xs leading-5 text-ink-secondary">
-            <span className="block font-semibold text-ink">{label}</span>
-            {formatCompactCurrency(Number(value))}
-          </p>
-        ))}
         {forecast.highlights.map(item => (
           <p key={item} className="rounded-md bg-surface-secondary px-3 py-2 text-xs leading-5 text-ink-secondary">{item}</p>
         ))}
       </div>
-
-      <div className="mt-3 flex flex-wrap gap-3 text-xs font-medium text-ink-secondary">
-        <span className="inline-flex items-center gap-1.5"><span className="h-2.5 w-2.5 rounded-full bg-blue-tint-40" />Baseline</span>
-        <span className="inline-flex items-center gap-1.5"><span className="h-2.5 w-2.5 rounded-full bg-brand-orange/60" />Weighted opportunities</span>
-        <span className="inline-flex items-center gap-1.5"><span className="h-2.5 w-2.5 rounded-full bg-rag-green/60" />Growth</span>
-        <span className="inline-flex items-center gap-1.5"><span className="h-2.5 w-2.5 rounded-full bg-rag-red/50" />Risk</span>
-      </div>
-
-      {forecast.missingData.length ? (
-        <div className="mt-3 rounded-md border border-brand-orange/20 bg-brand-orange/10 p-3">
-          <p className="text-xs font-semibold uppercase tracking-wider text-brand-orange">Missing data / fallback notes</p>
-          <ul className="mt-2 grid gap-1 text-xs leading-5 text-ink-secondary">
-            {forecast.missingData.slice(0, 3).map(item => <li key={item}>{item}</li>)}
-          </ul>
-        </div>
-      ) : null}
     </div>
   )
 }
@@ -667,54 +598,82 @@ function shouldRenderForecast(query: string) {
 
 function buildForecastAISearchResult(forecast: ForecastResult, timeline: TimelineEntry[]): AISearchResult {
   const sources = [...timeline].sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()).slice(0, 6)
-  const citationSources = forecastCitationsToTimelineEntries(forecast)
   return {
     answer: forecast.summary,
-    sourceEntries: uniqueTimelineEntries([...citationSources, ...sources]).slice(0, 10),
-    queryIntent: `Shared ${forecast.months}-month forecast`,
-    confidence: forecast.confidence === 'not_available' ? 'low' : forecast.confidence,
-    disclaimer: forecast.disclaimer,
+    sourceEntries: sources,
+    queryIntent: 'Predictive forecast',
+    confidence: 'medium',
+    disclaimer: `This forecast is based on current account values, open pipeline, health posture, and ${sources.length} recent recorded events. Verify before use in client communications.`,
   }
 }
 
-function forecastCitationsToTimelineEntries(forecast: ForecastResult): TimelineEntry[] {
-  const timestamp = new Date().toISOString()
-  return forecast.citations.flatMap((citation, index) => {
-    const type = typeof citation.type === 'string' ? citation.type : 'forecast_source'
-    const id = typeof citation.id === 'string' ? citation.id : `${type}-${index}`
-    const label = typeof citation.label === 'string' ? citation.label : titleize(type)
-    return [{
-      id: `forecast-${type}-${id}`,
-      accountId: typeof citation.account_id === 'string' ? citation.account_id : id,
-      eventType: forecastSourceTypeToEventType(type),
-      module: forecastSourceTypeToModule(type),
-      title: label,
-      description: `Forecast source: ${titleize(type)}`,
-      performedBy: 'kam-ai',
-      performedByName: 'KAM AI',
-      timestamp,
-      sourceRecordId: id,
-      sourceRecordType: type,
-      sourceRecordRoute: typeof citation.source_route === 'string' ? citation.source_route : undefined,
-      isSensitive: false,
-      isSystemGenerated: true,
-      isImmutable: true,
-    }]
+function buildAssignedBookForecastResult(accounts: Account[], opportunities: Opportunity[]): ForecastResult {
+  const openOpportunities = opportunities.filter(opportunity => opportunity.stage !== 'Won' && opportunity.stage !== 'Lost')
+  const openPipeline = openOpportunities.reduce((sum, opportunity) => sum + opportunity.estimatedValue, 0)
+  const baseArr = Math.max(accounts.reduce((sum, account) => sum + account.arr, 0), 1)
+  const healthStart = accounts.length ? Math.round(accounts.reduce((sum, account) => sum + account.health.overall, 0) / accounts.length) : 0
+  const criticalCount = accounts.filter(account => account.riskStatus === 'critical').length
+  const warningCount = accounts.filter(account => account.riskStatus === 'warning').length
+  const riskDrag = criticalCount ? -0.75 : warningCount ? 0.2 : 0.9
+  const captureRate = criticalCount ? 0.18 : warningCount ? 0.24 : 0.32
+  const points = Array.from({ length: 6 }, (_, index): ForecastPoint => {
+    const monthDate = new Date()
+    monthDate.setMonth(monthDate.getMonth() + index + 1)
+    const month = monthDate.toLocaleDateString(undefined, { month: 'short' })
+    const capture = openPipeline * captureRate * ((index + 1) / 6)
+    const organicExpansion = baseArr * 0.008 * (index + 1)
+    const arr = Math.round(baseArr + capture + organicExpansion)
+    const health = Math.round(Math.max(35, Math.min(94, healthStart + riskDrag * (index + 1))))
+    const pipeline = Math.max(0, Math.round(openPipeline * (1 - 0.1 * (index + 1))))
+    return { month, arr, health, pipeline }
   })
+  const finalPoint = points[points.length - 1]
+  const arrDelta = finalPoint.arr - baseArr
+  const healthDelta = finalPoint.health - healthStart
+
+  return {
+    title: 'Assigned projects six-month forecast',
+    summary: `Your assigned projects are projected to reach ${formatCompactCurrency(finalPoint.arr)} ARR over the next six months, a ${formatCompactCurrency(arrDelta)} lift from the current baseline. Average health is projected to ${healthDelta >= 0 ? 'improve' : 'decline'} by ${Math.abs(healthDelta)} points if current task pressure and pipeline assumptions hold.`,
+    points,
+    highlights: [
+      `Open pipeline basis: ${formatCompactCurrency(openPipeline)} across ${openOpportunities.length} opportunities.`,
+      `Projected month-six health: ${finalPoint.health}/100 from current ${healthStart}/100.`,
+      `Risk mix: ${criticalCount} critical, ${warningCount} warning, ${Math.max(0, accounts.length - criticalCount - warningCount)} healthy.`,
+    ],
+  }
 }
 
-function forecastSourceTypeToEventType(sourceType: string): TimelineEntry['eventType'] {
-  if (sourceType.includes('opportunity')) return 'opportunity_event'
-  if (sourceType.includes('kyc')) return 'kyc_update'
-  if (sourceType.includes('score') || sourceType.includes('csat')) return 'score_change'
-  if (sourceType.includes('engagement')) return 'engagement_updated'
-  return 'ai_event'
-}
+function buildForecastResult(account: Account, opportunities: Opportunity[]): ForecastResult {
+  const openPipeline = opportunities
+    .filter(opportunity => opportunity.stage !== 'Won' && opportunity.stage !== 'Lost')
+    .reduce((sum, opportunity) => sum + opportunity.estimatedValue, 0)
+  const baseArr = Math.max(account.arr, 1)
+  const healthStart = account.health.overall
+  const riskDrag = account.riskStatus === 'critical' ? -1.5 : account.riskStatus === 'warning' ? 0.25 : 1.15
+  const captureRate = account.riskStatus === 'critical' ? 0.16 : account.riskStatus === 'warning' ? 0.24 : 0.34
+  const points = Array.from({ length: 6 }, (_, index): ForecastPoint => {
+    const monthDate = new Date()
+    monthDate.setMonth(monthDate.getMonth() + index + 1)
+    const month = monthDate.toLocaleDateString(undefined, { month: 'short' })
+    const capture = openPipeline * captureRate * ((index + 1) / 6)
+    const organicExpansion = baseArr * 0.012 * (index + 1)
+    const arr = Math.round(baseArr + capture + organicExpansion)
+    const health = Math.round(Math.max(38, Math.min(94, healthStart + riskDrag * (index + 1) + (openPipeline > baseArr * 0.25 ? 0.8 * index : 0))))
+    const pipeline = Math.max(0, Math.round(openPipeline * (1 - 0.1 * (index + 1))))
+    return { month, arr, health, pipeline }
+  })
+  const finalPoint = points[points.length - 1]
+  const arrDelta = finalPoint.arr - baseArr
+  const healthDelta = finalPoint.health - healthStart
 
-function forecastSourceTypeToModule(sourceType: string): TimelineEntry['module'] {
-  if (sourceType.includes('opportunity')) return 'opportunity'
-  if (sourceType.includes('kyc')) return 'kyc'
-  if (sourceType.includes('score') || sourceType.includes('csat')) return 'scoring'
-  if (sourceType.includes('engagement')) return 'engagements'
-  return 'ai'
+  return {
+    title: `${account.name} six-month forecast`,
+    summary: `${account.name} is projected to reach ${formatCompactCurrency(finalPoint.arr)} ARR over the next six months, a ${formatCompactCurrency(arrDelta)} lift from the current baseline. Health is projected to ${healthDelta >= 0 ? 'improve' : 'decline'} by ${Math.abs(healthDelta)} points if current task pressure and pipeline assumptions hold.`,
+    points,
+    highlights: [
+      `Open pipeline basis: ${formatCompactCurrency(openPipeline)} across ${opportunities.filter(opportunity => opportunity.stage !== 'Won' && opportunity.stage !== 'Lost').length} opportunities.`,
+      `Projected month-six health: ${finalPoint.health}/100 from current ${healthStart}/100.`,
+      `Remaining modeled pipeline by month six: ${formatCompactCurrency(finalPoint.pipeline)}.`,
+    ],
+  }
 }

@@ -234,7 +234,7 @@ def test_dashboard_digest_and_report_workflows(client: TestClient, db_session: S
     assert current_dashboard.json()["dashboard"] == "kam_head_portfolio"
     assert current_dashboard.json()["role_group"] == "admin"
     admin_keys = [item["key"] for item in current_dashboard.json()["widgets"]]
-    assert admin_keys[:8] == ["summary", "forecast_chart", "account_portfolio", "high_risk_accounts", "signals", "escalations", "governance", "governance_calendar"]
+    assert admin_keys[:8] == ["summary", "account_portfolio", "high_risk_accounts", "signals", "escalations", "governance", "governance_calendar", "health_distribution"]
     assert "admin_system" in admin_keys
     admin_widget = next(item for item in current_dashboard.json()["widgets"] if item["key"] == "admin_system")
     assert admin_widget["value"]["failed_notifications"] == 1
@@ -247,7 +247,6 @@ def test_dashboard_digest_and_report_workflows(client: TestClient, db_session: S
     assert dashboard.status_code == 200
     widget_keys = {item["key"] for item in dashboard.json()["widgets"]}
     assert "ai_task_summary" in widget_keys
-    assert "forecast_chart" in widget_keys
 
     refresh = client.post("/api/dashboards/am-home/task-summary/refresh", headers=admin_headers)
     assert refresh.status_code == 200
@@ -295,15 +294,8 @@ def test_role_based_dashboard_profiles_and_reduced_direct_endpoints(client: Test
     assert "leadership" not in {item["key"] for item in am_dashboard.json()["widgets"]}
     am_keys = {item["key"] for item in am_dashboard.json()["widgets"]}
     assert "ai_task_summary" in am_keys
-    assert "forecast_chart" in am_keys
+    assert "forecast_chart" not in am_keys
     assert "governance_calendar" in am_keys
-    am_forecast = next(item for item in am_dashboard.json()["widgets"] if item["key"] == "forecast_chart")
-    assert am_forecast["title"] == "6-Month Revenue Forecast"
-    assert am_forecast["data_scope"] == "assigned_accounts"
-    assert am_forecast["metadata"]["chart_type"] == "line"
-    assert am_forecast["metadata"]["masked"] is False
-    assert len(am_forecast["value"]["points"]) == 6
-    assert isinstance(am_forecast["value"]["points"][0]["forecast_revenue"], (int, float))
 
     kam_head = seeded_user(client, admin_headers, "kam_head")
     kam_headers = auth_headers(client, kam_head["email"], "User@12345")
@@ -312,12 +304,8 @@ def test_role_based_dashboard_profiles_and_reduced_direct_endpoints(client: Test
     assert kam_dashboard.json()["dashboard"] == "kam_head_portfolio"
     assert kam_dashboard.json()["role_group"] == "kam_head"
     kam_keys = [item["key"] for item in kam_dashboard.json()["widgets"]]
-    assert "forecast_chart" in kam_keys
+    assert "forecast_chart" not in kam_keys
     assert "governance_calendar" in kam_keys
-    kam_forecast = next(item for item in kam_dashboard.json()["widgets"] if item["key"] == "forecast_chart")
-    assert kam_forecast["data_scope"] == "portfolio"
-    assert kam_forecast["metadata"]["masked"] is False
-    assert len(kam_forecast["value"]["points"]) == 6
     alert_widget = next(item for item in kam_dashboard.json()["widgets"] if item["key"] == "account_change_alerts")
     assert alert_widget["items"][0]["id"] == alert.id
     assert alert_widget["items"][0]["account_name"] == account.name
@@ -339,12 +327,7 @@ def test_role_based_dashboard_profiles_and_reduced_direct_endpoints(client: Test
     assert "opportunities" in leader_keys
     assert "governance_calendar" in leader_keys
     forecast = next(item for item in leader_dashboard.json()["widgets"] if item["key"] == "forecast_chart")
-    assert forecast["title"] == "6-Month Revenue Forecast"
-    assert forecast["metadata"]["chart_type"] == "line"
     assert forecast["value"]["pipeline_value"] == "Restricted"
-    assert forecast["value"]["weighted_forecast"] == "Restricted"
-    assert forecast["value"]["points"][0]["forecast_revenue"] == "Restricted"
-    assert forecast["value"]["summary"] == "Forecast calculated with the shared KAM AI logic. Commercial values are restricted for this role."
     opportunities = next(item for item in leader_dashboard.json()["widgets"] if item["key"] == "opportunities")
     assert opportunities["metadata"]["masked"] is True
     summaries = next(item for item in leader_dashboard.json()["widgets"] if item["key"] == "executive_summaries")

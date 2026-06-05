@@ -165,17 +165,12 @@ export function RoleDashboard({
             />
           ) : null}
 
-          <section className="grid gap-4 xl:grid-cols-[minmax(0,0.95fr)_minmax(320px,0.65fr)]">
+          <section className="grid gap-4 xl:grid-cols-[minmax(0,0.95fr)_minmax(360px,0.75fr)]">
             {opportunities ? <PipelinePanel widget={opportunities} /> : null}
-            {forecast ? <ForecastPanel widget={forecast} /> : health ? <HealthDistributionPanel widget={health} /> : null}
+            {health ? <HealthDistributionPanel widget={health} /> : null}
           </section>
 
-          {forecast && health ? (
-            <section className="grid gap-4 xl:grid-cols-2">
-              <HealthDistributionPanel widget={health} />
-            </section>
-          ) : null}
-
+          {forecast ? <ForecastPanel widget={forecast} /> : null}
           {portfolio ? <PortfolioTable widget={portfolio} /> : null}
 
           <section className="grid gap-4 xl:grid-cols-2">
@@ -474,145 +469,34 @@ function HealthDistributionPanel({ widget }: { widget: DashboardWidget }) {
 
 function ForecastPanel({ widget }: { widget: DashboardWidget }) {
   const value = isRecord(widget.value) ? widget.value : {}
-  const points = Array.isArray(value.points) ? value.points.filter(isRecord) : []
-  const totals = isRecord(value.totals) ? value.totals : {}
   const series = Array.isArray(value.series) ? value.series.filter(isRecord) : []
-  const missingData = Array.isArray(value.missing_data) ? value.missing_data.map(String) : []
-  const masked = Boolean(widget.metadata.masked)
-  const sharedForecast = points.length > 0
-  const noAuthorizedScope = missingData.some(note => note.toLowerCase().includes('no authorized accounts'))
-  const forecastUnavailable = (String(value.confidence) === 'not_available' || noAuthorizedScope) && numericValue(totals.forecast_revenue) <= 0
-  const maxPoint = Math.max(1, ...points.map(point => numericValue(point.forecast_revenue)))
-  const maxSeries = Math.max(1, ...series.map(item => Number(item.value) || 0))
-  const chartWidth = 500
-  const chartHeight = 162
-  const left = 34
-  const right = 16
-  const top = 18
-  const bottom = 32
-  const plotWidth = chartWidth - left - right
-  const plotHeight = chartHeight - top - bottom
-  const xFor = (index: number) => left + (plotWidth / Math.max(1, points.length - 1)) * index
-  const yFor = (amount: number) => top + plotHeight - (amount / maxPoint) * plotHeight
-  const forecastLine = points.map((point, index) => `${xFor(index)},${yFor(numericValue(point.forecast_revenue))}`).join(' ')
-  const metrics = sharedForecast
-    ? [
-        ['forecast_revenue', totals.forecast_revenue],
-        ['baseline_revenue', totals.baseline_revenue],
-        ['weighted_opportunity', totals.weighted_opportunity],
-        ['risk_adjustment', totals.risk_adjustment],
-      ]
-    : Object.entries(value).filter(([key]) => key !== 'series').slice(0, 4)
-
-  if (forecastUnavailable) {
-    return (
-      <section className="tk-card p-5">
-        <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-          <div className="min-w-0">
-            <div className="flex items-center gap-2">
-              <Activity className="h-4 w-4 text-brand-blue" />
-              <h2 className="text-lg font-semibold text-ink">Forecast outlook</h2>
-            </div>
-            <p className="mt-1 text-sm text-ink-secondary">Next 6 months</p>
-          </div>
-          <span className="w-fit rounded-full border border-brand-orange/20 bg-brand-orange/10 px-3 py-1.5 text-xs font-semibold text-brand-orange">
-            Insufficient data
-          </span>
-        </div>
-        <div className="mt-5 rounded-md border border-brand-orange/20 bg-brand-orange/10 p-3">
-          <p className="text-xs font-semibold uppercase text-brand-orange">Forecast notes</p>
-          <p className="mt-2 text-sm leading-5 text-ink-secondary">{missingData[0] ?? 'No authorized accounts are available in the forecast scope.'}</p>
-        </div>
-      </section>
-    )
-  }
-
+  const max = Math.max(1, ...series.map(item => Number(item.value) || 0))
   return (
-    <section className="tk-card overflow-hidden p-4">
-      <div className="flex flex-col gap-3 border-b border-surface-border pb-3 lg:flex-row lg:items-start lg:justify-between">
+    <section className="tk-card overflow-hidden p-5">
+      <div className="flex flex-col gap-4 border-b border-surface-border pb-5 lg:flex-row lg:items-start lg:justify-between">
         <div>
           <div className="flex items-center gap-2">
-            <Activity className="h-4 w-4 text-brand-blue" />
-            <h2 className="text-base font-semibold text-ink">{widget.title}</h2>
+            <Activity className="h-5 w-5 text-brand-blue" />
+            <h2 className="text-lg font-semibold text-ink">{widget.title}</h2>
           </div>
-          <div className="mt-3 grid gap-2 sm:grid-cols-2">
-            {metrics.map(([key, item]) => <ForecastMetric key={String(key)} label={String(key)} value={formatValue(item, String(key))} />)}
+          <div className="mt-4 grid gap-2 sm:grid-cols-3">
+            {Object.entries(value).filter(([key]) => key !== 'series').map(([key, item]) => <MiniMetric key={key} label={key} value={formatValue(item, key)} />)}
           </div>
         </div>
-        {masked ? <span className="w-fit rounded-full border border-surface-border bg-white px-2.5 py-1.5 text-xs font-semibold text-ink-secondary">Masked</span> : null}
+        {widget.metadata.masked ? <span className="rounded-full border border-surface-border bg-white px-3 py-2 text-xs font-semibold text-ink-secondary">Commercial values masked</span> : null}
       </div>
-
-      {sharedForecast ? (
-        <div className="mt-4">
-          {masked ? (
-            <div className="grid gap-2 sm:grid-cols-3">
-              {points.map(point => (
-                <div key={String(point.month)} className="rounded-md border border-surface-border bg-surface-secondary p-3">
-                  <p className="text-xs font-semibold text-ink">{String(point.month)}</p>
-                  <p className="mt-1 text-xs text-ink-secondary">Restricted</p>
-                </div>
-              ))}
+      <div className="mt-5 space-y-3">
+        {series.map(item => (
+          <div key={String(item.label)} className="grid gap-2 sm:grid-cols-[150px_1fr_120px] sm:items-center">
+            <span className="text-sm font-medium text-ink">{String(item.label)}</span>
+            <div className="h-3 overflow-hidden rounded-full bg-surface-tertiary">
+              <div className="h-full rounded-full bg-brand-blue" style={{ width: `${Math.max(6, ((Number(item.value) || 0) / max) * 100)}%` }} />
             </div>
-          ) : (
-            <div className="overflow-hidden">
-              <svg viewBox={`0 0 ${chartWidth} ${chartHeight}`} className="h-[170px] w-full min-w-0" role="img" aria-label="Dashboard six-month forecast chart">
-                {[0, 1, 2].map(index => {
-                  const y = top + (plotHeight / 2) * index
-                  return <line key={index} x1={left} x2={chartWidth - right} y1={y} y2={y} className="stroke-surface-border" />
-                })}
-                {points.map((point, index) => {
-                  const x = xFor(index)
-                  const y = yFor(numericValue(point.forecast_revenue))
-                  return (
-                    <g key={String(point.month)}>
-                      <rect x={x - 10} y={y} width="20" height={top + plotHeight - y} rx="4" className="fill-blue-tint-40" />
-                      <text x={x} y={chartHeight - 10} textAnchor="middle" className="fill-ink-secondary text-[10px] font-semibold">{String(point.month).split(' ')[0]}</text>
-                    </g>
-                  )
-                })}
-                <polyline points={forecastLine} fill="none" className="stroke-brand-blue" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" />
-              </svg>
-            </div>
-          )}
-          {typeof value.summary === 'string' ? <p className="mt-2 line-clamp-2 text-xs leading-5 text-ink-secondary">{value.summary}</p> : null}
-        </div>
-      ) : (
-        <div className="mt-5 space-y-3">
-          {series.map(item => (
-            <div key={String(item.label)} className="grid gap-2 sm:grid-cols-[150px_1fr_120px] sm:items-center">
-              <span className="text-sm font-medium text-ink">{String(item.label)}</span>
-              <div className="h-3 overflow-hidden rounded-full bg-surface-tertiary">
-                <div className="h-full rounded-full bg-brand-blue" style={{ width: `${Math.max(6, ((Number(item.value) || 0) / maxSeries) * 100)}%` }} />
-              </div>
-              <span className="text-sm font-semibold text-ink-secondary">{formatValue(item.display_value ?? item.value, 'pipeline_value')}</span>
-            </div>
-          ))}
-          {!series.length ? (
-            <p className="rounded-md bg-surface-secondary p-4 text-sm text-ink-secondary">No forecast data is available for this scope.</p>
-          ) : null}
-        </div>
-      )}
-
-      {sharedForecast && missingData.length ? (
-        <div className="mt-3 rounded-md border border-brand-orange/20 bg-brand-orange/10 p-3">
-          <p className="text-xs font-semibold uppercase text-brand-orange">Forecast notes</p>
-          <div className="mt-2 grid gap-1 text-xs leading-5 text-ink-secondary">
-            {missingData.slice(0, 2).map(item => (
-              <p key={item}>{item}</p>
-            ))}
+            <span className="text-sm font-semibold text-ink-secondary">{formatValue(item.display_value ?? item.value, 'pipeline_value')}</span>
           </div>
-        </div>
-      ) : null}
+        ))}
+      </div>
     </section>
-  )
-}
-
-function ForecastMetric({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="min-w-0 rounded-md bg-surface-secondary px-3 py-2">
-      <p className="truncate text-[10px] font-semibold uppercase text-ink-secondary" title={label}>{labelize(label)}</p>
-      <p className="mt-1 truncate text-base font-bold leading-none text-ink" title={value}>{value}</p>
-    </div>
   )
 }
 
@@ -1067,8 +951,4 @@ function formatValue(value: unknown, key = ''): string {
   if (Array.isArray(value)) return `${value.length} items`
   if (isRecord(value)) return JSON.stringify(value)
   return String(value)
-}
-
-function numericValue(value: unknown): number {
-  return typeof value === 'number' && Number.isFinite(value) ? value : 0
 }
