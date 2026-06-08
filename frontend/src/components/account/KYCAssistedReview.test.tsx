@@ -16,6 +16,7 @@ import {
   listKycSnapshots,
   queueKycWebResearch,
   rejectKycDraft,
+  refreshKycAgentRun,
   retryKycAgentRun,
   runPendingKycJobs,
   restoreKycSnapshot,
@@ -45,6 +46,7 @@ vi.mock('@/services/kyc', () => ({
   listKycSnapshots: vi.fn(),
   queueKycWebResearch: vi.fn(),
   rejectKycDraft: vi.fn(),
+  refreshKycAgentRun: vi.fn(),
   retryKycAgentRun: vi.fn(),
   runPendingKycJobs: vi.fn(),
   restoreKycSnapshot: vi.fn(),
@@ -63,18 +65,21 @@ vi.mock('@/components/ui/RichTextEditor', () => ({
     disabled,
     ariaLabel,
     placeholder,
+    editorHeight,
   }: {
     value: string
     onChange: (value: string) => void
     disabled?: boolean
     ariaLabel?: string
     placeholder?: string
+    editorHeight?: string
   }) => (
     <textarea
       aria-label={ariaLabel}
       value={value}
       disabled={disabled}
       placeholder={placeholder}
+      style={editorHeight ? { height: editorHeight } : undefined}
       onChange={event => onChange(event.target.value)}
     />
   ),
@@ -215,7 +220,27 @@ function agentRun(overrides: Partial<KycAgentRun> = {}): KycAgentRun {
     provider: { adapter: 'local-openai-compatible', base_url: 'http://host.docker.internal:11434/v1' },
     usage: {},
     cost: {},
-    retrieval_summary: {},
+    retrieval_summary: {
+      retrieved_context_count: 3,
+      ollama_debug: {
+        schema_fallback_count: 0,
+        runtime_events: [
+          {
+            at: '2026-06-01T07:00:00Z',
+            event: 'ollama_run_started',
+            details: {
+              model: 'qwen3:8b',
+              base_url: 'http://host.docker.internal:11434/v1',
+              retrieved_context_count: 3,
+            },
+          },
+        ],
+        prompt_sections: [{ title: 'Client Research', workstream_key: 'client_research', prompt: 'Return only valid JSON for Acme KYC.', input_tokens_estimate: 120, retrieved_context_count: 3 }],
+        raw_response_sections: [{ title: 'Client Research', workstream_key: 'client_research', raw_response: '{"status":"complete","fields":[]}' }],
+        workstream_calls: [{ workstream_key: 'client_research', status: 'complete', latency_ms: 1000 }],
+        processing_notes: ['Direct Google scraping is not performed.'],
+      },
+    },
     provider_response_id: null,
     model_name: 'qwen3:8b',
     detailed_description: 'Raw Qwen response',
@@ -278,6 +303,7 @@ describe('KYCAssistedReview', () => {
     vi.mocked(rejectKycDraft).mockResolvedValue(draft({ status: 'rejected' }))
     vi.mocked(createKycDraft).mockResolvedValue(draft({ id: 'draft-2' }))
     vi.mocked(queueKycWebResearch).mockResolvedValue(agentRun({ id: 'research-run-1', status: 'pending', provider: { research_only: true, adapter: 'tavily-ollama-research' }, model_name: 'qwen3:8b' }))
+    vi.mocked(refreshKycAgentRun).mockResolvedValue(agentRun({ id: 'run-2', previous_run_id: 'run-1', status: 'pending' }))
     vi.mocked(retryKycAgentRun).mockResolvedValue(agentRun({ status: 'pending' }))
     vi.mocked(runPendingKycJobs).mockResolvedValue({ processed_count: 0, failed_count: 0, processed_runs: [], failures: [] })
     vi.mocked(restoreKycSnapshot).mockResolvedValue(snapshot({ id: 'snapshot-3', version: 3 }))
@@ -352,11 +378,55 @@ describe('KYCAssistedReview', () => {
     await waitFor(() => expect(retryKycAgentRun).toHaveBeenCalledWith('test-token', account.id, 'run-1'))
   })
 
-  it('queues Tavily web research for the active draft', async () => {
+  it('re-runs a completed local Qwen KYC run from the local AI status card', async () => {
     const user = userEvent.setup()
+    vi.mocked(listKycAgentRuns).mockResolvedValue({
+      items: [agentRun({ status: 'complete' })],
+      total: 1,
+      page: 1,
+      page_size: 1,
+      pages: 1,
+    })
 
     render(<KYCAssistedReview account={account} />)
 
+    expect(await screen.findByText(/complete · qwen3:8b/i)).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: /Re-run Qwen/i }))
+
+    await waitFor(() => expect(refreshKycAgentRun).toHaveBeenCalledWith('test-token', account.id, 'run-1'))
+  })
+
+  it('re-runs a stale running local Qwen KYC run from the local AI status card', async () => {
+    const user = userEvent.setup()
+    vi.mocked(listKycAgentRuns).mockResolvedValue({
+      items: [agentRun({ status: 'running', completed_at: null })],
+      total: 1,
+      page: 1,
+      page_size: 1,
+      pages: 1,
+    })
+
+    render(<KYCAssistedReview account={account} />)
+
+    expect(await screen.findByText(/running · qwen3:8b/i)).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: /Re-run Qwen/i }))
+
+    await waitFor(() => expect(refreshKycAgentRun).toHaveBeenCalledWith('test-token', account.id, 'run-1'))
+  })
+
+  it('queues Tavily web research for the active draft', async () => {
+    const user = userEvent.setup()
+    vi.mocked(listKycAgentRuns).mockResolvedValue({ items: [agentRun()], total: 1, page: 1, page_size: 1, pages: 1 })
+
+    render(<KYCAssistedReview account={account} />)
+
+    expect(await screen.findByText('Ollama generated KYC')).toBeInTheDocument()
+    expect((screen.getByLabelText(/Ollama generated KYC/i) as HTMLTextAreaElement).value).toContain('Raw Qwen response')
+    expect((screen.getByLabelText(/Ollama generated KYC/i) as HTMLTextAreaElement).value).toContain('Current extracted KYC fields')
+    const logValue = (screen.getByLabelText(/Ollama KYC logs/i) as HTMLTextAreaElement).value
+    expect(logValue).toContain('Return only valid JSON for Acme KYC.')
+    expect(logValue).toContain('ollama run started')
+    expect(logValue).toContain('Direct Google scraping is not performed.')
     expect(await screen.findByText('Detailed AI description')).toBeInTheDocument()
     expect(screen.getByDisplayValue(/Acme Corp Statement of Work/i)).toBeInTheDocument()
     await user.type(screen.getByRole('textbox', { name: /Research question/i }), 'Tell me about Acme Inc in USA')

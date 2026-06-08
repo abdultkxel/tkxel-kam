@@ -28,6 +28,7 @@ import {
   listKycSnapshots,
   queueKycWebResearch,
   rejectKycDraft,
+  refreshKycAgentRun,
   retryKycAgentRun,
   runPendingKycJobs,
   restoreKycSnapshot,
@@ -43,7 +44,7 @@ import { cn } from '@/utils/cn'
 const DRAFT_PAGE_SIZE = 5
 const SNAPSHOT_PAGE_SIZE = 3
 
-type ActionState = 'initial' | 'refresh' | 'create' | 'save' | 'approve' | 'reject' | 'restore' | 'retryRun' | 'runPending' | 'webResearch' | ''
+type ActionState = 'initial' | 'refresh' | 'create' | 'save' | 'approve' | 'reject' | 'restore' | 'retryRun' | 'rerunRun' | 'runPending' | 'webResearch' | ''
 
 export function KYCAssistedReview({ account }: { account: Account }) {
   const { token } = useAuth()
@@ -93,6 +94,14 @@ export function KYCAssistedReview({ account }: { account: Account }) {
   const selectedSourceDocument = useMemo(
     () => sourceDocuments.find(document => document.id === selectedSourceDocumentId) ?? sourceDocuments[0] ?? null,
     [selectedSourceDocumentId, sourceDocuments],
+  )
+  const ollamaGeneratedKycHtml = useMemo(
+    () => buildOllamaGeneratedKycHtml(activeDraft, latestRun),
+    [activeDraft, latestRun],
+  )
+  const ollamaDebugLogsHtml = useMemo(
+    () => buildOllamaDebugLogsHtml(activeDraft, latestRun),
+    [activeDraft, latestRun],
   )
 
   const loadKyc = useCallback(
@@ -148,6 +157,14 @@ export function KYCAssistedReview({ account }: { account: Account }) {
   useEffect(() => {
     void loadKyc('initial')
   }, [loadKyc])
+
+  useEffect(() => {
+    if (!latestRun || !['pending', 'running'].includes(latestRun.status)) return
+    const timer = window.setInterval(() => {
+      void loadKyc('')
+    }, 5000)
+    return () => window.clearInterval(timer)
+  }, [latestRun?.id, latestRun?.status, loadKyc])
 
   useEffect(() => {
     if (!activeDraft) {
@@ -358,6 +375,21 @@ export function KYCAssistedReview({ account }: { account: Account }) {
     }
   }
 
+  async function rerunLatestRun() {
+    if (!token || !latestRun) return
+    setLoading('rerunRun')
+    setError(null)
+    try {
+      await refreshKycAgentRun(token, account.id, latestRun.id)
+      toast.success('Qwen KYC re-run queued. The local worker will prepare a fresh source-backed prompt.')
+      await loadKyc('refresh')
+    } catch (requestError) {
+      setError(errorMessage(requestError))
+    } finally {
+      setLoading('')
+    }
+  }
+
   async function runWebResearch() {
     if (!token || !activeDraft) return
     setLoading('webResearch')
@@ -420,6 +452,10 @@ export function KYCAssistedReview({ account }: { account: Account }) {
                 {loading === 'refresh' ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCcw className="h-4 w-4" />}
                 Refresh
               </button>
+              <button type="button" className="tk-button-secondary bg-white" onClick={createDraft} disabled={Boolean(loading)}>
+                {loading === 'create' ? <Loader2 className="h-4 w-4 animate-spin" /> : <PlusCircle className="h-4 w-4" />}
+                New draft
+              </button>
               <button type="button" className="tk-button-secondary bg-white" onClick={saveEdits} disabled={!canEditDraft || Boolean(loading)}>
                 {loading === 'save' ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
                 Save edits
@@ -469,6 +505,12 @@ export function KYCAssistedReview({ account }: { account: Account }) {
                 {latestRun.model_name?.toLowerCase().includes('qwen') ? 'Retry with Qwen' : 'Retry KYC run'}
               </button>
             ) : null}
+            {['complete', 'running'].includes(latestRun.status) ? (
+              <button type="button" className="tk-button-secondary bg-white" onClick={rerunLatestRun} disabled={Boolean(loading)}>
+                {loading === 'rerunRun' ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCcw className="h-4 w-4" />}
+                {latestRun.model_name?.toLowerCase().includes('qwen') ? 'Re-run Qwen' : 'Re-run KYC'}
+              </button>
+            ) : null}
           </div>
         </section>
       ) : null}
@@ -487,6 +529,47 @@ export function KYCAssistedReview({ account }: { account: Account }) {
           onSelectSource={setSelectedSourceDocumentId}
           previewError={sourcePreviewError}
         />
+      ) : null}
+
+      {activeDraft ? (
+        <section className="tk-card p-5">
+          <div className="flex flex-col gap-2 lg:flex-row lg:items-start lg:justify-between">
+            <div>
+              <p className="text-[10px] font-extrabold uppercase tracking-widest text-brand-blue">Local AI output</p>
+              <h3 className="mt-1 text-base font-semibold text-ink">Ollama generated KYC</h3>
+              <p className="mt-1 text-sm leading-6 text-ink-secondary">
+                Full generated KYC response from the selected draft/run, plus current extracted fields, citations, and compliant research context.
+              </p>
+            </div>
+            <span className="rounded-md bg-surface-secondary px-2 py-1 text-xs font-semibold text-ink-secondary">
+              {runMatchesDraft(latestRun, activeDraft) && latestRun?.model_name ? latestRun.model_name : 'Stored draft response'}
+            </span>
+          </div>
+          <div className="mt-3 grid gap-4 xl:grid-cols-[minmax(0,1fr)_420px]">
+            <div>
+              <p className="mb-2 text-xs font-semibold uppercase tracking-wider text-ink-secondary">Generated KYC body</p>
+              <RichTextEditor
+                value={ollamaGeneratedKycHtml}
+                onChange={() => undefined}
+                disabled
+                placeholder="Create or retry a KYC draft, then refresh after the Ollama run completes."
+                ariaLabel="Ollama generated KYC"
+                editorHeight="520px"
+              />
+            </div>
+            <aside>
+              <p className="mb-2 text-xs font-semibold uppercase tracking-wider text-ink-secondary">Prompt, response, and processing logs</p>
+              <RichTextEditor
+                value={ollamaDebugLogsHtml}
+                onChange={() => undefined}
+                disabled
+                placeholder="Prompt and raw response logs will appear after a new KYC or web research run completes."
+                ariaLabel="Ollama KYC logs"
+                editorHeight="520px"
+              />
+            </aside>
+          </div>
+        </section>
       ) : null}
 
       {error ? (
@@ -533,12 +616,6 @@ export function KYCAssistedReview({ account }: { account: Account }) {
                       <span className="text-xs font-medium text-ink-secondary">Created {formatDateTime(activeDraft.created_at)}</span>
                     </div>
                     <p className="mt-3 text-sm leading-6 text-ink-secondary">{activeDraft.ai_disclaimer}</p>
-                  </div>
-                  <div className="flex shrink-0 flex-wrap gap-2">
-                    <button type="button" className="tk-button-secondary bg-white" onClick={createDraft} disabled={Boolean(loading)}>
-                      {loading === 'create' ? <Loader2 className="h-4 w-4 animate-spin" /> : <PlusCircle className="h-4 w-4" />}
-                      New draft
-                    </button>
                   </div>
                 </div>
                 <div className="mt-4 rounded-lg border border-surface-border bg-surface-secondary p-3">
@@ -917,6 +994,113 @@ function buildKycRuntimeReviewHtml(draft: KycDraft, document: SourceDocument | n
   ].filter(Boolean).join('')
 }
 
+function buildOllamaGeneratedKycHtml(draft: KycDraft | null, latestRun: KycAgentRun | null) {
+  if (!draft) return ''
+  const linkedRun = runMatchesDraft(latestRun, draft) ? latestRun : null
+  const linkedRunResponse = linkedRun?.detailed_description ?? ''
+  const storedResponse = linkedRunResponse?.trim() || draft.detailed_description?.trim()
+  const generatedAt = linkedRun ? linkedRun.completed_at || linkedRun.updated_at || linkedRun.created_at : draft.updated_at
+  const sourceLabel = linkedRunResponse?.trim() ? 'Linked KYC run response' : 'Stored draft detailed response'
+  const provider = linkedRun ? providerText(linkedRun) : 'Stored KYC draft'
+  const populatedFields = draft.fields.filter(field => toPlainText(field.value || '').trim())
+  const emptyFields = draft.fields.filter(field => !toPlainText(field.value || '').trim())
+  const fieldSections = draft.fields.map(field => (
+    [
+      `<h5>${escapeHtml(field.workstream_title)} - ${escapeHtml(field.label)}</h5>`,
+      toPlainText(field.value || '').trim() ? richTextFromStoredKycText(field.value || '') : '<p><em>No value returned yet.</em></p>',
+      `<p><strong>Confidence:</strong> ${field.confidence}% · <strong>Status:</strong> ${field.missing ? 'Missing' : 'Populated'}${field.is_sensitive ? ' · Sensitive' : ''}</p>`,
+      field.missing_evidence_note ? `<p><strong>Missing evidence:</strong> ${escapeHtml(field.missing_evidence_note)}</p>` : '',
+      field.suggested_follow_up_questions?.length ? `<p><strong>Follow-up questions:</strong></p><ul>${field.suggested_follow_up_questions.map(question => `<li>${escapeHtml(question)}</li>`).join('')}</ul>` : '',
+    ].filter(Boolean).join('')
+  )).join('')
+  const citationItems = draft.citations.slice(0, 40).map(citation => (
+    `<li><strong>${escapeHtml(citation.label)}</strong>${citation.source_route ? ` · ${escapeHtml(citation.source_route)}` : ''}${citation.page_number ? ` · page ${citation.page_number}` : ''}<br/>${escapeHtml(citation.excerpt)}</li>`
+  )).join('')
+  return [
+    '<h4>Generated KYC response</h4>',
+    '<ul>',
+    `<li><strong>Source:</strong> ${escapeHtml(sourceLabel)}</li>`,
+    `<li><strong>Model:</strong> ${escapeHtml(linkedRun?.model_name || 'Stored draft response')}</li>`,
+    `<li><strong>Provider:</strong> ${escapeHtml(provider)}</li>`,
+    `<li><strong>Generated/stored at:</strong> ${escapeHtml(formatDateTime(generatedAt))}</li>`,
+    `<li><strong>Populated fields:</strong> ${populatedFields.length}/${draft.fields.length}</li>`,
+    `<li><strong>Empty fields:</strong> ${emptyFields.map(field => escapeHtml(field.label)).join(', ') || 'None'}</li>`,
+    '</ul>',
+    '<h4>Full response</h4>',
+    storedResponse
+      ? richTextFromStoredKycText(storedResponse)
+      : '<p>No Ollama generated KYC response has been stored yet. Create or retry the KYC draft, run the pending job if needed, then refresh this page.</p>',
+    '<h4>Current extracted KYC fields</h4>',
+    fieldSections || '<p>No KYC fields are available yet.</p>',
+    '<h4>Citations and web sources</h4>',
+    citationItems ? `<ul>${citationItems}</ul>` : '<p>No citations or web research sources are attached yet.</p>',
+    '<h4>Research source status</h4>',
+    '<ul>',
+    `<li><strong>Configured research labels:</strong> ${draft.research_sources.map(source => escapeHtml(source)).join(', ') || 'None'}</li>`,
+    '<li><strong>Compliant web search:</strong> Tavily API can return official websites, news, blogs, business pages, and public Reddit results when available.</li>',
+    '<li><strong>Google:</strong> direct Google scraping is not used; web search is routed through Tavily/API-backed search.</li>',
+    '<li><strong>LinkedIn:</strong> not scraped or cited without approved official API/data-provider access.</li>',
+    '<li><strong>ZoomInfo:</strong> not queried unless approved API credentials are configured.</li>',
+    '</ul>',
+  ].join('')
+}
+
+function buildOllamaDebugLogsHtml(draft: KycDraft | null, latestRun: KycAgentRun | null) {
+  if (!draft) return ''
+  const linkedRun = runMatchesDraft(latestRun, draft) ? latestRun : null
+  if (!linkedRun) {
+    return [
+      '<h4>No linked run logs available</h4>',
+      '<p>This draft does not currently have the latest KYC run loaded. Refresh the page or run/retry KYC to capture prompt and response logs for the next run.</p>',
+      '<h4>Processing notes</h4>',
+      '<ul>',
+      '<li>Existing drafts created before log persistence may only show stored detailed response text.</li>',
+      '<li>New Ollama KYC runs persist prompt sections, raw response sections, workstream call metadata, and processing notes.</li>',
+      '</ul>',
+    ].join('')
+  }
+
+  const retrieval = recordValue(linkedRun.retrieval_summary)
+  const ollamaDebug = recordValue(retrieval.ollama_debug)
+  const researchDebug = recordValue(retrieval.research_debug)
+  const promptSections = arrayValue(ollamaDebug.prompt_sections)
+  const rawSections = arrayValue(ollamaDebug.raw_response_sections)
+  const workstreamCalls = arrayValue(ollamaDebug.workstream_calls)
+  const runtimeEvents = arrayValue(ollamaDebug.runtime_events)
+  const researchSources = arrayValue(researchDebug.tavily_sources)
+  const researchQueries = arrayValue(researchDebug.tavily_queries)
+  const processingNotes = [
+    ...arrayValue(ollamaDebug.processing_notes).map(String),
+    ...arrayValue(researchDebug.processing_notes).map(String),
+  ]
+
+  return [
+    '<h4>Run summary</h4>',
+    '<ul>',
+    `<li><strong>Status:</strong> ${escapeHtml(linkedRun.status)}</li>`,
+    `<li><strong>Model:</strong> ${escapeHtml(linkedRun.model_name || 'unknown')}</li>`,
+    `<li><strong>Provider:</strong> ${escapeHtml(providerText(linkedRun))}</li>`,
+    `<li><strong>Run ID:</strong> ${escapeHtml(linkedRun.id)}</li>`,
+    `<li><strong>Started:</strong> ${linkedRun.started_at ? escapeHtml(formatDateTime(linkedRun.started_at)) : 'Not recorded'}</li>`,
+    `<li><strong>Completed:</strong> ${linkedRun.completed_at ? escapeHtml(formatDateTime(linkedRun.completed_at)) : 'Not recorded'}</li>`,
+    `<li><strong>Retrieved context:</strong> ${escapeHtml(String(retrieval.retrieved_context_count ?? 'not recorded'))}</li>`,
+    `<li><strong>Schema fallbacks:</strong> ${escapeHtml(String(ollamaDebug.schema_fallback_count ?? 0))}</li>`,
+    '</ul>',
+    processingNotes.length ? `<h4>Processing notes</h4><ul>${processingNotes.map(note => `<li>${escapeHtml(note)}</li>`).join('')}</ul>` : '',
+    runtimeEvents.length ? `<h4>Runtime Qwen/Ollama events</h4>${runtimeEvents.map(event => runtimeEventBlock(event)).join('')}` : '',
+    researchQueries.length ? `<h4>Tavily/web research queries</h4><ul>${researchQueries.map(query => `<li>${escapeHtml(String(query))}</li>`).join('')}</ul>` : '',
+    researchSources.length ? `<h4>Tavily/web research sources</h4><ul>${researchSources.map(source => sourceListItem(source)).join('')}</ul>` : '',
+    workstreamCalls.length ? `<h4>Workstream call metadata</h4>${workstreamCalls.map(call => debugBlock(callTitle(call), jsonText(call))).join('')}` : '',
+    promptSections.length ? `<h4>Ollama prompts</h4>${promptSections.map(section => promptBlock(section)).join('')}` : '',
+    rawSections.length ? `<h4>Ollama raw workstream responses</h4>${rawSections.map(section => rawResponseBlock(section)).join('')}` : '',
+    typeof researchDebug.ollama_prompt === 'string' && researchDebug.ollama_prompt.trim() ? `<h4>Ollama web-research prompt</h4>${debugBlock('Tavily/Ollama summarizer prompt', researchDebug.ollama_prompt)}` : '',
+    typeof researchDebug.ollama_raw_response === 'string' && researchDebug.ollama_raw_response.trim() ? `<h4>Ollama web-research raw response</h4>${debugBlock('Tavily/Ollama summarizer response', researchDebug.ollama_raw_response)}` : '',
+    !promptSections.length && !rawSections.length && !researchDebug.ollama_prompt
+      ? '<p>No prompt/raw response logs are stored for this run yet. Run a new KYC or web-research job after this update to populate the sidebar.</p>'
+      : '',
+  ].filter(Boolean).join('')
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null
 }
@@ -931,6 +1115,77 @@ function escapeHtml(value: string) {
 
 function textWithLineBreaks(value: string) {
   return escapeHtml(value).replace(/\n/g, '<br/>')
+}
+
+function richTextFromStoredKycText(value: string) {
+  if (/<\/?[a-z][\s\S]*>/i.test(value)) return value
+  return `<p>${textWithLineBreaks(value)}</p>`
+}
+
+function runMatchesDraft(run: KycAgentRun | null, draft: KycDraft | null) {
+  if (!run || !draft) return false
+  if (run.id === draft.agent_run_id) return true
+  const provider = recordValue(run.provider)
+  const retrieval = recordValue(run.retrieval_summary)
+  return provider.draft_id === draft.id || retrieval.draft_id === draft.id
+}
+
+function recordValue(value: unknown): Record<string, unknown> {
+  return isRecord(value) ? value : {}
+}
+
+function arrayValue(value: unknown): unknown[] {
+  return Array.isArray(value) ? value : []
+}
+
+function promptBlock(value: unknown) {
+  const record = recordValue(value)
+  const title = [record.title, record.workstream_key].filter(item => typeof item === 'string' && item).join(' - ') || 'Ollama prompt'
+  const tokens = typeof record.input_tokens_estimate === 'number' ? ` · ${record.input_tokens_estimate} estimated tokens` : ''
+  const context = typeof record.retrieved_context_count === 'number' ? ` · ${record.retrieved_context_count} context item(s)` : ''
+  return debugBlock(`${title}${tokens}${context}`, String(record.prompt || 'Prompt not stored.'))
+}
+
+function rawResponseBlock(value: unknown) {
+  const record = recordValue(value)
+  const title = [record.title, record.workstream_key].filter(item => typeof item === 'string' && item).join(' - ') || 'Ollama raw response'
+  return debugBlock(title, String(record.raw_response || 'Raw response not stored.'))
+}
+
+function runtimeEventBlock(value: unknown) {
+  const record = recordValue(value)
+  const event = typeof record.event === 'string' && record.event ? record.event : 'runtime_event'
+  const at = typeof record.at === 'string' && record.at ? ` · ${formatDateTime(record.at)}` : ''
+  return debugBlock(`${event.replace(/_/g, ' ')}${at}`, jsonText(recordValue(record.details)))
+}
+
+function callTitle(value: unknown) {
+  const record = recordValue(value)
+  return String(record.workstream_key || 'Workstream call')
+}
+
+function sourceListItem(value: unknown) {
+  const record = recordValue(value)
+  const label = escapeHtml(String(record.label || record.title || 'Web source'))
+  const url = typeof record.url === 'string' && record.url ? ` · ${escapeHtml(record.url)}` : ''
+  const confidence = typeof record.confidence === 'number' ? ` · ${record.confidence}%` : ''
+  const excerpt = typeof record.excerpt === 'string' && record.excerpt ? `<br/>${escapeHtml(record.excerpt)}` : ''
+  return `<li><strong>${label}</strong>${url}${confidence}${excerpt}</li>`
+}
+
+function debugBlock(title: string, value: string) {
+  return [
+    `<h5>${escapeHtml(title)}</h5>`,
+    `<pre style="white-space: pre-wrap; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', monospace; font-size: 12px; line-height: 1.5;">${escapeHtml(value)}</pre>`,
+  ].join('')
+}
+
+function jsonText(value: unknown) {
+  try {
+    return JSON.stringify(value, null, 2)
+  } catch {
+    return String(value)
+  }
 }
 
 function groupFields(draft: KycDraft | null) {

@@ -20,10 +20,12 @@ logger = logging.getLogger(__name__)
 
 BLOCKED_RESEARCH_DOMAINS = {
     "linkedin.com",
+    "zoominfo.com",
+    "crunchbase.com",
     "facebook.com",
     "instagram.com",
-    "x.com",
     "twitter.com",
+    "x.com",
 }
 
 
@@ -411,6 +413,13 @@ class OllamaKycResearchSummarizer:
             content, metadata = self._call_local_model(prompt)
             log_kyc_verbose_text(logger, self.settings, "ollama_kyc_research_summarizer.raw_response", content)
             parsed = self._parse_summary(content)
+            metadata = {
+                **metadata,
+                "prompt": prompt,
+                "raw_response": content,
+                "source_count": len(research_result.contexts),
+                "query_count": len(research_result.queries),
+            }
             return KycResearchSummary(
                 summary_markdown=parsed["summary_markdown"],
                 sources=parsed["sources"],
@@ -423,7 +432,7 @@ class OllamaKycResearchSummarizer:
             )
         except Exception as exc:  # pragma: no cover - provider boundary
             logger.exception("Local KYC research summarizer failed for account %s", account.id)
-            fallback = self._fallback_summary(account=account, research_result=research_result, error_message=str(exc))
+            fallback = self._fallback_summary(account=account, research_result=research_result, error_message=str(exc), prompt=prompt)
             return fallback
 
     def _call_local_model(self, prompt: str) -> tuple[str, dict[str, Any]]:
@@ -534,7 +543,7 @@ class OllamaKycResearchSummarizer:
             "follow_up_questions": [str(item) for item in questions if str(item).strip()][:20],
         }
 
-    def _fallback_summary(self, *, account: Account, research_result: KycResearchResult, error_message: str) -> KycResearchSummary:
+    def _fallback_summary(self, *, account: Account, research_result: KycResearchResult, error_message: str, prompt: str | None = None) -> KycResearchSummary:
         parts = [
             f"## Tavily Web Research For {account.name}",
             f"Local summarizer failed, so this fallback lists source-backed Tavily context for human review. Error: {error_message}",
@@ -559,6 +568,6 @@ class OllamaKycResearchSummarizer:
             follow_up_questions=["Should the account owner validate the Tavily source list before approving KYC?"],
             model=self.settings.ai_kyc_research_summarizer_model,
             provider=self.settings.ai_kyc_research_summarizer_provider,
-            metadata={"fallback": True, "error_message": error_message},
+            metadata={"fallback": True, "error_message": error_message, "prompt": prompt or "", "raw_response": ""},
             error_message=error_message,
         )

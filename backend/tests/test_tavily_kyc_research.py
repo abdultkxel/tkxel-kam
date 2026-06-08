@@ -37,7 +37,7 @@ def test_tavily_provider_normalizes_sources_and_blocks_social_domains() -> None:
         tavily_include_raw_content=True,
         tavily_include_images=False,
         tavily_include_domains="",
-        tavily_exclude_domains="linkedin.com,facebook.com",
+        tavily_exclude_domains="",
         tavily_search_endpoint="/search",
         tavily_extract_endpoint="/extract",
         tavily_base_url="https://api.tavily.com",
@@ -96,7 +96,7 @@ def test_tavily_provider_uses_custom_query_and_still_blocks_social_domains() -> 
         tavily_include_raw_content=True,
         tavily_include_images=False,
         tavily_include_domains="",
-        tavily_exclude_domains="linkedin.com,facebook.com",
+        tavily_exclude_domains="",
         tavily_search_endpoint="/search",
         tavily_extract_endpoint="/extract",
         tavily_base_url="https://api.tavily.com",
@@ -186,6 +186,8 @@ def test_ollama_research_summarizer_parses_json_and_falls_back_on_invalid_respon
     assert summary.confidence == 82
     assert "Company Profile" in summary.summary_markdown
     assert summary.sources[0]["url"] == "https://www.acme.com/about"
+    assert "Acme Inc official website company profile" in summary.metadata["prompt"]
+    assert "Company Profile" in summary.metadata["raw_response"]
 
     def fake_bad_model(prompt: str):  # noqa: ANN001
         return ("not json", {})
@@ -248,7 +250,11 @@ def test_tavily_ollama_research_run_appends_to_draft_and_snapshot(db_session: Se
                 follow_up_questions=["Confirm executive sponsor."],
                 model="qwen3:8b",
                 provider="ollama",
-                metadata={"usage": {"prompt_tokens": 100, "completion_tokens": 80}},
+                metadata={
+                    "usage": {"prompt_tokens": 100, "completion_tokens": 80},
+                    "prompt": "Summarize Acme Inc Tavily context for KYC.",
+                    "raw_response": '{"summary_markdown":"## Company Profile\\nAcme provides digital ordering."}',
+                },
             )
 
     monkeypatch.setattr("app.services.kyc.TavilyKycResearchProvider", FakeTavilyProvider)
@@ -270,6 +276,10 @@ def test_tavily_ollama_research_run_appends_to_draft_and_snapshot(db_session: Se
 
     processed = service.process_agent_run(run.id, kam_head)
     assert processed.status == "complete"
+    assert "research_debug" in processed.retrieval_summary_json
+    assert processed.retrieval_summary_json["research_debug"]["tavily_queries"] == ["Acme Inc official website company profile"]
+    assert "Summarize Acme Inc Tavily context" in processed.retrieval_summary_json["research_debug"]["ollama_prompt"]
+    assert "Acme provides digital ordering" in processed.retrieval_summary_json["research_debug"]["ollama_raw_response"]
 
     updated = service.get_draft(account.id, draft.id, kam_head)
     assert "Existing reviewer detail" in updated.detailed_description

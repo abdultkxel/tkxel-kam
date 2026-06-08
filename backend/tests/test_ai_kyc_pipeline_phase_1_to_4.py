@@ -523,6 +523,11 @@ def test_local_ollama_verbose_logging_emits_prompt_and_response(caplog) -> None:
 
     def fake_call_ollama_native(prompt: str, *, max_output_tokens: int | None = None):  # noqa: ANN001
         assert "platform modernization" in prompt
+        assert "maximum detail from the extracted document text" in prompt
+        assert "Tavily/API-backed web context" in prompt
+        assert "direct Google scraping" in prompt
+        assert "unofficial LinkedIn scraping" in prompt
+        assert "uncredentialed ZoomInfo access" in prompt
         return (
             json.dumps(
                 {
@@ -569,6 +574,11 @@ def test_local_ollama_verbose_logging_emits_prompt_and_response(caplog) -> None:
             }
         ],
     )
+
+    prepared_prompts = adapter.debug_prompt_sections(request)
+    assert prepared_prompts[0]["status"] == "prompt_prepared"
+    assert "platform modernization" in prepared_prompts[0]["prompt"]
+    assert "maximum detail from the extracted document text" in prepared_prompts[0]["prompt"]
 
     with caplog.at_level(logging.INFO):
         response = adapter.run(request)

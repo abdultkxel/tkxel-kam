@@ -99,7 +99,7 @@ class Settings:
         self.tavily_include_raw_content = os.getenv("TAVILY_INCLUDE_RAW_CONTENT", "true").lower() == "true"
         self.tavily_include_images = os.getenv("TAVILY_INCLUDE_IMAGES", "false").lower() == "true"
         self.tavily_include_domains = os.getenv("TAVILY_INCLUDE_DOMAINS", "").strip()
-        self.tavily_exclude_domains = os.getenv("TAVILY_EXCLUDE_DOMAINS", "linkedin.com,facebook.com,instagram.com,x.com,twitter.com").strip()
+        self.tavily_exclude_domains = os.getenv("TAVILY_EXCLUDE_DOMAINS", "").strip()
         self.tavily_extract_enabled = os.getenv("TAVILY_EXTRACT_ENABLED", "false").lower() == "true"
         self.tavily_extract_depth = os.getenv("TAVILY_EXTRACT_DEPTH", "basic").strip().lower()
         self.tavily_extract_format = os.getenv("TAVILY_EXTRACT_FORMAT", "markdown").strip().lower()

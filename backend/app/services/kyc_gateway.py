@@ -732,6 +732,7 @@ class LocalOpenAiCompatibleKycGatewayAdapter(OpenAiKycGatewayAdapter):
             "request_id": str(uuid4()),
             "local_execution": "per_workstream",
             "workstream_calls": [],
+            "prompt_sections": [],
             "raw_response_sections": [],
             "retrieved_context_count": len(request.retrieved_context),
             "schema_fallback_count": 0,
@@ -755,6 +756,15 @@ class LocalOpenAiCompatibleKycGatewayAdapter(OpenAiKycGatewayAdapter):
                     },
                 )
                 log_kyc_verbose_text(logger, self.settings, "local_ollama.workstream.prompt", prompt)
+                metadata["prompt_sections"].append(
+                    {
+                        "workstream_key": workstream.get("key"),
+                        "title": workstream.get("title"),
+                        "prompt": prompt,
+                        "input_tokens_estimate": input_tokens,
+                        "retrieved_context_count": len(workstream_request.retrieved_context),
+                    }
+                )
                 if input_tokens > self.settings.ai_kyc_max_input_tokens:
                     raise KycGatewayConfigurationError(
                         f"KYC workstream prompt exceeds configured input token limit ({input_tokens} > {self.settings.ai_kyc_max_input_tokens})."
@@ -999,6 +1009,23 @@ class LocalOpenAiCompatibleKycGatewayAdapter(OpenAiKycGatewayAdapter):
                 time.sleep(self.settings.ai_kyc_retry_backoff_seconds * (attempt + 1))
         raise RuntimeError(f"Local Ollama KYC request failed: {str(last_error)[:300]}") from last_error
 
+    def debug_prompt_sections(self, request: KycGatewayRequest) -> list[dict[str, Any]]:
+        sections: list[dict[str, Any]] = []
+        for workstream in request.workstreams:
+            workstream_request = self._workstream_request(request, workstream)
+            prompt = self._local_workstream_prompt(workstream_request, workstream)
+            sections.append(
+                {
+                    "workstream_key": workstream.get("key"),
+                    "title": workstream.get("title"),
+                    "prompt": prompt,
+                    "input_tokens_estimate": estimate_tokens(prompt),
+                    "retrieved_context_count": len(workstream_request.retrieved_context),
+                    "status": "prompt_prepared",
+                }
+            )
+        return sections
+
     def _workstream_request(self, request: KycGatewayRequest, workstream: dict[str, Any]) -> KycGatewayRequest:
         workstream_key = str(workstream.get("key") or "")
         account_context = dict(request.account_context)
@@ -1092,6 +1119,18 @@ class LocalOpenAiCompatibleKycGatewayAdapter(OpenAiKycGatewayAdapter):
             "reference_kyc_style_guide": REFERENCE_KYC_STYLE_GUIDE,
             "reference_output_template": REFERENCE_KYC_OUTPUT_TEMPLATE.get(str(workstream.get("key") or ""), []),
             "context": context,
+            "reviewer_enrichment_request": {
+                "instruction": (
+                    "Get maximum source-backed KYC detail from the extracted uploaded document text and approved web research context. "
+                    "Treat the context array as the extracted SOW/charter/account text plus any API-backed web/news/blog/Reddit research already retrieved for this run."
+                ),
+                "web_search_policy": (
+                    "Use only approved retrieved web research records, currently Tavily/API-backed search where enabled. "
+                    "Do not scrape Google directly. Do not scrape or cite LinkedIn unless official API/data-provider context is already present in retrieved_context. "
+                    "Do not query or cite ZoomInfo unless approved API credentials/context are already present in retrieved_context."
+                ),
+                "append_behavior": "Return detailed values so the application can append the generated KYC response and logs to the reviewer output panel.",
+            },
             "rules": {
                 "only_use_context": True,
                 "no_additional_web_search": True,
@@ -1105,6 +1144,7 @@ class LocalOpenAiCompatibleKycGatewayAdapter(OpenAiKycGatewayAdapter):
             "Return only valid JSON. Do not use markdown. Do not explain your reasoning.\n"
             f"{prompt_depth}\n"
             "Use only the supplied account context and retrieved context, including approved web research records when present. If a fact is not in source context, do not invent it.\n"
+            "The reviewer asked for maximum detail from the extracted document text and approved web research. Use the provided SOW/charter text chunks and Tavily/API-backed web context when present; direct Google scraping, unofficial LinkedIn scraping, and uncredentialed ZoomInfo access are not allowed.\n"
             "Preserve useful line breaks inside string values using \\n when it improves reviewability.\n"
             "Use this exact compact shape: "
             "{\"status\":\"complete\", \"fields\":[{\"key\":\"field_key\", \"value\":\"source-backed account intelligence\", \"confidence\":0, "

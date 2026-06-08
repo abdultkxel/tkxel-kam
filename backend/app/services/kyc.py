@@ -1511,6 +1511,32 @@ class KycService:
                     {"label": context.label, "url": context.source_route, "confidence": context.confidence}
                     for context in research_result.contexts[: self.settings.tavily_max_results]
                 ],
+                "research_debug": {
+                    "tavily_queries": list(research_result.queries),
+                    "tavily_metadata": dict(research_result.metadata or {}),
+                    "tavily_sources": [
+                        {
+                            "label": context.label,
+                            "url": context.source_route,
+                            "confidence": context.confidence,
+                            "excerpt": context.excerpt,
+                            "metadata": dict(context.metadata or {}),
+                        }
+                        for context in research_result.contexts[: self.settings.tavily_max_results]
+                    ],
+                    "ollama_prompt": summary.metadata.get("prompt"),
+                    "ollama_raw_response": summary.metadata.get("raw_response"),
+                    "ollama_metadata": {
+                        key: value
+                        for key, value in dict(summary.metadata or {}).items()
+                        if key not in {"prompt", "raw_response"}
+                    },
+                    "processing_notes": [
+                        "Tavily is used for compliant web search and extraction; public Reddit or news/blog results may appear when Tavily returns them.",
+                        "Direct Google scraping, unofficial LinkedIn scraping, and uncredentialed ZoomInfo access are not performed.",
+                        "Research output is appended to the KYC detailed description and remains advisory until KYC approval.",
+                    ],
+                },
             }
             self._mark_research_workstream(run, research_result, summary, status_value="complete")
         except Exception as exc:
@@ -1708,6 +1734,7 @@ class KycService:
             },
         )
         gateway_request = self._gateway_request(account, source_documents, research_sources, trigger_source, current_user, latest_snapshot)
+        self._persist_runtime_prompt_debug(run, gateway_request, source_documents)
         try:
             gateway_response = self.gateway.run(gateway_request)
         except Exception as exc:  # pragma: no cover - adapter boundary guard
@@ -1800,6 +1827,20 @@ class KycService:
         run.cost_json = dict(gateway_response.metadata.get("cost") or {})
         run.provider_response_id = gateway_response.metadata.get("provider_response_id")
         run.model_name = gateway_response.metadata.get("model")
+        existing_ollama_debug = dict(dict(run.retrieval_summary_json or {}).get("ollama_debug") or {})
+        runtime_events = list(existing_ollama_debug.get("runtime_events") or [])
+        runtime_events.append(
+            self._runtime_event(
+                "ollama_run_finished",
+                {
+                    "status": gateway_response.status,
+                    "error_message": gateway_response.error_message,
+                    "workstream_count": len(gateway_response.workstreams),
+                    "raw_response_sections": len(gateway_response.metadata.get("raw_response_sections") or []),
+                    "schema_fallback_count": gateway_response.metadata.get("schema_fallback_count") or 0,
+                },
+            )
+        )
         detailed_text = self._append_raw_detailed_description(
             self._web_research_detailed_description(gateway_request.retrieved_context),
             str(gateway_response.metadata.get("detailed_description") or ""),
@@ -1809,6 +1850,18 @@ class KycService:
             "retrieved_context_count": gateway_response.metadata.get("retrieved_context_count"),
             "source_document_ids": [document.id for document in source_documents],
             "source_coverage": self._source_coverage_summary(source_documents, gateway_response),
+            "ollama_debug": {
+                "request_id": gateway_response.metadata.get("request_id"),
+                "runtime_events": runtime_events,
+                "prompt_sections": gateway_response.metadata.get("prompt_sections") or existing_ollama_debug.get("prompt_sections", []),
+                "raw_response_sections": gateway_response.metadata.get("raw_response_sections") or [],
+                "workstream_calls": gateway_response.metadata.get("workstream_calls") or [],
+                "schema_fallback_count": gateway_response.metadata.get("schema_fallback_count") or 0,
+                "processing_notes": [
+                    "KYC workstreams are generated from uploaded source-document chunks, account context, engagement records, timeline entries, Fathom items after review, prior snapshots, and approved web research context where available.",
+                    "Direct Google scraping, unofficial LinkedIn scraping, and uncredentialed ZoomInfo access are not performed by this implementation.",
+                ],
+            },
         }
         run.completed_at = datetime.now(timezone.utc)
         log_kyc_verbose(
@@ -1836,6 +1889,76 @@ class KycService:
                 ],
             },
         )
+
+    def _persist_runtime_prompt_debug(self, run: KycAgentRun, gateway_request: KycGatewayRequest, source_documents: list[SourceDocument]) -> None:
+        prompt_sections: list[dict[str, Any]] = []
+        debug_builder = getattr(self.gateway, "debug_prompt_sections", None)
+        if callable(debug_builder):
+            try:
+                prompt_sections = list(debug_builder(gateway_request))
+            except Exception as exc:  # pragma: no cover - debug-only defensive path
+                logger.exception("Failed to prepare KYC runtime prompt debug for run %s", run.id)
+                prompt_sections = [{"status": "prompt_debug_failed", "error": str(exc)[:400]}]
+
+        existing_summary = dict(run.retrieval_summary_json or {})
+        existing_debug = dict(existing_summary.get("ollama_debug") or {})
+        now_event = self._runtime_event(
+            "ollama_run_started",
+            {
+                "run_id": run.id,
+                "model": self.settings.ai_kyc_model,
+                "provider": self.settings.ai_kyc_provider,
+                "base_url": self._safe_base_url(),
+                "timeout_seconds": self.settings.ai_kyc_timeout_seconds,
+                "source_document_count": len(source_documents),
+                "retrieved_context_count": len(gateway_request.retrieved_context),
+                "workstream_count": len(gateway_request.workstreams),
+            },
+        )
+        prompt_events = [
+            self._runtime_event(
+                "workstream_prompt_prepared",
+                {
+                    "workstream_key": section.get("workstream_key"),
+                    "title": section.get("title"),
+                    "input_tokens_estimate": section.get("input_tokens_estimate"),
+                    "retrieved_context_count": section.get("retrieved_context_count"),
+                    "status": section.get("status"),
+                },
+            )
+            for section in prompt_sections
+        ]
+        existing_events = list(existing_debug.get("runtime_events") or [])
+        run.retrieval_summary_json = {
+            **existing_summary,
+            "status": "running",
+            "retrieved_context_count": len(gateway_request.retrieved_context),
+            "source_document_ids": [document.id for document in source_documents],
+            "ollama_debug": {
+                **existing_debug,
+                "runtime_events": [*existing_events, now_event, *prompt_events],
+                "prompt_sections": prompt_sections,
+                "raw_response_sections": list(existing_debug.get("raw_response_sections") or []),
+                "workstream_calls": list(existing_debug.get("workstream_calls") or []),
+                "schema_fallback_count": int(existing_debug.get("schema_fallback_count") or 0),
+                "processing_notes": [
+                    "Runtime prompt prepared before the local Qwen/Ollama call starts.",
+                    "Raw response sections appear after Ollama finishes. While status is running, prompt logs are available but raw responses may be empty.",
+                    "KYC workstreams are generated from uploaded source-document chunks, account context, engagement records, timeline entries, Fathom items after review, prior snapshots, and approved web research context where available.",
+                    "Direct Google scraping, unofficial LinkedIn scraping, and uncredentialed ZoomInfo access are not performed by this implementation.",
+                ],
+            },
+        }
+        flag_modified(run, "retrieval_summary_json")
+        self.kyc.commit()
+
+    @staticmethod
+    def _runtime_event(event: str, details: dict[str, Any]) -> dict[str, Any]:
+        return {
+            "at": datetime.now(timezone.utc).isoformat(),
+            "event": event,
+            "details": details,
+        }
 
     def _should_queue_ai_run(self) -> bool:
         return bool(getattr(self.gateway, "is_async_preferred", False)) and self.settings.kyc_queue_backend == "local"

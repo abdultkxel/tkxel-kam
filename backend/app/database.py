@@ -963,6 +963,7 @@ def apply_additive_migrations() -> None:
     from app.models import (
         AccessLog,
         AiGatewayRun,
+        Account,
         AccountHealthRollup,
         AccountChangeAlert,
         CsatScore,
@@ -1021,6 +1022,7 @@ def apply_additive_migrations() -> None:
         NotificationTriggerConfig,
         NotificationPreference,
         NotificationRecord,
+        OnboardingDraft,
         SlaRule,
         SlaEscalatedItem,
         DigestSchedule,
@@ -1043,6 +1045,8 @@ def apply_additive_migrations() -> None:
     migrate_missing_columns(
         [
             User.__table__,
+            Account.__table__,
+            OnboardingDraft.__table__,
             SourceDocument.__table__,
             SourceDocumentExtraction.__table__,
             DocumentExtraction.__table__,
