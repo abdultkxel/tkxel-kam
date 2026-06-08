@@ -1,5 +1,6 @@
 from collections.abc import Generator
 from dataclasses import replace
+from datetime import datetime, timedelta, timezone
 
 import pytest
 from fastapi.testclient import TestClient
@@ -10,7 +11,7 @@ from sqlalchemy.pool import StaticPool
 from app.database import Base, get_db
 from app.dependencies import get_kyc_service
 from app.main import app
-from app.models import AuditLog, KycSnapshot, SourceDocumentChunk, SourceDocumentExtraction, TimelineEntry
+from app.models import AuditLog, KycAgentRun, KycSnapshot, KycWorkstreamOutput, SourceDocumentChunk, SourceDocumentExtraction, TimelineEntry
 from app.services.kyc import KycService
 from app.services.kyc_gateway import DeterministicKycGatewayAdapter
 from app.services.seed import seed_default_data
@@ -294,6 +295,28 @@ def test_kyc_agent_runs_support_partial_failure_refresh_filters_and_sensitive_ma
     assert payment_field["value"] != "Restricted KYC field"
 
 
+def test_uploaded_source_document_is_stored_extracted_and_downloadable(client: TestClient, db_session: Session) -> None:
+    admin_headers = auth_headers(client)
+    account_id, _ = create_account(client, admin_headers, "KYC Downloadable SOW")
+
+    upload_response = client.post(
+        f"/api/accounts/{account_id}/attachments/upload",
+        headers=admin_headers,
+        data={"source_type": "sow", "title": "Downloadable Test SOW", "extract_now": "true", "is_sensitive": "false"},
+        files={"file": ("downloadable-sow.txt", b"SOW says the client needs account intelligence, governance, and KYC research.", "text/plain")},
+    )
+    assert upload_response.status_code == 201
+    document = upload_response.json()
+    assert document["file_name"] == "downloadable-sow.txt"
+    assert document["storage_backend"] == "local"
+    assert document["extraction_status"] == "completed"
+    assert document["extracted_text_checksum"]
+
+    download_response = client.get(f"/api/accounts/{account_id}/attachments/{document['id']}/download", headers=admin_headers)
+    assert download_response.status_code == 200
+    assert download_response.content == b"SOW says the client needs account intelligence, governance, and KYC research."
+
+
 def test_account_attachment_upload_extracts_and_exposes_chunks(client: TestClient, db_session: Session) -> None:
     admin_headers = auth_headers(client)
     account_id, _ = create_account(client, admin_headers, "KYC Upload Extraction")
@@ -454,7 +477,10 @@ def test_kyc_configuration_requires_configure_permission_and_normalizes_sources(
     config = client.get("/api/kyc/configuration", headers=kam_headers)
     assert config.status_code == 200
     assert "company_snapshot" in config.json()["required_field_keys"]
+    assert "core_offerings" in config.json()["required_field_keys"]
+    assert "monetization_model" in config.json()["required_field_keys"]
     assert any(field["key"] == "gross_margins" and field["sensitive"] for field in config.json()["field_catalog"])
+    assert any(field["key"] == "market_size_growth" for field in config.json()["field_catalog"])
 
     updated = client.patch(
         "/api/kyc/configuration",
@@ -482,6 +508,17 @@ def test_local_ai_kyc_queue_manual_worker_retry_cancel_and_draft_population(clie
         name = "local-openai-compatible"
         is_async_preferred = True
 
+        def run(self, request):  # noqa: ANN001
+            response = super().run(request)
+            return replace(
+                response,
+                metadata={
+                    **response.metadata,
+                    "model": "qwen3:8b",
+                    "detailed_description": "Raw Qwen KYC response for the local queue account.",
+                },
+            )
+
     admin_headers = auth_headers(client)
     account_id, _ = create_account(client, admin_headers, "KYC Local Qwen Queue")
     kam_headers = auth_headers(client, "kam.head.user@tkxel.com", "User@12345")
@@ -494,9 +531,12 @@ def test_local_ai_kyc_queue_manual_worker_retry_cancel_and_draft_population(clie
         draft_response = client.post(f"/api/accounts/{account_id}/kyc/drafts", headers=kam_headers, json={"trigger_source": "kyc_page"})
         assert draft_response.status_code == 201
         queued_draft = draft_response.json()
-        assert queued_draft["confidence"] == 0
+        assert queued_draft["confidence"] > 0
         assert queued_draft["agent_run_id"]
         assert "KYC generation is queued" in queued_draft["conflicts"][0]
+        assert queued_draft["detailed_description"] == ""
+        assert any(field["value"] for field in queued_draft["fields"])
+        assert any(field["citations"] for field in queued_draft["fields"])
 
         pending_run = client.get(f"/api/accounts/{account_id}/kyc/agent-runs/{queued_draft['agent_run_id']}", headers=kam_headers)
         assert pending_run.status_code == 200
@@ -512,6 +552,18 @@ def test_local_ai_kyc_queue_manual_worker_retry_cancel_and_draft_population(clie
         assert populated_draft.status_code == 200
         assert populated_draft.json()["confidence"] >= 70
         assert any(field["value"] for field in populated_draft.json()["fields"])
+        assert "Raw Qwen KYC response for the local queue account." in populated_draft.json()["detailed_description"]
+        assert populated_draft.json()["detailed_description"].count("kyc-run:") == 1
+
+        approve = client.post(
+            f"/api/accounts/{account_id}/kyc/drafts/{queued_draft['id']}/approve",
+            headers=kam_headers,
+            json={"conflicts_acknowledged": True, "low_confidence_acknowledged": True},
+        )
+        assert approve.status_code == 200
+        snapshots = client.get(f"/api/accounts/{account_id}/kyc/snapshots", headers=kam_headers)
+        assert snapshots.status_code == 200
+        assert "Raw Qwen KYC response for the local queue account." in snapshots.json()["items"][0]["detailed_description"]
 
         retry_run = client.post(f"/api/accounts/{account_id}/kyc/agent-runs/{queued_draft['agent_run_id']}/retry", headers=kam_headers)
         assert retry_run.status_code == 400
@@ -527,3 +579,99 @@ def test_local_ai_kyc_queue_manual_worker_retry_cancel_and_draft_population(clie
         assert retried.json()["status"] == "pending"
     finally:
         app.dependency_overrides[get_kyc_service] = lambda: KycService(db_session, gateway=DeterministicKycGatewayAdapter())
+
+
+def test_stale_running_kyc_run_is_released_before_web_research_queue(client: TestClient, db_session: Session) -> None:
+    admin_headers = auth_headers(client)
+    account_id, _ = create_account(client, admin_headers, "KYC Stale Run Release")
+    kam_headers = auth_headers(client, "kam.head.user@tkxel.com", "User@12345")
+
+    draft_response = client.post(f"/api/accounts/{account_id}/kyc/drafts", headers=kam_headers, json={"trigger_source": "kyc_page"})
+    assert draft_response.status_code == 201
+    draft_id = draft_response.json()["id"]
+
+    stale_started_at = datetime.now(timezone.utc) - timedelta(hours=2)
+    stale_run = KycAgentRun(
+        account_id=account_id,
+        status="running",
+        trigger_source="kyc_page",
+        source_document_ids=[],
+        research_sources=["documents"],
+        triggered_by_name="KAM Head User",
+        queued_at=stale_started_at,
+        started_at=stale_started_at,
+        max_retries=1,
+        model_name="qwen3:8b",
+    )
+    db_session.add(stale_run)
+    db_session.flush()
+    db_session.add(
+        KycWorkstreamOutput(
+            run_id=stale_run.id,
+            account_id=account_id,
+            workstream_key="market_research",
+            title="Market Research",
+            status="running",
+            sort_order=1,
+            started_at=stale_started_at,
+        )
+    )
+    db_session.commit()
+
+    research_response = client.post(
+        f"/api/accounts/{account_id}/kyc/web-research",
+        headers=kam_headers,
+        json={"draft_id": draft_id},
+    )
+    assert research_response.status_code == 201
+    assert research_response.json()["status"] == "pending"
+
+    db_session.refresh(stale_run)
+    assert stale_run.status == "failed"
+    assert stale_run.completed_at is not None
+    assert "timed out" in (stale_run.error_message or "")
+    assert db_session.scalar(select(AuditLog).where(AuditLog.entity_id == stale_run.id, AuditLog.action == "agent_run_timeout_release")) is not None
+
+
+def test_running_kyc_run_can_be_cancelled(client: TestClient, db_session: Session) -> None:
+    admin_headers = auth_headers(client)
+    account_id, _ = create_account(client, admin_headers, "KYC Running Cancel")
+    kam_headers = auth_headers(client, "kam.head.user@tkxel.com", "User@12345")
+
+    started_at = datetime.now(timezone.utc)
+    run = KycAgentRun(
+        account_id=account_id,
+        status="running",
+        trigger_source="kyc_page",
+        source_document_ids=[],
+        research_sources=["documents"],
+        triggered_by_name="KAM Head User",
+        queued_at=started_at,
+        started_at=started_at,
+        max_retries=1,
+        model_name="qwen3:8b",
+    )
+    db_session.add(run)
+    db_session.flush()
+    db_session.add(
+        KycWorkstreamOutput(
+            run_id=run.id,
+            account_id=account_id,
+            workstream_key="market_research",
+            title="Market Research",
+            status="running",
+            sort_order=1,
+            started_at=started_at,
+        )
+    )
+    db_session.commit()
+
+    response = client.post(f"/api/accounts/{account_id}/kyc/agent-runs/{run.id}/cancel", headers=kam_headers)
+    assert response.status_code == 200
+    assert response.json()["status"] == "cancelled"
+    assert response.json()["error_message"] == "Cancelled while running."
+
+    db_session.refresh(run)
+    assert run.status == "cancelled"
+    assert run.completed_at is not None
+    assert db_session.scalar(select(AuditLog).where(AuditLog.entity_id == run.id, AuditLog.action == "agent_run_cancel")) is not None

@@ -76,6 +76,7 @@ class OnboardingRepository:
                 .where(*conditions)
                 .options(
                     selectinload(OnboardingDraft.source_documents).selectinload(SourceDocument.citations),
+                    selectinload(OnboardingDraft.source_documents).selectinload(SourceDocument.extractions),
                     selectinload(OnboardingDraft.engagement_drafts),
                 )
                 .order_by(order_column, OnboardingDraft.account_name)
@@ -91,6 +92,7 @@ class OnboardingRepository:
             .where(OnboardingDraft.id == draft_id)
             .options(
                 selectinload(OnboardingDraft.source_documents).selectinload(SourceDocument.citations),
+                selectinload(OnboardingDraft.source_documents).selectinload(SourceDocument.extractions),
                 selectinload(OnboardingDraft.engagement_drafts),
             )
         )

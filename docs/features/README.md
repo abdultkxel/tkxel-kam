@@ -18,6 +18,7 @@ docs/features/_feature-template.md
 - [Fireflies Meeting Capture](fireflies-meeting-capture.md)
 - [AI KYC Pipeline Phase 1-4](ai-kyc-pipeline-phase-1-to-4.md)
 - [KYC Snapshot Restore](kyc-snapshot-restore.md)
+- [KYC Ollama Output And Debug Sidebar](kyc-ollama-output-debug-sidebar.md)
 - [Local Qwen AI KYC Phase 5-10](local-qwen-ai-kyc-phase-5-to-10.md)
 - [Base Data Seeding](base-data-seeding.md)
 - [Account Detail Tabs](account-detail-tabs.md)

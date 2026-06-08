@@ -12,6 +12,8 @@ import type {
   SourceDocument,
 } from '@/types/v3'
 
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? 'http://127.0.0.1:8001'
+
 export interface Page<T> {
   items: T[]
   total: number
@@ -62,6 +64,8 @@ interface ApiSourceCitation {
   label: string
   page_number?: number | null
   excerpt: string
+  field_key?: string | null
+  confidence?: number | null
 }
 
 interface ApiSourceDocument {
@@ -71,6 +75,20 @@ interface ApiSourceDocument {
   draft_id?: string | null
   title: string
   source_type: string
+  file_name?: string | null
+  file_url?: string | null
+  link_url?: string | null
+  storage_backend?: string | null
+  mime_type?: string | null
+  size_bytes?: number | null
+  checksum_sha256?: string | null
+  extracted_text_checksum?: string | null
+  extracted_text?: string | null
+  extraction_started_at?: string | null
+  extraction_completed_at?: string | null
+  extraction_error?: string | null
+  ocr_status?: string | null
+  ocr_engine?: string | null
   uploaded_by_name: string
   extraction_status: string
   confidence: number
@@ -234,6 +252,25 @@ export interface CreateDraftPayload {
   managerEmail: string
   managerName: string
   fileNames: string[]
+  customFieldValues?: Record<string, unknown>
+}
+
+export interface CreateDraftFromUploadPayload {
+  files: File[]
+  linkedinUrl?: string
+  managerId?: string
+  managerEmail?: string
+  managerName?: string
+}
+
+export interface UpdateOnboardingDraftPayload {
+  accountName?: string
+  projectName?: string
+  companyUrl?: string
+  linkedinUrl?: string
+  managerId?: string
+  managerEmail?: string
+  managerName?: string
   customFieldValues?: Record<string, unknown>
 }
 
@@ -468,7 +505,23 @@ export async function createOnboardingDraft(token: string, payload: CreateDraftP
   )
 }
 
-export async function updateOnboardingDraft(token: string, draftId: string, payload: Partial<CreateDraftPayload>) {
+export async function createOnboardingDraftFromUpload(token: string, payload: CreateDraftFromUploadPayload) {
+  const body = new FormData()
+  payload.files.forEach(file => body.append('files', file))
+  if (payload.linkedinUrl?.trim()) body.append('linkedin_url', normalizeUrl(payload.linkedinUrl.trim()))
+  if (payload.managerId?.trim()) body.append('manager_id', payload.managerId.trim())
+  if (payload.managerName?.trim()) body.append('manager_name', payload.managerName.trim())
+  if (payload.managerEmail?.trim()) body.append('manager_email', payload.managerEmail.trim())
+  return mapDraft(
+    await apiRequest<ApiOnboardingDraft>('/api/onboarding/drafts/upload', {
+      method: 'POST',
+      token,
+      body,
+    }),
+  )
+}
+
+export async function updateOnboardingDraft(token: string, draftId: string, payload: UpdateOnboardingDraftPayload) {
   return mapDraft(
     await apiRequest<ApiOnboardingDraft>(`/api/onboarding/drafts/${draftId}`, {
       method: 'PATCH',
@@ -476,6 +529,17 @@ export async function updateOnboardingDraft(token: string, draftId: string, payl
       body: JSON.stringify(buildDraftUpdatePayload(payload)),
     }),
   )
+}
+
+export async function getOnboardingDraft(token: string, draftId: string) {
+  return mapDraft(await apiRequest<ApiOnboardingDraft>(`/api/onboarding/drafts/${draftId}`, { token }))
+}
+
+export async function retryOnboardingDraftDocumentExtraction(token: string, draftId: string, documentId: string, force = true) {
+  return apiRequest(`/api/onboarding/drafts/${draftId}/documents/${documentId}/extract?force=${force ? 'true' : 'false'}`, {
+    method: 'POST',
+    token,
+  })
 }
 
 export async function approveOnboardingDraft(token: string, draftId: string) {
@@ -495,6 +559,34 @@ export async function rejectOnboardingDraft(token: string, draftId: string, reas
       body: JSON.stringify({ reason }),
     }),
   )
+}
+
+export async function downloadOnboardingDraftDocument(token: string, draftId: string, document: SourceDocument) {
+  const response = await fetch(`${API_BASE_URL}/api/onboarding/drafts/${draftId}/documents/${document.id}/download`, {
+    headers: { Authorization: `Bearer ${token}` },
+  })
+  if (!response.ok) {
+    throw new Error('Onboarding source document download failed')
+  }
+  const blob = await response.blob()
+  const url = URL.createObjectURL(blob)
+  const link = window.document.createElement('a')
+  link.href = url
+  link.download = document.fileName || document.name
+  window.document.body.appendChild(link)
+  link.click()
+  link.remove()
+  URL.revokeObjectURL(url)
+}
+
+export async function createAccountAttachmentPreviewUrl(token: string, accountId: string, document: SourceDocument) {
+  const response = await fetch(`${API_BASE_URL}/api/accounts/${accountId}/attachments/${document.id}/download`, {
+    headers: { Authorization: `Bearer ${token}` },
+  })
+  if (!response.ok) {
+    throw new Error('Source document preview failed')
+  }
+  return URL.createObjectURL(await response.blob())
 }
 
 export async function listEngagements(token: string, accountId: string, params: URLSearchParams | EngagementListParams = new URLSearchParams()) {
@@ -540,6 +632,61 @@ export async function getEngagementTimeline(token: string, engagementId: string,
   const query = queryString(params)
   const page = await apiRequest<Page<ApiTimelineEvent>>(`/api/engagements/${engagementId}/timeline${query ? `?${query}` : ''}`, { token })
   return { ...page, items: page.items.map(mapTimelineEvent) }
+}
+
+export async function listAccountAttachments(token: string, accountId: string, params: URLSearchParams = new URLSearchParams()) {
+  const query = queryString(params)
+  const page = await apiRequest<Page<ApiSourceDocument>>(`/api/accounts/${accountId}/attachments${query ? `?${query}` : ''}`, { token })
+  return { ...page, items: page.items.map(mapSourceDocument) }
+}
+
+export interface UploadAccountAttachmentPayload {
+  file: File
+  title?: string
+  sourceType?: SourceDocument['type']
+  isSensitive?: boolean
+  extractNow?: boolean
+}
+
+export async function uploadAccountAttachment(token: string, accountId: string, payload: UploadAccountAttachmentPayload) {
+  const body = new FormData()
+  body.append('file', payload.file)
+  if (payload.title?.trim()) body.append('title', payload.title.trim())
+  body.append('source_type', payload.sourceType ?? inferSourceType(payload.file.name))
+  body.append('is_sensitive', String(Boolean(payload.isSensitive)))
+  body.append('extract_now', String(payload.extractNow ?? true))
+  return mapSourceDocument(
+    await apiRequest<ApiSourceDocument>(`/api/accounts/${accountId}/attachments/upload`, {
+      method: 'POST',
+      token,
+      body,
+    }),
+  )
+}
+
+export async function extractAccountAttachment(token: string, accountId: string, attachmentId: string, force = false) {
+  return apiRequest(`/api/accounts/${accountId}/attachments/${attachmentId}/extract?force=${force ? 'true' : 'false'}`, {
+    method: 'POST',
+    token,
+  })
+}
+
+export async function downloadAccountAttachment(token: string, accountId: string, document: SourceDocument) {
+  const response = await fetch(`${API_BASE_URL}/api/accounts/${accountId}/attachments/${document.id}/download`, {
+    headers: { Authorization: `Bearer ${token}` },
+  })
+  if (!response.ok) {
+    throw new Error('Source document download failed')
+  }
+  const blob = await response.blob()
+  const url = URL.createObjectURL(blob)
+  const link = window.document.createElement('a')
+  link.href = url
+  link.download = document.fileName || document.name
+  window.document.body.appendChild(link)
+  link.click()
+  link.remove()
+  URL.revokeObjectURL(url)
 }
 
 function buildDraftPayload(payload: CreateDraftPayload) {
@@ -596,7 +743,7 @@ function buildDraftPayload(payload: CreateDraftPayload) {
   }
 }
 
-function buildDraftUpdatePayload(payload: Partial<CreateDraftPayload>) {
+function buildDraftUpdatePayload(payload: UpdateOnboardingDraftPayload) {
   const body: Record<string, unknown> = {}
   setIfDefined(body, 'account_name', payload.accountName)
   setIfDefined(body, 'project_name', payload.projectName)
@@ -856,15 +1003,32 @@ function mapSourceDocument(document: ApiSourceDocument): SourceDocument {
     uploadedByName: document.uploaded_by_name,
     confidence: document.confidence,
     pages: document.pages,
-    status: document.extraction_status === 'needs_review' ? 'needs_review' : 'parsed',
+    status: document.extraction_status === 'completed' ? 'parsed' : 'needs_review',
+    fileName: document.file_name ?? undefined,
+    mimeType: document.mime_type ?? undefined,
+    sizeBytes: document.size_bytes ?? undefined,
+    extractionStatus: document.extraction_status,
+    extractionError: document.extraction_error ?? undefined,
+    ocrStatus: document.ocr_status ?? undefined,
+    extractedTextChecksum: document.extracted_text_checksum ?? undefined,
+    extractedText: document.extracted_text ?? undefined,
     citations: document.citations.map(citation => ({
       id: citation.id,
       documentId: citation.source_document_id,
       label: citation.label,
       page: citation.page_number ?? 1,
       excerpt: citation.excerpt,
+      fieldKey: citation.field_key ?? undefined,
+      confidence: citation.confidence ?? document.confidence,
     })),
   }
+}
+
+function inferSourceType(fileName: string): SourceDocument['type'] {
+  if (/sow|statement/i.test(fileName)) return 'sow'
+  if (/charter/i.test(fileName)) return 'project_charter'
+  if (/commercial|pricing|billing/i.test(fileName)) return 'commercial_note'
+  return 'attachment'
 }
 
 function mapTimelineEvent(event: ApiTimelineEvent): TimelineEntry {
@@ -904,7 +1068,7 @@ function toStage(value: string): AccountStage {
 }
 
 function toSourceType(value: string): SourceDocument['type'] {
-  if (value === 'sow' || value === 'commercial_note' || value === 'research') return value
+  if (value === 'sow' || value === 'project_charter' || value === 'attachment' || value === 'source_link' || value === 'commercial_note' || value === 'research' || value === 'manual_import') return value
   return 'project_charter'
 }
 

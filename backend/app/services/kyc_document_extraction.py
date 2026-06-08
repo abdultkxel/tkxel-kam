@@ -3,7 +3,9 @@ from __future__ import annotations
 import hashlib
 import mimetypes
 import re
-from dataclasses import dataclass
+import subprocess
+import tempfile
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -12,10 +14,26 @@ from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
 from app.config import get_settings
-from app.models import SourceDocument, SourceDocumentChunk, SourceDocumentExtraction
+from app.models import DocumentExtraction, SourceDocument, SourceDocumentChunk, SourceDocumentExtraction
+from app.services.kyc_embeddings import LocalHashEmbeddingClient
 
 
 TOKEN_WORD_RATIO = 1.35
+SECTION_HEADING_PATTERN = re.compile(
+    r"^\s*(?:\d+(?:\.\d+)*[\).:-]?\s*)?"
+    r"(Scope of Work|Engagement Scope|Project Scope|Statement of Work|Timeframe and Payment Schedule|"
+    r"Renewal Terms?|Commercial Terms?|Commercial Summary|Pricing|Fees|Billing Terms|Payment Terms|"
+    r"Customer Responsibilities|Client Responsibilities|Stakeholders?|Deliverables?|Milestones?|"
+    r"Risks?|Assumptions?|Dependencies?|Resources?|Service Lines?|Contract Terms?)\s*:?\s*$",
+    re.IGNORECASE,
+)
+
+
+@dataclass(frozen=True)
+class PageText:
+    page_number: int
+    raw_text: str
+    metadata: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -26,6 +44,7 @@ class ExtractedText:
     metadata: dict[str, Any]
     ocr_status: str | None = None
     ocr_engine: str | None = None
+    page_texts: list[PageText] = field(default_factory=list)
 
 
 class KycDocumentExtractionService:
@@ -39,6 +58,20 @@ class KycDocumentExtractionService:
     def extract_document(self, document: SourceDocument, *, force: bool = False) -> SourceDocumentExtraction:
         latest = self.latest_extraction(document.id)
         if latest and latest.status == "completed" and not force:
+            if not self.page_extractions_for_document(document.id):
+                self._store_page_extractions(
+                    document,
+                    latest,
+                    ExtractedText(
+                        raw_text=latest.raw_text or "",
+                        normalized_text=latest.normalized_text or normalize_text(latest.raw_text or ""),
+                        page_count=latest.page_count or 1,
+                        metadata=latest.metadata_json or {},
+                        page_texts=[PageText(page_number=1, raw_text=latest.raw_text or latest.normalized_text or "", metadata={"extractor": latest.extractor_name, "backfilled": True})],
+                    ),
+                    force=False,
+                )
+                self.db.flush()
             return latest
 
         now = datetime.now(timezone.utc)
@@ -75,18 +108,22 @@ class KycDocumentExtractionService:
         except Exception as exc:  # pragma: no cover - library boundary guard
             return self._finish_failure(document, extraction, f"Document extraction failed: {str(exc)[:400]}", status_value="failed")
 
-        extraction.status = "completed"
+        status_value = self._status_for_extracted_text(result)
+        extraction.status = status_value
         extraction.raw_text = result.raw_text
         extraction.normalized_text = result.normalized_text
         extraction.page_count = result.page_count
         extraction.metadata_json = result.metadata
+        extraction.error_message = self._extraction_error_for_status(result, status_value)
         extraction.completed_at = datetime.now(timezone.utc)
         document.pages = result.page_count or document.pages
         document.extracted_text_checksum = hashlib.sha256(result.normalized_text.encode("utf-8")).hexdigest() if result.normalized_text else None
-        document.extraction_status = "completed"
+        document.extraction_status = status_value
         document.extraction_completed_at = extraction.completed_at
+        document.extraction_error = extraction.error_message
         document.ocr_status = result.ocr_status
         document.ocr_engine = result.ocr_engine
+        self._store_page_extractions(document, extraction, result, force=force)
         self.db.flush()
         return extraction
 
@@ -107,6 +144,15 @@ class KycDocumentExtractionService:
             )
         )
 
+    def page_extractions_for_document(self, source_document_id: str) -> list[DocumentExtraction]:
+        return list(
+            self.db.scalars(
+                select(DocumentExtraction)
+                .where(DocumentExtraction.document_id == source_document_id)
+                .order_by(DocumentExtraction.page_number)
+            )
+        )
+
     def ensure_chunks(self, document: SourceDocument, *, force: bool = False) -> list[SourceDocumentChunk]:
         existing = self.chunks_for_document(document.id)
         if existing and not force:
@@ -119,13 +165,34 @@ class KycDocumentExtractionService:
             self.db.execute(delete(SourceDocumentChunk).where(SourceDocumentChunk.source_document_id == document.id))
             self.db.flush()
 
-        text = (extraction.normalized_text if extraction else None) or ""
-        chunks = self._chunk_text(text, chunk_size_tokens=self.settings.ai_kyc_chunk_size_tokens, overlap_tokens=self.settings.ai_kyc_chunk_overlap_tokens)
+        page_rows = self.page_extractions_for_document(document.id)
+        chunks: list[dict[str, Any]] = []
+        if page_rows:
+            for row in page_rows:
+                page_chunks = self._chunk_page_text(
+                    row.raw_text,
+                    row=row,
+                    chunk_size_tokens=self.settings.ai_kyc_chunk_size_tokens,
+                    overlap_tokens=self.settings.ai_kyc_chunk_overlap_tokens,
+                )
+                chunks.extend(page_chunks)
+        else:
+            text = (extraction.normalized_text if extraction else None) or ""
+            chunks = self._chunk_text(
+                text,
+                chunk_size_tokens=self.settings.ai_kyc_chunk_size_tokens,
+                overlap_tokens=self.settings.ai_kyc_chunk_overlap_tokens,
+                section_label="Document Text",
+                metadata={"chunk_strategy": "document_text"},
+            )
         if not chunks:
             chunks = self._chunks_from_citations(document)
+        embedding_client = self._local_embedding_client()
+        vectors = embedding_client.embed([chunk["text"] for chunk in chunks]) if self.settings.ai_kyc_use_embeddings and chunks else []
         records: list[SourceDocumentChunk] = []
         for index, chunk in enumerate(chunks):
             chunk_hash = hashlib.sha256(chunk["text"].encode("utf-8")).hexdigest()
+            vector = vectors[index] if index < len(vectors) else None
             record = SourceDocumentChunk(
                 source_document_id=document.id,
                 extraction_id=extraction.id if extraction else None,
@@ -139,10 +206,19 @@ class KycDocumentExtractionService:
                 start_offset=chunk.get("start_offset"),
                 end_offset=chunk.get("end_offset"),
                 token_count=estimate_tokens(chunk["text"]),
-                sensitivity_level="sensitive" if document.is_sensitive else "standard",
+                sensitivity_level=self._chunk_sensitivity(document, chunk),
                 source_type=document.source_type,
                 trust_score=source_trust_score(document.source_type, is_sensitive=document.is_sensitive),
-                metadata_json={"source_title": document.title, **chunk.get("metadata", {})},
+                embedding_provider=embedding_client.provider if vector else None,
+                embedding_model=embedding_client.model if vector else None,
+                embedding_json=vector,
+                embedding_hash=chunk_hash if vector else None,
+                metadata_json={
+                    "source_title": document.title,
+                    "source_file": document.file_name or document.title,
+                    "chunk_strategy": "section_page_token",
+                    **chunk.get("metadata", {}),
+                },
             )
             self.db.add(record)
             records.append(record)
@@ -160,32 +236,129 @@ class KycDocumentExtractionService:
         raise ValueError(f"Unsupported source document type: {suffix or mime_type or 'unknown'}")
 
     def _extract_pdf(self, path: Path) -> ExtractedText:
-        from pypdf import PdfReader
-
-        reader = PdfReader(str(path))
-        pages: list[str] = []
-        for page in reader.pages:
-            pages.append(page.extract_text() or "")
+        pages, extractor = self._extract_pdf_pages(path)
         raw = "\n\n".join(pages)
         normalized = normalize_text(raw)
-        metadata = {"pages": [{"page_number": index + 1, "char_count": len(value)} for index, value in enumerate(pages)]}
+        metadata = {
+            "extractor_stack": extractor,
+            "source_file": path.name,
+            "pages": [{"page_number": index + 1, "char_count": len(value)} for index, value in enumerate(pages)],
+        }
+        page_texts = [PageText(page_number=index + 1, raw_text=value, metadata={"extractor": extractor}) for index, value in enumerate(pages)]
         if len(normalized) >= self.settings.kyc_ocr_min_text_chars or not self.settings.kyc_ocr_enabled:
-            return ExtractedText(raw_text=raw, normalized_text=normalized, page_count=len(pages), metadata=metadata, ocr_status="not_required")
-        ocr = self._ocr_pdf(path)
-        if ocr is None:
-            return ExtractedText(raw_text=raw, normalized_text=normalized, page_count=len(pages), metadata=metadata, ocr_status="ocr_required", ocr_engine=self.settings.kyc_ocr_engine)
+            ocr_status = "not_required" if normalized else ("disabled" if not self.settings.kyc_ocr_enabled else "not_required")
+            return ExtractedText(
+                raw_text=raw,
+                normalized_text=normalized,
+                page_count=len(pages),
+                metadata={**metadata, "ocr_status": ocr_status, "ocr_required": False},
+                ocr_status=ocr_status,
+                page_texts=page_texts,
+            )
+        ocr_pages = self._ocr_pdf_pages(path)
+        if ocr_pages is None:
+            return ExtractedText(
+                raw_text=raw,
+                normalized_text=normalized,
+                page_count=len(pages),
+                metadata={
+                    **metadata,
+                    "ocr_status": "ocr_required",
+                    "ocr_required": True,
+                    "ocr_attempted": True,
+                    "ocr_engine": self.settings.kyc_ocr_engine,
+                    "ocr_error": "OCR could not extract readable text. Install/configure OCR dependencies or retry after correcting the source file.",
+                },
+                ocr_status="ocr_required",
+                ocr_engine=self.settings.kyc_ocr_engine,
+                page_texts=page_texts,
+            )
+        ocr = "\n\n".join(ocr_pages)
         return ExtractedText(
             raw_text=ocr,
             normalized_text=normalize_text(ocr),
-            page_count=len(pages),
-            metadata={**metadata, "ocr_applied": True},
+            page_count=len(ocr_pages),
+            metadata={**metadata, "ocr_applied": True, "ocr_status": "completed", "ocr_required": True, "ocr_engine": self.settings.kyc_ocr_engine},
             ocr_status="completed",
             ocr_engine=self.settings.kyc_ocr_engine,
+            page_texts=[PageText(page_number=index + 1, raw_text=value, metadata={"extractor": self.settings.kyc_ocr_engine}) for index, value in enumerate(ocr_pages)],
         )
 
-    def _ocr_pdf(self, path: Path) -> str | None:
-        if self.settings.kyc_ocr_engine != "tesseract":
+    def _extract_pdf_pages(self, path: Path) -> tuple[list[str], str]:
+        for extractor_name, extractor in (
+            ("pymupdf", self._extract_pdf_pages_pymupdf),
+            ("pdfplumber", self._extract_pdf_pages_pdfplumber),
+            ("pypdf", self._extract_pdf_pages_pypdf),
+        ):
+            pages = extractor(path)
+            if normalize_text("\n".join(pages)):
+                return pages, extractor_name
+        return [], "none"
+
+    @staticmethod
+    def _extract_pdf_pages_pymupdf(path: Path) -> list[str]:
+        try:
+            import fitz
+        except Exception:
+            return []
+        try:
+            with fitz.open(str(path)) as document:
+                return [page.get_text("text") or "" for page in document]
+        except Exception:
+            return []
+
+    @staticmethod
+    def _extract_pdf_pages_pdfplumber(path: Path) -> list[str]:
+        try:
+            import pdfplumber
+        except Exception:
+            return []
+        try:
+            with pdfplumber.open(str(path)) as document:
+                return [page.extract_text() or "" for page in document.pages]
+        except Exception:
+            return []
+
+    @staticmethod
+    def _extract_pdf_pages_pypdf(path: Path) -> list[str]:
+        try:
+            from pypdf import PdfReader
+        except Exception:
+            return []
+        try:
+            reader = PdfReader(str(path))
+            return [page.extract_text() or "" for page in reader.pages]
+        except Exception:
+            return []
+
+    def _ocr_pdf_pages(self, path: Path) -> list[str] | None:
+        pages = self._ocr_pdf_pages_ocrmypdf(path)
+        if pages and normalize_text("\n".join(pages)):
+            return pages
+        pages = self._ocr_pdf_pages_tesseract(path)
+        return pages if pages and normalize_text("\n".join(pages)) else None
+
+    def _ocr_pdf_pages_ocrmypdf(self, path: Path) -> list[str] | None:
+        try:
+            import ocrmypdf  # noqa: F401
+        except Exception:
             return None
+        try:
+            with tempfile.TemporaryDirectory() as tmpdir:
+                output = Path(tmpdir) / "ocr-output.pdf"
+                subprocess.run(
+                    ["ocrmypdf", "--skip-text", "--quiet", str(path), str(output)],
+                    check=True,
+                    timeout=max(60, self.settings.ai_kyc_timeout_seconds),
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                )
+                pages, _ = self._extract_pdf_pages(output)
+                return pages if normalize_text("\n".join(pages)) else None
+        except Exception:
+            return None
+
+    def _ocr_pdf_pages_tesseract(self, path: Path) -> list[str] | None:
         try:
             from pdf2image import convert_from_path
             import pytesseract
@@ -193,7 +366,7 @@ class KycDocumentExtractionService:
             return None
         try:
             images = convert_from_path(str(path), dpi=200)
-            return "\n\n".join(pytesseract.image_to_string(image) for image in images)
+            return [pytesseract.image_to_string(image) for image in images]
         except Exception:
             return None
 
@@ -209,12 +382,66 @@ class KycDocumentExtractionService:
                 if values:
                     parts.append(" | ".join(values))
         raw = "\n".join(parts)
-        return ExtractedText(raw_text=raw, normalized_text=normalize_text(raw), page_count=0, metadata={"paragraphs": len(parts)}, ocr_status="not_required")
+        return ExtractedText(
+            raw_text=raw,
+            normalized_text=normalize_text(raw),
+            page_count=1 if raw.strip() else 0,
+            metadata={"paragraphs": len(parts), "pages": [{"page_number": 1, "char_count": len(raw)}]},
+            ocr_status="not_required",
+            page_texts=[PageText(page_number=1, raw_text=raw, metadata={"extractor": "python-docx"})] if raw.strip() else [],
+        )
 
     @staticmethod
     def _extract_text(path: Path) -> ExtractedText:
         raw = path.read_text(encoding="utf-8", errors="ignore")
-        return ExtractedText(raw_text=raw, normalized_text=normalize_text(raw), page_count=0, metadata={"line_count": raw.count("\n") + 1}, ocr_status="not_required")
+        return ExtractedText(
+            raw_text=raw,
+            normalized_text=normalize_text(raw),
+            page_count=1 if raw.strip() else 0,
+            metadata={"line_count": raw.count("\n") + 1, "pages": [{"page_number": 1, "char_count": len(raw)}]},
+            ocr_status="not_required",
+            page_texts=[PageText(page_number=1, raw_text=raw, metadata={"extractor": "plain-text"})] if raw.strip() else [],
+        )
+
+    @staticmethod
+    def _status_for_extracted_text(result: ExtractedText) -> str:
+        if result.ocr_status == "ocr_required":
+            return "ocr_required"
+        if not result.normalized_text.strip():
+            return "needs_review"
+        return "completed"
+
+    @staticmethod
+    def _extraction_error_for_status(result: ExtractedText, status_value: str) -> str | None:
+        if status_value == "ocr_required":
+            return "OCR is required before readable text can be extracted from this source document."
+        if status_value == "needs_review":
+            return "No readable text was extracted from this source document."
+        return None
+
+    def _store_page_extractions(self, document: SourceDocument, extraction: SourceDocumentExtraction, result: ExtractedText, *, force: bool) -> None:
+        if force:
+            self.db.execute(delete(DocumentExtraction).where(DocumentExtraction.document_id == document.id))
+            self.db.flush()
+        page_texts = result.page_texts or ([PageText(page_number=1, raw_text=result.raw_text)] if result.raw_text.strip() else [])
+        for page in page_texts:
+            raw_text = page.raw_text or ""
+            if not raw_text.strip():
+                continue
+            checksum = hashlib.sha256(raw_text.encode("utf-8")).hexdigest()
+            self.db.add(
+                DocumentExtraction(
+                    document_id=document.id,
+                    extraction_id=extraction.id,
+                    raw_text=raw_text,
+                    page_number=page.page_number,
+                    source_file=document.file_name or document.title,
+                    checksum=checksum,
+                    extractor_name=self.extractor_name,
+                    extractor_version=self.extractor_version,
+                    metadata_json=page.metadata,
+                )
+            )
 
     def _finish_failure(self, document: SourceDocument, extraction: SourceDocumentExtraction, message: str, *, status_value: str) -> SourceDocumentExtraction:
         now = datetime.now(timezone.utc)
@@ -248,8 +475,45 @@ class KycDocumentExtractionService:
     def _guess_mime_type(document: SourceDocument) -> str | None:
         return mimetypes.guess_type(document.file_name or document.file_url or document.storage_path or "")[0]
 
+    def _chunk_page_text(
+        self,
+        text: str,
+        *,
+        row: DocumentExtraction,
+        chunk_size_tokens: int,
+        overlap_tokens: int,
+    ) -> list[dict[str, Any]]:
+        sections = self._split_sections(text)
+        chunks: list[dict[str, Any]] = []
+        for section_index, section in enumerate(sections):
+            section_chunks = self._chunk_text(
+                normalize_text(section["text"]),
+                chunk_size_tokens=chunk_size_tokens,
+                overlap_tokens=overlap_tokens,
+                section_label=section["section_label"],
+                metadata={
+                    "document_extraction_id": row.id,
+                    "page_checksum": row.checksum,
+                    "source_file": row.source_file,
+                    "section_index": section_index,
+                    "section_start_line": section.get("start_line"),
+                    "section_end_line": section.get("end_line"),
+                    "section_heading_raw": section.get("raw_heading"),
+                },
+            )
+            for chunk in section_chunks:
+                chunks.append({**chunk, "page_number": row.page_number})
+        return chunks
+
     @staticmethod
-    def _chunk_text(text: str, *, chunk_size_tokens: int, overlap_tokens: int) -> list[dict[str, Any]]:
+    def _chunk_text(
+        text: str,
+        *,
+        chunk_size_tokens: int,
+        overlap_tokens: int,
+        section_label: str | None = None,
+        metadata: dict[str, Any] | None = None,
+    ) -> list[dict[str, Any]]:
         words = text.split()
         if not words:
             return []
@@ -261,11 +525,100 @@ class KycDocumentExtractionService:
             end = min(len(words), start + words_per_chunk)
             chunk_text = " ".join(words[start:end]).strip()
             if chunk_text:
-                chunks.append({"text": chunk_text, "start_offset": start, "end_offset": end})
+                chunks.append(
+                    {
+                        "text": chunk_text,
+                        "start_offset": start,
+                        "end_offset": end,
+                        "section_label": section_label,
+                        "metadata": dict(metadata or {}),
+                    }
+                )
             if end >= len(words):
                 break
             start = max(end - overlap_words, start + 1)
         return chunks
+
+    def _split_sections(self, text: str) -> list[dict[str, Any]]:
+        lines = text.splitlines()
+        sections: list[dict[str, Any]] = []
+        current_heading = "Document Text"
+        current_raw_heading: str | None = None
+        current_lines: list[str] = []
+        current_start_line = 1
+        saw_heading = False
+
+        def flush(end_line: int) -> None:
+            body = "\n".join(current_lines).strip()
+            if not body:
+                return
+            sections.append(
+                {
+                    "section_label": current_heading,
+                    "raw_heading": current_raw_heading,
+                    "start_line": current_start_line,
+                    "end_line": end_line,
+                    "text": body,
+                }
+            )
+
+        for line_number, line in enumerate(lines, start=1):
+            heading = self._section_label_from_line(line)
+            if heading:
+                flush(line_number - 1)
+                saw_heading = True
+                current_heading = heading
+                current_raw_heading = line.strip()
+                current_lines = [line.strip()]
+                current_start_line = line_number
+            else:
+                current_lines.append(line)
+        flush(len(lines))
+
+        if not sections:
+            normalized = normalize_text(text)
+            return [{"section_label": "Document Text", "raw_heading": None, "start_line": 1, "end_line": len(lines) or 1, "text": normalized}] if normalized else []
+        if not saw_heading and len(sections) == 1:
+            sections[0]["section_label"] = "Document Text"
+        return sections
+
+    @staticmethod
+    def _section_label_from_line(line: str) -> str | None:
+        cleaned = re.sub(r"\s+", " ", line or "").strip()
+        if not cleaned or len(cleaned) > 140:
+            return None
+        match = SECTION_HEADING_PATTERN.match(cleaned)
+        if not match:
+            return None
+        lower = cleaned.lower()
+        if any(token in lower for token in ("renewal", "notice")):
+            return "Renewal Terms"
+        if any(token in lower for token in ("commercial", "pricing", "fees", "billing", "payment")):
+            return "Commercial Terms"
+        if any(token in lower for token in ("timeframe", "schedule", "contract", "term")):
+            return "Contract Terms"
+        if any(token in lower for token in ("scope", "statement of work", "service", "resources")):
+            return "Scope of Work"
+        if any(token in lower for token in ("deliverable", "milestone")):
+            return "Deliverables"
+        if any(token in lower for token in ("risk", "assumption", "dependenc")):
+            return "Risks And Assumptions"
+        if any(token in lower for token in ("stakeholder", "responsibilit", "customer", "client")):
+            return "Stakeholders And Responsibilities"
+        return cleaned[:120]
+
+    @staticmethod
+    def _chunk_sensitivity(document: SourceDocument, chunk: dict[str, Any]) -> str:
+        if document.is_sensitive:
+            return "sensitive"
+        text = f"{chunk.get('section_label') or ''} {chunk.get('text') or ''}".lower()
+        if document.source_type == "commercial_note" or any(token in text for token in ("commercial", "pricing", "fee", "billing", "payment", "contract value", "renewal", "notice period")):
+            return "commercial"
+        return "standard"
+
+    def _local_embedding_client(self) -> LocalHashEmbeddingClient:
+        model = self.settings.ai_kyc_embedding_model if self.settings.ai_kyc_embedding_provider == "local_hash" else "local-hash-v1"
+        return LocalHashEmbeddingClient(dimensions=self.settings.ai_kyc_embedding_dimensions, model=model or "local-hash-v1")
 
     @staticmethod
     def _chunks_from_citations(document: SourceDocument) -> list[dict[str, Any]]:
@@ -278,7 +631,7 @@ class KycDocumentExtractionService:
                     "text": citation.excerpt,
                     "page_number": citation.page_number,
                     "section_label": citation.label,
-                    "metadata": {"field_key": citation.field_key, "citation_id": citation.id},
+                    "metadata": {"field_key": citation.field_key, "citation_id": citation.id, "chunk_strategy": "citation_fallback"},
                 }
             )
         return chunks

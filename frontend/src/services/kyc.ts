@@ -70,6 +70,7 @@ export interface KycDraftUpdatePayload {
   conflicts_acknowledged?: boolean | null
   override_reason?: string | null
   review_notes?: string | null
+  detailed_description?: string | null
 }
 
 export interface KycDraftApprovePayload {
@@ -85,6 +86,11 @@ export interface KycDraftRejectPayload {
 
 export interface KycSnapshotRestorePayload {
   reason: string
+}
+
+export interface KycWebResearchPayload {
+  draft_id?: string | null
+  query?: string | null
 }
 
 export interface KycAgentRunCreatePayload {
@@ -146,6 +152,14 @@ export function approveKycDraft(token: string, accountId: string, draftId: strin
 
 export function rejectKycDraft(token: string, accountId: string, draftId: string, payload: KycDraftRejectPayload) {
   return apiRequest<KycDraft>(`/api/accounts/${accountId}/kyc/drafts/${draftId}/reject`, {
+    method: 'POST',
+    token,
+    body: JSON.stringify(payload),
+  })
+}
+
+export function queueKycWebResearch(token: string, accountId: string, payload: KycWebResearchPayload = {}) {
+  return apiRequest<KycAgentRun>(`/api/accounts/${accountId}/kyc/web-research`, {
     method: 'POST',
     token,
     body: JSON.stringify(payload),

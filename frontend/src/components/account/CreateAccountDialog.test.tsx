@@ -1,7 +1,7 @@
 import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
-import { describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { CreateAccountDialog } from '@/components/account/CreateAccountDialog'
 import { toast } from 'sonner'
 
@@ -14,6 +14,30 @@ vi.mock('sonner', () => ({
     success: vi.fn(),
     error: vi.fn(),
   },
+}))
+
+vi.mock('@/components/ui/RichTextEditor', () => ({
+  RichTextEditor: ({
+    value,
+    onChange,
+    disabled,
+    ariaLabel,
+    placeholder,
+  }: {
+    value: string
+    onChange: (value: string) => void
+    disabled?: boolean
+    ariaLabel?: string
+    placeholder?: string
+  }) => (
+    <textarea
+      aria-label={ariaLabel}
+      value={value}
+      disabled={disabled}
+      placeholder={placeholder}
+      onChange={event => onChange(event.target.value)}
+    />
+  ),
 }))
 
 function jsonResponse(body: unknown, status = 200) {
@@ -58,6 +82,7 @@ function apiDraft(status: 'ready_for_review' | 'approved' = 'ready_for_review') 
         source_type: 'project_charter',
         uploaded_by_name: 'Admin',
         extraction_status: 'completed',
+        extracted_text: 'Page 1\nAcme Corp Statement of Work\nScope includes customer intelligence modernization.',
         confidence: 82,
         pages: 1,
         is_sensitive: false,
@@ -116,6 +141,11 @@ async function fillForm() {
 }
 
 describe('CreateAccountDialog', () => {
+  beforeEach(() => {
+    Object.defineProperty(URL, 'createObjectURL', { value: vi.fn(() => 'blob:preview'), configurable: true })
+    Object.defineProperty(URL, 'revokeObjectURL', { value: vi.fn(), configurable: true })
+  })
+
   it('creates an onboarding draft before navigating to onboarding review', async () => {
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input)
@@ -155,6 +185,43 @@ describe('CreateAccountDialog', () => {
       )
     })).toBe(true)
     expect(toast.success).toHaveBeenCalledWith('Account draft created for onboarding review.')
+  })
+
+  it('uploads SOW files, shows split extraction review, saves reviewed draft fields, and opens onboarding', async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input)
+      const method = init?.method ?? 'GET'
+      if (url.endsWith('/api/accounts/custom-fields') && method === 'GET') return jsonResponse([])
+      if (url.endsWith('/api/onboarding/account-managers') && method === 'GET') return jsonResponse(apiManagers())
+      if (url.endsWith('/api/onboarding/drafts/upload') && method === 'POST') return jsonResponse(apiDraft())
+      if (url.endsWith('/api/onboarding/drafts/draft-1') && method === 'PATCH') return jsonResponse(apiDraft())
+      return jsonResponse({})
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    render(
+      <MemoryRouter initialEntries={['/accounts']}>
+        <Routes>
+          <Route path="/accounts" element={<CreateAccountDialog />} />
+          <Route path="/accounts/onboarding" element={<div>Onboarding review loaded</div>} />
+        </Routes>
+      </MemoryRouter>,
+    )
+
+    await userEvent.click(screen.getByRole('button', { name: /create account/i }))
+    await userEvent.selectOptions(await screen.findByLabelText(/account manager/i), 'usr-am')
+    await userEvent.upload(screen.getByLabelText(/upload sow or project charter/i), new File(['%PDF-1.4'], 'Acme_SOW.pdf', { type: 'application/pdf' }))
+
+    expect(await screen.findByText('SOW extraction preview')).toBeInTheDocument()
+    await userEvent.click(screen.getByRole('button', { name: /extract details/i }))
+    expect(await screen.findByDisplayValue(/Full extracted PDF text/i)).toBeInTheDocument()
+    expect(screen.getByDisplayValue(/Acme Corp Statement of Work/i)).toBeInTheDocument()
+
+    await userEvent.click(screen.getByRole('button', { name: /open onboarding review/i }))
+
+    expect(await screen.findByText('Onboarding review loaded')).toBeInTheDocument()
+    expect(fetchMock.mock.calls.some(call => String(call[0]).endsWith('/api/onboarding/drafts/upload'))).toBe(true)
+    expect(fetchMock.mock.calls.some(call => String(call[0]).endsWith('/api/onboarding/drafts/draft-1') && call[1]?.method === 'PATCH')).toBe(true)
   })
 
   it('requires a LinkedIn URL before creating the onboarding draft', async () => {

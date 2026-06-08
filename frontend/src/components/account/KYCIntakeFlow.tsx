@@ -4,12 +4,14 @@ import { useMemo, useState } from 'react'
 import { toast } from 'sonner'
 import { useAuth } from '@/contexts/AuthContext'
 import { useRole } from '@/hooks/useRole'
+import { uploadAccountAttachment } from '@/services/accountWorkspace'
 import { createKycDraft } from '@/services/kyc'
 import { useScoreActivityStore } from '@/stores/scoreActivityStore'
 import { useV3Store } from '@/stores/v3Store'
 import { Account } from '@/types/account'
 import { ScoreActivityTask } from '@/types/scoreActivity'
 import { KycDraft } from '@/types/kyc'
+import { SourceDocument } from '@/types/v3'
 import { emitTimelineEvent } from '@/utils/emitTimelineEvent'
 import { formatRelative } from '@/utils/formatters'
 
@@ -19,9 +21,10 @@ export function KYCIntakeFlow({ account }: { account: Account }) {
   const drafts = useV3Store(state => state.onboardingDrafts)
   const addAccountKycIntakeDraft = useV3Store(state => state.addAccountKycIntakeDraft)
   const addTask = useScoreActivityStore(state => state.addTask)
-  const [fileNames, setFileNames] = useState<string[]>([])
+  const [selectedFiles, setSelectedFiles] = useState<File[]>([])
   const [extracting, setExtracting] = useState(false)
   const [latestBackendDraft, setLatestBackendDraft] = useState<KycDraft | null>(null)
+  const [latestUploadedDocuments, setLatestUploadedDocuments] = useState<SourceDocument[]>([])
   const [error, setError] = useState<string | null>(null)
   const accountDrafts = useMemo(
     () =>
@@ -33,15 +36,33 @@ export function KYCIntakeFlow({ account }: { account: Account }) {
   const latestDraft = accountDrafts[0]
 
   async function runIntake() {
-    const names = fileNames.length ? fileNames : [`${account.name} Project Charter.pdf`, `${account.name} Renewal SOW.pdf`]
+    if (!selectedFiles.length) {
+      setError('Select at least one charter, SOW, or supporting document before running AI intake.')
+      return
+    }
+    const names = selectedFiles.map(file => file.name)
     setExtracting(true)
     setError(null)
     let draftId = ''
+    let sourceDocuments: SourceDocument[] = []
     try {
       if (token) {
+        const uploaded: SourceDocument[] = []
+        for (const file of selectedFiles) {
+          uploaded.push(
+            await uploadAccountAttachment(token, account.id, {
+              file,
+              title: file.name,
+              extractNow: true,
+            }),
+          )
+        }
+        sourceDocuments = uploaded
+        setLatestUploadedDocuments(uploaded)
         const draft = await createKycDraft(token, account.id, {
           trigger_source: 'source_documents',
-          notes: `Charter/SOW intake file names: ${names.join(', ')}`,
+          source_document_ids: uploaded.map(document => document.id),
+          notes: `Charter/SOW intake uploaded from stored source documents: ${names.join(', ')}`,
         })
         setLatestBackendDraft(draft)
         draftId = draft.id
@@ -84,13 +105,13 @@ export function KYCIntakeFlow({ account }: { account: Account }) {
       sourceRecordId: task.id,
       sourceRecordType: 'score_activity_task',
       sourceRecordRoute: `/accounts/${account.id}?tab=kyc`,
-      metadata: { taskId: task.id, draftId, sourceDocuments: names },
+      metadata: { taskId: task.id, draftId, sourceDocuments: sourceDocuments.map(document => document.id), sourceDocumentNames: names },
       isSensitive: false,
       isSystemGenerated: true,
       isImmutable: false,
     })
     setExtracting(false)
-    setFileNames([])
+    setSelectedFiles([])
     toast.success('AI intake added and KYC update task created')
   }
 
@@ -120,22 +141,34 @@ export function KYCIntakeFlow({ account }: { account: Account }) {
             <label className="flex min-h-[112px] cursor-pointer flex-col items-center justify-center rounded-lg border border-dashed border-brand-blue/40 bg-white p-4 text-center transition-colors hover:bg-blue-tint-20">
               <UploadCloud className="h-6 w-6 text-brand-blue" />
               <span className="mt-2 text-sm font-semibold text-ink">Select charter/SOW files</span>
-              <span className="mt-1 text-xs text-ink-secondary">PDF or DOCX names are used for prototype extraction.</span>
+              <span className="mt-1 text-xs text-ink-secondary">PDF, DOCX, or text content is stored and extracted for KYC.</span>
               <input
                 type="file"
                 multiple
+                accept=".pdf,.doc,.docx,.txt,.csv,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,text/plain,text/csv"
                 className="sr-only"
-                onChange={event => setFileNames(Array.from(event.target.files ?? []).map(file => file.name))}
+                onChange={event => setSelectedFiles(Array.from(event.target.files ?? []))}
               />
             </label>
 
             <div className="rounded-lg border border-surface-border bg-white p-3">
               <p className="text-xs font-semibold uppercase tracking-wider text-ink-secondary">Files ready</p>
               <div className="mt-2 space-y-2">
-                {(fileNames.length ? fileNames : [`${account.name} Project Charter.pdf`, `${account.name} Renewal SOW.pdf`]).slice(0, 3).map(name => (
-                  <div key={name} className="flex items-center gap-2 rounded-md bg-surface-secondary p-2 text-xs font-medium text-ink-secondary">
+                {selectedFiles.length ? selectedFiles.slice(0, 3).map(file => (
+                  <div key={file.name} className="flex items-center gap-2 rounded-md bg-surface-secondary p-2 text-xs font-medium text-ink-secondary">
                     <FileText className="h-4 w-4 shrink-0 text-brand-blue" />
-                    <span className="min-w-0 truncate">{name}</span>
+                    <span className="min-w-0 truncate">{file.name}</span>
+                  </div>
+                )) : (
+                  <div className="rounded-md bg-surface-secondary p-2 text-xs text-ink-secondary">No files selected yet.</div>
+                )}
+                {selectedFiles.length > 3 ? (
+                  <div className="rounded-md bg-surface-secondary p-2 text-xs text-ink-secondary">+{selectedFiles.length - 3} more selected</div>
+                ) : null}
+                {latestUploadedDocuments.slice(0, 3).map(document => (
+                  <div key={document.id} className="flex items-center gap-2 rounded-md bg-blue-tint-20 p-2 text-xs font-medium text-brand-blue">
+                    <CheckCircle2 className="h-4 w-4 shrink-0" />
+                    <span className="min-w-0 truncate">{document.name} stored</span>
                   </div>
                 ))}
               </div>

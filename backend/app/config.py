@@ -32,6 +32,7 @@ class Settings:
         self.expose_reset_tokens = os.getenv("EXPOSE_RESET_TOKENS", "false").lower() == "true"
         self.content_storage_backend = os.getenv("CONTENT_STORAGE_BACKEND", "local").lower()
         self.local_content_storage_dir = os.getenv("LOCAL_CONTENT_STORAGE_DIR", str(BASE_DIR / "storage" / "content"))
+        self.content_storage_max_file_mb = int(os.getenv("CONTENT_STORAGE_MAX_FILE_MB", "25"))
         self.s3_bucket_name = os.getenv("S3_BUCKET_NAME", "")
         self.s3_region = os.getenv("S3_REGION", "")
         self.google_calendar_client_id = os.getenv("GOOGLE_CALENDAR_CLIENT_ID", "")
@@ -76,6 +77,43 @@ class Settings:
         self.ai_kyc_max_input_tokens = int(os.getenv("AI_KYC_MAX_INPUT_TOKENS", "35000"))
         self.ai_kyc_max_output_tokens = int(os.getenv("AI_KYC_MAX_OUTPUT_TOKENS", "8000"))
         self.ai_kyc_temperature = float(os.getenv("AI_KYC_TEMPERATURE", "0.2"))
+        self.ai_kyc_detail_level = os.getenv("AI_KYC_DETAIL_LEVEL", "compact").strip().lower()
+        self.ai_kyc_ollama_context_tokens = int(os.getenv("AI_KYC_OLLAMA_CONTEXT_TOKENS", "2048"))
+        self.ai_kyc_web_research_enabled = os.getenv("AI_KYC_WEB_RESEARCH_ENABLED", "false").lower() == "true"
+        self.ai_kyc_web_research_provider = os.getenv("AI_KYC_WEB_RESEARCH_PROVIDER", "openai").strip().lower()
+        self.ai_kyc_web_research_api_key = os.getenv("AI_KYC_WEB_RESEARCH_API_KEY", os.getenv("OPENAI_API_KEY", "")).strip()
+        self.ai_kyc_web_research_model = os.getenv("AI_KYC_WEB_RESEARCH_MODEL", "gpt-4o-mini").strip()
+        self.ai_kyc_web_research_context_size = os.getenv("AI_KYC_WEB_RESEARCH_CONTEXT_SIZE", "high").strip().lower()
+        self.ai_kyc_web_research_max_sources = int(os.getenv("AI_KYC_WEB_RESEARCH_MAX_SOURCES", "12"))
+        self.ai_kyc_web_research_timeout_seconds = int(os.getenv("AI_KYC_WEB_RESEARCH_TIMEOUT_SECONDS", "90"))
+        self.tavily_api_key = os.getenv("TAVILY_API_KEY", "").strip()
+        self.tavily_base_url = os.getenv("TAVILY_BASE_URL", "https://api.tavily.com").strip()
+        self.tavily_search_endpoint = os.getenv("TAVILY_SEARCH_ENDPOINT", "/search").strip()
+        self.tavily_extract_endpoint = os.getenv("TAVILY_EXTRACT_ENDPOINT", "/extract").strip()
+        self.tavily_timeout_seconds = int(os.getenv("TAVILY_TIMEOUT_SECONDS", "45"))
+        self.tavily_max_retries = int(os.getenv("TAVILY_MAX_RETRIES", "2"))
+        self.tavily_retry_backoff_seconds = float(os.getenv("TAVILY_RETRY_BACKOFF_SECONDS", "1.5"))
+        self.tavily_max_results = int(os.getenv("TAVILY_MAX_RESULTS", "8"))
+        self.tavily_search_depth = os.getenv("TAVILY_SEARCH_DEPTH", "advanced").strip().lower()
+        self.tavily_include_answer = os.getenv("TAVILY_INCLUDE_ANSWER", "false").lower() == "true"
+        self.tavily_include_raw_content = os.getenv("TAVILY_INCLUDE_RAW_CONTENT", "true").lower() == "true"
+        self.tavily_include_images = os.getenv("TAVILY_INCLUDE_IMAGES", "false").lower() == "true"
+        self.tavily_include_domains = os.getenv("TAVILY_INCLUDE_DOMAINS", "").strip()
+        self.tavily_exclude_domains = os.getenv("TAVILY_EXCLUDE_DOMAINS", "").strip()
+        self.tavily_extract_enabled = os.getenv("TAVILY_EXTRACT_ENABLED", "false").lower() == "true"
+        self.tavily_extract_depth = os.getenv("TAVILY_EXTRACT_DEPTH", "basic").strip().lower()
+        self.tavily_extract_format = os.getenv("TAVILY_EXTRACT_FORMAT", "markdown").strip().lower()
+        self.tavily_daily_credit_limit = int(os.getenv("TAVILY_DAILY_CREDIT_LIMIT", "100"))
+        self.tavily_per_run_credit_limit = int(os.getenv("TAVILY_PER_RUN_CREDIT_LIMIT", "10"))
+        self.ai_kyc_research_summarizer_provider = os.getenv("AI_KYC_RESEARCH_SUMMARIZER_PROVIDER", "ollama").strip().lower()
+        self.ai_kyc_research_summarizer_model = os.getenv("AI_KYC_RESEARCH_SUMMARIZER_MODEL", self.ai_kyc_model).strip() or self.ai_kyc_model
+        self.ai_kyc_research_summarizer_base_url = os.getenv("AI_KYC_RESEARCH_SUMMARIZER_BASE_URL", self.ai_kyc_base_url or "http://ollama:11434/v1").strip()
+        self.ai_kyc_research_summarizer_timeout_seconds = int(os.getenv("AI_KYC_RESEARCH_SUMMARIZER_TIMEOUT_SECONDS", "900"))
+        self.ai_kyc_research_summarizer_max_input_tokens = int(os.getenv("AI_KYC_RESEARCH_SUMMARIZER_MAX_INPUT_TOKENS", "12000"))
+        self.ai_kyc_research_summarizer_max_output_tokens = int(os.getenv("AI_KYC_RESEARCH_SUMMARIZER_MAX_OUTPUT_TOKENS", "2500"))
+        self.ai_kyc_research_summarizer_temperature = float(os.getenv("AI_KYC_RESEARCH_SUMMARIZER_TEMPERATURE", "0.1"))
+        self.ai_kyc_verbose_logging = os.getenv("AI_KYC_VERBOSE_LOGGING", "false").lower() == "true"
+        self.ai_kyc_verbose_log_max_chars = int(os.getenv("AI_KYC_VERBOSE_LOG_MAX_CHARS", "60000"))
         self.ai_kyc_max_cost_per_run_usd = float(os.getenv("AI_KYC_MAX_COST_PER_RUN_USD", "0.25"))
         self.ai_kyc_daily_budget_usd = float(os.getenv("AI_KYC_DAILY_BUDGET_USD", "5"))
         self.ai_kyc_monthly_budget_usd = float(os.getenv("AI_KYC_MONTHLY_BUDGET_USD", "25"))
@@ -85,9 +123,9 @@ class Settings:
         self.ai_kyc_chunk_size_tokens = int(os.getenv("AI_KYC_CHUNK_SIZE_TOKENS", "650"))
         self.ai_kyc_chunk_overlap_tokens = int(os.getenv("AI_KYC_CHUNK_OVERLAP_TOKENS", "90"))
         self.ai_kyc_use_embeddings = os.getenv("AI_KYC_USE_EMBEDDINGS", "true").lower() == "true"
-        self.ai_kyc_embedding_provider = os.getenv("AI_KYC_EMBEDDING_PROVIDER", "openai").strip().lower()
-        self.ai_kyc_embedding_model = os.getenv("AI_KYC_EMBEDDING_MODEL", "text-embedding-3-small")
-        self.ai_kyc_embedding_dimensions = int(os.getenv("AI_KYC_EMBEDDING_DIMENSIONS", "1536"))
+        self.ai_kyc_embedding_provider = os.getenv("AI_KYC_EMBEDDING_PROVIDER", "local_hash").strip().lower()
+        self.ai_kyc_embedding_model = os.getenv("AI_KYC_EMBEDDING_MODEL", "local_hash")
+        self.ai_kyc_embedding_dimensions = int(os.getenv("AI_KYC_EMBEDDING_DIMENSIONS", "384"))
         self.kyc_document_extraction_enabled = os.getenv("KYC_DOCUMENT_EXTRACTION_ENABLED", "true").lower() == "true"
         self.kyc_document_extraction_max_file_mb = int(os.getenv("KYC_DOCUMENT_EXTRACTION_MAX_FILE_MB", "25"))
         self.kyc_ocr_enabled = os.getenv("KYC_OCR_ENABLED", "true").lower() == "true"
@@ -98,6 +136,10 @@ class Settings:
         self.kyc_worker_initial_delay_seconds = int(os.getenv("KYC_WORKER_INITIAL_DELAY_SECONDS", "5"))
         self.kyc_worker_interval_seconds = int(os.getenv("KYC_WORKER_INTERVAL_SECONDS", "5"))
         self.kyc_worker_batch_size = int(os.getenv("KYC_WORKER_BATCH_SIZE", "1"))
+        self.sow_ai_extraction_enabled = os.getenv("SOW_AI_EXTRACTION_ENABLED", "true").lower() == "true"
+        self.sow_ai_extraction_model = os.getenv("SOW_AI_EXTRACTION_MODEL", self.ai_kyc_model).strip() or self.ai_kyc_model
+        self.sow_ai_extraction_timeout_seconds = int(os.getenv("SOW_AI_EXTRACTION_TIMEOUT_SECONDS", "180"))
+        self.sow_ai_extraction_max_output_tokens = int(os.getenv("SOW_AI_EXTRACTION_MAX_OUTPUT_TOKENS", "600"))
 
 
 @lru_cache

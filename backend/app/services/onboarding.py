@@ -1,6 +1,8 @@
+import re
 from datetime import datetime, timezone
+from pathlib import Path
 
-from fastapi import HTTPException, status
+from fastapi import HTTPException, UploadFile, status
 from pydantic import ValidationError
 from sqlalchemy.orm import Session
 
@@ -34,7 +36,9 @@ from app.schemas import (
     OnboardingDraftRead,
     OnboardingDraftRejectRequest,
     OnboardingDraftUpdateRequest,
+    SourceDocumentExtractionRead,
     UserRead,
+    validate_linkedin_url,
 )
 from app.services.account_access import AccountAccessService
 from app.services.accounts import AccountService
@@ -42,7 +46,11 @@ from app.services.audit import AuditService
 from app.services.custom_fields import CustomFieldService
 from app.services.engagements import calculate_notice_deadline
 from app.services.engagement_health_rollup import notify_account_health_impacted_by_engagement_change
+from app.services.kyc_document_extraction import KycDocumentExtractionService
 from app.services.notifications import NotificationsService
+from app.services.source_document_contract import ONBOARDING_DRAFT_LIFECYCLE_DEFAULT, infer_service_lines_from_text
+from app.services.sow_extraction import SowExtractionService
+from app.services.storage import ContentStorageService
 from app.services.timeline import TimelineService
 from app.services.user_management import page_count
 
@@ -165,6 +173,146 @@ class OnboardingService:
         self.onboarding.commit()
         return OnboardingDraftRead.model_validate(self._get_draft_or_404(draft.id))
 
+    async def create_draft_from_uploads(
+        self,
+        uploads: list[UploadFile],
+        current_user: User,
+        *,
+        manager_id: str | None = None,
+        manager_name: str | None = None,
+        manager_email: str | None = None,
+        linkedin_url: str | None = None,
+    ) -> OnboardingDraftRead:
+        self.access.require_module_permission(current_user, "account_onboarding_workspace", "create")
+        if not uploads:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="At least one SOW, charter, or source document is required")
+        if len(uploads) > 10:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="At most 10 source documents can be uploaded for one onboarding draft")
+        try:
+            normalized_linkedin_url = validate_linkedin_url(linkedin_url)
+        except ValueError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail={"message": "Validation failed", "errors": [{"field": "linkedin_url", "message": str(exc)}]},
+            ) from exc
+        primary_owner = self._resolve_owner_from_values(manager_id, manager_email)
+        self._ensure_owner_selection_allowed(current_user, primary_owner)
+        resolved_manager_name = primary_owner.full_name if primary_owner else manager_name
+        resolved_manager_email = primary_owner.email if primary_owner else manager_email
+
+        storage = ContentStorageService()
+        extraction_service = KycDocumentExtractionService(self.onboarding.db)
+        documents: list[SourceDocument] = []
+        extracted_parts: list[str] = []
+        structured_extractions: list[dict] = []
+        request_checksums: set[str] = set()
+        stored_files_to_cleanup: list[str] = []
+        try:
+            for upload in uploads:
+                stored = await storage.save_upload(upload)
+                stored_files_to_cleanup.append(stored.file_path)
+                checksum = self.account_service.file_checksum_for_upload(stored.file_path)
+                self._ensure_uploaded_source_is_unique(
+                    checksum,
+                    storage=storage,
+                    stored_file_path=stored.file_path,
+                    request_checksums=request_checksums,
+                )
+                document = SourceDocument(
+                    title=self._title_from_file(stored.file_name),
+                    source_type=self._source_type_from_file(stored.file_name),
+                    file_name=stored.file_name,
+                    file_url=stored.file_path,
+                    storage_backend=stored.storage_backend,
+                    storage_path=stored.file_path,
+                    mime_type=stored.mime_type,
+                    size_bytes=stored.size_bytes,
+                    checksum_sha256=checksum,
+                    uploaded_by_id=current_user.id,
+                    uploaded_by_name=current_user.full_name,
+                    extraction_status="queued",
+                    confidence=75,
+                    pages=0,
+                    is_sensitive=False,
+                )
+                self.accounts.add_attachment(document)
+                extraction = extraction_service.extract_document(document, force=True)
+                if extraction.status == "completed":
+                    extraction_service.chunk_document(document, extraction=extraction, force=True)
+                    structured = SowExtractionService(self.onboarding.db).extract_structured_fields(document, extraction)
+                    structured_extractions.append(structured.fields)
+                    extracted_text = extraction.raw_text or extraction.normalized_text
+                    if extracted_text:
+                        extracted_parts.append(f"Source: {stored.file_name}\n{extracted_text}")
+                else:
+                    document.extraction_status = extraction.status
+                documents.append(document)
+        except HTTPException:
+            for path in stored_files_to_cleanup:
+                storage.delete_stored_file(path)
+            self.onboarding.db.rollback()
+            raise
+
+        combined_text = "\n\n".join(extracted_parts)
+        inferred = self._infer_uploaded_draft_fields(
+            combined_text,
+            documents,
+            structured_extractions=structured_extractions,
+            manager_name=resolved_manager_name,
+            manager_email=resolved_manager_email,
+            current_user=current_user,
+        )
+        duplicate = self.accounts.find_duplicate_by_name(inferred["account_name"])
+        conflicts = list(inferred["conflicts"])
+        if duplicate:
+            conflicts.append(f"Possible duplicate account: {duplicate.name}")
+
+        draft = OnboardingDraft(
+            account_name=inferred["account_name"],
+            project_name=inferred["project_name"],
+            company_url=inferred["company_url"],
+            lifecycle_status=ONBOARDING_DRAFT_LIFECYCLE_DEFAULT,
+            segment=inferred["segment"],
+            region=inferred["region"],
+            service_context=inferred["service_context"],
+            commercial_summary=inferred["commercial_summary"],
+            initial_notes=inferred["initial_notes"],
+            commercial_value=inferred["commercial_value"],
+            currency=inferred["currency"],
+            linkedin_url=normalized_linkedin_url,
+            primary_owner_id=primary_owner.id if primary_owner else None,
+            primary_owner_name=inferred["primary_owner_name"],
+            primary_owner_email=inferred["primary_owner_email"],
+            confidence=inferred["confidence"],
+            missing_fields=inferred["missing_fields"],
+            conflicts=conflicts,
+            duplicate_account_id=duplicate.id if duplicate else None,
+            source_citation=inferred["source_citation"],
+            created_by_id=current_user.id,
+            created_by_name=current_user.full_name,
+            extraction_status="completed" if combined_text.strip() else "needs_review",
+        )
+        self.onboarding.add_draft(draft)
+        for document in documents:
+            document.draft_id = draft.id
+            self._add_inferred_citations(document, combined_text, inferred)
+        self._add_uploaded_engagement_draft(draft, inferred)
+        self.audit.log(
+            module="account_onboarding_workspace",
+            action="draft_create_from_upload",
+            entity_type="onboarding_draft",
+            entity_id=draft.id,
+            actor=current_user,
+            after_value={
+                "account_name": draft.account_name,
+                "source_count": len(documents),
+                "extraction_status": draft.extraction_status,
+                "used_filename_for_account_name": False,
+            },
+        )
+        self.onboarding.commit()
+        return OnboardingDraftRead.model_validate(self._get_draft_or_404(draft.id))
+
     def update_draft(self, draft_id: str, payload: OnboardingDraftUpdateRequest, current_user: User) -> OnboardingDraftRead:
         draft = self._get_draft_or_404(draft_id)
         self.access.require_module_permission(current_user, "account_onboarding_workspace", "update")
@@ -232,6 +380,7 @@ class OnboardingService:
         for document in draft.source_documents:
             document.account_id = account.id
         created_engagements = [self._create_engagement(account, engagement_draft, primary_owner, current_user) for engagement_draft in draft.engagement_drafts]
+        self._link_source_documents_to_created_engagements(draft, created_engagements)
         self._notify_account_health_impacted_by_engagement_creation(account, created_engagements)
         draft.status = "approved"
         draft.approved_by_id = current_user.id
@@ -563,6 +712,772 @@ class OnboardingService:
             errors.append({"field": field_path, "message": message[:1].upper() + message[1:]})
         return errors
 
+    def draft_document_download_path(self, draft_id: str, document_id: str, current_user: User) -> tuple[SourceDocument, Path]:
+        draft = self._get_draft_or_404(draft_id)
+        self.access.require_module_permission(current_user, "account_onboarding_workspace", "view")
+        document = next((item for item in draft.source_documents if item.id == document_id), None)
+        if document is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Onboarding source document was not found")
+        if document.is_sensitive and current_user.role not in {"admin", "super_admin", "kam_head", "account_manager", "am"}:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="You cannot download sensitive source documents")
+        path = self._stored_file_path(document)
+        if path is None or not path.exists() or not path.is_file():
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Stored source document file was not found")
+        return document, path
+
+    def extract_draft_document(
+        self,
+        draft_id: str,
+        document_id: str,
+        current_user: User,
+        *,
+        force: bool = True,
+    ) -> SourceDocumentExtractionRead:
+        draft = self._get_draft_or_404(draft_id)
+        self.access.require_module_permission(current_user, "account_onboarding_workspace", "update")
+        if draft.status not in {"ready_for_review"}:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Only source documents on drafts ready for review can be re-extracted")
+        document = next((item for item in draft.source_documents if item.id == document_id), None)
+        if document is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Onboarding source document was not found")
+        if document.is_sensitive and current_user.role not in {"admin", "super_admin", "kam_head", "account_manager", "am"}:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="You cannot extract sensitive source documents")
+
+        extraction_service = KycDocumentExtractionService(self.onboarding.db)
+        extraction = extraction_service.extract_document(document, force=force)
+        if extraction.status == "completed":
+            extraction_service.chunk_document(document, extraction=extraction, force=force)
+            if document.source_type in {"sow", "project_charter", "commercial_note"}:
+                SowExtractionService(self.onboarding.db).extract_structured_fields(document, extraction)
+        draft.extraction_status = "completed" if all(item.extraction_status == "completed" for item in draft.source_documents) else "needs_review"
+        self.audit.log(
+            module="account_onboarding_workspace",
+            action="source_extraction_retry",
+            entity_type="source_document",
+            entity_id=document.id,
+            actor=current_user,
+            after_value={
+                "draft_id": draft.id,
+                "extraction_status": document.extraction_status,
+                "ocr_status": document.ocr_status,
+                "pages": document.pages,
+                "force": force,
+            },
+        )
+        self.onboarding.commit()
+        return SourceDocumentExtractionRead.model_validate(extraction)
+
+    def _ensure_uploaded_source_is_unique(
+        self,
+        checksum: str | None,
+        *,
+        storage: ContentStorageService,
+        stored_file_path: str,
+        request_checksums: set[str],
+    ) -> None:
+        if not checksum:
+            return
+        if checksum in request_checksums:
+            storage.delete_stored_file(stored_file_path)
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail={
+                    "message": "The same source file was included more than once in this upload.",
+                    "duplicate_scope": "request",
+                    "checksum_sha256": checksum,
+                },
+            )
+        duplicate = self.accounts.find_source_document_by_checksum(checksum)
+        if duplicate:
+            storage.delete_stored_file(stored_file_path)
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail={
+                    "message": "This source file was already uploaded. Reuse the existing source document or upload a different file.",
+                    "duplicate_scope": "global",
+                    "existing_document_id": duplicate.id,
+                    "existing_account_id": duplicate.account_id,
+                    "existing_draft_id": duplicate.draft_id,
+                    "existing_title": duplicate.title,
+                    "existing_file_name": duplicate.file_name,
+                    "checksum_sha256": duplicate.checksum_sha256,
+                },
+            )
+        request_checksums.add(checksum)
+
+    def _infer_uploaded_draft_fields(
+        self,
+        text: str,
+        documents: list[SourceDocument],
+        *,
+        structured_extractions: list[dict] | None = None,
+        manager_name: str | None,
+        manager_email: str | None,
+        current_user: User,
+    ) -> dict:
+        structured = self._merge_structured_extractions(structured_extractions or [])
+        field_citations = self._draft_field_citations(structured)
+        account_name = (
+            self._structured_value(structured, "client_name", min_confidence=30)
+            or
+            self._extract_label(text, ["Account Name", "Customer", "Client", "Company Name", "Legal Entity", "Client Legal Name"])
+            or self._extract_customer_from_legal_intro(text)
+            or "Unidentified Account from uploaded SOW"
+        )
+        project_name = self._extract_label(text, ["Project Name", "SOW Title", "Statement of Work Title", "Engagement Name", "Program Name"]) or self._extract_sow_heading(text)
+        company_url = self._extract_label(text, ["Company URL", "Website", "Client Website"])
+        region = self._extract_label(text, ["Region", "Primary Region", "Geography"]) or self._extract_region_from_legal_intro(text) or "Global"
+        segment = self._extract_label(text, ["Segment", "Account Segment", "Client Segment"]) or "Enterprise"
+        structured_service_lines = self._structured_list(structured, "service_lines")
+        service_lines = structured_service_lines or self._split_list(self._extract_label(text, ["Service Lines", "Services", "Tkxel Service Lines"])) or self._infer_service_lines(text)
+        commercial_value, currency = self._extract_money(text)
+        structured_commercial_value, structured_currency = self._structured_money(structured)
+        if structured_commercial_value is not None:
+            commercial_value = structured_commercial_value
+            currency = structured_currency or currency
+        start_date = self._extract_date(text, ["Start Date", "Effective Date", "SOW Start Date"])
+        end_date = self._extract_date(text, ["End Date", "Expiration Date", "SOW End Date"])
+        narrative_start, narrative_end = self._extract_timeframe_sentence_dates(text)
+        start_date = self._parse_structured_date(self._structured_value(structured, "start_date", min_confidence=30)) or start_date or narrative_start
+        end_date = self._parse_structured_date(self._structured_value(structured, "end_date", min_confidence=30)) or end_date or narrative_end
+        renewal_date = self._extract_date(text, ["Renewal Date", "Renewal Review Date"])
+        structured_notice = self._structured_value(structured, "notice_period", min_confidence=30)
+        structured_renewal_terms = self._structured_value(structured, "renewal_terms", min_confidence=30)
+        notice_period_days = self._structured_notice_days(structured_notice) or self._extract_notice_period(text) or self._extract_renewal_notice_days(text)
+        auto_renewal = self._structured_auto_renewal(structured_renewal_terms) or self._extract_bool(text, ["Auto Renewal", "Auto-Renewal", "Automatic Renewal"])
+        owner_name = manager_name or self._extract_label(text, ["Primary Owner Name", "Account Manager", "Tkxel Account Manager"]) or current_user.full_name
+        owner_email = manager_email or self._extract_label(text, ["Primary Owner Email", "Account Manager Email", "Tkxel Account Manager Email"]) or current_user.email
+
+        structured_deliverables = self._structured_list(structured, "deliverables")
+        service_context = self._extract_section(
+            text,
+            ["Scope of Work", "Service Context", "Engagement Scope", "Project Scope", "Business Context", "Objectives"],
+            max_chars=1600,
+        )
+        commercial_summary = self._extract_section(
+            text,
+            ["Commercial Summary", "Commercial Terms", "Pricing", "Fees", "Billing Terms", "Payment Terms"],
+            max_chars=1400,
+        )
+        commercial_summary = self._structured_commercial_summary(
+            commercial_summary,
+            commercial_value,
+            currency,
+            renewal_terms=structured_renewal_terms,
+            notice_period=structured_notice,
+        )
+        initial_notes = self._extract_section(
+            text,
+            ["Risks", "Assumptions", "Success Metrics", "Governance", "Out of Scope"],
+            max_chars=1400,
+        )
+        structured_risks = self._structured_list(structured, "risks")
+        if structured_risks:
+            initial_notes = "Risks:\n" + "\n".join(f"- {item}" for item in structured_risks)
+        if structured_deliverables and service_context:
+            service_context = f"{service_context}\n\nDeliverables:\n" + "\n".join(f"- {item}" for item in structured_deliverables[:12])
+        elif structured_deliverables:
+            service_context = "Deliverables:\n" + "\n".join(f"- {item}" for item in structured_deliverables[:12])
+
+        source_name = documents[0].file_name if documents else "uploaded source document"
+        missing_fields = []
+        if account_name.startswith("Unidentified"):
+            missing_fields.append("Account name was not found in the uploaded source text.")
+        if not project_name:
+            missing_fields.append("Project name was not found in the uploaded source text.")
+        if not company_url:
+            missing_fields.append("Company website was not found in the uploaded source text.")
+        if not text.strip():
+            missing_fields.append("Readable text could not be extracted from the uploaded source document.")
+        if not service_lines:
+            missing_fields.append("Service lines were not found in the uploaded source text.")
+        if commercial_value <= 0:
+            missing_fields.append("Commercial value was not found in the uploaded source text.")
+        if not start_date:
+            missing_fields.append("Engagement start date was not found in the uploaded source text.")
+        if not end_date:
+            missing_fields.append("Engagement end date was not found in the uploaded source text.")
+        if not notice_period_days:
+            missing_fields.append("Renewal notice period was not found in the uploaded source text.")
+        missing_fields.extend(self._structured_missing_evidence_notes(structured))
+        missing_fields = list(dict.fromkeys(missing_fields))
+
+        conflicts = []
+        if any(document.extraction_status not in {"completed", "parsed"} for document in documents):
+            conflicts.append("One or more source documents could not be fully extracted and need manual review.")
+
+        confidence = self._draft_confidence(structured)
+        if missing_fields:
+            confidence = min(confidence, 74)
+        if not text.strip():
+            confidence = 45
+        source_citation = (
+            self._citation_summary("Account name", field_citations.get("account_name"))
+            or f"{source_name}: onboarding draft inferred from extracted document text, not from the file name."
+        )
+
+        return {
+            "account_name": self._clean_short(account_name, default="Unidentified Account from uploaded SOW"),
+            "project_name": self._clean_short(project_name, default=f"{account_name} Engagement" if not account_name.startswith("Unidentified") else "Uploaded SOW Review"),
+            "company_url": self._normalize_url(company_url),
+            "segment": self._clean_short(segment, default="Enterprise"),
+            "region": self._clean_short(region, default="Global"),
+            "service_context": service_context or self._summarize_text(text, "Service scope was extracted from the uploaded source document."),
+            "commercial_summary": commercial_summary or self._commercial_summary_from_money(commercial_value, currency),
+            "initial_notes": initial_notes or "Review the extracted source document before approval. No separate assumptions or risks section was found.",
+            "commercial_value": commercial_value,
+            "currency": currency,
+            "primary_owner_name": self._clean_short(owner_name, default=current_user.full_name),
+            "primary_owner_email": owner_email,
+            "source_citation": source_citation,
+            "missing_fields": missing_fields,
+            "conflicts": conflicts,
+            "confidence": confidence,
+            "service_lines": service_lines or ["Account onboarding"],
+            "start_date": start_date,
+            "end_date": end_date,
+            "renewal_date": renewal_date or end_date,
+            "notice_period_days": notice_period_days,
+            "auto_renewal": auto_renewal,
+            "delivery_status": self._inferred_delivery_status(start_date, end_date),
+            "resource_dependency": self._resource_dependency_from_risks(structured_risks, initial_notes),
+            "engagement_source_citation": self._engagement_source_citation(field_citations, source_name),
+            "engagement_confidence": self._engagement_confidence(structured, fallback=confidence, missing_fields=missing_fields),
+            "structured_extraction": structured,
+            "field_citations": field_citations,
+        }
+
+    @staticmethod
+    def _merge_structured_extractions(extractions: list[dict]) -> dict:
+        merged: dict[str, dict] = {}
+        for extraction in extractions:
+            for key, value in extraction.items():
+                if not isinstance(value, dict):
+                    continue
+                current = merged.get(key)
+                if current is None or OnboardingService._confidence_value(value) > OnboardingService._confidence_value(current):
+                    merged[key] = value
+        return merged
+
+    @staticmethod
+    def _structured_value(structured: dict, key: str, *, min_confidence: int = 1) -> str | None:
+        item = structured.get(key)
+        if not isinstance(item, dict):
+            return None
+        if OnboardingService._confidence_value(item) < min_confidence:
+            return None
+        value = item.get("value")
+        if value is None:
+            return None
+        if isinstance(value, str):
+            return value.strip() or None
+        if isinstance(value, (int, float)):
+            return str(value)
+        return None
+
+    @staticmethod
+    def _structured_list(structured: dict, key: str) -> list[str]:
+        item = structured.get(key)
+        if not isinstance(item, dict):
+            return []
+        value = item.get("value")
+        if isinstance(value, list):
+            return [str(entry).strip() for entry in value if str(entry).strip()][:20]
+        if isinstance(value, str):
+            return [entry.strip() for entry in re.split(r"[,;\n|]+", value) if entry.strip()][:20]
+        return []
+
+    @staticmethod
+    def _structured_money(structured: dict) -> tuple[float | None, str | None]:
+        item = structured.get("commercial_value")
+        if not isinstance(item, dict) or OnboardingService._confidence_value(item) < 30:
+            return None, None
+        raw_value = item.get("value")
+        if raw_value in {None, ""}:
+            return None, None
+        try:
+            value = float(str(raw_value).replace(",", "").replace("$", "").strip())
+        except ValueError:
+            return None, None
+        raw_currency = str(item.get("currency") or "").strip().upper()
+        currency = raw_currency[:3] if re.fullmatch(r"[A-Z]{3}", raw_currency[:3]) else None
+        return value, currency
+
+    @staticmethod
+    def _structured_auto_renewal(renewal_terms: str | None) -> bool:
+        return bool(renewal_terms and re.search(r"\b(auto|automatic|automatically|stand renewed|renewed automatically)\b", renewal_terms, re.IGNORECASE))
+
+    @staticmethod
+    def _confidence_value(item: dict | None) -> int:
+        if not isinstance(item, dict):
+            return 0
+        try:
+            confidence = float(item.get("confidence") or 0)
+        except (TypeError, ValueError):
+            return 0
+        if 0 < confidence <= 1:
+            confidence *= 100
+        return max(0, min(100, round(confidence)))
+
+    @staticmethod
+    def _draft_confidence(structured: dict) -> int:
+        required_keys = ["client_name", "commercial_value", "service_lines", "start_date", "end_date"]
+        confidences = [OnboardingService._confidence_value(structured.get(key)) for key in required_keys if OnboardingService._confidence_value(structured.get(key)) > 0]
+        if not confidences:
+            return 92
+        return max(45, min(96, round(sum(confidences) / len(confidences))))
+
+    @staticmethod
+    def _structured_commercial_summary(
+        current_summary: str | None,
+        commercial_value: float,
+        currency: str,
+        *,
+        renewal_terms: str | None,
+        notice_period: str | None,
+    ) -> str | None:
+        parts: list[str] = []
+        if current_summary:
+            parts.append(current_summary)
+        elif commercial_value:
+            parts.append(OnboardingService._commercial_summary_from_money(commercial_value, currency))
+        if renewal_terms:
+            parts.append(f"Renewal terms: {renewal_terms}")
+        if notice_period:
+            parts.append(f"Notice period: {notice_period}")
+        return "\n\n".join(part for part in parts if part).strip() or None
+
+    @staticmethod
+    def _draft_field_citations(structured: dict) -> dict[str, dict]:
+        mapping = {
+            "account_name": "client_name",
+            "commercial_value": "commercial_value",
+            "start_date": "start_date",
+            "end_date": "end_date",
+            "renewal_terms": "renewal_terms",
+            "notice_period_days": "notice_period",
+            "service_lines": "service_lines",
+            "service_context": "deliverables",
+            "initial_notes": "risks",
+        }
+        citations: dict[str, dict] = {}
+        for draft_key, structured_key in mapping.items():
+            item = structured.get(structured_key)
+            if not isinstance(item, dict):
+                continue
+            citation = item.get("citation")
+            if isinstance(citation, dict) and citation.get("excerpt"):
+                citations[draft_key] = citation
+        return citations
+
+    @staticmethod
+    def _citation_summary(label: str, citation: dict | None) -> str | None:
+        if not citation:
+            return None
+        document = citation.get("document") or "uploaded source document"
+        page = citation.get("page")
+        excerpt = re.sub(r"\s+", " ", str(citation.get("excerpt") or "")).strip()
+        if not excerpt:
+            return None
+        page_label = f" p{page}" if page else ""
+        return f"{document}{page_label}: {label} inferred from extracted source text: {excerpt[:500]}"
+
+    @staticmethod
+    def _structured_missing_evidence_notes(structured: dict) -> list[str]:
+        review_relevant_keys = {"client_name", "commercial_value", "service_lines", "start_date", "end_date", "notice_period"}
+        notes: list[str] = []
+        for key, item in structured.items():
+            if key not in review_relevant_keys:
+                continue
+            if not isinstance(item, dict):
+                continue
+            note = item.get("missing_evidence")
+            value = item.get("value")
+            if note and not OnboardingService._has_structured_value(value):
+                notes.append(str(note)[:500])
+        return notes
+
+    @staticmethod
+    def _has_structured_value(value) -> bool:
+        return not (value is None or value == "" or value == () or (isinstance(value, list) and not value))
+
+    @staticmethod
+    def _parse_structured_date(value: str | None) -> datetime | None:
+        if not value:
+            return None
+        value = value.strip()
+        iso_match = re.search(r"\d{4}-\d{2}-\d{2}", value)
+        if iso_match:
+            return datetime.fromisoformat(iso_match.group(0)).replace(tzinfo=timezone.utc)
+        us_match = re.search(r"\d{1,2}/\d{1,2}/\d{4}", value)
+        if us_match:
+            return OnboardingService._parse_us_date(us_match.group(0))
+        return None
+
+    @staticmethod
+    def _structured_notice_days(value: str | None) -> int | None:
+        if not value:
+            return None
+        days_match = re.search(r"(\d+)\s*days?", value, re.IGNORECASE)
+        if days_match:
+            return int(days_match.group(1))
+        weeks_match = re.search(r"(\d+)\s*weeks?", value, re.IGNORECASE)
+        if weeks_match:
+            return int(weeks_match.group(1)) * 7
+        word_weeks = re.search(r"\b(one|two|three|four|five|six|seven|eight|nine|ten|twelve)\b\s*(?:\(\d+\))?\s*weeks?", value, re.IGNORECASE)
+        if not word_weeks:
+            return None
+        word_numbers = {"one": 1, "two": 2, "three": 3, "four": 4, "five": 5, "six": 6, "seven": 7, "eight": 8, "nine": 9, "ten": 10, "twelve": 12}
+        return word_numbers[word_weeks.group(1).lower()] * 7
+
+    def _add_uploaded_engagement_draft(self, draft: OnboardingDraft, inferred: dict) -> None:
+        self.onboarding.add_engagement_draft(
+            OnboardingDraftEngagement(
+                draft_id=draft.id,
+                name=inferred["project_name"] or f"{draft.account_name} Engagement",
+                owner_name=inferred["primary_owner_name"],
+                service_lines=inferred["service_lines"],
+                value=inferred["commercial_value"],
+                currency=inferred["currency"],
+                delivery_status=inferred["delivery_status"],
+                start_date=inferred["start_date"],
+                end_date=inferred["end_date"],
+                renewal_date=inferred["renewal_date"],
+                notice_deadline=calculate_notice_deadline(inferred["renewal_date"], inferred["end_date"], inferred["notice_period_days"]),
+                notice_period_days=inferred["notice_period_days"],
+                auto_renewal=bool(inferred["auto_renewal"]),
+                commercial_context=self._engagement_context(inferred),
+                resource_dependency=inferred["resource_dependency"],
+                risks=self._inferred_risks(inferred),
+                source_citation=inferred["engagement_source_citation"],
+                confidence=inferred["engagement_confidence"],
+            )
+        )
+
+    @staticmethod
+    def _inferred_delivery_status(start_date: datetime | None, end_date: datetime | None) -> str:
+        now = datetime.now(timezone.utc)
+        if start_date and start_date.tzinfo is None:
+            start_date = start_date.replace(tzinfo=timezone.utc)
+        if end_date and end_date.tzinfo is None:
+            end_date = end_date.replace(tzinfo=timezone.utc)
+        if not start_date:
+            return "watch"
+        if end_date and end_date < now:
+            return "completed"
+        if start_date > now:
+            return "planned"
+        return "active"
+
+    def _resource_dependency_from_risks(self, structured_risks: list[str], initial_notes: str | None) -> str | None:
+        candidates = structured_risks or self._split_list(self._extract_label(initial_notes or "", ["Risks"]))
+        dependency_items = [item for item in candidates if re.search(r"\b(dependency|dependent|access|input|approval|integration|data)\b", item, re.IGNORECASE)]
+        if not dependency_items:
+            return None
+        return "; ".join(dependency_items[:5])[:1000]
+
+    @staticmethod
+    def _engagement_source_citation(field_citations: dict[str, dict], source_name: str) -> str:
+        for label, field_key in (
+            ("Renewal terms", "renewal_terms"),
+            ("Commercial value", "commercial_value"),
+            ("Service scope", "service_context"),
+            ("Service lines", "service_lines"),
+            ("End date", "end_date"),
+            ("Start date", "start_date"),
+        ):
+            summary = OnboardingService._citation_summary(label, field_citations.get(field_key))
+            if summary:
+                return summary
+        return f"{source_name}: engagement draft inferred from extracted SOW/charter text."
+
+    @staticmethod
+    def _engagement_confidence(structured: dict, *, fallback: int, missing_fields: list[str]) -> int:
+        engagement_keys = ["commercial_value", "service_lines", "start_date", "end_date", "renewal_terms", "notice_period", "deliverables", "risks"]
+        confidences = [OnboardingService._confidence_value(structured.get(key)) for key in engagement_keys if OnboardingService._confidence_value(structured.get(key)) > 0]
+        confidence = round(sum(confidences) / len(confidences)) if confidences else fallback
+        if any("Engagement" in field or "Commercial value" in field or "Service lines" in field for field in missing_fields):
+            confidence = min(confidence, 74)
+        return max(45, min(96, confidence))
+
+    def _engagement_context(self, inferred: dict) -> str | None:
+        parts = [inferred.get("commercial_summary"), inferred.get("service_context")]
+        return "\n\n".join(str(part).strip() for part in parts if str(part or "").strip())[:3000] or None
+
+    def _inferred_risks(self, inferred: dict) -> list[str]:
+        structured_risks = self._structured_list(inferred.get("structured_extraction") or {}, "risks")
+        if structured_risks:
+            return structured_risks
+        label_risks = self._split_list(self._extract_label(inferred["initial_notes"], ["Risks"]))
+        return label_risks or ["KYC has not been completed yet"]
+
+    def _add_inferred_citations(self, document: SourceDocument, combined_text: str, inferred: dict) -> None:
+        citations = [
+            ("Account name", "account_name", inferred["account_name"]),
+            ("Project name", "project_name", inferred["project_name"]),
+            ("Service context", "service_context", inferred["service_context"]),
+            ("Commercial summary", "commercial_summary", inferred["commercial_summary"]),
+            ("Commercial value", "commercial_value", inferred["commercial_value"]),
+            ("Start date", "start_date", inferred["start_date"]),
+            ("End date", "end_date", inferred["end_date"]),
+            ("Renewal terms", "renewal_terms", inferred.get("structured_extraction", {}).get("renewal_terms", {}).get("value")),
+            ("Notice period", "notice_period_days", inferred["notice_period_days"]),
+            ("Service lines", "service_lines", ", ".join(inferred["service_lines"])),
+            ("Risks", "initial_notes", inferred["initial_notes"]),
+        ]
+        structured_citations = inferred.get("field_citations") or {}
+        for label, field_key, value in citations:
+            structured_citation = structured_citations.get(field_key)
+            if structured_citation and structured_citation.get("document_id") and structured_citation.get("document_id") != document.id:
+                continue
+            confidence = self._citation_confidence_for_draft_field(inferred, field_key)
+            if structured_citation and structured_citation.get("excerpt"):
+                page_number = structured_citation.get("page") or 1
+                excerpt = str(structured_citation.get("excerpt") or "")[:1000]
+                confidence = self._confidence_value({"confidence": structured_citation.get("confidence")}) or confidence
+            else:
+                page_number = 1
+                excerpt = self._snippet_for_value(combined_text, str(value or "")) or f"{label} inferred from {document.file_name or document.title}."
+            self.accounts.add_citation(
+                SourceCitation(
+                    source_document_id=document.id,
+                    label=f"{document.title}: {label}",
+                    page_number=page_number,
+                    excerpt=excerpt[:1000],
+                    field_key=field_key,
+                    confidence=confidence,
+                )
+            )
+
+    @staticmethod
+    def _citation_confidence_for_draft_field(inferred: dict, field_key: str) -> int:
+        structured_key_by_field = {
+            "account_name": "client_name",
+            "commercial_summary": "commercial_value",
+            "commercial_value": "commercial_value",
+            "start_date": "start_date",
+            "end_date": "end_date",
+            "renewal_terms": "renewal_terms",
+            "notice_period_days": "notice_period",
+            "service_lines": "service_lines",
+            "service_context": "deliverables",
+            "project_name": "client_name",
+            "initial_notes": "risks",
+        }
+        structured = inferred.get("structured_extraction") or {}
+        confidence = OnboardingService._confidence_value(structured.get(structured_key_by_field.get(field_key, "")))
+        if confidence:
+            return confidence
+        return int(inferred.get("confidence") or 75)
+
+    @staticmethod
+    def _title_from_file(file_name: str) -> str:
+        return Path(file_name).stem.replace("_", " ").replace("-", " ").strip()[:220] or "Uploaded source document"
+
+    @staticmethod
+    def _source_type_from_file(file_name: str) -> str:
+        lower = file_name.lower()
+        if "sow" in lower or "statement" in lower:
+            return "sow"
+        if "charter" in lower:
+            return "project_charter"
+        if "commercial" in lower or "pricing" in lower or "billing" in lower:
+            return "commercial_note"
+        return "attachment"
+
+    @staticmethod
+    def _extract_customer_from_legal_intro(text: str) -> str | None:
+        patterns = [
+            r"(?is)by\s+and\s+between\s+(.+?)\s*\([\"“']?\s*Customer\s*[\"”']?",
+            r"(?is)between\s+(.+?)\s+and\s+TkXel\s+LLC",
+        ]
+        for pattern in patterns:
+            match = re.search(pattern, text)
+            if not match:
+                continue
+            value = re.sub(r"\s+", " ", match.group(1)).strip(" ,.;")
+            if value:
+                return value[:180]
+        return None
+
+    @staticmethod
+    def _extract_sow_heading(text: str) -> str | None:
+        lines = [line.strip() for line in text.splitlines() if line.strip()]
+        if not lines:
+            return None
+        for index, line in enumerate(lines[:8]):
+            if "statement of work" not in line.lower():
+                continue
+            suffix = lines[index + 1].strip() if index + 1 < len(lines) else ""
+            if suffix and not suffix.lower().startswith("this statement"):
+                return f"{line} - {suffix}"[:180]
+            return line[:180]
+        return None
+
+    @staticmethod
+    def _extract_region_from_legal_intro(text: str) -> str | None:
+        match = re.search(r"(?is)principal place of business at .{0,220}?(United States|USA|Canada|United Kingdom|Europe|North America)", text)
+        return match.group(1) if match else None
+
+    @staticmethod
+    def _extract_label(text: str, labels: list[str]) -> str | None:
+        for label in labels:
+            pattern = rf"(?im)^\s*{re.escape(label)}\s*[:\-]\s*(.+?)\s*$"
+            match = re.search(pattern, text)
+            if match:
+                value = re.sub(r"\s+", " ", match.group(1)).strip(" |")
+                if value:
+                    return value[:1000]
+        return None
+
+    @staticmethod
+    def _extract_section(text: str, headings: list[str], *, max_chars: int) -> str | None:
+        if not text.strip():
+            return None
+        for heading in headings:
+            pattern = rf"(?is)(?:^|\n)\s*{re.escape(heading)}\s*[:\n-]\s*(.+?)(?=\n\s*[A-Z][A-Za-z0-9 /&(),.-]{{2,70}}\s*[:\n-]|\Z)"
+            match = re.search(pattern, text)
+            if match:
+                value = re.sub(r"\n{3,}", "\n\n", match.group(1).strip())
+                if value:
+                    return value[:max_chars]
+        return None
+
+    @staticmethod
+    def _split_list(value: str | None) -> list[str]:
+        if not value:
+            return []
+        return [item.strip(" .") for item in re.split(r"[,;\n|]+", value) if item.strip(" .")][:12]
+
+    @staticmethod
+    def _infer_service_lines(text: str) -> list[str]:
+        return infer_service_lines_from_text(text)
+
+    @staticmethod
+    def _extract_money(text: str) -> tuple[float, str]:
+        patterns = [
+            r"(?im)^\s*(?:Contract Value|SOW Value|Commercial Value|Estimated Budget|Budget|Fees|Total monthly fee|Applicable monthly fee|Monthly fee)\s*[:\-]\s*(?:([A-Z]{3})\s*)?\$?\s*([\d,]+(?:\.\d+)?)",
+            r"(?im)^\s*(?:Contract Value|SOW Value|Commercial Value|Estimated Budget|Budget|Fees|Total monthly fee|Applicable monthly fee|Monthly fee)\s*[:\-]\s*\$?\s*([\d,]+(?:\.\d+)?)\s*([A-Z]{3})?",
+        ]
+        for pattern in patterns:
+            match = re.search(pattern, text)
+            if not match:
+                continue
+            groups = [group for group in match.groups() if group]
+            currency = next((group for group in groups if re.fullmatch(r"[A-Z]{3}", group)), "USD")
+            amount = next((group for group in groups if re.search(r"\d", group) and not re.fullmatch(r"[A-Z]{3}", group)), "0")
+            return float(amount.replace(",", "")), currency
+        currency = OnboardingService._extract_label(text, ["Currency"]) or "USD"
+        return 0.0, currency[:3].upper()
+
+    @staticmethod
+    def _extract_date(text: str, labels: list[str]) -> datetime | None:
+        raw = OnboardingService._extract_label(text, labels)
+        if not raw:
+            return None
+        match = re.search(r"\d{4}-\d{2}-\d{2}", raw)
+        if not match:
+            return None
+        return datetime.fromisoformat(match.group(0)).replace(tzinfo=timezone.utc)
+
+    @staticmethod
+    def _extract_timeframe_sentence_dates(text: str) -> tuple[datetime | None, datetime | None]:
+        match = re.search(r"(?is)start\s+date\s+of\s+engagement\s+is\s+(\d{1,2}/\d{1,2}/\d{4})\s+(?:till|until|through|to)\s+(\d{1,2}/\d{1,2}/\d{4})", text)
+        if not match:
+            return None, None
+        return OnboardingService._parse_us_date(match.group(1)), OnboardingService._parse_us_date(match.group(2))
+
+    @staticmethod
+    def _parse_us_date(value: str) -> datetime | None:
+        try:
+            month, day, year = [int(part) for part in value.split("/")]
+            return datetime(year, month, day, tzinfo=timezone.utc)
+        except (ValueError, TypeError):
+            return None
+
+    @staticmethod
+    def _extract_notice_period(text: str) -> int | None:
+        raw = OnboardingService._extract_label(text, ["Notice Period", "Renewal Notice Period", "Termination Notice"])
+        if not raw:
+            return None
+        match = re.search(r"\d+", raw)
+        return int(match.group(0)) if match else None
+
+    @staticmethod
+    def _extract_renewal_notice_days(text: str) -> int | None:
+        match = re.search(r"(?is)(\w+|\d+)\s*\(?\d*\)?\s+weeks?\s+prior\s+to\s+expiry", text)
+        if not match:
+            return None
+        raw = match.group(1).lower()
+        word_numbers = {
+            "one": 1,
+            "two": 2,
+            "three": 3,
+            "four": 4,
+            "five": 5,
+            "six": 6,
+            "seven": 7,
+            "eight": 8,
+            "nine": 9,
+            "ten": 10,
+            "twelve": 12,
+        }
+        weeks = int(raw) if raw.isdigit() else word_numbers.get(raw)
+        return weeks * 7 if weeks else None
+
+    @staticmethod
+    def _extract_bool(text: str, labels: list[str]) -> bool:
+        raw = OnboardingService._extract_label(text, labels)
+        return bool(raw and raw.strip().lower() in {"yes", "true", "enabled", "automatic"})
+
+    @staticmethod
+    def _clean_short(value: str | None, *, default: str) -> str:
+        cleaned = re.sub(r"\s+", " ", value or "").strip()
+        return (cleaned or default)[:180]
+
+    @staticmethod
+    def _normalize_url(value: str | None) -> str | None:
+        if not value:
+            return None
+        cleaned = value.strip()
+        if not cleaned:
+            return None
+        if not cleaned.startswith(("http://", "https://")):
+            cleaned = f"https://{cleaned}"
+        return cleaned[:500]
+
+    @staticmethod
+    def _summarize_text(text: str, fallback: str) -> str:
+        cleaned = re.sub(r"\s+", " ", text).strip()
+        return cleaned[:1600] if cleaned else fallback
+
+    @staticmethod
+    def _commercial_summary_from_money(value: float, currency: str) -> str:
+        if value:
+            return f"Commercial value extracted from the uploaded source document: {currency} {value:,.2f}."
+        return "Commercial value, billing terms, and payment terms were not clearly found in the uploaded source document."
+
+    @staticmethod
+    def _snippet_for_value(text: str, value: str) -> str | None:
+        if not text.strip() or not value.strip():
+            return None
+        needle = value.strip()[:80]
+        index = text.lower().find(needle.lower())
+        if index < 0:
+            return None
+        start = max(index - 160, 0)
+        end = min(index + len(needle) + 260, len(text))
+        return re.sub(r"\s+", " ", text[start:end]).strip()
+
+    @staticmethod
+    def _stored_file_path(document: SourceDocument) -> Path | None:
+        if not document.storage_path:
+            return None
+        path = Path(document.storage_path)
+        if path.is_absolute():
+            return path
+        return Path(ContentStorageService().settings.local_content_storage_dir) / path
+
     @staticmethod
     def _account_import_audit_value(account: Account) -> dict:
         return {
@@ -818,6 +1733,7 @@ class OnboardingService:
                         page_number=citation_payload.page_number,
                         excerpt=citation_payload.excerpt,
                         field_key=citation_payload.field_key,
+                        confidence=citation_payload.confidence,
                     )
                 )
 
@@ -918,6 +1834,15 @@ class OnboardingService:
         )
         self.engagements.save(engagement)
         return engagement
+
+    @staticmethod
+    def _link_source_documents_to_created_engagements(draft: OnboardingDraft, engagements: list[Engagement]) -> None:
+        if len(engagements) != 1:
+            return
+        engagement = engagements[0]
+        for document in draft.source_documents:
+            if document.source_type in {"sow", "project_charter", "commercial_note", "attachment"}:
+                document.engagement_id = engagement.id
 
     def _log_approval(self, account: Account, draft: OnboardingDraft, actor: User, engagements: list[Engagement]) -> None:
         self.audit.log(

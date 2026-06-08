@@ -1,5 +1,147 @@
 # KAM Intelligence Platform
 
+## What is this repository for?
+
+### Quick summary
+
+This repository contains the KAM Intelligence Platform, an Enterprise SaaS / Customer Success application for strategic account management. It centralizes account workspaces, engagements, governance, stakeholder intelligence, renewals, escalations, notifications, dashboards, AI-assisted KYC, document intelligence, and integrations for Key Account Management teams.
+
+### Version
+
+```text
+Application version: 1.0.0
+Backend API version: 0.1.0
+```
+
+### Learn Markdown
+
+This README is written in Markdown. Useful references:
+
+```text
+Markdown Guide: https://www.markdownguide.org/basic-syntax/
+GitHub Markdown: https://docs.github.com/en/get-started/writing-on-github
+```
+
+## How do I get set up?
+
+### Summary of set up
+
+Use Docker Compose as the default local development workflow.
+
+```bash
+make dev-run
+```
+
+This builds and starts PostgreSQL, the FastAPI backend, the React/Vite frontend, and configured local services such as Ollama.
+
+### Configuration
+
+Local configuration is driven by environment variables from `.env`, `backend/.env`, `.env.example`, and Docker Compose defaults. Important configuration areas include:
+
+```text
+DATABASE_URL
+JWT_SECRET_KEY
+BACKEND_CORS_ORIGINS
+FRONTEND_APP_URL
+VITE_API_BASE_URL
+GOOGLE_SIGN_IN_CLIENT_ID
+VITE_GOOGLE_SIGN_IN_CLIENT_ID
+MAIL_* / SMTP_*
+FATHOM_*
+TAVILY_*
+AI_KYC_*
+CONTENT_STORAGE_*
+```
+
+### Dependencies
+
+Primary dependencies:
+
+```text
+Docker and Docker Compose
+PostgreSQL 16
+Python / FastAPI / SQLAlchemy backend dependencies from backend/requirements.txt
+Node.js / React / Vite frontend dependencies from frontend/package.json
+Optional local AI runtime through Ollama for Qwen-backed KYC flows
+```
+
+### Database configuration
+
+Docker Compose starts PostgreSQL with:
+
+```text
+Database: kam_intelligence
+User:     kam_app
+Password: kam_app_password
+Host:     db inside Docker
+Port:     5432 inside Docker, 5433 on host by default
+```
+
+Run schema sync and base seed data with:
+
+```bash
+make migrate
+make seed
+```
+
+### How to run tests
+
+Run the full Docker-based test suite:
+
+```bash
+make test
+```
+
+Run targeted backend or frontend checks when working on a focused change:
+
+```bash
+docker compose exec -T backend pytest tests/test_account_workspace.py -q
+docker compose exec -T frontend npm run typecheck
+docker compose exec -T frontend npm test -- src/components/account/CreateAccountDialog.test.tsx
+```
+
+### Deployment instructions
+
+Local/demo deployment uses Docker Compose:
+
+```bash
+make run
+```
+
+For office LAN QA sharing:
+
+```bash
+make qa-run
+```
+
+For production or pre-production, configure real environment variables, managed PostgreSQL/storage, mail provider settings, OAuth redirect URLs, integration credentials, worker settings, CORS origins, and secret keys before deployment.
+
+## Contribution guidelines
+
+### Writing tests
+
+Add or update tests for every code change. Cover happy paths, validation failures, permission/RBAC boundaries, pagination/search/filter behavior where relevant, and meaningful regression cases.
+
+### Code review
+
+Review for scope control, architecture consistency, security, data persistence, API validation, frontend error handling, and test coverage. Keep routers thin, business logic in services, and persistence in repositories.
+
+### Other guidelines
+
+Follow the repository rules in `AGENTS.md`. Use Docker by default, keep changes focused, avoid unrelated refactors, preserve existing user changes, and run relevant checks before handoff.
+
+## Who do I talk to?
+
+### Repo owner or admin
+
+Contact the project repository owner, platform admin, or Tkxel KAM platform administrator for access, environment setup, deployment, and production-readiness decisions.
+
+### Other community or team contact
+
+Contact the KAM product owner, solution architect, backend/frontend leads, or QA team for feature scope, demo flows, acceptance criteria, and testing coordination.
+
+## Existing Project Documentation
+
 Enterprise SaaS / Customer Success platform for strategic account management, governance, renewals, stakeholder intelligence, escalations, and AI-assisted account operations.
 
 ## Stack

@@ -21,7 +21,7 @@ UserRole = str
 LifecycleStatus = Literal["Draft", "Onboarding", "Active", "At Risk", "Renewal Focus", "Expansion Focus", "Dormant", "Archived"]
 RiskStatus = Literal["healthy", "warning", "critical"]
 DraftStatus = Literal["ready_for_review", "approved", "rejected", "linked"]
-ExtractionStatus = Literal["queued", "running", "completed", "failed", "needs_review", "parsed"]
+ExtractionStatus = Literal["queued", "running", "completed", "failed", "needs_review", "parsed", "ocr_required", "unsupported"]
 OwnershipRole = Literal["primary_am", "supporting_am", "ops_lead", "leadership_sponsor"]
 EngagementStatus = Literal["draft", "active", "on_hold", "renewal_watch", "at_risk", "completed", "archived"]
 DeliveryStatus = Literal["not_started", "planned", "active", "watch", "blocked", "at_risk", "completed"]
@@ -823,6 +823,7 @@ class SourceCitationRead(BaseModel):
     page_number: int | None = None
     excerpt: str
     field_key: str | None = None
+    confidence: int = 75
 
 
 class SourceCitationCreateRequest(BaseModel):
@@ -830,6 +831,7 @@ class SourceCitationCreateRequest(BaseModel):
     page_number: int | None = None
     excerpt: str
     field_key: str | None = None
+    confidence: int = 75
 
     @field_validator("label")
     @classmethod
@@ -845,6 +847,11 @@ class SourceCitationCreateRequest(BaseModel):
     @classmethod
     def field_key_is_valid(cls, value: str | None) -> str | None:
         return optional_text(value, "Citation field", max_length=120)
+
+    @field_validator("confidence")
+    @classmethod
+    def confidence_is_valid(cls, value: int) -> int:
+        return validate_percent(value, "Citation confidence")
 
 
 class SourceLinkRead(BaseModel):
@@ -884,6 +891,7 @@ class SourceDocumentRead(BaseModel):
     size_bytes: int | None = None
     checksum_sha256: str | None = None
     extracted_text_checksum: str | None = None
+    extracted_text: str | None = None
     extraction_started_at: datetime | None = None
     extraction_completed_at: datetime | None = None
     extraction_error: str | None = None
@@ -1065,6 +1073,7 @@ class KycDraftRead(BaseModel):
     conflicts: list[str] = Field(default_factory=list)
     difference_summary: list[str] = Field(default_factory=list)
     source_context: dict[str, Any] = Field(default_factory=dict)
+    detailed_description: str = ""
     confidence: int
     completeness: int
     source_coverage: int
@@ -1138,6 +1147,7 @@ class KycDraftUpdateRequest(BaseModel):
     conflicts_acknowledged: bool | None = None
     override_reason: str | None = None
     review_notes: str | None = None
+    detailed_description: str | None = None
 
     @field_validator("fields")
     @classmethod
@@ -1150,6 +1160,11 @@ class KycDraftUpdateRequest(BaseModel):
     @classmethod
     def review_text_is_valid(cls, value: str | None) -> str | None:
         return validate_optional_long_text(value, "KYC review text")
+
+    @field_validator("detailed_description")
+    @classmethod
+    def detailed_description_is_valid(cls, value: str | None) -> str | None:
+        return validate_optional_long_text(value, "Detailed KYC description", max_length=200000)
 
 
 class KycDraftApproveRequest(BaseModel):
@@ -1178,6 +1193,26 @@ class KycDraftRejectRequest(BaseModel):
         return validate_short_text(value, "Rejection reason", 1000)
 
 
+class KycWebResearchCreateRequest(BaseModel):
+    draft_id: str | None = None
+    query: str | None = None
+
+    @field_validator("draft_id")
+    @classmethod
+    def draft_id_is_valid(cls, value: str | None) -> str | None:
+        return validate_short_text(value, "KYC draft", 36) if value is not None else None
+
+    @field_validator("query")
+    @classmethod
+    def query_is_valid(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        text = " ".join(str(value).split())
+        if not text:
+            return None
+        return validate_short_text(text, "KYC research question", 500)
+
+
 class KycSnapshotRestoreRequest(BaseModel):
     reason: str
 
@@ -1198,6 +1233,7 @@ class KycSnapshotRead(BaseModel):
     fields: list[KycFieldRead] = Field(default_factory=list)
     citations: list[KycCitationRead] = Field(default_factory=list)
     source_context: dict[str, Any] = Field(default_factory=dict)
+    detailed_description: str = ""
     source_document_ids: list[str] = Field(default_factory=list)
     research_sources: list[str] = Field(default_factory=list)
     confidence: int
@@ -1295,6 +1331,7 @@ class KycAgentRunRead(BaseModel):
     retrieval_summary: dict[str, Any] = Field(default_factory=dict)
     provider_response_id: str | None = None
     model_name: str | None = None
+    detailed_description: str = ""
     started_at: datetime | None = None
     completed_at: datetime | None = None
     created_at: datetime

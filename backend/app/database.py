@@ -213,6 +213,9 @@ _TABLE_BACKFILL_DEFAULTS: dict[str, dict[str, Any]] = {
         "metadata_json": {},
         "created_at": lambda: datetime.now(timezone.utc),
     },
+    "source_citations": {
+        "confidence": 75,
+    },
     "playbook_templates": {
         "objective": "",
         "description": "",
@@ -442,6 +445,16 @@ _TABLE_BACKFILL_DEFAULTS: dict[str, dict[str, Any]] = {
         "metadata_json": {},
         "created_at": lambda: datetime.now(timezone.utc),
     },
+    "document_extractions": {
+        "raw_text": "",
+        "page_number": 1,
+        "source_file": "unknown",
+        "checksum": "missing",
+        "extractor_name": "local-document-extractor",
+        "extractor_version": "v1",
+        "metadata_json": {},
+        "created_at": lambda: datetime.now(timezone.utc),
+    },
     "source_document_chunks": {
         "chunk_index": 0,
         "chunk_text": "",
@@ -461,6 +474,13 @@ _TABLE_BACKFILL_DEFAULTS: dict[str, dict[str, Any]] = {
         "provider_json": {},
         "usage_json": {},
         "cost_json": {},
+        "detailed_description": "",
+    },
+    "kyc_drafts": {
+        "detailed_description": "",
+    },
+    "kyc_snapshots": {
+        "detailed_description": "",
     },
     "kyc_workstream_outputs": {
         "reviewer_notes_json": [],
@@ -943,6 +963,7 @@ def apply_additive_migrations() -> None:
     from app.models import (
         AccessLog,
         AiGatewayRun,
+        Account,
         AccountHealthRollup,
         AccountChangeAlert,
         CsatScore,
@@ -1001,6 +1022,7 @@ def apply_additive_migrations() -> None:
         NotificationTriggerConfig,
         NotificationPreference,
         NotificationRecord,
+        OnboardingDraft,
         SlaRule,
         SlaEscalatedItem,
         DigestSchedule,
@@ -1012,18 +1034,26 @@ def apply_additive_migrations() -> None:
         User,
         SourceDocument,
         SourceDocumentExtraction,
+        DocumentExtraction,
         SourceDocumentChunk,
         KycAgentRun,
+        KycDraft,
+        KycSnapshot,
         KycWorkstreamOutput,
     )
 
     migrate_missing_columns(
         [
             User.__table__,
+            Account.__table__,
+            OnboardingDraft.__table__,
             SourceDocument.__table__,
             SourceDocumentExtraction.__table__,
+            DocumentExtraction.__table__,
             SourceDocumentChunk.__table__,
             KycAgentRun.__table__,
+            KycDraft.__table__,
+            KycSnapshot.__table__,
             KycWorkstreamOutput.__table__,
             FieldPermission.__table__,
             ConfigurationChange.__table__,

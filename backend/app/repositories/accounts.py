@@ -213,7 +213,7 @@ class AccountRepository:
             self.db.scalars(
                 select(SourceDocument)
                 .where(*conditions)
-                .options(selectinload(SourceDocument.citations))
+                .options(selectinload(SourceDocument.citations), selectinload(SourceDocument.extractions))
                 .order_by(order_column, SourceDocument.title)
                 .offset((page - 1) * page_size)
                 .limit(page_size)
@@ -222,7 +222,18 @@ class AccountRepository:
         return items, total
 
     def get_attachment(self, attachment_id: str) -> SourceDocument | None:
-        return self.db.scalar(select(SourceDocument).where(SourceDocument.id == attachment_id).options(selectinload(SourceDocument.citations)))
+        return self.db.scalar(select(SourceDocument).where(SourceDocument.id == attachment_id).options(selectinload(SourceDocument.citations), selectinload(SourceDocument.extractions)))
+
+    def find_source_document_by_checksum(self, checksum: str, *, account_id: str | None = None) -> SourceDocument | None:
+        conditions = [SourceDocument.checksum_sha256 == checksum]
+        if account_id:
+            conditions.append(SourceDocument.account_id == account_id)
+        return self.db.scalar(
+            select(SourceDocument)
+            .where(*conditions)
+            .order_by(SourceDocument.created_at.desc())
+            .limit(1)
+        )
 
     def add_attachment(self, document: SourceDocument) -> SourceDocument:
         self.db.add(document)
