@@ -106,6 +106,21 @@ class DashboardRepository:
             conditions.append(GovernanceEvent.account_id.in_(account_ids) if account_ids else False)
         return list(self.db.scalars(select(GovernanceEvent).where(*conditions).options(selectinload(GovernanceEvent.account)).order_by(GovernanceEvent.scheduled_at.asc()).limit(limit)))
 
+    def list_active_account_owners(self, *, account_ids: list[str], ownership_roles: list[str]) -> list[AccountOwner]:
+        if not account_ids:
+            return []
+        return list(
+            self.db.scalars(
+                select(AccountOwner)
+                .where(
+                    AccountOwner.account_id.in_(account_ids),
+                    AccountOwner.is_active.is_(True),
+                    AccountOwner.ownership_role.in_(ownership_roles),
+                )
+                .order_by(AccountOwner.user_name, AccountOwner.account_id)
+            )
+        )
+
     def list_account_change_alerts(self, *, account_ids: list[str] | None = None, limit: int = 100) -> list[AccountChangeAlert]:
         conditions = [AccountChangeAlert.status.in_(["open", "acknowledged"])]
         if account_ids is not None:

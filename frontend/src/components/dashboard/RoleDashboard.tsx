@@ -57,6 +57,7 @@ type DashboardProps = {
   onDraftSearchChange: (value: string) => void
   onRiskChange: (value: string) => void
   onSearchSubmit: (event: FormEvent) => void
+  onPageChange: (page: number) => void
   onRefreshSummary: () => void
 }
 
@@ -111,6 +112,7 @@ export function RoleDashboard({
   onDraftSearchChange,
   onRiskChange,
   onSearchSubmit,
+  onPageChange,
   onRefreshSummary,
 }: DashboardProps) {
   const widgets = dashboard?.widgets ?? []
@@ -123,8 +125,6 @@ export function RoleDashboard({
   const opportunities = widgetByKey.get('opportunities') ?? widgetByKey.get('growth')
   const portfolio = widgetByKey.get('account_portfolio') ?? widgetByKey.get('accounts')
   const forecast = widgetByKey.get('forecast_chart')
-  const governance = widgetByKey.get('governance') ?? widgetByKey.get('governance_cadence')
-  const governanceCadence = widgetByKey.get('governance_cadence')
   const calendar = widgetByKey.get('governance_calendar')
   const accountOptions = useMemo(() => collectAccountOptions(widgets), [widgets])
   const allowedFilters = dashboard?.allowed_filters ?? []
@@ -180,7 +180,7 @@ export function RoleDashboard({
             </section>
           ) : null}
 
-          {portfolio ? <PortfolioTable widget={portfolio} /> : null}
+          {portfolio ? <PortfolioTable widget={portfolio} onPageChange={onPageChange} /> : null}
 
           <section className="grid gap-4 xl:grid-cols-2">
             {[
@@ -198,21 +198,18 @@ export function RoleDashboard({
               widgetByKey.get('overdue_actions'),
               widgetByKey.get('sla_compliance'),
               widgetByKey.get('admin_system'),
-              governance,
-              governanceCadence && governanceCadence.key !== governance?.key ? governanceCadence : undefined,
               ...fallbackWidgets,
             ].filter(isWidget).map(widget => (
               <WidgetListPanel key={widget.key} widget={widget} />
             ))}
           </section>
 
-          {(calendar || governance) && token ? (
+          {calendar && token ? (
             <GovernanceCalendarPanel
               token={token}
               userId={userId}
               dashboardReadOnly={Boolean(dashboard?.read_only)}
               calendarWidget={calendar}
-              governanceWidget={governance}
               accountOptions={accountOptions}
             />
           ) : null}
@@ -571,9 +568,18 @@ function HealthDistributionPanel({ widget }: { widget: DashboardWidget }) {
   const warning = Number(value.warning) || 0
   const critical = Number(value.critical) || 0
   const total = healthy + warning + critical
-  const healthPct = total ? Math.round((healthy / total) * 100) : 0
   const circumference = 2 * Math.PI * 42
-  const healthyDash = (healthPct / 100) * circumference
+  let segmentOffset = 0
+  const segments = [
+    { key: 'healthy', value: healthy, className: 'text-rag-green', label: 'Healthy health segment' },
+    { key: 'warning', value: warning, className: 'text-brand-orange', label: 'Warning health segment' },
+    { key: 'critical', value: critical, className: 'text-rag-red', label: 'Critical health segment' },
+  ].map(segment => {
+    const dash = total ? (segment.value / total) * circumference : 0
+    const offset = segmentOffset
+    segmentOffset += dash
+    return { ...segment, dash, offset }
+  })
 
   return (
     <section className="tk-card p-5">
@@ -584,7 +590,22 @@ function HealthDistributionPanel({ widget }: { widget: DashboardWidget }) {
       <div className="mt-5 grid gap-5 sm:grid-cols-[180px_minmax(0,1fr)] sm:items-center xl:grid-cols-1">
         <svg viewBox="0 0 120 120" className="mx-auto h-44 w-44 -rotate-90" role="img" aria-label="Health distribution">
           <circle cx="60" cy="60" r="42" className="text-surface-tertiary" fill="none" stroke="currentColor" strokeWidth="18" />
-          <circle cx="60" cy="60" r="42" className="text-rag-green" fill="none" stroke="currentColor" strokeWidth="18" strokeDasharray={`${healthyDash} ${circumference - healthyDash}`} />
+          {segments.map(segment => (
+            <circle
+              key={segment.key}
+              cx="60"
+              cy="60"
+              r="42"
+              className={segment.className}
+              data-testid={`health-segment-${segment.key}`}
+              fill="none"
+              stroke="currentColor"
+              strokeDasharray={`${segment.dash} ${circumference - segment.dash}`}
+              strokeDashoffset={-segment.offset}
+              strokeWidth="18"
+              aria-label={segment.label}
+            />
+          ))}
         </svg>
         <div className="space-y-4">
           <LegendStat label="Healthy" value={healthy} tone="green" />
@@ -740,11 +761,34 @@ function ForecastMetric({ label, value }: { label: string; value: string }) {
   )
 }
 
-function PortfolioTable({ widget }: { widget: DashboardWidget }) {
+function PortfolioTable({ widget, onPageChange }: { widget: DashboardWidget; onPageChange: (page: number) => void }) {
+  const page = Math.max(1, Number(widget.metadata.page) || 1)
+  const pageSize = Math.max(1, Number(widget.metadata.page_size) || widget.items.length || 1)
+  const total = Math.max(widget.items.length, Number(widget.metadata.total) || widget.items.length)
+  const pages = Math.max(1, Math.ceil(total / pageSize))
+  const firstItem = total ? (page - 1) * pageSize + 1 : 0
+  const lastItem = Math.min(total, firstItem + widget.items.length - 1)
+
   return (
     <section className="tk-card overflow-hidden">
-      <div className="border-b border-surface-border p-5">
-        <h2 className="text-lg font-semibold text-ink">{widget.title}</h2>
+      <div className="flex flex-col gap-3 border-b border-surface-border p-5 md:flex-row md:items-center md:justify-between">
+        <div>
+          <h2 className="text-lg font-semibold text-ink">{widget.title}</h2>
+          <p className="mt-1 text-xs font-medium text-ink-secondary">
+            {total ? `Showing ${firstItem}-${lastItem} of ${total}` : 'No accounts in this view'}
+          </p>
+        </div>
+        {pages > 1 ? (
+          <div className="flex items-center gap-2">
+            <button className="tk-icon-button" type="button" onClick={() => onPageChange(page - 1)} disabled={page <= 1} aria-label="Previous portfolio page">
+              <ArrowLeft className="h-4 w-4" />
+            </button>
+            <span className="min-w-[96px] text-center text-sm font-semibold text-ink-secondary">Page {page} of {pages}</span>
+            <button className="tk-icon-button" type="button" onClick={() => onPageChange(page + 1)} disabled={page >= pages} aria-label="Next portfolio page">
+              <ArrowRight className="h-4 w-4" />
+            </button>
+          </div>
+        ) : null}
       </div>
       <div className="overflow-x-auto">
         <table className="w-full min-w-[860px] text-left text-sm">
@@ -801,7 +845,7 @@ function WidgetListPanel({ widget }: { widget: DashboardWidget }) {
         </div>
       ) : null}
       <div className="divide-y divide-surface-border">
-        {widget.items.slice(0, 6).map(item => <RowLink key={String(item.id ?? item.title ?? item.name)} item={item} />)}
+        {widget.items.slice(0, 6).map(item => <RowLink key={`${String(item.source_type ?? 'item')}-${String(item.id ?? item.title ?? item.name)}`} item={item} />)}
         {!widget.items.length ? <p className="p-5 text-sm text-ink-secondary">No items in this view.</p> : null}
       </div>
     </section>
@@ -813,7 +857,7 @@ function RowLink({ item, valueKey, dateKey }: { item: Record<string, unknown>; v
   const title = itemName(item)
   const account = getString(item.account_name ?? item.account)
   const status = getString(item.severity ?? item.priority ?? item.risk_status ?? item.status)
-  const value = valueKey ? item[valueKey] : item.value ?? item.delivery_health ?? item.affected_metric
+  const value = valueKey ? item[valueKey] : item.value ?? item.accounts ?? item.delivery_health ?? item.affected_metric
   const date = dateKey ? getString(item[dateKey]) : getString(item.due_at ?? item.sla_due_at ?? item.scheduled_at ?? item.target_date ?? item.renewal_date ?? item.created_at)
 
   const content = (
@@ -843,14 +887,12 @@ function GovernanceCalendarPanel({
   userId,
   dashboardReadOnly,
   calendarWidget,
-  governanceWidget,
   accountOptions,
 }: {
   token: string
   userId?: string
   dashboardReadOnly: boolean
   calendarWidget?: DashboardWidget
-  governanceWidget?: DashboardWidget
   accountOptions: AccountOption[]
 }) {
   const [monthAnchor, setMonthAnchor] = useState(startOfMonth(new Date()))
@@ -1041,8 +1083,8 @@ function GovernanceCalendarPanel({
                 <span className="rounded-full border border-surface-border bg-white px-2 py-1 text-[11px] font-semibold text-brand-blue-dark">{shortDate(item.date)}</span>
               </button>
             ))}
-            {!upcoming.length && governanceWidget?.items.length ? governanceWidget.items.slice(0, 4).map(item => <RowLink key={String(item.id)} item={item} />) : null}
-            {!upcoming.length && !governanceWidget?.items.length ? <p className="rounded-md bg-surface-tertiary p-3 text-sm text-ink-secondary">No upcoming calendar items in the next 30 days.</p> : null}
+            {!upcoming.length && calendarWidget?.items.length ? calendarWidget.items.slice(0, 4).map(item => <RowLink key={String(item.id)} item={item} />) : null}
+            {!upcoming.length && !calendarWidget?.items.length ? <p className="rounded-md bg-surface-tertiary p-3 text-sm text-ink-secondary">No upcoming calendar items in the next 30 days.</p> : null}
           </div>
         </aside>
       </div>
@@ -1164,7 +1206,7 @@ function calendarDotClass(item: GovernanceCalendarItemRecord) {
 }
 
 function itemName(item: Record<string, unknown>) {
-  return getString(item.title ?? item.name ?? item.account_name ?? item.account ?? item.summary) || '-'
+  return getString(item.title ?? item.name ?? item.account_name ?? item.account ?? item.owner ?? item.summary) || '-'
 }
 
 function isWidget(value: DashboardWidget | undefined): value is DashboardWidget {

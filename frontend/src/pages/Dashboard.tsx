@@ -10,6 +10,7 @@ export function Dashboard() {
   const [search, setSearch] = useState('')
   const [draftSearch, setDraftSearch] = useState('')
   const [risk, setRisk] = useState('')
+  const [page, setPage] = useState(1)
   const [loading, setLoading] = useState(false)
   const [refreshingSummary, setRefreshingSummary] = useState(false)
   const [error, setError] = useState('')
@@ -19,7 +20,7 @@ export function Dashboard() {
     let active = true
     setLoading(true)
     setError('')
-    getMyDashboard(token, { search, risk, page_size: 10 })
+    getMyDashboard(token, { search, risk, page, page_size: 10 })
       .then(result => {
         if (active) setDashboard(result)
       })
@@ -32,14 +33,20 @@ export function Dashboard() {
     return () => {
       active = false
     }
-  }, [risk, search, token])
+  }, [page, risk, search, token])
 
   const taskSummary = dashboard?.widgets.find(widget => widget.key === 'ai_task_summary')
   const canRefreshSummary = Boolean(taskSummary && !dashboard?.read_only && taskSummary.metadata.manual_refresh !== false)
 
   function submitSearch(event: FormEvent) {
     event.preventDefault()
+    setPage(1)
     setSearch(draftSearch)
+  }
+
+  function updateRisk(value: string) {
+    setPage(1)
+    setRisk(value)
   }
 
   async function refreshSummary() {
@@ -69,8 +76,9 @@ export function Dashboard() {
       refreshingSummary={refreshingSummary}
       canRefreshSummary={canRefreshSummary}
       onDraftSearchChange={setDraftSearch}
-      onRiskChange={setRisk}
+      onRiskChange={updateRisk}
       onSearchSubmit={submitSearch}
+      onPageChange={setPage}
       onRefreshSummary={() => void refreshSummary()}
     />
   )

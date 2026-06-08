@@ -1,4 +1,5 @@
 import { render, screen, waitFor } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import { MemoryRouter } from 'react-router-dom'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { Dashboard } from '@/pages/Dashboard'
@@ -148,14 +149,14 @@ function accountManagerDashboard() {
         generated_at: '2026-06-03T10:00:00Z',
         data_scope: 'assigned_accounts',
         primary_route: '/dashboard',
-        value: { my_accounts: 5, at_risk: 2, signals_critical_tasks: 4, upcoming_governance: 3 },
+        value: { my_accounts: 5, at_risk: 2, signals_critical_tasks: 4, open_tasks: 14 },
         items: [],
         metadata: {
           tiles: [
             { key: 'my_accounts', label: 'My Accounts', value: 5, route: '/accounts', detail: 'Assigned account portfolio.' },
             { key: 'at_risk', label: 'At risk', value: 2, route: '/accounts?risk=critical', detail: 'Warning and critical accounts.' },
             { key: 'signals_critical_tasks', label: 'Signals / Critical tasks', value: 4, route: '/tasks', detail: 'Signals and critical blockers.' },
-            { key: 'upcoming_governance', label: 'Upcoming governance', value: 3, route: '/governance', detail: 'Scheduled governance reviews.' },
+            { key: 'open_tasks', label: 'Open tasks', value: 14, route: '/tasks', detail: 'Open operational work in scope.' },
           ],
         },
         error: null,
@@ -240,7 +241,7 @@ function portfolioDashboard() {
         generated_at: '2026-06-03T10:00:00Z',
         data_scope: 'portfolio',
         primary_route: '/dashboard',
-        value: { accounts: 12, at_risk_accounts: 3, open_signals: 4, open_escalations: 2, upcoming_governance: 5 },
+        value: { accounts: 12, at_risk_accounts: 3, signals_critical_tasks: 4, open_escalations: 2, open_tasks: 6 },
         items: [],
         metadata: {},
         error: null,
@@ -274,6 +275,75 @@ function portfolioDashboard() {
         value: { open_opportunities: 8, pipeline_value: 640000, stalled: 1, series: [{ label: 'Qualified', value: 240000, display_value: 240000 }] },
         items: [],
         metadata: { masked: false, stalled_after_days: 90 },
+        error: null,
+      },
+      {
+        key: 'am_workload',
+        title: 'AM workload',
+        status: 'complete',
+        generated_at: '2026-06-03T10:00:00Z',
+        data_scope: 'portfolio',
+        primary_route: '/accounts',
+        value: null,
+        items: [{ owner_id: 'usr-am', owner: 'Account Manager', accounts: 2, status: 'accounts', route: '/accounts?owner=usr-am' }],
+        metadata: {},
+        error: null,
+      },
+    ],
+  })
+}
+
+function healthDashboard() {
+  return dashboard({
+    widgets: [
+      {
+        key: 'health_distribution',
+        title: 'Health distribution',
+        status: 'complete',
+        generated_at: '2026-06-03T10:00:00Z',
+        data_scope: 'portfolio',
+        primary_route: '/accounts',
+        value: { healthy: 2, warning: 5, critical: 1 },
+        items: [],
+        metadata: {},
+        error: null,
+      },
+    ],
+  })
+}
+
+function paginatedPortfolioDashboard(page: number) {
+  return dashboard({
+    display_name: 'KAM Head Portfolio',
+    dashboard: 'kam_head_portfolio',
+    role_group: 'kam_head',
+    read_only: false,
+    data_scope: 'portfolio',
+    metadata: {},
+    widgets: [
+      {
+        key: 'account_portfolio',
+        title: 'Account portfolio table',
+        status: 'complete',
+        generated_at: '2026-06-03T10:00:00Z',
+        data_scope: 'portfolio',
+        primary_route: '/accounts',
+        value: null,
+        items: [
+          {
+            id: `acc-${page}`,
+            account_id: `acc-${page}`,
+            name: `Account ${page}`,
+            account_name: `Account ${page}`,
+            risk_status: page === 1 ? 'warning' : 'healthy',
+            health_score: page === 1 ? 68 : 84,
+            segment: 'Growth',
+            owner: 'Account Manager',
+            next_governance_at: '2026-06-15T10:00:00Z',
+            route: `/accounts/acc-${page}`,
+          },
+        ],
+        metadata: { page, page_size: 1, total: 2 },
         error: null,
       },
     ],
@@ -550,13 +620,60 @@ describe('Dashboard', () => {
     await screen.findByText('KAM Head Portfolio')
     expect(screen.getByRole('link', { name: /accounts 12/i })).toHaveAttribute('href', '/accounts')
     expect(screen.getByRole('link', { name: /at risk accounts 3/i })).toHaveAttribute('href', '/accounts?risk=critical')
-    expect(screen.getByRole('link', { name: /open signals 4/i })).toHaveAttribute('href', '/tasks')
+    expect(screen.getByRole('link', { name: /signals critical tasks 4/i })).toHaveAttribute('href', '/tasks')
     expect(screen.getByRole('link', { name: /open escalations 2/i })).toHaveAttribute('href', '/escalations')
     expect(screen.getByRole('link', { name: /tasks 6/i })).toHaveAttribute('href', '/tasks')
     expect(screen.getByRole('link', { name: /signals 2/i })).toHaveAttribute('href', '/tasks')
     expect(screen.getByRole('link', { name: /open opps 8/i })).toHaveAttribute('href', '/opportunities?openOnly=true')
     expect(screen.getByRole('link', { name: /total value \$640/i })).toHaveAttribute('href', '/opportunities?openOnly=true')
     expect(screen.getByRole('link', { name: /stalled 1 >90 days no move/i })).toHaveAttribute('href', '/opportunities?stalled=true')
+    expect(screen.getByRole('link', { name: /account manager 2 accounts/i })).toHaveAttribute('href', '/accounts?owner=usr-am')
+  })
+
+  it('renders warning and critical segments in the health distribution donut', async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input)
+      if (url.includes('/api/dashboards/me')) return jsonResponse(healthDashboard())
+      return jsonResponse({})
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    render(
+      <MemoryRouter>
+        <Dashboard />
+      </MemoryRouter>,
+    )
+
+    expect(await screen.findByRole('img', { name: 'Health distribution' })).toBeInTheDocument()
+    expect(screen.getByTestId('health-segment-healthy')).toHaveAttribute('stroke-dasharray', expect.not.stringMatching(/^0(\.0+)? /))
+    expect(screen.getByTestId('health-segment-warning')).toHaveAttribute('stroke-dasharray', expect.not.stringMatching(/^0(\.0+)? /))
+    expect(screen.getByTestId('health-segment-critical')).toHaveAttribute('stroke-dasharray', expect.not.stringMatching(/^0(\.0+)? /))
+  })
+
+  it('requests the next dashboard page from the portfolio table pager', async () => {
+    const user = userEvent.setup()
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = new URL(String(input), 'http://localhost')
+      if (url.pathname.endsWith('/api/dashboards/me')) {
+        return jsonResponse(paginatedPortfolioDashboard(Number(url.searchParams.get('page') ?? '1')))
+      }
+      return jsonResponse({})
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    render(
+      <MemoryRouter>
+        <Dashboard />
+      </MemoryRouter>,
+    )
+
+    expect(await screen.findByText('Account 1')).toBeInTheDocument()
+    expect(screen.getByText('Page 1 of 2')).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: /next portfolio page/i }))
+
+    expect(await screen.findByText('Account 2')).toBeInTheDocument()
+    expect(screen.getByText('Page 2 of 2')).toBeInTheDocument()
+    expect(fetchMock.mock.calls.some(call => String(call[0]).includes('page=2'))).toBe(true)
   })
 
   it('shows the no-widgets empty state without fetching calendar data', async () => {
