@@ -27,7 +27,10 @@ Implements role-resolved dashboard behavior so users no longer see AM Home, KAM 
 - Admin/system alerts are sourced from failed worker runs, failed notification records, integration error connections, and persisted account-change alert counts.
 - Executive summaries are account fact rows from authorized account records, not generated placeholder prose.
 - Stale KYC and Renewal focus panels are omitted from all role dashboards.
-- Account Manager dashboard scope is intentionally focused on clickable attention tiles, account portfolio table, signals/critical tasks, merged task breakdown/listing, upcoming governance, opportunities/pipeline, assigned-account forecast, and the governance calendar. Duplicate AI task summary and escalation panels are omitted for this role.
+- Account Manager dashboard scope is intentionally focused on clickable attention tiles, paginated account portfolio table, combined signals/critical tasks, merged task breakdown/listing, opportunities/pipeline, assigned-account forecast, and the global governance calendar. Duplicate AI task summary, escalation, upcoming-governance, and governance-cadence panels are omitted for this role.
+- All role dashboards now expose governance through `governance_calendar` only; standalone upcoming-governance and governance-cadence dashboard panels are omitted.
+- Health distribution renders healthy, warning, and critical donut segments instead of treating all non-healthy accounts as neutral background.
+- AM workload counts active AM ownership assignments, including supporting AM ownership records, deduped per owner/account.
 - Account Manager opportunities/pipeline uses the compact reference layout with Open opps, Total value, and Stalled tiles plus data-source/stalled-signal rows. Assigned-account opportunity values are shown when `opportunity_management:view` is available; unauthorized/commercial-sensitive values remain backend-masked.
 - Dashboard top metric tiles are clickable for all roles, using backend-provided routes when present and route fallbacks by metric key otherwise.
 - Task summary tiles deep-link to `/tasks` with real module filters (`status`, `due`, `my_items`, and account query aliases). AI task summary source-count tiles also link to their source module.
@@ -60,6 +63,10 @@ Implements role-resolved dashboard behavior so users no longer see AM Home, KAM 
 
 Latest verification:
 
+- `docker compose run --rm --no-deps backend pytest tests/test_notifications_dashboards_reporting.py -q` passed with 9 tests after dashboard panel functionality fixes.
+- `docker compose run --rm --no-deps frontend npm test -- Dashboard.test.tsx` passed with 9 tests after health donut, portfolio paging, and AM workload rendering coverage.
+- `docker compose run --rm --no-deps frontend npm run typecheck` passed after dashboard pagination/rendering updates.
+- `docker compose run --rm --no-deps backend python -m py_compile app/services/dashboards.py app/repositories/dashboards.py app/routers/dashboards.py` passed.
 - `docker compose run --rm --no-deps frontend npm test -- Dashboard.test.tsx` passed with 4 tests after generic top/task/opportunity tile clickability coverage.
 - `docker compose run --rm --no-deps frontend npm run typecheck` passed after generic tile clickability updates.
 - `python3 -m py_compile backend/app/services/dashboards.py` passed.

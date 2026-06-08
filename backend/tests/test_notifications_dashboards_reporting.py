@@ -234,7 +234,9 @@ def test_dashboard_digest_and_report_workflows(client: TestClient, db_session: S
     assert current_dashboard.json()["dashboard"] == "kam_head_portfolio"
     assert current_dashboard.json()["role_group"] == "admin"
     admin_keys = [item["key"] for item in current_dashboard.json()["widgets"]]
-    assert admin_keys[:8] == ["summary", "forecast_chart", "account_portfolio", "high_risk_accounts", "signals", "escalations", "governance", "governance_calendar"]
+    assert admin_keys[:7] == ["summary", "forecast_chart", "account_portfolio", "high_risk_accounts", "signals", "escalations", "governance_calendar"]
+    assert "governance" not in admin_keys
+    assert "governance_cadence" not in admin_keys
     assert "admin_system" in admin_keys
     admin_widget = next(item for item in current_dashboard.json()["widgets"] if item["key"] == "admin_system")
     assert admin_widget["value"]["failed_notifications"] == 1
@@ -310,6 +312,19 @@ def test_role_based_dashboard_profiles_and_reduced_direct_endpoints(client: Test
                 priority="critical",
                 created_by_id=owner["id"],
             ),
+            Signal(
+                account_id=account.id,
+                signal_type="weak_metric",
+                severity="critical",
+                status="new",
+                owner_id=owner["id"],
+                owner_name=owner["full_name"],
+                title="Critical relationship signal",
+                detail="Relationship health dropped below threshold.",
+                due_at=now + timedelta(days=1),
+                created_at=now,
+                updated_at=now,
+            ),
             GovernanceEvent(
                 account_id=account.id,
                 owner_id=owner["id"],
@@ -323,8 +338,12 @@ def test_role_based_dashboard_profiles_and_reduced_direct_endpoints(client: Test
             ),
         ]
     )
+    supporting_account = create_owned_account(db_session, owner, "supporting-workload-account")
+    for assignment in supporting_account.owners:
+        assignment.ownership_role = "supporting_am"
+        assignment.is_primary = False
     db_session.commit()
-    removed_dashboard_widgets = {"stale_kyc", "renewal_focus"}
+    removed_dashboard_widgets = {"stale_kyc", "renewal_focus", "governance", "governance_cadence"}
 
     admin_dashboard = client.get("/api/dashboards/me", headers=admin_headers)
     assert admin_dashboard.status_code == 200
@@ -332,20 +351,25 @@ def test_role_based_dashboard_profiles_and_reduced_direct_endpoints(client: Test
     assert removed_dashboard_widgets.isdisjoint(admin_keys)
 
     owner_headers = auth_headers(client, owner["email"], "User@12345")
-    am_dashboard = client.get("/api/dashboards/me", headers=owner_headers)
+    am_dashboard = client.get("/api/dashboards/me", headers=owner_headers, params={"page_size": 50})
     assert am_dashboard.status_code == 200
     assert am_dashboard.json()["dashboard"] == "am_home"
     assert am_dashboard.json()["role_group"] == "account_manager"
     assert "leadership" not in {item["key"] for item in am_dashboard.json()["widgets"]}
     am_keys = [item["key"] for item in am_dashboard.json()["widgets"]]
-    assert am_keys == ["summary", "account_portfolio", "signals", "tasks", "governance", "opportunities", "forecast_chart", "governance_calendar"]
+    assert am_keys == ["summary", "account_portfolio", "signals", "tasks", "opportunities", "forecast_chart", "governance_calendar"]
     assert "ai_task_summary" not in am_keys
     assert removed_dashboard_widgets.isdisjoint(am_keys)
     assert "forecast_chart" in am_keys
     assert "governance_calendar" in am_keys
     summary = next(item for item in am_dashboard.json()["widgets"] if item["key"] == "summary")
-    assert [tile["label"] for tile in summary["metadata"]["tiles"]] == ["My Accounts", "At risk", "Signals / Critical tasks", "Upcoming governance"]
+    assert [tile["label"] for tile in summary["metadata"]["tiles"]] == ["My Accounts", "At risk", "Signals / Critical tasks", "Open tasks"]
     assert summary["metadata"]["tiles"][0]["route"] == "/accounts"
+    signals = next(item for item in am_dashboard.json()["widgets"] if item["key"] == "signals")
+    signal_titles = {item["title"] for item in signals["items"]}
+    assert {"Critical relationship signal", "Overdue blocker"}.issubset(signal_titles)
+    assert signals["metadata"]["source_counts"]["critical_tasks"] >= 1
+    assert signals["metadata"]["source_counts"]["signals"] >= 1
     tasks = next(item for item in am_dashboard.json()["widgets"] if item["key"] == "tasks")
     assert tasks["value"]["open"] == 1
     assert tasks["value"]["in_progress"] == 1
@@ -355,8 +379,8 @@ def test_role_based_dashboard_profiles_and_reduced_direct_endpoints(client: Test
     assert opportunities["title"] == "Opportunities & pipeline"
     assert opportunities["metadata"]["masked"] is False
     assert opportunities["value"]["stalled"] == 0
-    governance = next(item for item in am_dashboard.json()["widgets"] if item["key"] == "governance")
-    assert governance["items"][0]["route"] == f"/accounts/{account.id}?tab=governance"
+    governance_calendar = next(item for item in am_dashboard.json()["widgets"] if item["key"] == "governance_calendar")
+    assert governance_calendar["items"][0]["route"] == f"/accounts/{account.id}?tab=governance"
     am_forecast = next(item for item in am_dashboard.json()["widgets"] if item["key"] == "forecast_chart")
     assert am_forecast["title"] == "6-Month Revenue Forecast"
     assert am_forecast["data_scope"] == "assigned_accounts"
@@ -379,6 +403,9 @@ def test_role_based_dashboard_profiles_and_reduced_direct_endpoints(client: Test
     assert kam_forecast["data_scope"] == "portfolio"
     assert kam_forecast["metadata"]["masked"] is False
     assert len(kam_forecast["value"]["points"]) == 6
+    workload_widget = next(item for item in kam_dashboard.json()["widgets"] if item["key"] == "am_workload")
+    owner_workload = next(item for item in workload_widget["items"] if item["owner_id"] == owner["id"])
+    assert owner_workload["accounts"] >= 2
     alert_widget = next(item for item in kam_dashboard.json()["widgets"] if item["key"] == "account_change_alerts")
     assert alert_widget["items"][0]["id"] == alert.id
     assert alert_widget["items"][0]["account_name"] == account.name
@@ -412,9 +439,9 @@ def test_role_based_dashboard_profiles_and_reduced_direct_endpoints(client: Test
     opportunities = next(item for item in leader_dashboard.json()["widgets"] if item["key"] == "opportunities")
     assert opportunities["metadata"]["masked"] is True
     summaries = next(item for item in leader_dashboard.json()["widgets"] if item["key"] == "executive_summaries")
-    assert summaries["items"][0]["account_id"] == account.id
-    assert summaries["items"][0]["health_score"] == account.health_overall
-    assert "summary" not in summaries["items"][0]
+    account_summary = next(item for item in summaries["items"] if item["account_id"] == account.id)
+    assert account_summary["health_score"] == account.health_overall
+    assert "summary" not in account_summary
 
 
 def test_delivery_lead_dashboard_and_system_role_protection(client: TestClient, db_session: Session) -> None:
@@ -471,7 +498,8 @@ def test_delivery_lead_dashboard_and_system_role_protection(client: TestClient, 
     assert body["dashboard"] == "delivery"
     assert body["role_group"] == "delivery_lead"
     widget_keys = {item["key"] for item in body["widgets"]}
-    assert {"tasks", "signals", "escalations", "governance", "governance_calendar", "engagement_health"}.issubset(widget_keys)
+    assert {"tasks", "signals", "escalations", "governance_calendar", "engagement_health"}.issubset(widget_keys)
+    assert "governance" not in widget_keys
     engagement_health = next(item for item in body["widgets"] if item["key"] == "engagement_health")
     assert engagement_health["items"][0]["delivery_health"] == 48
 
