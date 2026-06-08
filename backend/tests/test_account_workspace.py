@@ -11,7 +11,7 @@ from sqlalchemy.pool import StaticPool
 from app.database import Base, get_db
 from app.config import get_settings
 from app.main import app
-from app.models import Account, CustomFieldValue, DocumentExtraction, Engagement, OnboardingDraft, SourceDocument, SourceDocumentExtraction
+from app.models import Account, AccountOwner, CustomFieldValue, DocumentExtraction, Engagement, OnboardingDraft, SourceDocument, SourceDocumentExtraction
 from app.services.kyc_document_extraction import KycDocumentExtractionService
 from app.services.source_document_contract import SERVICE_LINE_LABELS, infer_service_lines_from_text
 from app.services.sow_extraction import SowExtractionService
@@ -61,6 +61,24 @@ def seeded_user(client: TestClient, headers: dict[str, str], role: str) -> dict:
     return response.json()["items"][0]
 
 
+def create_account_manager_user(client: TestClient, headers: dict[str, str], email: str, full_name: str) -> dict:
+    response = client.post(
+        "/api/admin/users",
+        headers=headers,
+        json={
+            "email": email,
+            "password": "User@12345",
+            "full_name": full_name,
+            "role": "account_manager",
+            "title": "Account Manager",
+            "avatar_initials": "".join(part[0] for part in full_name.split()[:2]).upper(),
+            "is_active": True,
+        },
+    )
+    assert response.status_code == 201
+    return response.json()
+
+
 def draft_payload(account_name: str, owner_id: str, *, include_engagement: bool = True) -> dict:
     engagement_drafts = []
     if include_engagement:
@@ -83,6 +101,7 @@ def draft_payload(account_name: str, owner_id: str, *, include_engagement: bool 
         "account_name": account_name,
         "project_name": "Customer intelligence modernization",
         "company_url": "https://customer.example.com",
+        "linkedin_url": "https://www.linkedin.com/company/customer-example",
         "lifecycle_status": "Onboarding",
         "segment": "Growth",
         "region": "Global",
@@ -195,7 +214,7 @@ def create_engagement_for_account(client: TestClient, headers: dict[str, str], a
     return response.json()
 
 
-def create_approved_account(client: TestClient, headers: dict[str, str], account_name: str, *, include_engagement: bool = False) -> tuple[str, str, dict]:
+def create_approved_account(client: TestClient, headers: dict[str, str], account_name: str, *, include_engagement: bool = True) -> tuple[str, str, dict]:
     owner = seeded_user(client, headers, "account_manager")
     draft_response = client.post("/api/onboarding/drafts", headers=headers, json=draft_payload(account_name, owner["id"], include_engagement=include_engagement))
     assert draft_response.status_code == 201
@@ -206,6 +225,35 @@ def create_approved_account(client: TestClient, headers: dict[str, str], account
     return approved["approved_account_id"], owner["id"], approved
 
 
+def create_account_without_engagement(db_session: Session, owner: dict, account_name: str) -> str:
+    account = Account(
+        name=account_name,
+        project_name="Legacy account without engagement",
+        company_url="https://legacy.example.com",
+        linkedin_url="https://www.linkedin.com/company/legacy-account",
+        lifecycle_status="Onboarding",
+        segment="Growth",
+        region="Global",
+        risk_status="warning",
+        created_by_id=owner["id"],
+    )
+    db_session.add(account)
+    db_session.flush()
+    db_session.add(
+        AccountOwner(
+            account_id=account.id,
+            user_id=owner["id"],
+            user_name=owner["full_name"],
+            user_email=owner["email"],
+            ownership_role="primary_am",
+            is_primary=True,
+            created_by_id=owner["id"],
+        )
+    )
+    db_session.commit()
+    return account.id
+
+
 def test_onboarding_draft_approval_creates_account_sources_and_engagement(client: TestClient) -> None:
     headers = auth_headers(client)
     owner = seeded_user(client, headers, "account_manager")
@@ -214,6 +262,7 @@ def test_onboarding_draft_approval_creates_account_sources_and_engagement(client
     assert create_response.status_code == 201
     draft = create_response.json()
     assert draft["status"] == "ready_for_review"
+    assert draft["linkedin_url"] == "https://www.linkedin.com/company/customer-example"
     assert draft["source_documents"][0]["citations"][0]["field_key"] == "account_name"
     assert draft["engagement_drafts"][0]["name"] == "Customer intelligence modernization"
 
@@ -229,6 +278,7 @@ def test_onboarding_draft_approval_creates_account_sources_and_engagement(client
     assert overview_response.status_code == 200
     overview = overview_response.json()
     assert overview["account"]["name"] == "Northwind Workspace"
+    assert overview["account"]["linkedin_url"] == "https://www.linkedin.com/company/customer-example"
     assert overview["account"]["lifecycle_status"] == "Onboarding"
     assert overview["account"]["primary_owner"]["user_id"] == owner["id"]
     assert overview["engagements"]["total"] == 1
@@ -245,6 +295,7 @@ def test_onboarding_draft_approval_creates_account_sources_and_engagement(client
 
 def test_onboarding_upload_extracts_draft_from_content_not_filename(client: TestClient) -> None:
     headers = auth_headers(client)
+    owner = seeded_user(client, headers, "account_manager")
     content = b"""
 Demo document only. Not a real signed commercial agreement.
 Account Name: McDonald's Corporation
@@ -269,7 +320,7 @@ Customer data access, franchise operating model complexity, and point-of-sale in
     response = client.post(
         "/api/onboarding/drafts/upload",
         headers=headers,
-        data={"manager_name": "KAM Owner", "manager_email": "account.manager@tkxel.com"},
+        data={"manager_id": owner["id"], "manager_name": owner["full_name"], "manager_email": owner["email"]},
         files=[("files", ("wrong-client-name.txt", content, "text/plain"))],
     )
 
@@ -496,6 +547,7 @@ def test_onboarding_upload_uses_qwen_structured_fields_to_prefill_account_and_en
     previous_ai_setting = settings.sow_ai_extraction_enabled
     settings.sow_ai_extraction_enabled = True
     headers = auth_headers(client)
+    owner = seeded_user(client, headers, "account_manager")
     content = b"""
 Statement of Work for McDonald's Corporation
 Customer: McDonald's Corporation
@@ -536,6 +588,7 @@ Point-of-sale data dependency and franchise rollout sequencing.
         response = client.post(
             "/api/onboarding/drafts/upload",
             headers=headers,
+            data={"manager_id": owner["id"], "manager_name": owner["full_name"], "manager_email": owner["email"]},
             files=[("files", ("not-the-client-name.txt", content, "text/plain"))],
         )
     finally:
@@ -798,6 +851,99 @@ def test_sow_structured_qwen_result_is_cited_and_vendor_name_guarded(db_session:
     assert fields["start_date"]["citation"]["validation_status"] == "validated_ai_citation"
     assert fields["renewal_terms"]["citation"]["page"] == 2
     assert fields["stakeholders"]["missing_evidence"] == "Stakeholders were not supported by extracted SOW text."
+def test_onboarding_account_manager_candidates_are_active_account_managers(client: TestClient) -> None:
+    admin_headers = auth_headers(client)
+    kam_headers = auth_headers(client, "kam.head.user@tkxel.com", "User@12345")
+    create_account_manager_user(client, admin_headers, "second.account.manager@tkxel.com", "Second Account Manager")
+
+    response = client.get("/api/onboarding/account-managers", headers=kam_headers)
+
+    assert response.status_code == 200
+    candidates = response.json()
+    emails = {candidate["email"] for candidate in candidates}
+    roles = {candidate["role"] for candidate in candidates}
+    assert "account.manager.user@tkxel.com" in emails
+    assert "second.account.manager@tkxel.com" in emails
+    assert roles == {"account_manager"}
+
+
+def test_onboarding_approval_requires_explicit_account_manager_assignment(client: TestClient) -> None:
+    headers = auth_headers(client)
+    owner = seeded_user(client, headers, "account_manager")
+    payload = draft_payload("Unassigned Owner Workspace", owner["id"])
+    payload.pop("primary_owner_id")
+
+    create_response = client.post("/api/onboarding/drafts", headers=headers, json=payload)
+    assert create_response.status_code == 201
+
+    approve_response = client.post(f"/api/onboarding/drafts/{create_response.json()['id']}/approve", headers=headers)
+    assert approve_response.status_code == 422
+    error = approve_response.json()["detail"]["errors"][0]
+    assert error["field"] == "primary_owner_id"
+    assert error["message"] == "Assign an account manager before approving this draft."
+
+
+def test_onboarding_approval_requires_at_least_one_engagement_draft(client: TestClient) -> None:
+    headers = auth_headers(client)
+    owner = seeded_user(client, headers, "account_manager")
+
+    create_response = client.post(
+        "/api/onboarding/drafts",
+        headers=headers,
+        json=draft_payload("No Engagement Draft Workspace", owner["id"], include_engagement=False),
+    )
+    assert create_response.status_code == 201
+
+    approve_response = client.post(f"/api/onboarding/drafts/{create_response.json()['id']}/approve", headers=headers)
+    assert approve_response.status_code == 422
+    error = approve_response.json()["detail"]["errors"][0]
+    assert error["field"] == "engagement_drafts"
+    assert error["message"] == "At least one engagement is required before approval."
+
+
+def test_onboarding_drafts_are_visible_to_assigned_manager_not_unrelated_managers(client: TestClient) -> None:
+    admin_headers = auth_headers(client)
+    owner = seeded_user(client, admin_headers, "account_manager")
+    other_owner = create_account_manager_user(client, admin_headers, "unrelated.account.manager@tkxel.com", "Unrelated Account Manager")
+
+    draft_response = client.post("/api/onboarding/drafts", headers=admin_headers, json=draft_payload("Assigned Visibility Workspace", owner["id"]))
+    assert draft_response.status_code == 201
+    draft_id = draft_response.json()["id"]
+
+    assigned_headers = auth_headers(client, owner["email"], "User@12345")
+    assigned_list = client.get("/api/onboarding/drafts", headers=assigned_headers, params={"page": 1, "page_size": 10})
+    assert assigned_list.status_code == 200
+    assert {item["id"] for item in assigned_list.json()["items"]} == {draft_id}
+
+    assigned_read = client.get(f"/api/onboarding/drafts/{draft_id}", headers=assigned_headers)
+    assert assigned_read.status_code == 200
+    assert assigned_read.json()["primary_owner_id"] == owner["id"]
+
+    unrelated_headers = auth_headers(client, other_owner["email"], "User@12345")
+    unrelated_list = client.get("/api/onboarding/drafts", headers=unrelated_headers, params={"page": 1, "page_size": 10})
+    assert unrelated_list.status_code == 200
+    assert unrelated_list.json()["items"] == []
+    assert unrelated_list.json()["total"] == 0
+
+    unrelated_read = client.get(f"/api/onboarding/drafts/{draft_id}", headers=unrelated_headers)
+    assert unrelated_read.status_code == 403
+
+
+def test_account_manager_can_self_assign_but_not_assign_other_managers(client: TestClient) -> None:
+    admin_headers = auth_headers(client)
+    owner = seeded_user(client, admin_headers, "account_manager")
+    other_owner = create_account_manager_user(client, admin_headers, "handoff.account.manager@tkxel.com", "Handoff Account Manager")
+    owner_headers = auth_headers(client, owner["email"], "User@12345")
+
+    create_other_response = client.post("/api/onboarding/drafts", headers=owner_headers, json=draft_payload("AM Other Owner Workspace", other_owner["id"]))
+    assert create_other_response.status_code == 403
+
+    create_self_response = client.post("/api/onboarding/drafts", headers=owner_headers, json=draft_payload("AM Self Owner Workspace", owner["id"]))
+    assert create_self_response.status_code == 201
+    draft_id = create_self_response.json()["id"]
+
+    reassign_response = client.patch(f"/api/onboarding/drafts/{draft_id}", headers=owner_headers, json={"primary_owner_id": other_owner["id"]})
+    assert reassign_response.status_code == 403
 
 
 def test_onboarding_validation_and_authorization_errors_are_enforced(client: TestClient) -> None:
@@ -810,6 +956,14 @@ def test_onboarding_validation_and_authorization_errors_are_enforced(client: Tes
         json={**draft_payload("Invalid Workspace", owner["id"]), "source_documents": []},
     )
     assert invalid_response.status_code == 422
+
+    invalid_linkedin_response = client.post(
+        "/api/onboarding/drafts",
+        headers=headers,
+        json={**draft_payload("Invalid LinkedIn Workspace", owner["id"]), "linkedin_url": "https://customer.example.com/company"},
+    )
+    assert invalid_linkedin_response.status_code == 422
+    assert invalid_linkedin_response.json()["errors"][0]["field"] == "linkedin_url"
     assert invalid_response.json()["message"] == "Validation failed"
 
     draft_response = client.post("/api/onboarding/drafts", headers=headers, json=draft_payload("Authorization Workspace", owner["id"]))
@@ -820,9 +974,11 @@ def test_onboarding_validation_and_authorization_errors_are_enforced(client: Tes
     assert approve_response.status_code == 403
 
 
-def test_engagement_list_endpoint_returns_items_empty_state_and_rejects_unauthorized_access(client: TestClient) -> None:
+def test_engagement_list_endpoint_returns_items_empty_state_and_rejects_unauthorized_access(client: TestClient, db_session: Session) -> None:
     headers = auth_headers(client)
-    account_id, owner_id, _ = create_approved_account(client, headers, "Engagement List API Workspace")
+    owner = seeded_user(client, headers, "account_manager")
+    account_id = create_account_without_engagement(db_session, owner, "Engagement List API Workspace")
+    owner_id = owner["id"]
 
     empty_response = client.get(f"/api/accounts/{account_id}/engagements", headers=headers)
     assert empty_response.status_code == 200

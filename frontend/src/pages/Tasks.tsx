@@ -1,7 +1,7 @@
 import * as Dialog from '@radix-ui/react-dialog'
 import { CalendarClock, Check, CheckCircle2, ClipboardCheck, ExternalLink, FileUp, Filter, Link as LinkIcon, Loader2, Plus, Save, X, XCircle } from 'lucide-react'
 import { FormEvent, useEffect, useMemo, useState } from 'react'
-import { Link } from 'react-router-dom'
+import { Link, useSearchParams } from 'react-router-dom'
 import { toast } from 'sonner'
 import { RuntimeCustomFields, customValuesForSubmit, requiredCustomFieldErrors } from '@/components/custom-fields/RuntimeCustomFields'
 import { EmptyState } from '@/components/ui/EmptyState'
@@ -17,6 +17,7 @@ import { formatDate, formatRelative } from '@/utils/formatters'
 type DueFilter = 'all' | 'overdue' | 'today' | 'next7'
 
 export function Tasks() {
+  const [searchParams] = useSearchParams()
   const { token } = useAuth()
   const user = useRole()
   const accounts = useAccountStore(state => state.accounts)
@@ -24,19 +25,30 @@ export function Tasks() {
   const [customFields, setCustomFields] = useState<RuntimeCustomField[]>([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
-  const [search, setSearch] = useState('')
-  const [accountId, setAccountId] = useState('')
-  const [status, setStatus] = useState('')
-  const [priority, setPriority] = useState('')
-  const [sourceType, setSourceType] = useState('')
-  const [due, setDue] = useState<DueFilter>('all')
-  const [myItems, setMyItems] = useState(false)
+  const [search, setSearch] = useState(() => searchParams.get('search') ?? '')
+  const [accountId, setAccountId] = useState(() => searchParams.get('accountId') ?? searchParams.get('account_id') ?? '')
+  const [status, setStatus] = useState(() => searchParams.get('status') ?? '')
+  const [priority, setPriority] = useState(() => searchParams.get('priority') ?? '')
+  const [sourceType, setSourceType] = useState(() => searchParams.get('sourceType') ?? searchParams.get('source_type') ?? '')
+  const [due, setDue] = useState<DueFilter>(() => dueFilterParam(searchParams.get('due')))
+  const [myItems, setMyItems] = useState(() => boolParam(searchParams.get('myItems') ?? searchParams.get('my_items')))
   const [sort, setSort] = useState<'due_at' | 'priority' | 'status' | 'updated_at'>('due_at')
   const [direction, setDirection] = useState<'asc' | 'desc'>('asc')
   const [page, setPage] = useState(1)
   const [total, setTotal] = useState(0)
   const readOnly = user.role === 'leadership_viewer'
   const pageSize = 10
+
+  useEffect(() => {
+    setSearch(searchParams.get('search') ?? '')
+    setAccountId(searchParams.get('accountId') ?? searchParams.get('account_id') ?? '')
+    setStatus(searchParams.get('status') ?? '')
+    setPriority(searchParams.get('priority') ?? '')
+    setSourceType(searchParams.get('sourceType') ?? searchParams.get('source_type') ?? '')
+    setDue(dueFilterParam(searchParams.get('due')))
+    setMyItems(boolParam(searchParams.get('myItems') ?? searchParams.get('my_items')))
+    setPage(positivePage(searchParams.get('page')))
+  }, [searchParams])
 
   useEffect(() => {
     if (!token) return
@@ -187,7 +199,9 @@ export function Tasks() {
               <option value="">Any source</option>
               <option value="playbook">Playbook</option>
               <option value="manual">Manual</option>
-              <option value="governance">Governance</option>
+              <option value="governance_event">Governance event</option>
+              <option value="governance_action_item">Governance action</option>
+              <option value="opportunity_action_item">Opportunity action</option>
               <option value="renewal">Renewal</option>
             </select>
           </label>
@@ -270,7 +284,7 @@ function TaskCard({ task, token, readOnly, onStatus, onUpdated }: { task: Playbo
           <div className="flex flex-wrap items-center gap-2">
             <span className={cn('inline-flex rounded-full border px-2 py-1 text-[11px] font-semibold uppercase tracking-wider', statusClass(task.status))}>{task.status.replace('_', ' ')}</span>
             <span className={cn('inline-flex rounded-full border px-2 py-1 text-[11px] font-semibold uppercase tracking-wider', priorityClass(task.priority))}>{task.priority}</span>
-            <span className="inline-flex rounded-full border border-blue-tint-20 bg-blue-tint-20 px-2 py-1 text-[11px] font-semibold uppercase tracking-wider text-brand-blue">{task.source_type}</span>
+            <span className={cn('inline-flex rounded-full border px-2 py-1 text-[11px] font-semibold uppercase tracking-wider', sourceClass(task.source_type))}>{sourceLabel(task.source_type)}</span>
             {overdue ? <span className="inline-flex rounded-full border border-rag-red/20 bg-rag-red/10 px-2 py-1 text-[11px] font-semibold uppercase tracking-wider text-rag-red">Overdue</span> : null}
           </div>
           <h2 className="mt-3 text-base font-semibold text-ink">{task.title}</h2>
@@ -537,6 +551,18 @@ function dueRange(due: DueFilter) {
   return {}
 }
 
+function dueFilterParam(value: string | null): DueFilter {
+  return value === 'overdue' || value === 'today' || value === 'next7' ? value : 'all'
+}
+
+function boolParam(value: string | null): boolean {
+  return value === 'true' || value === '1'
+}
+
+function positivePage(value: string | null): number {
+  return Math.max(1, Number(value ?? '1') || 1)
+}
+
 function statusClass(status: TaskStatus) {
   if (status === 'done') return 'border-rag-green/20 bg-rag-green/10 text-rag-green'
   if (status === 'in_progress') return 'border-blue-tint-20 bg-blue-tint-20 text-brand-blue'
@@ -549,4 +575,25 @@ function priorityClass(priority: TaskPriority) {
   if (priority === 'urgent' || priority === 'high') return 'border-brand-orange/20 bg-brand-orange/10 text-brand-orange'
   if (priority === 'medium') return 'border-blue-tint-20 bg-blue-tint-20 text-brand-blue'
   return 'border-surface-border bg-surface-tertiary text-ink-secondary'
+}
+
+function sourceLabel(sourceType: string) {
+  const labels: Record<string, string> = {
+    manual: 'Manual',
+    playbook: 'Playbook',
+    signal: 'Signal',
+    governance_event: 'Governance event',
+    governance_action_item: 'Governance action',
+    opportunity_action_item: 'Opportunity action',
+    renewal: 'Renewal',
+    retention_recommendation: 'Retention recommendation',
+  }
+  return labels[sourceType] ?? sourceType.replace(/_/g, ' ')
+}
+
+function sourceClass(sourceType: string) {
+  if (sourceType === 'opportunity_action_item') return 'border-brand-orange/20 bg-brand-orange/10 text-brand-orange'
+  if (sourceType === 'governance_action_item' || sourceType === 'governance_event') return 'border-rag-green/20 bg-rag-green/10 text-rag-green'
+  if (sourceType === 'manual') return 'border-surface-border bg-surface-tertiary text-ink-secondary'
+  return 'border-blue-tint-20 bg-blue-tint-20 text-brand-blue'
 }

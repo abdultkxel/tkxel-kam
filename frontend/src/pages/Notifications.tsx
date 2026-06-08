@@ -1,10 +1,10 @@
-import { Bell, Check, Loader2, Search } from 'lucide-react'
+import { Archive, Bell, Check, Loader2, Search } from 'lucide-react'
 import { FormEvent, useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { toast } from 'sonner'
 import { PageHeader } from '@/components/ui/PageHeader'
 import { useAuth } from '@/contexts/AuthContext'
-import { getNotifications, markAllNotificationsRead, markNotificationRead, NotificationRecord } from '@/services/notificationsReporting'
+import { archiveNotification, getNotifications, getNotificationTriggers, markAllNotificationsRead, markNotificationRead, NotificationRecord, NotificationTriggerConfig } from '@/services/notificationsReporting'
 import { formatRelative } from '@/utils/formatters'
 
 export function Notifications() {
@@ -14,9 +14,16 @@ export function Notifications() {
   const [draftSearch, setDraftSearch] = useState('')
   const [readState, setReadState] = useState('')
   const [trigger, setTrigger] = useState('')
+  const [workflow, setWorkflow] = useState('')
+  const [priority, setPriority] = useState('')
+  const [channel, setChannel] = useState('')
+  const [accountId, setAccountId] = useState('')
+  const [sort, setSort] = useState('created_at')
+  const [direction, setDirection] = useState('desc')
   const [page, setPage] = useState(1)
   const [pages, setPages] = useState(0)
   const [unread, setUnread] = useState(0)
+  const [triggers, setTriggers] = useState<NotificationTriggerConfig[]>([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
 
@@ -25,7 +32,7 @@ export function Notifications() {
     let active = true
     setLoading(true)
     setError('')
-    getNotifications(token, { search, read_state: readState, trigger, page, page_size: 12 })
+    getNotifications(token, { search, read_state: readState, trigger, workflow, priority, channel, account_id: accountId, sort, direction, page, page_size: 12 })
       .then(result => {
         if (!active) return
         setItems(result.items)
@@ -41,7 +48,22 @@ export function Notifications() {
     return () => {
       active = false
     }
-  }, [page, readState, search, token, trigger])
+  }, [accountId, channel, direction, page, priority, readState, search, sort, token, trigger, workflow])
+
+  useEffect(() => {
+    if (!token) return
+    let active = true
+    getNotificationTriggers(token)
+      .then(result => {
+        if (active) setTriggers(result.items.filter(item => item.is_active))
+      })
+      .catch(() => {
+        if (active) setTriggers([])
+      })
+    return () => {
+      active = false
+    }
+  }, [token])
 
   function submitSearch(event: FormEvent) {
     event.preventDefault()
@@ -64,6 +86,14 @@ export function Notifications() {
     toast.success('Notifications marked read')
   }
 
+  async function archiveItem(item: NotificationRecord) {
+    if (!token) return
+    const updated = await archiveNotification(token, item.id)
+    setItems(current => readState === 'archived' ? current.map(value => (value.id === item.id ? updated : value)) : current.filter(value => value.id !== item.id))
+    if (!item.read_at) setUnread(value => Math.max(0, value - 1))
+    toast.success('Notification archived')
+  }
+
   return (
     <div className="space-y-5">
       <PageHeader
@@ -74,7 +104,7 @@ export function Notifications() {
       />
 
       <section className="tk-card p-4">
-        <form className="grid gap-3 md:grid-cols-[1fr_180px_180px_auto]" onSubmit={submitSearch}>
+        <form className="grid gap-3 md:grid-cols-2 xl:grid-cols-[1fr_160px_180px_160px_auto]" onSubmit={submitSearch}>
           <label className="relative block">
             <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-ink-tertiary" />
             <input className="tk-input pl-9" value={draftSearch} onChange={event => setDraftSearch(event.target.value)} placeholder="Search title, body, account" />
@@ -83,19 +113,47 @@ export function Notifications() {
             <option value="">All states</option>
             <option value="unread">Unread</option>
             <option value="read">Read</option>
+            <option value="archived">Archived</option>
           </select>
           <select className="tk-input" value={trigger} onChange={event => { setTrigger(event.target.value); setPage(1) }}>
             <option value="">All triggers</option>
-            <option value="sla_escalation">SLA escalation</option>
-            <option value="stale_kyc">Stale KYC</option>
-            <option value="renewal_due">Renewal due</option>
-            <option value="governance_reminder">Governance reminder</option>
-            <option value="timeline_mention">Mention</option>
+            {triggers.map(item => (
+              <option key={item.trigger} value={item.trigger}>{item.label}</option>
+            ))}
+          </select>
+          <select className="tk-input" value={channel} onChange={event => { setChannel(event.target.value); setPage(1) }}>
+            <option value="">All channels</option>
+            <option value="in_app">In-app</option>
+            <option value="email">Email</option>
           </select>
           <button className="tk-button-primary" type="submit">
             <Search className="h-4 w-4" />
             Search
           </button>
+          <select className="tk-input" value={workflow} onChange={event => { setWorkflow(event.target.value); setPage(1) }}>
+            <option value="">All workflows</option>
+            {[...new Set(triggers.map(item => item.workflow))].sort().map(item => (
+              <option key={item} value={item}>{item.replace(/_/g, ' ')}</option>
+            ))}
+          </select>
+          <select className="tk-input" value={priority} onChange={event => { setPriority(event.target.value); setPage(1) }}>
+            <option value="">All priorities</option>
+            <option value="critical">Critical</option>
+            <option value="high">High</option>
+            <option value="medium">Medium</option>
+            <option value="low">Low</option>
+          </select>
+          <input className="tk-input md:col-span-2 xl:col-span-1" value={accountId} onChange={event => { setAccountId(event.target.value); setPage(1) }} placeholder="Account ID" />
+          <select className="tk-input" value={sort} onChange={event => { setSort(event.target.value); setPage(1) }}>
+            <option value="created_at">Created date</option>
+            <option value="unread_first">Unread first</option>
+            <option value="priority">Priority</option>
+            <option value="trigger">Trigger</option>
+          </select>
+          <select className="tk-input" value={direction} onChange={event => { setDirection(event.target.value); setPage(1) }}>
+            <option value="desc">Newest first</option>
+            <option value="asc">Oldest first</option>
+          </select>
         </form>
       </section>
 
@@ -122,14 +180,18 @@ export function Notifications() {
                   <span className="rounded-full bg-surface-tertiary px-2 py-1 text-[10px] font-bold uppercase tracking-wider text-ink-secondary">{item.trigger.replace(/_/g, ' ')}</span>
                 </div>
                 <p className="mt-1 text-sm text-ink-secondary">{item.body}</p>
-                <p className="mt-1 text-xs text-ink-tertiary">{formatRelative(item.created_at)}{item.email_queued ? ' | email queued' : ''}</p>
+                <p className="mt-1 text-xs text-ink-tertiary">{item.workflow ? `${item.workflow.replace(/_/g, ' ')} | ` : ''}{formatRelative(item.created_at)}{item.email_queued ? ' | email queued' : ''}</p>
               </div>
               <div className="flex flex-wrap gap-2">
                 <button className="tk-button-secondary" type="button" disabled={Boolean(item.read_at)} onClick={() => void markRead(item)}>
                   <Check className="h-4 w-4" />
                   Read
                 </button>
-                {item.source_record_route ? <Link className="tk-button-primary" to={item.source_record_route}>Open</Link> : null}
+                <button className="tk-button-secondary" type="button" disabled={Boolean(item.archived_at)} onClick={() => void archiveItem(item)}>
+                  <Archive className="h-4 w-4" />
+                  Archive
+                </button>
+                {item.source_record_route ? <Link className="tk-button-primary" to={item.source_record_route}>{item.action_label || 'Open'}</Link> : null}
               </div>
             </article>
           ))}

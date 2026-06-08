@@ -48,7 +48,7 @@ const task = {
   engagement_id: null,
   playbook_execution_id: 'exec-1',
   template_activity_id: 'activity-1',
-  source_type: 'playbook',
+  source_type: 'opportunity_action_item',
   source_record_id: 'exec-1',
   source_metric: 'health',
   title: 'Backend recovery task',
@@ -119,6 +119,7 @@ describe('Tasks page backend work queue', () => {
     expect(await screen.findByText(/loading tasks/i)).toBeInTheDocument()
     resolveTasks(jsonResponse(page([task])))
     expect(await screen.findByText('Backend recovery task')).toBeInTheDocument()
+    expect(screen.getAllByText('Opportunity action').length).toBeGreaterThan(0)
 
     await userEvent.type(screen.getByPlaceholderText(/search title/i), 'recovery')
     await waitFor(() => expect(fetchMock.mock.calls.some(call => String(call[0]).includes('search=recovery'))).toBe(true))
@@ -126,6 +127,32 @@ describe('Tasks page backend work queue', () => {
     await userEvent.click(screen.getByRole('button', { name: /start/i }))
 
     await waitFor(() => expect(screen.getByText('in progress')).toBeInTheDocument())
+  })
+
+  it('applies dashboard tile query filters to the backend task request', async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input)
+      if (url.includes('/api/custom-fields')) return jsonResponse([])
+      if (url.includes('/api/tasks')) return jsonResponse(page([task]))
+      return jsonResponse(page([]))
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    render(
+      <MemoryRouter initialEntries={['/tasks?status=in_progress&due=overdue&my_items=true&account_id=acct-1']}>
+        <Tasks />
+      </MemoryRouter>,
+    )
+
+    await screen.findByText('Backend recovery task')
+    expect(screen.getByRole('option', { name: /opportunity action/i })).toHaveValue('opportunity_action_item')
+    await waitFor(() => {
+      const taskRequest = fetchMock.mock.calls.find(call => String(call[0]).includes('/api/tasks'))
+      expect(String(taskRequest?.[0])).toContain('status=in_progress')
+      expect(String(taskRequest?.[0])).toContain('my_items=true')
+      expect(String(taskRequest?.[0])).toContain('account_id=acct-1')
+      expect(String(taskRequest?.[0])).toContain('due_to=')
+    })
   })
 
   it('shows backend error state', async () => {

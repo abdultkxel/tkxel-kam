@@ -45,6 +45,7 @@ def test_stakeholder_tables_columns_and_indexes_are_created(db_session: Session)
         "account_id",
         "engagement_id",
         "reports_to_stakeholder_id",
+        "linkedin_url",
         "role",
         "influence",
         "relationship_strength",

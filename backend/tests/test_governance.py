@@ -522,6 +522,48 @@ def test_governance_completion_uses_meeting_capture_and_creates_action_task(clie
     assert action_task.due_at.isoformat().startswith("2026-06-22T17:00:00")
 
 
+def test_governance_completion_accepts_fireflies_meeting_artifact(client: TestClient, db_session: Session) -> None:
+    headers = auth_headers(client)
+    account_id, engagement_id, owner_id = create_approved_account(client, headers, "Fireflies Governance")
+    created = client.post("/api/governance-events", headers=headers, json=governance_payload(account_id, engagement_id, owner_id))
+    assert created.status_code == 201
+    event = created.json()
+
+    meeting = client.post(
+        "/api/meeting-capture/meetings",
+        headers=headers,
+        json={
+            "provider": "fireflies",
+            "title": "Fireflies SteerCo transcript",
+            "meeting_url": "https://meet.example.com/fireflies-governance",
+            "summary": "Fireflies summary reviewed with governance owners.",
+            "action_items": ["Send Fireflies action register"],
+            "account_id": account_id,
+        },
+    )
+    assert meeting.status_code == 201
+    assert meeting.json()["provider"] == "fireflies"
+
+    completed = client.post(
+        f"/api/governance-events/{event['id']}/complete",
+        headers=headers,
+        json={
+            "meeting_artifact_id": meeting.json()["id"],
+            "notes": "Fireflies summary reviewed with governance owners.",
+            "action_items": [{"title": "Send Fireflies action register", "owner_id": owner_id, "due_date": "2026-06-22T17:00:00Z"}],
+        },
+    )
+    assert completed.status_code == 200
+    assert completed.json()["status"] == "completed"
+
+    artifact = db_session.get(MeetingArtifact, meeting.json()["id"])
+    assert artifact is not None
+    assert artifact.provider == "fireflies"
+    assert artifact.status == "attached"
+    assert artifact.linked_object_type == "governance_event"
+    assert artifact.linked_object_id == event["id"]
+
+
 def test_governance_deterministic_agenda_brief_and_read_only_permissions(client: TestClient) -> None:
     headers = auth_headers(client)
     account_id, engagement_id, owner_id = create_approved_account(client, headers, "Brief Governance Workspace")

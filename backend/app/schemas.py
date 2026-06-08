@@ -203,6 +203,16 @@ def validate_http_url(value: str | None, field_label: str = "URL") -> str | None
     return url
 
 
+def validate_linkedin_url(value: str | None, field_label: str = "LinkedIn URL") -> str | None:
+    url = validate_http_url(value, field_label)
+    if url is None:
+        return None
+    hostname = (urlparse(url).hostname or "").lower()
+    if hostname != "linkedin.com" and not hostname.endswith(".linkedin.com"):
+        raise ValueError(f"{field_label} must be a linkedin.com URL.")
+    return url
+
+
 def validate_percent(value: int, field_label: str) -> int:
     if value < 0 or value > 100:
         raise ValueError(f"{field_label} must be between 0 and 100.")
@@ -1492,6 +1502,7 @@ class OnboardingDraftRead(BaseModel):
     account_name: str
     project_name: str | None = None
     company_url: str | None = None
+    linkedin_url: str | None = None
     lifecycle_status: str
     segment: str
     region: str | None = None
@@ -1530,6 +1541,7 @@ class OnboardingDraftCreateRequest(BaseModel):
     account_name: str
     project_name: str | None = None
     company_url: str | None = None
+    linkedin_url: str | None = None
     lifecycle_status: LifecycleStatus = "Draft"
     segment: str = "Growth"
     region: str | None = None
@@ -1563,6 +1575,11 @@ class OnboardingDraftCreateRequest(BaseModel):
     @classmethod
     def company_url_is_valid(cls, value: str | None) -> str | None:
         return optional_text(value, "Company URL", max_length=500)
+
+    @field_validator("linkedin_url")
+    @classmethod
+    def linkedin_url_is_valid(cls, value: str | None) -> str | None:
+        return validate_linkedin_url(value)
 
     @field_validator("segment")
     @classmethod
@@ -1604,6 +1621,7 @@ class AccountCsvImportRow(BaseModel):
     account_name: str | None = Field(default=None, description="Account name from the CSV row.")
     project_name: str | None = Field(default=None, description="Optional project or engagement name.")
     company_url: str | None = Field(default=None, description="Optional company website.")
+    linkedin_url: str | None = Field(default=None, description="Optional company LinkedIn profile URL.")
     industry: str | None = Field(default=None, description="Optional industry value stored as account context.")
     arr: Any = Field(default=None, description="Annual recurring revenue from the CSV row.")
     commercial_value: Any = Field(default=None, description="Commercial value alias for ARR.")
@@ -1632,6 +1650,7 @@ class OnboardingDraftUpdateRequest(BaseModel):
     account_name: str | None = None
     project_name: str | None = None
     company_url: str | None = None
+    linkedin_url: str | None = None
     lifecycle_status: LifecycleStatus | None = None
     segment: str | None = None
     region: str | None = None
@@ -1657,6 +1676,11 @@ class OnboardingDraftUpdateRequest(BaseModel):
     @classmethod
     def optional_text_is_valid(cls, value: str | None) -> str | None:
         return optional_text(value, "Field", max_length=500)
+
+    @field_validator("linkedin_url")
+    @classmethod
+    def optional_linkedin_url_is_valid(cls, value: str | None) -> str | None:
+        return validate_linkedin_url(value)
 
     @field_validator("service_context", "commercial_summary", "initial_notes", "source_citation")
     @classmethod
@@ -1785,6 +1809,7 @@ class AccountRead(BaseModel):
     name: str
     project_name: str | None = None
     company_url: str | None = None
+    linkedin_url: str | None = None
     segment: str
     region: str | None = None
     lifecycle_status: str
@@ -2563,15 +2588,51 @@ class AiForecastRequest(BaseModel):
 
 class AiForecastPointRead(BaseModel):
     month: str
-    commercial_value: float
-    health: int
-    open_opportunities: int
+    baseline_revenue: float = 0
+    weighted_opportunity: float = 0
+    growth_adjustment: float = 0
+    risk_adjustment: float = 0
+    forecast_revenue: float = 0
+    commercial_value: float = 0
+    health: int = 0
+    open_opportunities: int = 0
+
+
+class AiForecastTotalsRead(BaseModel):
+    account_count: int = 0
+    active_sow_count: int = 0
+    open_opportunities: int = 0
+    at_risk_accounts: int = 0
+    contracted_baseline: float = 0
+    baseline_revenue: float = 0
+    pipeline_value: float = 0
+    weighted_opportunity: float = 0
+    growth_adjustment: float = 0
+    risk_adjustment: float = 0
+    forecast_revenue: float = 0
+
+
+class AiForecastWaterfallItemRead(BaseModel):
+    label: str
+    value: float
+    kind: Literal["baseline", "opportunity", "growth", "risk", "forecast"]
 
 
 class AiForecastResponse(BaseModel):
     title: str
     summary: str
     points: list[AiForecastPointRead]
+    months: int = 6
+    scope: Literal["account", "portfolio", "empty"] = "portfolio"
+    forecast_type: Literal["monthly_revenue"] = "monthly_revenue"
+    confidence: Literal["high", "medium", "low", "not_available"] = "low"
+    trend_label: Literal["positive", "stable", "declining", "insufficient_data"] = "stable"
+    totals: AiForecastTotalsRead = Field(default_factory=AiForecastTotalsRead)
+    waterfall: list[AiForecastWaterfallItemRead] = Field(default_factory=list)
+    basis: list[str] = Field(default_factory=list)
+    assumptions: list[str] = Field(default_factory=list)
+    missing_data: list[str] = Field(default_factory=list)
+    recommended_actions: list[str] = Field(default_factory=list)
     highlights: list[str] = Field(default_factory=list)
     citations: list[dict[str, Any]] = Field(default_factory=list)
     disclaimer: str
@@ -2758,6 +2819,7 @@ class StakeholderRead(BaseModel):
     company: str | None = None
     email: EmailStr | None = None
     phone: str | None = None
+    linkedin_url: str | None = None
     role: str
     influence: str
     relationship_strength: str
@@ -2855,6 +2917,7 @@ class StakeholderOrgChartNodeRead(BaseModel):
     id: str
     name: str
     title: str | None = None
+    linkedin_url: str | None = None
     role: str | None = None
     influence_level: str | None = None
     relationship_strength: str | None = None
@@ -2883,6 +2946,7 @@ class StakeholderCreateRequest(BaseModel):
     company: str | None = None
     email: EmailStr | None = None
     phone: str | None = None
+    linkedin_url: str | None = None
     role: StakeholderRole
     influence: StakeholderInfluence = "medium"
     relationship_strength: StakeholderRelationshipStrength = "unknown"
@@ -2908,6 +2972,11 @@ class StakeholderCreateRequest(BaseModel):
     def phone_is_valid(cls, value: str | None) -> str | None:
         return validate_phone(value)
 
+    @field_validator("linkedin_url")
+    @classmethod
+    def linkedin_url_is_valid(cls, value: str | None) -> str | None:
+        return validate_linkedin_url(value)
+
     @field_validator("role")
     @classmethod
     def role_is_valid(cls, value: str) -> str:
@@ -2932,6 +3001,7 @@ class StakeholderUpdateRequest(BaseModel):
     company: str | None = None
     email: EmailStr | None = None
     phone: str | None = None
+    linkedin_url: str | None = None
     role: StakeholderRole | None = None
     influence: StakeholderInfluence | None = None
     relationship_strength: StakeholderRelationshipStrength | None = None
@@ -2956,6 +3026,11 @@ class StakeholderUpdateRequest(BaseModel):
     @classmethod
     def phone_is_valid(cls, value: str | None) -> str | None:
         return validate_phone(value)
+
+    @field_validator("linkedin_url")
+    @classmethod
+    def linkedin_url_is_valid(cls, value: str | None) -> str | None:
+        return validate_linkedin_url(value)
 
     @field_validator("role")
     @classmethod
@@ -4723,6 +4798,7 @@ class OpportunityActionItemCreateRequest(BaseModel):
     status: OpportunityActionItemStatus = "open"
     priority: EscalationPriority = "medium"
     notes: str | None = None
+    create_task: bool = True
 
     @field_validator("title")
     @classmethod
@@ -4756,6 +4832,7 @@ class OpportunityActionItemUpdateRequest(BaseModel):
     status: OpportunityActionItemStatus | None = None
     priority: EscalationPriority | None = None
     notes: str | None = None
+    create_task: bool | None = None
 
     @field_validator("title")
     @classmethod
@@ -5501,9 +5578,12 @@ class IntegrationConnectionRead(BaseModel):
     updated_at: datetime
 
 
+MeetingCaptureProvider = Literal["fathom", "fireflies"]
+
+
 class UserFathomConnectionRead(BaseModel):
     id: str | None = None
-    provider: str = "fathom"
+    provider: MeetingCaptureProvider = "fathom"
     enabled: bool = False
     status: str = "configuration_required"
     auth_type: str = "api_key"
@@ -5517,13 +5597,36 @@ class UserFathomConnectionRead(BaseModel):
 
 class UserFathomConnectionUpdateRequest(BaseModel):
     enabled: bool = True
-    api_key: str | None = Field(default=None, description="Personal Fathom API key. Existing key is preserved when omitted.")
+    api_key: str | None = Field(default=None, description="Personal meeting provider API key. Existing key is preserved when omitted.")
+    clear_api_key: bool = Field(default=False, description="Remove the stored personal meeting provider API key.")
     settings_json: dict[str, Any] | None = None
 
     @field_validator("api_key")
     @classmethod
     def api_key_is_valid(cls, value: str | None) -> str | None:
-        return optional_text(value, "Fathom API key", max_length=1000)
+        return optional_text(value, "Meeting provider API key", max_length=1000)
+
+
+class MeetingProviderResolveRequest(BaseModel):
+    identifier: str = Field(description="Meeting provider recording/transcript ID or share URL.")
+    account_id: str | None = None
+    engagement_id: str | None = None
+    linked_object_type: str | None = None
+    linked_object_id: str | None = None
+
+    @field_validator("identifier")
+    @classmethod
+    def identifier_is_valid(cls, value: str) -> str:
+        return validate_short_text(value, "Meeting identifier", 1000)
+
+    @field_validator("linked_object_type", "linked_object_id")
+    @classmethod
+    def linked_object_field_is_valid(cls, value: str | None) -> str | None:
+        return optional_text(value, "Meeting link field", max_length=255)
+
+
+FathomMeetingResolveRequest = MeetingProviderResolveRequest
+FirefliesMeetingResolveRequest = MeetingProviderResolveRequest
 
 
 class MeetingArtifactRead(BaseModel):
@@ -5559,7 +5662,7 @@ class MeetingArtifactPageRead(BaseModel):
 
 
 class MeetingArtifactCreateRequest(BaseModel):
-    provider: Literal["fathom"] = "fathom"
+    provider: MeetingCaptureProvider = "fathom"
     title: str | None = None
     meeting_url: str | None = None
     summary: str | None = None
@@ -6776,6 +6879,10 @@ NotificationMode = Literal["in_app", "in_app_email", "off"]
 DigestCadence = Literal["immediate", "daily", "weekly", "monthly"]
 NotificationChannel = Literal["in_app", "email"]
 NotificationPriority = Literal["low", "medium", "high", "critical"]
+NotificationTimingMode = Literal["immediate", "before_due", "after_pending", "scheduled"]
+NotificationTimingUnit = Literal["business_days", "calendar_days", "weeks", "months"]
+NotificationLeadDirection = Literal["before", "after"]
+NotificationPriority = Literal["low", "medium", "high", "critical"]
 SlaItemType = Literal["signal", "task", "kyc", "escalation"]
 SlaState = Literal["escalated", "resolved"]
 ScheduleCadence = Literal["daily", "weekly", "monthly"]
@@ -6819,10 +6926,28 @@ class NotificationTriggerConfigRead(BaseModel):
     trigger: str
     label: str
     description: str | None = None
+    workflow: str
+    priority: str
+    recipient_policy: str
+    action_label: str | None = None
     default_mode: str
     default_digest_cadence: str
     supported_channels: list[str] = Field(default_factory=list)
     mandatory: bool
+    timing_mode: str
+    timing_unit: str
+    lead_time_value: int | None = None
+    lead_time_direction: str | None = None
+    pending_threshold_value: int | None = None
+    repeat_enabled: bool
+    repeat_every_value: int | None = None
+    repeat_limit: int | None = None
+    escalation_enabled: bool
+    escalation_after_value: int | None = None
+    escalation_recipient_policy: str | None = None
+    quiet_hours_start: str | None = None
+    quiet_hours_end: str | None = None
+    template_json: dict[str, Any] = Field(default_factory=dict)
     is_active: bool
     created_at: datetime
     updated_at: datetime
@@ -6832,10 +6957,28 @@ class NotificationTriggerConfigRequest(BaseModel):
     trigger: str
     label: str
     description: str | None = None
+    workflow: str = "general"
+    priority: NotificationPriority = "medium"
+    recipient_policy: str = "explicit"
+    action_label: str | None = None
     default_mode: NotificationMode = "in_app"
     default_digest_cadence: DigestCadence = "daily"
     supported_channels: list[NotificationChannel] = Field(default_factory=lambda: ["in_app"])
     mandatory: bool = False
+    timing_mode: NotificationTimingMode = "immediate"
+    timing_unit: NotificationTimingUnit = "business_days"
+    lead_time_value: int | None = None
+    lead_time_direction: NotificationLeadDirection | None = None
+    pending_threshold_value: int | None = None
+    repeat_enabled: bool = False
+    repeat_every_value: int | None = None
+    repeat_limit: int | None = None
+    escalation_enabled: bool = False
+    escalation_after_value: int | None = None
+    escalation_recipient_policy: str | None = None
+    quiet_hours_start: str | None = None
+    quiet_hours_end: str | None = None
+    template_json: dict[str, Any] = Field(default_factory=dict)
     is_active: bool = True
 
     @field_validator("trigger")
@@ -6852,6 +6995,35 @@ class NotificationTriggerConfigRequest(BaseModel):
     @classmethod
     def description_is_valid(cls, value: str | None) -> str | None:
         return validate_optional_long_text(value, "Trigger description", 1000)
+
+    @field_validator("workflow", "recipient_policy")
+    @classmethod
+    def slugs_are_valid(cls, value: str) -> str:
+        return validate_slug(value, "Notification configuration")
+
+    @field_validator("action_label")
+    @classmethod
+    def action_label_is_valid(cls, value: str | None) -> str | None:
+        return validate_optional_long_text(value, "Action label", 120)
+
+    @field_validator("lead_time_value", "pending_threshold_value", "repeat_every_value", "repeat_limit", "escalation_after_value")
+    @classmethod
+    def optional_positive_int_is_valid(cls, value: int | None) -> int | None:
+        if value is None:
+            return value
+        return validate_positive_int(value, "Timing value", 365)
+
+    @field_validator("quiet_hours_start", "quiet_hours_end")
+    @classmethod
+    def quiet_hours_are_valid(cls, value: str | None) -> str | None:
+        if value is None or not value.strip():
+            return None
+        if not __import__("re").match(r"^\d{2}:\d{2}$", value.strip()):
+            raise ValueError("Quiet hours must use HH:MM format.")
+        hour, minute = [int(part) for part in value.strip().split(":")]
+        if hour > 23 or minute > 59:
+            raise ValueError("Quiet hours must use a valid 24-hour time.")
+        return value.strip()
 
 
 class NotificationDefaultsRead(BaseModel):
@@ -6915,6 +7087,7 @@ class NotificationRecordRead(BaseModel):
     recipient_name: str
     recipient_email: str | None = None
     trigger: str
+    workflow: str | None = None
     title: str
     body: str
     account_id: str | None = None
@@ -6923,6 +7096,7 @@ class NotificationRecordRead(BaseModel):
     source_record_id: str | None = None
     source_record_route: str | None = None
     priority: str
+    action_label: str | None = None
     channel: str
     delivery_status: str
     delivery_metadata_json: dict[str, Any] = Field(default_factory=dict)
@@ -6930,6 +7104,7 @@ class NotificationRecordRead(BaseModel):
     retry_count: int
     error_message: str | None = None
     read_at: datetime | None = None
+    archived_at: datetime | None = None
     delivered_at: datetime | None = None
     created_at: datetime
 
@@ -6941,6 +7116,98 @@ class NotificationPageRead(BaseModel):
     page_size: int
     pages: int
     unread_count: int
+
+
+class NotificationSummaryRead(BaseModel):
+    unread_count: int
+    total_count: int
+    latest: list[NotificationRecordRead] = Field(default_factory=list)
+
+
+class NotificationTriggerUpdateRequest(BaseModel):
+    label: str | None = None
+    description: str | None = None
+    priority: NotificationPriority | None = None
+    recipient_policy: str | None = None
+    action_label: str | None = None
+    default_mode: NotificationMode | None = None
+    default_digest_cadence: DigestCadence | None = None
+    supported_channels: list[NotificationChannel] | None = None
+    mandatory: bool | None = None
+    timing_mode: NotificationTimingMode | None = None
+    timing_unit: NotificationTimingUnit | None = None
+    lead_time_value: int | None = None
+    lead_time_direction: NotificationLeadDirection | None = None
+    pending_threshold_value: int | None = None
+    repeat_enabled: bool | None = None
+    repeat_every_value: int | None = None
+    repeat_limit: int | None = None
+    escalation_enabled: bool | None = None
+    escalation_after_value: int | None = None
+    escalation_recipient_policy: str | None = None
+    quiet_hours_start: str | None = None
+    quiet_hours_end: str | None = None
+    is_active: bool | None = None
+
+    @field_validator("label")
+    @classmethod
+    def optional_label_is_valid(cls, value: str | None) -> str | None:
+        return validate_short_text(value, "Trigger label", 160) if value is not None else None
+
+    @field_validator("description")
+    @classmethod
+    def optional_description_is_valid(cls, value: str | None) -> str | None:
+        return validate_optional_long_text(value, "Trigger description", 1000)
+
+    @field_validator("recipient_policy", "escalation_recipient_policy")
+    @classmethod
+    def optional_slug_is_valid(cls, value: str | None) -> str | None:
+        return validate_slug(value, "Recipient policy") if value is not None else None
+
+    @field_validator("lead_time_value", "pending_threshold_value", "repeat_every_value", "repeat_limit", "escalation_after_value")
+    @classmethod
+    def optional_timing_value_is_valid(cls, value: int | None) -> int | None:
+        if value is None:
+            return None
+        return validate_positive_int(value, "Timing value", 365)
+
+
+class NotificationTriggerTestRequest(BaseModel):
+    recipient_user_id: str | None = None
+    title: str | None = None
+    body: str | None = None
+
+
+class NotificationSchedulerDryRunRead(BaseModel):
+    evaluated_triggers: int
+    due_triggers: int
+    message: str
+
+
+class ScheduledWorkerRunRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    job_type: str
+    mode: str
+    status: str
+    matched_count: int
+    affected_count: int
+    actor_id: str | None = None
+    actor_name: str
+    error_message: str | None = None
+    metadata_json: dict[str, Any] = Field(default_factory=dict)
+    started_at: datetime
+    finished_at: datetime | None = None
+    created_at: datetime
+
+
+class ScheduledWorkerRunPageRead(BaseModel):
+    items: list[ScheduledWorkerRunRead]
+    total: int
+    page: int
+    page_size: int
+    pages: int
 
 
 class SlaRuleRead(BaseModel):

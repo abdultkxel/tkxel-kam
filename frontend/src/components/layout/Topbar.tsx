@@ -1,4 +1,4 @@
-import { ArrowLeft, LogOut, Menu, Sparkles, UserRound, Video } from 'lucide-react'
+import { ArrowLeft, LogOut, Menu, Sparkles, UserRound } from 'lucide-react'
 import { useLocation, useNavigate } from 'react-router-dom'
 import { AISearchBar } from '@/components/ai/AISearchBar'
 import { NotificationTray } from '@/components/notifications/NotificationTray'
@@ -12,7 +12,6 @@ export function Topbar() {
   const { logout, user } = useAuth()
   const setMobileNavOpen = useUIStore(state => state.setMobileNavOpen)
   const openAI = useUIStore(state => state.openAI)
-  const setMeetingCaptureOpen = useUIStore(state => state.setMeetingCaptureOpen)
   const title = location.pathname.split('/').filter(Boolean)[0] ?? 'dashboard'
   const historyIndex = typeof window !== 'undefined' ? Number(window.history.state?.idx ?? 0) : 0
   const onDashboard = location.pathname === '/' || location.pathname === '/dashboard'
@@ -69,15 +68,6 @@ export function Topbar() {
           </div>
         </div>
         <div className="flex shrink-0 items-center justify-end gap-1 sm:gap-2">
-          <button
-            type="button"
-            className="tk-icon-button"
-            onClick={() => setMeetingCaptureOpen(true)}
-            aria-label="Open meeting capture"
-            title="Meeting capture"
-          >
-            <Video className="h-4 w-4" />
-          </button>
           <button
             type="button"
             className="tk-icon-button bg-brand-blue text-white hover:bg-brand-blue-dark md:hidden"

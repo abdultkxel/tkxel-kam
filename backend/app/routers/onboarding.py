@@ -14,6 +14,7 @@ from app.schemas import (
     OnboardingDraftRejectRequest,
     OnboardingDraftUpdateRequest,
     SourceDocumentExtractionRead,
+    UserRead,
 )
 from app.services.onboarding import OnboardingService
 
@@ -21,6 +22,27 @@ DraftStatusFilter = Literal["ready_for_review", "approved", "rejected", "linked"
 DraftSort = Literal["newest", "oldest", "account_name", "extraction_status"]
 
 router = APIRouter(prefix="/api/onboarding", tags=["Account Onboarding"])
+
+
+@router.get(
+    "/account-managers",
+    response_model=list[UserRead],
+    summary="List account manager assignment candidates",
+    description=(
+        "Returns active Account Manager/KAM users that can be assigned as the primary owner of an onboarding draft. "
+        "Used by manual and upload-based intake before draft approval."
+    ),
+    response_description="Active account managers available for onboarding draft assignment.",
+    responses={
+        401: {"description": "Missing, invalid, or expired bearer token."},
+        403: {"description": "Authenticated user cannot create onboarding drafts."},
+    },
+)
+def list_account_managers(
+    current_user: Annotated[User, Depends(get_current_user)],
+    service: Annotated[OnboardingService, Depends(get_onboarding_service)],
+) -> list[UserRead]:
+    return service.list_account_manager_candidates(current_user)
 
 
 @router.get(
@@ -113,10 +135,19 @@ async def create_draft_from_upload(
     current_user: Annotated[User, Depends(get_current_user)],
     service: Annotated[OnboardingService, Depends(get_onboarding_service)],
     files: Annotated[list[UploadFile], File(description="One or more PDF, DOCX, TXT, or CSV source documents.")],
+    manager_id: Annotated[str | None, Form(description="Optional primary account manager user ID.")] = None,
     manager_name: Annotated[str | None, Form(description="Optional primary account manager display name.")] = None,
     manager_email: Annotated[str | None, Form(description="Optional primary account manager email.")] = None,
+    linkedin_url: Annotated[str | None, Form(description="Optional company LinkedIn profile URL.")] = None,
 ) -> OnboardingDraftRead:
-    return await service.create_draft_from_uploads(files, current_user, manager_name=manager_name, manager_email=manager_email)
+    return await service.create_draft_from_uploads(
+        files,
+        current_user,
+        manager_id=manager_id,
+        manager_name=manager_name,
+        manager_email=manager_email,
+        linkedin_url=linkedin_url,
+    )
 
 
 @router.get(

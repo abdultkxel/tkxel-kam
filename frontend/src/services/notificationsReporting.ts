@@ -13,10 +13,28 @@ export interface NotificationTriggerConfig {
   trigger: string
   label: string
   description?: string | null
+  workflow: string
+  priority: 'low' | 'medium' | 'high' | 'critical'
+  recipient_policy: string
+  action_label?: string | null
   default_mode: 'in_app' | 'in_app_email' | 'off'
   default_digest_cadence: 'immediate' | 'daily' | 'weekly' | 'monthly'
   supported_channels: string[]
   mandatory: boolean
+  timing_mode: 'immediate' | 'before_due' | 'after_pending' | 'scheduled'
+  timing_unit: 'business_days' | 'calendar_days' | 'weeks' | 'months'
+  lead_time_value?: number | null
+  lead_time_direction?: 'before' | 'after' | null
+  pending_threshold_value?: number | null
+  repeat_enabled: boolean
+  repeat_every_value?: number | null
+  repeat_limit?: number | null
+  escalation_enabled: boolean
+  escalation_after_value?: number | null
+  escalation_recipient_policy?: string | null
+  quiet_hours_start?: string | null
+  quiet_hours_end?: string | null
+  template_json?: Record<string, unknown>
   is_active: boolean
 }
 
@@ -33,21 +51,30 @@ export interface NotificationPreference {
 export interface NotificationRecord {
   id: string
   trigger: string
+  workflow?: string | null
   title: string
   body: string
   account_id?: string | null
   account_name_snapshot?: string | null
   source_record_route?: string | null
   priority: string
+  action_label?: string | null
   channel: string
   delivery_status: string
   email_queued: boolean
   read_at?: string | null
+  archived_at?: string | null
   created_at: string
 }
 
 export interface NotificationPage extends Page<NotificationRecord> {
   unread_count: number
+}
+
+export interface NotificationSummary {
+  unread_count: number
+  total_count: number
+  latest: NotificationRecord[]
 }
 
 export interface DashboardWidget {
@@ -182,6 +209,10 @@ export function getNotifications(token: string, params: Record<string, string | 
   return apiRequest<NotificationPage>(`/api/notifications${query(params)}`, { token })
 }
 
+export function getNotificationSummary(token: string) {
+  return apiRequest<NotificationSummary>('/api/notifications/summary', { token })
+}
+
 export function markNotificationRead(token: string, id: string) {
   return apiRequest<NotificationRecord>(`/api/notifications/${id}/read`, { method: 'PATCH', token })
 }
@@ -190,8 +221,16 @@ export function markAllNotificationsRead(token: string) {
   return apiRequest<{ updated: number }>('/api/notifications/read-all', { method: 'PATCH', token })
 }
 
+export function archiveNotification(token: string, id: string) {
+  return apiRequest<NotificationRecord>(`/api/notifications/${id}/archive`, { method: 'PATCH', token })
+}
+
 export function getNotificationPreferences(token: string) {
   return apiRequest<NotificationPreference[]>('/api/users/me/notification-preferences', { token })
+}
+
+export function getNotificationTriggers(token: string) {
+  return apiRequest<{ items: NotificationTriggerConfig[] }>('/api/notifications/triggers', { token })
 }
 
 export function updateNotificationPreferences(token: string, items: Pick<NotificationPreference, 'trigger' | 'mode' | 'digest_cadence'>[]) {
@@ -204,6 +243,26 @@ export function getNotificationDefaults(token: string) {
 
 export function updateNotificationDefaults(token: string, items: Partial<NotificationTriggerConfig>[]) {
   return apiRequest<{ items: NotificationTriggerConfig[] }>('/api/admin/notification-defaults', { method: 'PUT', token, body: JSON.stringify({ items }) })
+}
+
+export function updateNotificationTrigger(token: string, trigger: string, payload: Partial<NotificationTriggerConfig>) {
+  return apiRequest<NotificationTriggerConfig>(`/api/admin/notification-triggers/${trigger}`, { method: 'PATCH', token, body: JSON.stringify(payload) })
+}
+
+export function resetNotificationTrigger(token: string, trigger: string) {
+  return apiRequest<NotificationTriggerConfig>(`/api/admin/notification-triggers/${trigger}/reset-defaults`, { method: 'POST', token })
+}
+
+export function sendTestNotification(token: string, trigger: string) {
+  return apiRequest<NotificationRecord>(`/api/admin/notification-triggers/${trigger}/test`, { method: 'POST', token, body: JSON.stringify({}) })
+}
+
+export function dryRunNotificationScheduler(token: string) {
+  return apiRequest<{ evaluated_triggers: number; due_triggers: number; message: string }>('/api/admin/notification-scheduler/dry-run', { method: 'POST', token })
+}
+
+export function getNotificationSchedulerRuns(token: string, params: Record<string, string | number | undefined> = {}) {
+  return apiRequest<Page<{ id: string; job_type: string; mode: string; status: string; matched_count: number; affected_count: number; actor_name: string; created_at: string }>>(`/api/admin/notification-scheduler/runs${query(params)}`, { token })
 }
 
 export function getSlaRules(token: string) {

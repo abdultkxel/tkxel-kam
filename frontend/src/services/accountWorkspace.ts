@@ -37,6 +37,7 @@ interface ApiAccount {
   name: string
   project_name?: string | null
   company_url?: string | null
+  linkedin_url?: string | null
   segment: string
   region?: string | null
   lifecycle_status: string
@@ -190,6 +191,7 @@ interface ApiOnboardingDraft {
   account_name: string
   project_name?: string | null
   company_url?: string | null
+  linkedin_url?: string | null
   lifecycle_status: string
   segment: string
   region?: string | null
@@ -207,6 +209,23 @@ interface ApiOnboardingDraft {
   created_at: string
   source_documents: ApiSourceDocument[]
   engagement_drafts: ApiDraftEngagement[]
+}
+
+interface ApiUser {
+  id: string
+  email: string
+  full_name: string
+  role: string
+  title?: string | null
+  is_active: boolean
+}
+
+export interface OnboardingAccountManager {
+  id: string
+  email: string
+  name: string
+  role: string
+  title?: string | null
 }
 
 export interface OnboardingDraftView {
@@ -228,6 +247,8 @@ export interface CreateDraftPayload {
   accountName: string
   projectName: string
   companyUrl: string
+  linkedinUrl: string
+  managerId: string
   managerEmail: string
   managerName: string
   fileNames: string[]
@@ -236,6 +257,8 @@ export interface CreateDraftPayload {
 
 export interface CreateDraftFromUploadPayload {
   files: File[]
+  linkedinUrl?: string
+  managerId?: string
   managerEmail?: string
   managerName?: string
 }
@@ -244,6 +267,8 @@ export interface UpdateOnboardingDraftPayload {
   accountName?: string
   projectName?: string
   companyUrl?: string
+  linkedinUrl?: string
+  managerId?: string
   managerEmail?: string
   managerName?: string
   customFieldValues?: Record<string, unknown>
@@ -253,6 +278,7 @@ export interface AccountCsvImportRow {
   account_name?: string
   project_name?: string
   company_url?: string
+  linkedin_url?: string
   industry?: string
   arr?: number
   commercial_value?: number
@@ -464,6 +490,11 @@ export async function listOnboardingDrafts(token: string, params: URLSearchParam
   return { ...page, items: page.items.map(mapDraft) }
 }
 
+export async function listOnboardingAccountManagers(token: string) {
+  const users = await apiRequest<ApiUser[]>('/api/onboarding/account-managers', { token })
+  return users.map(mapOnboardingAccountManager)
+}
+
 export async function createOnboardingDraft(token: string, payload: CreateDraftPayload) {
   return mapDraft(
     await apiRequest<ApiOnboardingDraft>('/api/onboarding/drafts', {
@@ -477,6 +508,8 @@ export async function createOnboardingDraft(token: string, payload: CreateDraftP
 export async function createOnboardingDraftFromUpload(token: string, payload: CreateDraftFromUploadPayload) {
   const body = new FormData()
   payload.files.forEach(file => body.append('files', file))
+  if (payload.linkedinUrl?.trim()) body.append('linkedin_url', normalizeUrl(payload.linkedinUrl.trim()))
+  if (payload.managerId?.trim()) body.append('manager_id', payload.managerId.trim())
   if (payload.managerName?.trim()) body.append('manager_name', payload.managerName.trim())
   if (payload.managerEmail?.trim()) body.append('manager_email', payload.managerEmail.trim())
   return mapDraft(
@@ -493,13 +526,7 @@ export async function updateOnboardingDraft(token: string, draftId: string, payl
     await apiRequest<ApiOnboardingDraft>(`/api/onboarding/drafts/${draftId}`, {
       method: 'PATCH',
       token,
-      body: JSON.stringify({
-        ...(payload.accountName !== undefined ? { account_name: payload.accountName } : {}),
-        ...(payload.projectName !== undefined ? { project_name: payload.projectName } : {}),
-        ...(payload.companyUrl !== undefined ? { company_url: normalizeUrl(payload.companyUrl) } : {}),
-        ...(payload.managerName !== undefined ? { primary_owner_name: payload.managerName } : {}),
-        ...(payload.managerEmail !== undefined ? { primary_owner_email: payload.managerEmail } : {}),
-      }),
+      body: JSON.stringify(buildDraftUpdatePayload(payload)),
     }),
   )
 }
@@ -671,11 +698,13 @@ function buildDraftPayload(payload: CreateDraftPayload) {
     account_name: payload.accountName,
     project_name: payload.projectName,
     company_url: normalizeUrl(payload.companyUrl),
+    linkedin_url: normalizeUrl(payload.linkedinUrl),
     lifecycle_status: 'Draft',
     segment: 'Growth',
     region: 'Global',
     commercial_value: 0,
     currency: 'USD',
+    primary_owner_id: payload.managerId,
     primary_owner_name: payload.managerName,
     primary_owner_email: payload.managerEmail,
     confidence: 82,
@@ -714,6 +743,18 @@ function buildDraftPayload(payload: CreateDraftPayload) {
   }
 }
 
+function buildDraftUpdatePayload(payload: UpdateOnboardingDraftPayload) {
+  const body: Record<string, unknown> = {}
+  setIfDefined(body, 'account_name', payload.accountName)
+  setIfDefined(body, 'project_name', payload.projectName)
+  setIfDefined(body, 'company_url', payload.companyUrl ? normalizeUrl(payload.companyUrl) : payload.companyUrl)
+  setIfDefined(body, 'linkedin_url', payload.linkedinUrl ? normalizeUrl(payload.linkedinUrl) : payload.linkedinUrl)
+  setIfDefined(body, 'primary_owner_id', payload.managerId)
+  setIfDefined(body, 'primary_owner_name', payload.managerName)
+  setIfDefined(body, 'primary_owner_email', payload.managerEmail)
+  return body
+}
+
 function buildEngagementPayload(payload: EngagementCreatePayload | EngagementUpdatePayload) {
   const body: Record<string, unknown> = {}
   const resourceDependency = payload.resourceDependencyNotes !== undefined ? payload.resourceDependencyNotes : payload.resourceDependency
@@ -747,12 +788,23 @@ function setIfDefined(target: Record<string, unknown>, key: string, value: unkno
   if (value !== undefined) target[key] = value
 }
 
+function mapOnboardingAccountManager(user: ApiUser): OnboardingAccountManager {
+  return {
+    id: user.id,
+    email: user.email,
+    name: user.full_name,
+    role: user.role,
+    title: user.title ?? null,
+  }
+}
+
 function mapDraft(draft: ApiOnboardingDraft): OnboardingDraftView {
   const account = mapApiAccount({
     id: draft.approved_account_id ?? draft.id,
     name: draft.account_name,
     project_name: draft.project_name,
     company_url: draft.company_url,
+    linkedin_url: draft.linkedin_url,
     segment: draft.segment,
     region: draft.region,
     lifecycle_status: draft.lifecycle_status,
@@ -774,6 +826,9 @@ function mapDraft(draft: ApiOnboardingDraft): OnboardingDraftView {
     owners: [],
     governance_completeness: {},
   })
+  account.recordType = 'onboarding_draft'
+  account.draftStatus = draft.status
+  account.detailPath = `/accounts/onboarding?draft=${draft.id}`
   const documents = draft.source_documents.map(mapSourceDocument)
   return {
     id: draft.id,
@@ -799,6 +854,7 @@ function mapApiAccount(account: ApiAccount): Account {
     name: account.name,
     projectName: account.project_name ?? undefined,
     companyUrl: account.company_url ?? undefined,
+    linkedinUrl: account.linkedin_url ?? undefined,
     segment,
     tags: [account.segment, account.region].filter(Boolean) as string[],
     ownerId: owner?.user_id ?? owner?.id ?? '',

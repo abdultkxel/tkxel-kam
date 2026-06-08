@@ -27,6 +27,7 @@ export interface Stakeholder {
   company?: string | null
   email?: string | null
   phone?: string | null
+  linkedinUrl?: string | null
   role: StakeholderRole | CustomStakeholderValue
   influence: StakeholderInfluence | CustomStakeholderValue
   relationshipStrength: StakeholderRelationshipStrength | CustomStakeholderValue
@@ -65,6 +66,7 @@ export interface StakeholderCreatePayload {
   company?: string | null
   email?: string | null
   phone?: string | null
+  linkedinUrl?: string | null
   role: StakeholderRole | CustomStakeholderValue
   influence?: StakeholderInfluence | CustomStakeholderValue
   relationshipStrength?: StakeholderRelationshipStrength | CustomStakeholderValue
@@ -124,6 +126,7 @@ export interface StakeholderOrgChartNode {
   id: string
   name: string
   title?: string | null
+  linkedinUrl?: string | null
   role?: string | null
   influenceLevel?: string | null
   relationshipStrength?: string | null

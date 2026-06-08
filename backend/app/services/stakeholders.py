@@ -108,6 +108,7 @@ class StakeholderService:
             company=payload.company,
             email=str(payload.email) if payload.email else None,
             phone=payload.phone,
+            linkedin_url=payload.linkedin_url,
             role=payload.role,
             influence=payload.influence,
             relationship_strength=payload.relationship_strength,
@@ -192,6 +193,7 @@ class StakeholderService:
                     id=UNMAPPED_STAKEHOLDERS_NODE_ID,
                     name="Unmapped Stakeholders",
                     title=None,
+                    linkedin_url=None,
                     role="group",
                     influence_level=None,
                     relationship_strength=None,
@@ -419,7 +421,7 @@ class StakeholderService:
         read = StakeholderRead.model_validate(stakeholder)
         if not redacted:
             return read.model_copy(update={"sensitive_fields_redacted": False})
-        return read.model_copy(update={"email": None, "phone": None, "notes": None, "sensitive_fields_redacted": True})
+        return read.model_copy(update={"email": None, "phone": None, "linkedin_url": None, "notes": None, "sensitive_fields_redacted": True})
 
     def _interaction_read(self, interaction: StakeholderInteraction, user: User, account: Account) -> StakeholderInteractionRead:
         redacted = interaction.is_sensitive and not self._can_view_sensitive_fields(user, account)
@@ -447,6 +449,7 @@ class StakeholderService:
             id=stakeholder.id,
             name="Sensitive Stakeholder" if redacted else stakeholder.name,
             title=None if redacted else stakeholder.title,
+            linkedin_url=None if redacted else stakeholder.linkedin_url,
             role=stakeholder.role,
             influence_level=stakeholder.influence,
             relationship_strength=stakeholder.relationship_strength,
@@ -527,6 +530,7 @@ class StakeholderService:
             "name": stakeholder.name,
             "title": stakeholder.title,
             "company": stakeholder.company,
+            "linkedin_url": stakeholder.linkedin_url,
             "role": stakeholder.role,
             "influence": stakeholder.influence,
             "relationship_strength": stakeholder.relationship_strength,

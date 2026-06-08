@@ -1,7 +1,7 @@
 from datetime import datetime
 from typing import Annotated, Literal
 
-from fastapi import APIRouter, Depends, status
+from fastapi import APIRouter, Depends, Query, status
 
 from app.dependencies import get_current_user, get_opportunity_service
 from app.models import User
@@ -62,6 +62,9 @@ def list_opportunities(
     min_value: float | None = None,
     max_value: float | None = None,
     include_archived: bool = False,
+    open_only: Annotated[bool, Query(description="When true, returns only active opportunities whose stage is not Won or Lost.")] = False,
+    stalled: Annotated[bool, Query(description="When true, returns only active open opportunities with no update inside the stalled-after window.")] = False,
+    stalled_after_days: Annotated[int, Query(ge=1, le=365, description="Number of days without an update before an opportunity is considered stalled.")] = 90,
     sort: OpportunitySort = "target_date",
     direction: Direction = "asc",
     page: int = 1,
@@ -83,6 +86,9 @@ def list_opportunities(
         min_value=min_value,
         max_value=max_value,
         include_archived=include_archived,
+        open_only=open_only,
+        stalled=stalled,
+        stalled_after_days=stalled_after_days,
         sort=sort,
         direction=direction,
         page=page,
@@ -202,7 +208,7 @@ def add_opportunity_decision(opportunity_id: str, payload: OpportunityDecisionCr
     "/opportunities/{opportunity_id}/action-items",
     response_model=OpportunityActionItemPageRead,
     summary="List opportunity action items",
-    description="Paginated opportunity-local action items that are future-ready for conversion to first-class Tasks.",
+    description="Paginated opportunity action items with owner, due date, status, and optional linked first-class Task references.",
 )
 def list_opportunity_action_items(opportunity_id: str, current_user: Annotated[User, Depends(get_current_user)], service: Annotated[OpportunityService, Depends(get_opportunity_service)], page: int = 1, page_size: int = 10) -> OpportunityActionItemPageRead:
     return service.list_action_items(opportunity_id, current_user, page, page_size)
@@ -213,7 +219,7 @@ def list_opportunity_action_items(opportunity_id: str, current_user: Annotated[U
     response_model=OpportunityActionItemRead,
     status_code=status.HTTP_201_CREATED,
     summary="Add opportunity action item",
-    description="Adds an opportunity-local owner/due-date-backed action item without creating a first-class Task.",
+    description="Adds an opportunity action item and can create a linked first-class Task when requested.",
 )
 def add_opportunity_action_item(opportunity_id: str, payload: OpportunityActionItemCreateRequest, current_user: Annotated[User, Depends(get_current_user)], service: Annotated[OpportunityService, Depends(get_opportunity_service)]) -> OpportunityActionItemRead:
     return service.add_action_item(opportunity_id, payload, current_user)
@@ -223,7 +229,7 @@ def add_opportunity_action_item(opportunity_id: str, payload: OpportunityActionI
     "/opportunity-action-items/{action_item_id}",
     response_model=OpportunityActionItemRead,
     summary="Update opportunity action item",
-    description="Updates an opportunity-local action item title, owner, due date, priority, notes, or completion status.",
+    description="Updates an opportunity action item title, owner, due date, priority, notes, completion status, or linked Task request.",
 )
 def update_opportunity_action_item(action_item_id: str, payload: OpportunityActionItemUpdateRequest, current_user: Annotated[User, Depends(get_current_user)], service: Annotated[OpportunityService, Depends(get_opportunity_service)]) -> OpportunityActionItemRead:
     return service.update_action_item(action_item_id, payload, current_user)

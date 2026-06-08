@@ -13,7 +13,7 @@ import { Column, SortableTable } from '@/components/ui/SortableTable'
 import { useAuth } from '@/contexts/AuthContext'
 import { users } from '@/data/mock'
 import { useRole } from '@/hooks/useRole'
-import { listAccounts } from '@/services/accountWorkspace'
+import { listAccounts, listOnboardingDrafts } from '@/services/accountWorkspace'
 import { useAccountStore } from '@/stores/accountStore'
 import { useTimelineStore } from '@/stores/timelineStore'
 import { Account } from '@/types/account'
@@ -76,7 +76,8 @@ export function Accounts() {
   const sort: AccountSortOption = accountSortOptions.includes(requestedSort as AccountSortOption) ? requestedSort as AccountSortOption : 'name'
   const direction: SortDirection = params.get('direction') === 'desc' ? 'desc' : 'asc'
   const page = Number(params.get('page') ?? '1')
-  const privileged = user.role === 'leadership' || user.role === 'admin' || user.role === 'super_admin'
+  const privileged = user.role === 'leadership' || user.role === 'kam_head' || user.role === 'admin' || user.role === 'super_admin'
+  const canSeeDraftAccounts = user.role === 'kam_head' || user.role === 'admin' || user.role === 'super_admin'
   const tableSort = { column: apiSortToTableColumn[sort] ?? 'name', direction }
 
   function setFilter(key: string, value: string) {
@@ -222,11 +223,16 @@ export function Accounts() {
     let active = true
     setLoading(true)
     setError('')
-    listAccounts(token, query)
-      .then(result => {
+    const draftQuery = buildDraftAccountQuery({ search, stage, risk, segment: segments[0] })
+    const draftsPromise = canSeeDraftAccounts && draftQuery ? listOnboardingDrafts(token, draftQuery) : Promise.resolve({ items: [], total: 0, page: 1, page_size: 25, pages: 0 })
+
+    Promise.all([listAccounts(token, query), draftsPromise])
+      .then(([result, draftResult]) => {
         if (!active) return
-        setAccounts(result.items)
-        setPagination({ total: result.total, page: result.page, pageSize: result.page_size, pages: result.pages })
+        const draftAccounts = page <= 1 ? draftResult.items.map(draft => draft.accountDraft) : []
+        setAccounts([...draftAccounts, ...result.items])
+        const total = result.total + (canSeeDraftAccounts ? draftResult.total : 0)
+        setPagination({ total, page: result.page, pageSize: result.page_size, pages: Math.max(result.pages, pageCount(total, result.page_size)) })
         setSelectedIds([])
       })
       .catch(err => {
@@ -241,7 +247,7 @@ export function Accounts() {
     return () => {
       active = false
     }
-  }, [direction, page, risk, search, segmentsKey, setAccounts, sort, stage, token])
+  }, [canSeeDraftAccounts, direction, page, risk, search, segmentsKey, setAccounts, sort, stage, token])
 
   return (
     <div>
@@ -420,7 +426,7 @@ export function Accounts() {
           defaultSort={{ column: 'name', direction: 'asc' }}
           sort={tableSort}
           onSortChange={handleTableSort}
-          onRowClick={account => navigate(`/accounts/${account.id}`)}
+          onRowClick={account => navigate(account.detailPath ?? `/accounts/${account.id}`)}
           selection={privileged ? { selectedIds, onToggle: toggleSelected, onToggleAll: toggleAll } : undefined}
         />
       )}
@@ -473,6 +479,19 @@ export function Accounts() {
       ) : null}
     </div>
   )
+}
+
+function buildDraftAccountQuery({ search, stage, risk, segment }: { search: string; stage: string; risk: string; segment?: string }) {
+  if (stage && stage !== 'Draft') return null
+  if (risk && risk !== 'warning') return null
+  const query = new URLSearchParams({ status: 'ready_for_review', page: '1', page_size: '25' })
+  if (search) query.set('search', search)
+  if (segment) query.set('segment', segment)
+  return query
+}
+
+function pageCount(total: number, pageSize: number) {
+  return total ? Math.ceil(total / pageSize) : 0
 }
 
 function AccountImportDialog() {

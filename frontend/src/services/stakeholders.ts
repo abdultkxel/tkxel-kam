@@ -22,6 +22,7 @@ interface ApiStakeholder {
   company?: string | null
   email?: string | null
   phone?: string | null
+  linkedin_url?: string | null
   role: string
   influence: string
   relationship_strength: string
@@ -82,6 +83,7 @@ interface ApiStakeholderOrgChartNode {
   id: string
   name: string
   title?: string | null
+  linkedin_url?: string | null
   role?: string | null
   influence_level?: string | null
   relationship_strength?: string | null
@@ -167,6 +169,7 @@ function buildStakeholderPayload(payload: StakeholderCreatePayload | Stakeholder
   setIfDefined(body, 'company', payload.company)
   setIfDefined(body, 'email', payload.email)
   setIfDefined(body, 'phone', payload.phone)
+  setIfDefined(body, 'linkedin_url', payload.linkedinUrl)
   setIfDefined(body, 'role', payload.role)
   setIfDefined(body, 'influence', payload.influence)
   setIfDefined(body, 'relationship_strength', payload.relationshipStrength)
@@ -201,6 +204,7 @@ function mapStakeholder(stakeholder: ApiStakeholder): Stakeholder {
     company: stakeholder.company,
     email: stakeholder.email,
     phone: stakeholder.phone,
+    linkedinUrl: stakeholder.linkedin_url,
     role: stakeholder.role,
     influence: stakeholder.influence,
     relationshipStrength: stakeholder.relationship_strength,
@@ -260,6 +264,7 @@ function mapOrgChart(chart: ApiStakeholderOrgChart): StakeholderOrgChart {
       id: node.id,
       name: node.name,
       title: node.title,
+      linkedinUrl: node.linkedin_url,
       role: node.role,
       influenceLevel: node.influence_level,
       relationshipStrength: node.relationship_strength,

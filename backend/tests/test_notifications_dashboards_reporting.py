@@ -9,7 +9,7 @@ from sqlalchemy.pool import StaticPool
 
 from app.database import Base, get_db
 from app.main import app
-from app.models import Account, AccountOwner, CustomFieldDefinition, NotificationRecord, Signal, SlaEscalatedItem, Task
+from app.models import Account, AccountChangeAlert, AccountOwner, CustomFieldDefinition, Engagement, GovernanceEvent, NotificationRecord, Signal, SlaEscalatedItem, Task
 from app.services.seed import seed_default_data
 
 
@@ -80,6 +80,54 @@ def create_owned_account(db_session: Session, owner: dict, account_id: str = "nd
     )
     db_session.commit()
     return account
+
+
+def create_account_change_alert(db_session: Session, account: Account, owner: dict) -> AccountChangeAlert:
+    alert = AccountChangeAlert(
+        account_id=account.id,
+        alert_type="health",
+        reason_code="health_drop",
+        affected_metric="health_overall",
+        previous_value_json={"value": 72},
+        new_value_json={"value": account.health_overall},
+        change_magnitude=30,
+        severity="critical",
+        status="open",
+        owner_id=owner["id"],
+        owner_name=owner["full_name"],
+        recommended_action="Review account recovery plan.",
+        source_evidence_json=[{"label": "Health score", "value": account.health_overall}],
+        deduplication_key=f"dashboard-alert-{account.id}",
+        created_by_id=owner["id"],
+    )
+    db_session.add(alert)
+    db_session.commit()
+    return alert
+
+
+def create_engagement_health_item(db_session: Session, account: Account, owner: dict, *, ops_lead: dict | None = None) -> Engagement:
+    now = datetime.now(timezone.utc)
+    engagement = Engagement(
+        account_id=account.id,
+        name="Delivery Recovery SOW",
+        owner_id=owner["id"],
+        owner_name=owner["full_name"],
+        ops_lead_id=ops_lead["id"] if ops_lead else None,
+        ops_lead_name=ops_lead["full_name"] if ops_lead else None,
+        service_lines=["Engineering"],
+        value=150000,
+        currency="USD",
+        delivery_health=48,
+        health_status="critical",
+        renewal_risk="high",
+        start_date=now - timedelta(days=90),
+        end_date=now + timedelta(days=120),
+        renewal_date=now + timedelta(days=60),
+        created_by_id=owner["id"],
+    )
+    db_session.add(engagement)
+    db_session.commit()
+    return engagement
 
 
 def test_notification_preferences_validation_pagination_and_read(client: TestClient, db_session: Session) -> None:
@@ -159,17 +207,50 @@ def test_sla_evaluation_creates_deduplicated_escalation_notification(client: Tes
 def test_dashboard_digest_and_report_workflows(client: TestClient, db_session: Session) -> None:
     admin_headers = auth_headers(client)
     owner = seeded_user(client, admin_headers, "account_manager")
-    create_owned_account(db_session, owner, "dashboard-report-account")
+    admin_user = client.get("/api/auth/me", headers=admin_headers).json()
+    account = create_owned_account(db_session, owner, "dashboard-report-account")
+    db_session.add(
+        NotificationRecord(
+            recipient_user_id=admin_user["id"],
+            recipient_name=admin_user["full_name"],
+            recipient_email=admin_user["email"],
+            trigger="admin_system_alert",
+            title="Dashboard delivery failed",
+            body="The dashboard alert notification failed.",
+            account_id=account.id,
+            account_name_snapshot=account.name,
+            source_record_type="account",
+            source_record_id=account.id,
+            source_record_route=f"/accounts/{account.id}",
+            priority="critical",
+            delivery_status="failed",
+            deduplication_key="dashboard-admin-system-alert",
+        )
+    )
+    db_session.commit()
 
     current_dashboard = client.get("/api/dashboards/me", headers=admin_headers)
     assert current_dashboard.status_code == 200
     assert current_dashboard.json()["dashboard"] == "kam_head_portfolio"
     assert current_dashboard.json()["role_group"] == "admin"
+    admin_keys = [item["key"] for item in current_dashboard.json()["widgets"]]
+    assert admin_keys[:7] == ["summary", "forecast_chart", "account_portfolio", "high_risk_accounts", "signals", "escalations", "governance_calendar"]
+    assert "governance" not in admin_keys
+    assert "governance_cadence" not in admin_keys
+    assert "admin_system" in admin_keys
+    admin_widget = next(item for item in current_dashboard.json()["widgets"] if item["key"] == "admin_system")
+    assert admin_widget["value"]["failed_notifications"] == 1
+    assert "dashboard_rules" not in admin_widget["value"]
+    assert admin_widget["items"][0]["source_type"] == "notification_record"
+    assert admin_widget["items"][0]["title"] == "Dashboard delivery failed"
+    assert admin_widget["items"][0]["account_name"] == account.name
 
     dashboard = client.get("/api/dashboards/am-home", headers=admin_headers)
     assert dashboard.status_code == 200
     widget_keys = {item["key"] for item in dashboard.json()["widgets"]}
-    assert "ai_task_summary" in widget_keys
+    assert "tasks" in widget_keys
+    assert "ai_task_summary" not in widget_keys
+    assert "forecast_chart" in widget_keys
 
     refresh = client.post("/api/dashboards/am-home/task-summary/refresh", headers=admin_headers)
     assert refresh.status_code == 200
@@ -206,15 +287,107 @@ def test_dashboard_digest_and_report_workflows(client: TestClient, db_session: S
 def test_role_based_dashboard_profiles_and_reduced_direct_endpoints(client: TestClient, db_session: Session) -> None:
     admin_headers = auth_headers(client)
     owner = seeded_user(client, admin_headers, "account_manager")
-    create_owned_account(db_session, owner, "role-dashboard-account")
+    account = create_owned_account(db_session, owner, "role-dashboard-account")
+    alert = create_account_change_alert(db_session, account, owner)
+    now = datetime.now(timezone.utc)
+    db_session.add_all(
+        [
+            Task(
+                account_id=account.id,
+                title="Open account follow-up",
+                owner_id=owner["id"],
+                owner_name=owner["full_name"],
+                due_at=now + timedelta(days=2),
+                status="open",
+                priority="medium",
+                created_by_id=owner["id"],
+            ),
+            Task(
+                account_id=account.id,
+                title="Overdue blocker",
+                owner_id=owner["id"],
+                owner_name=owner["full_name"],
+                due_at=now - timedelta(days=1),
+                status="in_progress",
+                priority="critical",
+                created_by_id=owner["id"],
+            ),
+            Signal(
+                account_id=account.id,
+                signal_type="weak_metric",
+                severity="critical",
+                status="new",
+                owner_id=owner["id"],
+                owner_name=owner["full_name"],
+                title="Critical relationship signal",
+                detail="Relationship health dropped below threshold.",
+                due_at=now + timedelta(days=1),
+                created_at=now,
+                updated_at=now,
+            ),
+            GovernanceEvent(
+                account_id=account.id,
+                owner_id=owner["id"],
+                owner_name=owner["full_name"],
+                governance_type="QBR",
+                deduplication_key="role-dashboard-qbr",
+                scheduled_at=now + timedelta(days=5),
+                status="scheduled",
+                created_by_id=owner["id"],
+                created_by_name=owner["full_name"],
+            ),
+        ]
+    )
+    supporting_account = create_owned_account(db_session, owner, "supporting-workload-account")
+    for assignment in supporting_account.owners:
+        assignment.ownership_role = "supporting_am"
+        assignment.is_primary = False
+    db_session.commit()
+    removed_dashboard_widgets = {"stale_kyc", "renewal_focus", "governance", "governance_cadence"}
+
+    admin_dashboard = client.get("/api/dashboards/me", headers=admin_headers)
+    assert admin_dashboard.status_code == 200
+    admin_keys = {item["key"] for item in admin_dashboard.json()["widgets"]}
+    assert removed_dashboard_widgets.isdisjoint(admin_keys)
 
     owner_headers = auth_headers(client, owner["email"], "User@12345")
-    am_dashboard = client.get("/api/dashboards/me", headers=owner_headers)
+    am_dashboard = client.get("/api/dashboards/me", headers=owner_headers, params={"page_size": 50})
     assert am_dashboard.status_code == 200
     assert am_dashboard.json()["dashboard"] == "am_home"
     assert am_dashboard.json()["role_group"] == "account_manager"
     assert "leadership" not in {item["key"] for item in am_dashboard.json()["widgets"]}
-    assert "ai_task_summary" in {item["key"] for item in am_dashboard.json()["widgets"]}
+    am_keys = [item["key"] for item in am_dashboard.json()["widgets"]]
+    assert am_keys == ["summary", "account_portfolio", "signals", "tasks", "opportunities", "forecast_chart", "governance_calendar"]
+    assert "ai_task_summary" not in am_keys
+    assert removed_dashboard_widgets.isdisjoint(am_keys)
+    assert "forecast_chart" in am_keys
+    assert "governance_calendar" in am_keys
+    summary = next(item for item in am_dashboard.json()["widgets"] if item["key"] == "summary")
+    assert [tile["label"] for tile in summary["metadata"]["tiles"]] == ["My Accounts", "At risk", "Signals / Critical tasks", "Open tasks"]
+    assert summary["metadata"]["tiles"][0]["route"] == "/accounts"
+    signals = next(item for item in am_dashboard.json()["widgets"] if item["key"] == "signals")
+    signal_titles = {item["title"] for item in signals["items"]}
+    assert {"Critical relationship signal", "Overdue blocker"}.issubset(signal_titles)
+    assert signals["metadata"]["source_counts"]["critical_tasks"] >= 1
+    assert signals["metadata"]["source_counts"]["signals"] >= 1
+    tasks = next(item for item in am_dashboard.json()["widgets"] if item["key"] == "tasks")
+    assert tasks["value"]["open"] == 1
+    assert tasks["value"]["in_progress"] == 1
+    assert tasks["value"]["overdue"] == 1
+    assert tasks["value"]["due_this_week"] == 1
+    opportunities = next(item for item in am_dashboard.json()["widgets"] if item["key"] == "opportunities")
+    assert opportunities["title"] == "Opportunities & pipeline"
+    assert opportunities["metadata"]["masked"] is False
+    assert opportunities["value"]["stalled"] == 0
+    governance_calendar = next(item for item in am_dashboard.json()["widgets"] if item["key"] == "governance_calendar")
+    assert governance_calendar["items"][0]["route"] == f"/accounts/{account.id}?tab=governance"
+    am_forecast = next(item for item in am_dashboard.json()["widgets"] if item["key"] == "forecast_chart")
+    assert am_forecast["title"] == "6-Month Revenue Forecast"
+    assert am_forecast["data_scope"] == "assigned_accounts"
+    assert am_forecast["metadata"]["chart_type"] == "line"
+    assert am_forecast["metadata"]["masked"] is False
+    assert len(am_forecast["value"]["points"]) == 6
+    assert isinstance(am_forecast["value"]["points"][0]["forecast_revenue"], (int, float))
 
     kam_head = seeded_user(client, admin_headers, "kam_head")
     kam_headers = auth_headers(client, kam_head["email"], "User@12345")
@@ -222,12 +395,28 @@ def test_role_based_dashboard_profiles_and_reduced_direct_endpoints(client: Test
     assert kam_dashboard.status_code == 200
     assert kam_dashboard.json()["dashboard"] == "kam_head_portfolio"
     assert kam_dashboard.json()["role_group"] == "kam_head"
+    kam_keys = [item["key"] for item in kam_dashboard.json()["widgets"]]
+    assert removed_dashboard_widgets.isdisjoint(kam_keys)
+    assert "forecast_chart" in kam_keys
+    assert "governance_calendar" in kam_keys
+    kam_forecast = next(item for item in kam_dashboard.json()["widgets"] if item["key"] == "forecast_chart")
+    assert kam_forecast["data_scope"] == "portfolio"
+    assert kam_forecast["metadata"]["masked"] is False
+    assert len(kam_forecast["value"]["points"]) == 6
+    workload_widget = next(item for item in kam_dashboard.json()["widgets"] if item["key"] == "am_workload")
+    owner_workload = next(item for item in workload_widget["items"] if item["owner_id"] == owner["id"])
+    assert owner_workload["accounts"] >= 2
+    alert_widget = next(item for item in kam_dashboard.json()["widgets"] if item["key"] == "account_change_alerts")
+    assert alert_widget["items"][0]["id"] == alert.id
+    assert alert_widget["items"][0]["account_name"] == account.name
 
     reduced = client.get("/api/dashboards/leadership", headers=kam_headers)
     assert reduced.status_code == 200
     assert reduced.json()["dashboard"] == "kam_head_portfolio"
     assert reduced.json()["metadata"]["requested_dashboard"] == "leadership"
     assert reduced.json()["metadata"]["reduced_scope"] is True
+    reduced_keys = {item["key"] for item in reduced.json()["widgets"]}
+    assert removed_dashboard_widgets.isdisjoint(reduced_keys)
 
     leader = seeded_user(client, admin_headers, "leadership_viewer")
     leader_headers = auth_headers(client, leader["email"], "User@12345")
@@ -235,15 +424,33 @@ def test_role_based_dashboard_profiles_and_reduced_direct_endpoints(client: Test
     assert leader_dashboard.status_code == 200
     assert leader_dashboard.json()["dashboard"] == "leadership"
     assert leader_dashboard.json()["read_only"] is True
+    leader_keys = {item["key"] for item in leader_dashboard.json()["widgets"]}
+    assert "growth" not in leader_keys
+    assert removed_dashboard_widgets.isdisjoint(leader_keys)
+    assert "opportunities" in leader_keys
+    assert "governance_calendar" in leader_keys
     forecast = next(item for item in leader_dashboard.json()["widgets"] if item["key"] == "forecast_chart")
+    assert forecast["title"] == "6-Month Revenue Forecast"
+    assert forecast["metadata"]["chart_type"] == "line"
     assert forecast["value"]["pipeline_value"] == "Restricted"
+    assert forecast["value"]["weighted_forecast"] == "Restricted"
+    assert forecast["value"]["points"][0]["forecast_revenue"] == "Restricted"
+    assert forecast["value"]["summary"] == "Forecast calculated with the shared KAM AI logic. Commercial values are restricted for this role."
+    opportunities = next(item for item in leader_dashboard.json()["widgets"] if item["key"] == "opportunities")
+    assert opportunities["metadata"]["masked"] is True
+    summaries = next(item for item in leader_dashboard.json()["widgets"] if item["key"] == "executive_summaries")
+    account_summary = next(item for item in summaries["items"] if item["account_id"] == account.id)
+    assert account_summary["health_score"] == account.health_overall
+    assert "summary" not in account_summary
 
 
 def test_delivery_lead_dashboard_and_system_role_protection(client: TestClient, db_session: Session) -> None:
     admin_headers = auth_headers(client)
     owner = seeded_user(client, admin_headers, "account_manager")
     delivery = seeded_user(client, admin_headers, "delivery_lead")
+    legacy_delivery = seeded_user(client, admin_headers, "delivery_stakeholder")
     account = create_owned_account(db_session, owner, "delivery-dashboard-account")
+    create_engagement_health_item(db_session, account, owner, ops_lead=delivery)
     db_session.add(
         AccountOwner(
             account_id=account.id,
@@ -254,6 +461,19 @@ def test_delivery_lead_dashboard_and_system_role_protection(client: TestClient, 
             is_primary=False,
             is_active=True,
             rationale="Delivery lead assignment.",
+            created_by_id=owner["id"],
+        )
+    )
+    db_session.add(
+        AccountOwner(
+            account_id=account.id,
+            user_id=legacy_delivery["id"],
+            user_name=legacy_delivery["full_name"],
+            user_email=legacy_delivery["email"],
+            ownership_role="delivery_stakeholder",
+            is_primary=False,
+            is_active=True,
+            rationale="Legacy delivery assignment.",
             created_by_id=owner["id"],
         )
     )
@@ -277,7 +497,17 @@ def test_delivery_lead_dashboard_and_system_role_protection(client: TestClient, 
     body = dashboard.json()
     assert body["dashboard"] == "delivery"
     assert body["role_group"] == "delivery_lead"
-    assert {"tasks", "signals", "escalations", "governance"}.issubset({item["key"] for item in body["widgets"]})
+    widget_keys = {item["key"] for item in body["widgets"]}
+    assert {"tasks", "signals", "escalations", "governance_calendar", "engagement_health"}.issubset(widget_keys)
+    assert "governance" not in widget_keys
+    engagement_health = next(item for item in body["widgets"] if item["key"] == "engagement_health")
+    assert engagement_health["items"][0]["delivery_health"] == 48
+
+    legacy_headers = auth_headers(client, legacy_delivery["email"], "User@12345")
+    legacy_dashboard = client.get("/api/dashboards/me", headers=legacy_headers)
+    assert legacy_dashboard.status_code == 200
+    assert legacy_dashboard.json()["dashboard"] == "delivery"
+    assert legacy_dashboard.json()["role_group"] == "delivery_lead"
 
     protected = client.delete("/api/admin/roles/delivery_lead", headers=admin_headers)
     assert protected.status_code == 400
