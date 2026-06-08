@@ -25,6 +25,7 @@ from app.schemas import (
     KycSnapshotPageRead,
     KycSnapshotRead,
     KycSnapshotRestoreRequest,
+    KycWebResearchCreateRequest,
 )
 from app.services.kyc import KycService
 
@@ -184,6 +185,27 @@ def reject_draft(
     service: Annotated[KycService, Depends(get_kyc_service)],
 ) -> KycDraftRead:
     return service.reject_draft(account_id, draft_id, payload, current_user)
+
+
+@router.post(
+    "/web-research",
+    response_model=KycAgentRunRead,
+    status_code=status.HTTP_201_CREATED,
+    summary="Queue Tavily KYC web research",
+    description="Queues a low-cost KYC enrichment run that searches Tavily, summarizes with the configured local Ollama model, and appends the result to the selected ready-for-review draft detailed description without replacing existing KYC content.",
+    responses={
+        400: {"description": "No ready-for-review draft exists or the selected draft cannot be changed."},
+        403: {"description": "The current user cannot trigger KYC enrichment for this account."},
+        409: {"description": "Another KYC AI or web research run is already pending or running."},
+    },
+)
+def queue_web_research(
+    account_id: str,
+    payload: KycWebResearchCreateRequest,
+    current_user: Annotated[User, Depends(get_current_user)],
+    service: Annotated[KycService, Depends(get_kyc_service)],
+) -> KycAgentRunRead:
+    return service.trigger_web_research(account_id, payload, current_user)
 
 
 @router.get(

@@ -35,6 +35,8 @@ from app.schemas import (
 from app.services.account_access import AccountAccessService, GLOBAL_EDIT_ROLES
 from app.services.audit import AuditService
 from app.services.kyc_document_extraction import KycDocumentExtractionService
+from app.services.source_document_contract import SENSITIVE_SOURCE_TYPES
+from app.services.sow_extraction import SowExtractionService
 from app.services.storage import ContentStorageService
 from app.services.timeline import TimelineService
 from app.services.user_management import page_count
@@ -337,6 +339,7 @@ class AccountService:
                     page_number=citation_payload.page_number,
                     excerpt=citation_payload.excerpt,
                     field_key=citation_payload.field_key,
+                    confidence=citation_payload.confidence,
                 )
             )
         self.audit.log(
@@ -375,7 +378,11 @@ class AccountService:
         if source_type not in SOURCE_TYPES:
             raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Source type is not supported for KYC extraction")
         stored = await ContentStorageService().save_upload(upload)
-        checksum = self._file_checksum(stored.file_path)
+        checksum = self.file_checksum_for_upload(stored.file_path)
+        duplicate = self.accounts.find_source_document_by_checksum(checksum, account_id=account_id) if checksum else None
+        if duplicate:
+            ContentStorageService().delete_stored_file(stored)
+            raise self._duplicate_source_exception(duplicate, scope="account")
         document = SourceDocument(
             account_id=account_id,
             title=(title or stored.file_name).strip(),
@@ -391,7 +398,7 @@ class AccountService:
             extraction_status="queued" if extract_now else "needs_review",
             confidence=0 if extract_now else 50,
             pages=0,
-            is_sensitive=is_sensitive,
+            is_sensitive=is_sensitive or source_type in SENSITIVE_SOURCE_TYPES,
         )
         self.accounts.add_attachment(document)
         self.audit.log(
@@ -422,6 +429,8 @@ class AccountService:
             extraction = extraction_service.extract_document(document, force=True)
             if extraction.status == "completed":
                 extraction_service.chunk_document(document, extraction=extraction, force=True)
+                if source_type in {"sow", "project_charter", "commercial_note"}:
+                    SowExtractionService(self.accounts.db).extract_structured_fields(document, extraction)
             self.audit.log(
                 module="kyc",
                 action="source_extraction",
@@ -464,6 +473,17 @@ class AccountService:
         if extraction is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Extraction was not found for this attachment")
         return SourceDocumentExtractionRead.model_validate(extraction)
+
+    def attachment_download_path(self, account_id: str, attachment_id: str, current_user: User) -> tuple[SourceDocument, Path]:
+        account = self._get_account_or_404(account_id)
+        self.access.require_account_view(current_user, account)
+        document = self._get_attachment_for_account(account_id, attachment_id)
+        if document.is_sensitive and current_user.role not in {*GLOBAL_EDIT_ROLES, "account_manager", "am"}:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="You cannot download sensitive source documents")
+        path = self._stored_file_path(document)
+        if path is None or not path.exists() or not path.is_file():
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Stored attachment file was not found")
+        return document, path
 
     def attachment_chunks(
         self,
@@ -524,12 +544,40 @@ class AccountService:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Attachment was not found")
         return document
 
+    def _stored_file_path(self, document: SourceDocument) -> Path | None:
+        if not document.storage_path:
+            return None
+        path = Path(document.storage_path)
+        if path.is_absolute():
+            return path
+        return Path(ContentStorageService().settings.local_content_storage_dir) / path
+
     @staticmethod
     def _file_checksum(path: str) -> str | None:
         try:
             return hashlib.sha256(Path(path).read_bytes()).hexdigest()
         except OSError:
             return None
+
+    @staticmethod
+    def file_checksum_for_upload(path: str) -> str | None:
+        return AccountService._file_checksum(path)
+
+    @staticmethod
+    def _duplicate_source_exception(document: SourceDocument, *, scope: str) -> HTTPException:
+        return HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "message": "This source file was already uploaded. Reuse the existing source document or upload a different file.",
+                "duplicate_scope": scope,
+                "existing_document_id": document.id,
+                "existing_account_id": document.account_id,
+                "existing_draft_id": document.draft_id,
+                "existing_title": document.title,
+                "existing_file_name": document.file_name,
+                "checksum_sha256": document.checksum_sha256,
+            },
+        )
 
     def _get_account_or_404(self, account_id: str) -> Account:
         account = self.accounts.get_by_id(account_id)

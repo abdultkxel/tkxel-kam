@@ -4,6 +4,9 @@ email-validator
 google-auth
 openai
 pdf2image
+pdfplumber
+PyMuPDF
+ocrmypdf
 Pillow
 pypdf
 python-docx

@@ -2,6 +2,7 @@ from datetime import datetime
 from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends, File, Form, Query, UploadFile, status
+from fastapi.responses import FileResponse
 
 from app.dependencies import get_account_service, get_current_user, get_custom_field_service, get_engagement_service, get_onboarding_service, require_permission
 from app.models import User
@@ -407,6 +408,7 @@ def add_attachment(
         401: {"description": "Missing, invalid, or expired bearer token."},
         403: {"description": "Authenticated user cannot update this account."},
         404: {"description": "Account was not found."},
+        409: {"description": "Uploaded source file checksum already exists for this account."},
         422: {"description": "Upload form validation failed."},
     },
 )
@@ -461,6 +463,30 @@ def read_attachment_extraction(
     service: Annotated[AccountService, Depends(get_account_service)],
 ) -> SourceDocumentExtractionRead:
     return service.attachment_extraction(account_id, attachment_id, current_user)
+
+
+@router.get(
+    "/{account_id}/attachments/{attachment_id}/download",
+    summary="Download account source document",
+    description="Downloads the locally stored SOW, charter, or source attachment after account-level and sensitive-document RBAC checks.",
+    responses={
+        401: {"description": "Missing, invalid, or expired bearer token."},
+        403: {"description": "Authenticated user cannot download this source document."},
+        404: {"description": "Account, attachment, or stored file was not found."},
+    },
+)
+def download_attachment(
+    account_id: str,
+    attachment_id: str,
+    current_user: Annotated[User, Depends(get_current_user)],
+    service: Annotated[AccountService, Depends(get_account_service)],
+) -> FileResponse:
+    document, path = service.attachment_download_path(account_id, attachment_id, current_user)
+    return FileResponse(
+        path,
+        media_type=document.mime_type or "application/octet-stream",
+        filename=document.file_name or f"{document.title}.bin",
+    )
 
 
 @router.get(

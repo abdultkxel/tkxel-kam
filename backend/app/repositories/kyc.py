@@ -76,6 +76,15 @@ class KycRepository:
             .options(selectinload(KycDraft.agent_run).selectinload(KycAgentRun.workstreams))
         )
 
+    def latest_ready_draft(self, account_id: str) -> KycDraft | None:
+        return self.db.scalar(
+            select(KycDraft)
+            .where(KycDraft.account_id == account_id, KycDraft.status == "ready_for_review")
+            .options(selectinload(KycDraft.agent_run).selectinload(KycAgentRun.workstreams))
+            .order_by(KycDraft.updated_at.desc(), KycDraft.created_at.desc())
+            .limit(1)
+        )
+
     def save_draft(self, draft: KycDraft) -> KycDraft:
         self.db.add(draft)
         self.db.flush()
@@ -291,6 +300,7 @@ class KycRepository:
                     cast(KycDraft.missing_fields, String).ilike(term),
                     cast(KycDraft.conflicts, String).ilike(term),
                     cast(KycDraft.difference_summary, String).ilike(term),
+                    KycDraft.detailed_description.ilike(term),
                 )
             )
         if status_filter:
@@ -334,6 +344,7 @@ class KycRepository:
                     cast(KycSnapshot.missing_fields, String).ilike(term),
                     cast(KycSnapshot.conflicts, String).ilike(term),
                     cast(KycSnapshot.change_summary, String).ilike(term),
+                    KycSnapshot.detailed_description.ilike(term),
                 )
             )
         if approver:

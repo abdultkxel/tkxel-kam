@@ -1,4 +1,5 @@
 import logging
+from html import escape
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
@@ -32,12 +33,16 @@ from app.schemas import (
     KycSnapshotPageRead,
     KycSnapshotRead,
     KycSnapshotRestoreRequest,
+    KycWebResearchCreateRequest,
     KycWorkstreamRead,
 )
 from app.services.account_access import AccountAccessService, GLOBAL_EDIT_ROLES
 from app.services.audit import AuditService
-from app.services.kyc_gateway import DeterministicKycGatewayAdapter, KycGatewayAdapter, KycGatewayRequest
+from app.services.kyc_debug_logging import log_kyc_verbose
+from app.services.kyc_gateway import DeterministicKycGatewayAdapter, KycGatewayAdapter, KycGatewayRequest, KycGatewayResponse, KycGatewayWorkstreamResult
 from app.services.kyc_retrieval import KycRetrievalService
+from app.services.kyc_web_research import KycWebResearchService
+from app.services.tavily_research import KycResearchResult, KycResearchSummary, OllamaKycResearchSummarizer, TavilyKycResearchProvider
 from app.services.timeline import TimelineService
 from app.services.user_management import page_count
 
@@ -59,11 +64,20 @@ WORKSTREAMS: tuple[dict[str, str | int], ...] = (
 FIELD_CATALOG: tuple[dict[str, Any], ...] = (
     {"key": "industry_overview", "label": "Industry overview", "workstream_key": "market_research", "required": True},
     {"key": "market_trends", "label": "Market landscape and trends", "workstream_key": "market_research", "required": True},
+    {"key": "market_size_growth", "label": "Market size and growth", "workstream_key": "market_research", "required": True},
+    {"key": "business_drivers", "label": "Business drivers", "workstream_key": "market_research", "required": True},
     {"key": "competitors", "label": "Competitor analysis", "workstream_key": "market_research", "required": True},
     {"key": "regulatory", "label": "Regulatory and compliance factors", "workstream_key": "market_research", "required": True},
     {"key": "company_snapshot", "label": "Company snapshot", "workstream_key": "client_research", "required": True},
+    {"key": "company_profile", "label": "Company profile", "workstream_key": "client_research", "required": True},
     {"key": "strategy", "label": "Vision, mission and strategy", "workstream_key": "client_research", "required": True},
     {"key": "company_history", "label": "Company history and evolution", "workstream_key": "client_research", "required": True},
+    {"key": "core_offerings", "label": "Core offerings and solutions", "workstream_key": "client_research", "required": True},
+    {"key": "monetization_model", "label": "Monetization model", "workstream_key": "client_research", "required": True},
+    {"key": "key_achievements", "label": "Key achievements", "workstream_key": "client_research", "required": True},
+    {"key": "clients_and_segments", "label": "Clients and served segments", "workstream_key": "client_research", "required": True},
+    {"key": "digital_products", "label": "Digital products and platforms", "workstream_key": "client_research", "required": True},
+    {"key": "website_and_social", "label": "Website and approved public profile links", "workstream_key": "client_research", "required": True},
     {"key": "stakeholder_map", "label": "Stakeholder map", "workstream_key": "client_research", "required": True},
     {"key": "technical_landscape", "label": "Technical landscape", "workstream_key": "client_research", "required": True},
     {"key": "client_stakeholders", "label": "Client-side stakeholders", "workstream_key": "stakeholder_details", "required": True},
@@ -138,7 +152,9 @@ class KycService:
         if self._should_queue_ai_run():
             agent_run = self._queue_agent_run(account, source_documents, research_sources, payload.trigger_source, current_user, latest_snapshot=latest_snapshot)
             fields = self._pending_fields(latest_snapshot)
+            fields = self._prefill_fields_from_sources(account, fields, source_documents, current_user, latest_snapshot)
             fields = self._apply_note_to_fields(fields, payload.notes)
+            initial_quality = self._quality(fields, source_documents, config)
             draft = KycDraft(
                 account_id=account.id,
                 trigger_source=payload.trigger_source,
@@ -147,14 +163,15 @@ class KycService:
                 source_document_ids=[document.id for document in source_documents],
                 research_sources=research_sources,
                 fields_json=fields,
-                citations_json=[],
-                missing_fields=self._missing_required_fields(fields, config),
+                citations_json=self._citations_from_fields(fields) or self._citations_from_documents(source_documents),
+                missing_fields=initial_quality["missing_fields"],
                 conflicts=["KYC generation is queued. Review and approve only after the AI run completes."],
                 difference_summary=self._difference_summary(fields, latest_snapshot),
                 source_context=self._source_context(source_documents, agent_run),
-                confidence=0,
-                completeness=0,
-                source_coverage=0,
+                detailed_description=self._append_detailed_description("", agent_run.detailed_description, agent_run),
+                confidence=initial_quality["confidence"],
+                completeness=initial_quality["completeness"],
+                source_coverage=initial_quality["source_coverage"],
                 freshness_status="fresh",
                 created_by_id=current_user.id,
                 created_by_name=current_user.full_name,
@@ -202,6 +219,7 @@ class KycService:
             conflicts=self._conflicts(source_documents, agent_run),
             difference_summary=self._difference_summary(fields, latest_snapshot),
             source_context=self._source_context(source_documents, agent_run),
+            detailed_description=self._append_detailed_description("", agent_run.detailed_description, agent_run),
             confidence=quality["confidence"],
             completeness=quality["completeness"],
             source_coverage=quality["source_coverage"],
@@ -273,6 +291,8 @@ class KycService:
             draft.override_reason = payload.override_reason
         if payload.review_notes is not None:
             draft.review_notes = payload.review_notes
+        if payload.detailed_description is not None:
+            draft.detailed_description = payload.detailed_description
         quality = self._quality(fields, self._documents_by_ids(account, draft.source_document_ids), self._configuration())
         draft.missing_fields = quality["missing_fields"]
         draft.confidence = quality["confidence"]
@@ -312,6 +332,7 @@ class KycService:
             fields_json=list(draft.fields_json),
             citations_json=list(draft.citations_json),
             source_context=self._source_context_read(draft.source_context, current_user),
+            detailed_description=draft.detailed_description,
             source_document_ids=list(draft.source_document_ids),
             research_sources=list(draft.research_sources),
             confidence=draft.confidence,
@@ -399,6 +420,89 @@ class KycService:
         self.kyc.commit()
         return self.get_draft(account.id, draft.id, current_user)
 
+    def trigger_web_research(self, account_id: str, payload: KycWebResearchCreateRequest, current_user: User) -> KycAgentRunRead:
+        account = self._require_account_trigger(account_id, current_user)
+        active = self._active_agent_run_or_release_stale(account.id, current_user)
+        if active is not None:
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="A KYC AI or web research run is already pending or running for this account")
+        draft = self._research_target_draft(account.id, payload.draft_id)
+        source_documents = self._documents_by_ids(account, list(draft.source_document_ids))
+        custom_query = self._normalize_research_query(payload.query)
+        now = datetime.now(timezone.utc)
+        run = KycAgentRun(
+            account_id=account.id,
+            status="pending",
+            trigger_source="manual",
+            source_document_ids=list(draft.source_document_ids),
+            research_sources=list(dict.fromkeys([*list(draft.research_sources), "tavily_web_research"])),
+            triggered_by_id=current_user.id,
+            triggered_by_name=current_user.full_name,
+            queued_at=now,
+            max_retries=self.settings.ai_kyc_max_retries,
+            provider_json={
+                "adapter": "tavily-ollama-research",
+                "provider": "tavily",
+                "search_provider": "tavily",
+                "summarizer_provider": self.settings.ai_kyc_research_summarizer_provider,
+                "summarizer_model": self.settings.ai_kyc_research_summarizer_model,
+                "base_url": self.settings.ai_kyc_research_summarizer_base_url,
+                "research_only": True,
+                "draft_id": draft.id,
+                "custom_query": custom_query,
+            },
+            model_name=self.settings.ai_kyc_research_summarizer_model,
+            retrieval_summary_json={
+                "status": "queued",
+                "research_only": True,
+                "draft_id": draft.id,
+                "custom_query": custom_query,
+                "source_document_ids": [document.id for document in source_documents],
+            },
+        )
+        self.kyc.save_agent_run(run)
+        self.kyc.save_workstream(
+            KycWorkstreamOutput(
+                run_id=run.id,
+                account_id=account.id,
+                workstream_key="client_research",
+                title="Tavily Web Research",
+                status="pending",
+                sort_order=2,
+                output_json={},
+                citations_json=[],
+                missing_fields=[],
+                confidence=0,
+            )
+        )
+        self.audit.log(
+            module="kyc",
+            action="web_research_queued",
+            entity_type="kyc_agent_run",
+            entity_id=run.id,
+            actor=current_user,
+            after_value={
+                "account_id": account.id,
+                "draft_id": draft.id,
+                "provider": "tavily",
+                "model": self.settings.ai_kyc_research_summarizer_model,
+                "custom_query": custom_query,
+            },
+        )
+        self.timeline.add_account_event(
+            account_id=account.id,
+            event_type="kyc_web_research",
+            module="kyc",
+            title="KYC web research queued",
+            description="Tavily web research was queued for local Ollama summarization. Existing KYC content will be appended, not replaced.",
+            actor=current_user,
+            source_record_id=run.id,
+            source_record_type="kyc_agent_run",
+            source_record_route=f"/accounts/{account.id}?tab=kyc",
+            metadata={"draft_id": draft.id, "provider": "tavily", "model": self.settings.ai_kyc_research_summarizer_model, "custom_query": custom_query},
+        )
+        self.kyc.commit()
+        return self.get_agent_run(account.id, run.id, current_user)
+
     def restore_snapshot(self, account_id: str, snapshot_id: str, payload: KycSnapshotRestoreRequest, current_user: User) -> KycSnapshotRead:
         account = self._require_account_approve(account_id, current_user)
         snapshot = self.kyc.get_snapshot(snapshot_id)
@@ -431,6 +535,7 @@ class KycService:
             fields_json=list(snapshot.fields_json),
             citations_json=list(snapshot.citations_json),
             source_context=source_context,
+            detailed_description=snapshot.detailed_description,
             source_document_ids=list(snapshot.source_document_ids),
             research_sources=list(snapshot.research_sources),
             confidence=snapshot.confidence,
@@ -721,16 +826,20 @@ class KycService:
         run = self.kyc.get_agent_run(run_id)
         if run is None or run.account_id != account.id:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="KYC agent run was not found")
-        if run.status != "pending":
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Only pending KYC runs can be cancelled")
+        if run.status not in {"pending", "running"}:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Only pending or running KYC runs can be cancelled")
         now = datetime.now(timezone.utc)
+        previous_status = run.status
+        cancel_message = "Cancelled before processing." if previous_status == "pending" else "Cancelled while running."
         run.status = "cancelled"
-        run.error_message = "Cancelled before processing."
+        run.error_message = cancel_message
         run.completed_at = now
+        run.updated_at = now
         for workstream in run.workstreams:
-            workstream.status = "cancelled"
-            workstream.error_message = "Cancelled before processing."
-            workstream.completed_at = now
+            if workstream.status in {"pending", "running"}:
+                workstream.status = "cancelled"
+                workstream.error_message = cancel_message
+                workstream.completed_at = now
         self._update_linked_drafts_from_run(account, run, current_user)
         self.audit.log(
             module="kyc",
@@ -738,6 +847,7 @@ class KycService:
             entity_type="kyc_agent_run",
             entity_id=run.id,
             actor=current_user,
+            before_value={"status": previous_status},
             after_value={"status": run.status},
         )
         self.kyc.commit()
@@ -750,6 +860,17 @@ class KycService:
         failed: list[dict[str, str]] = []
         batch_size = limit or self.settings.kyc_worker_batch_size
         runs = self.kyc.due_agent_runs(limit=batch_size)
+        log_kyc_verbose(
+            logger,
+            self.settings,
+            "kyc_service.run_pending_jobs.start",
+            {
+                "batch_size": batch_size,
+                "due_run_ids": [run.id for run in runs],
+                "current_user_id": current_user.id if current_user else None,
+                "current_user_role": current_user.role if current_user else None,
+            },
+        )
         for run in runs:
             try:
                 actor = self.kyc.db.get(User, run.triggered_by_id) if run.triggered_by_id else current_user
@@ -760,7 +881,24 @@ class KycService:
             except Exception as exc:  # pragma: no cover - defensive scheduled worker guard
                 failed.append({"run_id": run.id, "message": str(exc)[:300]})
                 logger.exception("KYC pending job failed for run %s", run.id)
+                log_kyc_verbose(
+                    logger,
+                    self.settings,
+                    "kyc_service.run_pending_jobs.failure",
+                    {"run_id": run.id, "error": str(exc)},
+                )
         self.kyc.commit()
+        log_kyc_verbose(
+            logger,
+            self.settings,
+            "kyc_service.run_pending_jobs.complete",
+            {
+                "processed_count": len(processed),
+                "failed_count": len(failed),
+                "processed_run_ids": [run.id for run in processed],
+                "failures": failed,
+            },
+        )
         return KycJobRunPendingRead(processed_count=len(processed), failed_count=len(failed), processed_runs=processed, failures=failed)
 
     def process_agent_run(self, run_id: str, current_user: User) -> KycAgentRun:
@@ -769,6 +907,33 @@ class KycService:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="KYC agent run was not found")
         account = self._account_or_404(run.account_id)
         if run.status not in {"pending", "failed"}:
+            log_kyc_verbose(
+                logger,
+                self.settings,
+                "kyc_service.process_agent_run.skipped",
+                {"run_id": run.id, "status": run.status, "account_id": account.id},
+            )
+            return run
+        log_kyc_verbose(
+            logger,
+            self.settings,
+            "kyc_service.process_agent_run.start",
+            {
+                "run_id": run.id,
+                "account_id": account.id,
+                "account_name": account.name,
+                "status": run.status,
+                "trigger_source": run.trigger_source,
+                "source_document_ids": list(run.source_document_ids),
+                "research_sources": list(run.research_sources),
+                "actor_id": current_user.id,
+                "actor_role": current_user.role,
+            },
+        )
+        if self._is_research_only_run(run):
+            self._execute_research_run(account, run, current_user)
+            self._log_agent_run(account, run, current_user, "kyc_web_research_complete" if run.status in {"complete", "partial"} else "kyc_web_research_failed")
+            self.kyc.commit()
             return run
         source_documents = self._authorized_source_documents(account, list(run.source_document_ids), current_user)
         latest_snapshot = self.kyc.latest_snapshot(account.id)
@@ -776,6 +941,31 @@ class KycService:
         self._update_linked_drafts_from_run(account, run, current_user)
         self._log_agent_run(account, run, current_user, "kyc_agent_run_complete" if run.status in {"complete", "partial"} else "kyc_agent_run_failed")
         self.kyc.commit()
+        log_kyc_verbose(
+            logger,
+            self.settings,
+            "kyc_service.process_agent_run.complete",
+            {
+                "run_id": run.id,
+                "status": run.status,
+                "error_message": run.error_message,
+                "provider_json": run.provider_json,
+                "usage_json": run.usage_json,
+                "retrieval_summary_json": run.retrieval_summary_json,
+                "workstreams": [
+                    {
+                        "workstream_key": item.workstream_key,
+                        "status": item.status,
+                        "confidence": item.confidence,
+                        "missing_fields": item.missing_fields,
+                        "output_json": item.output_json,
+                        "citations_json": item.citations_json,
+                        "error_message": item.error_message,
+                    }
+                    for item in run.workstreams
+                ],
+            },
+        )
         return run
 
     def _require_account_view(self, account_id: str, current_user: User) -> Account:
@@ -812,6 +1002,13 @@ class KycService:
         draft = self.kyc.get_draft(draft_id)
         if draft is None or draft.account_id != account_id:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="KYC draft was not found")
+        return draft
+
+    def _research_target_draft(self, account_id: str, draft_id: str | None) -> KycDraft:
+        draft = self._draft_or_404(draft_id, account_id) if draft_id else self.kyc.latest_ready_draft(account_id)
+        if draft is None:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Create a ready-for-review KYC draft before running web research")
+        self._ensure_open_draft(draft)
         return draft
 
     @staticmethod
@@ -874,6 +1071,9 @@ class KycService:
             "prior_kyc": "prior_snapshots",
             "openai": "openai_context",
             "openai_context": "openai_context",
+            "tavily": "tavily_web_research",
+            "tavily_web_research": "tavily_web_research",
+            "web_research": "tavily_web_research",
             # Legacy labels are accepted for backwards compatibility, but they do not trigger standalone providers.
             "travoly": "documents",
             "trivoly": "documents",
@@ -943,7 +1143,23 @@ class KycService:
                 can_view_sensitive=self._can_view_sensitive(current_user),
                 prior_snapshot=latest_snapshot,
             )
-        return KycGatewayRequest(
+            web_research = KycWebResearchService().research(account=account, source_documents=source_documents, retrieved_context=retrieved_context)
+            if web_research.contexts:
+                retrieved_context.extend(web_research.contexts)
+            log_kyc_verbose(
+                logger,
+                self.settings,
+                "kyc_service.web_research_context",
+                {
+                    "account_id": account.id,
+                    "enabled": self.settings.ai_kyc_web_research_enabled,
+                    "metadata": web_research.metadata,
+                    "error_message": web_research.error_message,
+                    "context_count": len(web_research.contexts),
+                    "contexts": web_research.contexts,
+                },
+            )
+        gateway_request = KycGatewayRequest(
             account_context={
                 "id": account.id,
                 "name": account.name,
@@ -1009,6 +1225,23 @@ class KycService:
             workstreams=[dict(item) for item in WORKSTREAMS],
             retrieved_context=retrieved_context,
         )
+        log_kyc_verbose(
+            logger,
+            self.settings,
+            "kyc_service.gateway_request",
+            {
+                "account_id": account.id,
+                "account_name": account.name,
+                "trigger_source": trigger_source,
+                "current_user_id": current_user.id,
+                "current_user_role": current_user.role,
+                "source_document_count": len(source_documents),
+                "retrieved_context_count": len(retrieved_context),
+                "latest_snapshot_id": latest_snapshot.id if latest_snapshot else None,
+                "gateway_request": gateway_request,
+            },
+        )
+        return gateway_request
 
     def _build_agent_run(
         self,
@@ -1048,7 +1281,7 @@ class KycService:
         previous_run_id: str | None = None,
         latest_snapshot: KycSnapshot | None = None,
     ) -> KycAgentRun:
-        active = self.kyc.active_agent_run(account.id)
+        active = self._active_agent_run_or_release_stale(account.id, current_user)
         if active is not None:
             raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="A KYC AI run is already pending or running for this account")
         now = datetime.now(timezone.utc)
@@ -1077,6 +1310,22 @@ class KycService:
             },
         )
         self.kyc.save_agent_run(run)
+        log_kyc_verbose(
+            logger,
+            self.settings,
+            "kyc_service.queue_agent_run.created",
+            {
+                "run_id": run.id,
+                "account_id": account.id,
+                "status": run.status,
+                "trigger_source": trigger_source,
+                "previous_run_id": previous_run_id,
+                "source_document_ids": [document.id for document in source_documents],
+                "research_sources": research_sources,
+                "provider_json": run.provider_json,
+                "retrieval_summary_json": run.retrieval_summary_json,
+            },
+        )
         for workstream in WORKSTREAMS:
             self.kyc.save_workstream(
                 KycWorkstreamOutput(
@@ -1120,6 +1369,271 @@ class KycService:
         )
         return run
 
+    def _active_agent_run_or_release_stale(self, account_id: str, current_user: User) -> KycAgentRun | None:
+        active = self.kyc.active_agent_run(account_id)
+        if active is None:
+            return None
+        if self._release_stale_running_run(active, current_user):
+            return None
+        return active
+
+    def _release_stale_running_run(self, run: KycAgentRun, current_user: User) -> bool:
+        if run.status != "running":
+            return False
+        started_at = run.started_at or run.updated_at or run.created_at
+        if started_at.tzinfo is None:
+            started_at = started_at.replace(tzinfo=timezone.utc)
+        timeout_seconds = max(int(self.settings.ai_kyc_timeout_seconds or 0), 1)
+        now = datetime.now(timezone.utc)
+        if now - started_at <= timedelta(seconds=timeout_seconds):
+            return False
+
+        message = f"KYC run timed out after {timeout_seconds} seconds without completing and was released automatically before queuing a new run."
+        run.status = "failed"
+        run.error_message = message
+        run.completed_at = now
+        run.next_retry_at = None
+        run.updated_at = now
+        for workstream in run.workstreams:
+            if workstream.status in {"pending", "running"}:
+                workstream.status = "failed"
+                workstream.error_message = message
+                workstream.completed_at = now
+        self.audit.log(
+            module="kyc",
+            action="agent_run_timeout_release",
+            entity_type="kyc_agent_run",
+            entity_id=run.id,
+            actor=current_user,
+            before_value={"status": "running"},
+            after_value={"status": run.status, "error_message": message},
+        )
+        return True
+
+    @staticmethod
+    def _is_research_only_run(run: KycAgentRun) -> bool:
+        provider = dict(run.provider_json or {})
+        retrieval = dict(run.retrieval_summary_json or {})
+        return bool(provider.get("research_only") or retrieval.get("research_only"))
+
+    @staticmethod
+    def _normalize_research_query(value: str | None) -> str | None:
+        text = " ".join(str(value or "").split())
+        return text[:500] if text else None
+
+    def _execute_research_run(self, account: Account, run: KycAgentRun, current_user: User) -> None:
+        now = datetime.now(timezone.utc)
+        draft_id = str((run.provider_json or {}).get("draft_id") or (run.retrieval_summary_json or {}).get("draft_id") or "")
+        custom_query = self._normalize_research_query(
+            (run.provider_json or {}).get("custom_query") or (run.retrieval_summary_json or {}).get("custom_query")
+        )
+        draft = self._research_target_draft(account.id, draft_id or None)
+        source_documents = self._authorized_source_documents(account, list(run.source_document_ids), current_user)
+        internal_context = KycRetrievalService(self.kyc.db).prepare_context(
+            account=account,
+            source_documents=source_documents,
+            current_user=current_user,
+            workstreams=[dict(item) for item in WORKSTREAMS],
+            can_view_sensitive=self._can_view_sensitive(current_user),
+            prior_snapshot=self.kyc.latest_snapshot(account.id),
+        )
+        run.status = "running"
+        run.error_message = None
+        run.started_at = now
+        run.completed_at = None
+        run.provider_json = {
+            **dict(run.provider_json or {}),
+            "adapter": "tavily-ollama-research",
+            "provider": "tavily",
+            "search_provider": "tavily",
+            "summarizer_provider": self.settings.ai_kyc_research_summarizer_provider,
+            "summarizer_model": self.settings.ai_kyc_research_summarizer_model,
+                "base_url": self.settings.ai_kyc_research_summarizer_base_url,
+                "research_only": True,
+                "draft_id": draft.id,
+                "custom_query": custom_query,
+            }
+        run.model_name = self.settings.ai_kyc_research_summarizer_model
+        for workstream in self._workstream_outputs_for_run(run):
+            workstream.status = "running"
+            workstream.error_message = None
+            workstream.started_at = now
+            workstream.completed_at = None
+        self.kyc.commit()
+        log_kyc_verbose(
+            logger,
+            self.settings,
+            "kyc_service.execute_research_run.start",
+            {
+                "run_id": run.id,
+                "account_id": account.id,
+                "draft_id": draft.id,
+                "source_document_ids": [document.id for document in source_documents],
+                "internal_context_count": len(internal_context),
+                "custom_query": custom_query,
+            },
+        )
+        try:
+            research_result = TavilyKycResearchProvider().research(
+                account=account,
+                source_documents=source_documents,
+                retrieved_context=internal_context,
+                custom_query=custom_query,
+            )
+            if research_result.error_message and not research_result.contexts:
+                raise RuntimeError(research_result.error_message)
+            summary = OllamaKycResearchSummarizer().summarize(account=account, research_result=research_result, internal_context=internal_context)
+            if summary.error_message and not summary.summary_markdown:
+                raise RuntimeError(summary.error_message)
+            self._append_research_to_draft(account, draft, run, research_result, summary, current_user)
+            run.status = "partial" if summary.error_message else "complete"
+            run.error_message = summary.error_message
+            run.completed_at = datetime.now(timezone.utc)
+            run.provider_json = {
+                **dict(run.provider_json or {}),
+                "tavily": dict(research_result.metadata or {}),
+                "summarizer": {
+                    "provider": summary.provider,
+                    "model": summary.model,
+                    "metadata": dict(summary.metadata or {}),
+                },
+            }
+            run.usage_json = dict(summary.metadata.get("usage") or {})
+            run.retrieval_summary_json = {
+                **dict(run.retrieval_summary_json or {}),
+                "status": run.status,
+                "research_only": True,
+                "draft_id": draft.id,
+                "custom_query": custom_query,
+                "query_count": len(research_result.queries),
+                "source_count": len(research_result.contexts),
+                "sources": [
+                    {"label": context.label, "url": context.source_route, "confidence": context.confidence}
+                    for context in research_result.contexts[: self.settings.tavily_max_results]
+                ],
+            }
+            self._mark_research_workstream(run, research_result, summary, status_value="complete")
+        except Exception as exc:
+            error_message = f"KYC web research failed: {str(exc)[:400]}"
+            run.status = "failed"
+            run.error_message = error_message
+            run.completed_at = datetime.now(timezone.utc)
+            if run.retry_count < run.max_retries:
+                run.retry_count += 1
+                run.next_retry_at = datetime.now(timezone.utc) + timedelta(seconds=self.settings.ai_kyc_retry_backoff_seconds * max(run.retry_count, 1))
+            else:
+                run.next_retry_at = None
+            for workstream in self._workstream_outputs_for_run(run):
+                workstream.status = "failed"
+                workstream.error_message = error_message
+                workstream.completed_at = datetime.now(timezone.utc)
+            self.audit.log(
+                module="kyc",
+                action="web_research_failed",
+                entity_type="kyc_agent_run",
+                entity_id=run.id,
+                actor=current_user,
+                after_value={"account_id": account.id, "draft_id": draft.id, "error_message": error_message},
+            )
+            logger.exception("KYC Tavily/Ollama research failed for run %s", run.id)
+
+    def _append_research_to_draft(
+        self,
+        account: Account,
+        draft: KycDraft,
+        run: KycAgentRun,
+        research_result: KycResearchResult,
+        summary: KycResearchSummary,
+        current_user: User,
+    ) -> None:
+        section = self._research_detailed_description(account, run, research_result, summary)
+        run.detailed_description = self._append_raw_detailed_description(run.detailed_description, section)
+        draft.detailed_description = self._append_research_detailed_description(draft.detailed_description, section, run)
+        citations = self._citations_from_research_contexts(research_result.retrieval_contexts())
+        existing_citations = list(draft.citations_json or [])
+        existing_keys = {(item.get("source_record_id"), item.get("source_route"), item.get("excerpt")) for item in existing_citations if isinstance(item, dict)}
+        for citation in citations:
+            key = (citation.get("source_record_id"), citation.get("source_route"), citation.get("excerpt"))
+            if key not in existing_keys:
+                existing_citations.append(citation)
+                existing_keys.add(key)
+        draft.citations_json = existing_citations
+        draft.research_sources = list(dict.fromkeys([*list(draft.research_sources or []), "tavily_web_research"]))
+        source_context = dict(draft.source_context or {})
+        web_runs = list(source_context.get("web_research_runs") or [])
+        web_runs.append(
+            {
+                "run_id": run.id,
+                "provider": "tavily",
+                "summarizer_model": summary.model,
+                "status": "partial" if summary.error_message else "complete",
+                "source_count": len(research_result.contexts),
+                "queries": list(research_result.queries),
+                "custom_query": (run.provider_json or {}).get("custom_query") or (run.retrieval_summary_json or {}).get("custom_query"),
+                "created_at": datetime.now(timezone.utc).isoformat(),
+            }
+        )
+        source_context["web_research_runs"] = web_runs[-20:]
+        draft.source_context = source_context
+        flag_modified(draft, "citations_json")
+        flag_modified(draft, "research_sources")
+        flag_modified(draft, "source_context")
+        self.audit.log(
+            module="kyc",
+            action="web_research_appended",
+            entity_type="kyc_draft",
+            entity_id=draft.id,
+            actor=current_user,
+            after_value={
+                "account_id": account.id,
+                "agent_run_id": run.id,
+                "source_count": len(research_result.contexts),
+                "provider": "tavily",
+                "model": summary.model,
+                "status": "partial" if summary.error_message else "complete",
+            },
+        )
+        self.timeline.add_account_event(
+            account_id=account.id,
+            event_type="kyc_web_research",
+            module="kyc",
+            title="KYC web research appended",
+            description=f"Tavily research from {len(research_result.contexts)} source(s) was appended to the KYC detailed description.",
+            actor=current_user,
+            source_record_id=run.id,
+            source_record_type="kyc_agent_run",
+            source_record_route=f"/accounts/{account.id}?tab=kyc",
+            metadata={"draft_id": draft.id, "provider": "tavily", "model": summary.model},
+        )
+
+    def _mark_research_workstream(
+        self,
+        run: KycAgentRun,
+        research_result: KycResearchResult,
+        summary: KycResearchSummary,
+        *,
+        status_value: str,
+    ) -> None:
+        workstream = self._existing_or_new_workstream(run, self._account_or_404(run.account_id), {"key": "client_research", "title": "Tavily Web Research", "sort_order": 2})
+        workstream.status = status_value
+        workstream.output_json = {
+            "web_research_summary": {
+                "value": summary.summary_markdown,
+                "confidence": summary.confidence,
+                "citations": self._citations_from_research_contexts(research_result.retrieval_contexts()),
+                "missing_evidence_note": "\n".join(summary.missing_evidence_notes),
+                "conflicts": [summary.error_message] if summary.error_message else [],
+                "reviewer_notes": ["Review Tavily/Ollama research before approving KYC."],
+                "suggested_follow_up_questions": summary.follow_up_questions,
+            }
+        }
+        workstream.citations_json = self._citations_from_research_contexts(research_result.retrieval_contexts())
+        workstream.missing_fields = []
+        workstream.confidence = summary.confidence
+        workstream.error_message = summary.error_message
+        workstream.completed_at = datetime.now(timezone.utc)
+
+
     def _execute_agent_run(
         self,
         account: Account,
@@ -1131,38 +1645,126 @@ class KycService:
         latest_snapshot: KycSnapshot | None,
     ) -> None:
         now = datetime.now(timezone.utc)
+        log_kyc_verbose(
+            logger,
+            self.settings,
+            "kyc_service.execute_agent_run.start",
+            {
+                "run_id": run.id,
+                "account_id": account.id,
+                "account_name": account.name,
+                "trigger_source": trigger_source,
+                "source_documents": [
+                    {
+                        "id": document.id,
+                        "title": document.title,
+                        "source_type": document.source_type,
+                        "file_name": document.file_name,
+                        "extraction_status": document.extraction_status,
+                        "ocr_status": document.ocr_status,
+                        "confidence": document.confidence,
+                        "is_sensitive": document.is_sensitive,
+                    }
+                    for document in source_documents
+                ],
+                "research_sources": research_sources,
+                "latest_snapshot_id": latest_snapshot.id if latest_snapshot else None,
+            },
+        )
         run.status = "running"
         run.error_message = None
         run.started_at = now
         run.completed_at = None
+        run.provider_json = {
+            "adapter": getattr(self.gateway, "name", "unknown"),
+            "provider": self.settings.ai_kyc_provider,
+            "model": self.settings.ai_kyc_model,
+            "base_url": self._safe_base_url(),
+        }
+        run.model_name = self.settings.ai_kyc_model
         for workstream in self._workstream_outputs_for_run(run):
             workstream.status = "running"
             workstream.error_message = None
             workstream.started_at = now
             workstream.completed_at = None
+        self.kyc.commit()
+        log_kyc_verbose(
+            logger,
+            self.settings,
+            "kyc_service.execute_agent_run.running_committed",
+            {
+                "run_id": run.id,
+                "account_id": account.id,
+                "status": run.status,
+                "started_at": run.started_at,
+                "workstreams": [
+                    {
+                        "workstream_key": item.workstream_key,
+                        "status": item.status,
+                        "started_at": item.started_at,
+                    }
+                    for item in self._workstream_outputs_for_run(run)
+                ],
+            },
+        )
+        gateway_request = self._gateway_request(account, source_documents, research_sources, trigger_source, current_user, latest_snapshot)
         try:
-            gateway_response = self.gateway.run(self._gateway_request(account, source_documents, research_sources, trigger_source, current_user, latest_snapshot))
+            gateway_response = self.gateway.run(gateway_request)
         except Exception as exc:  # pragma: no cover - adapter boundary guard
             error_message = f"AI/LLM Gateway failure: {str(exc)[:400]}"
-            for workstream in WORKSTREAMS:
-                output = self._existing_or_new_workstream(run, account, workstream)
-                output.status = "failed"
-                output.output_json = {}
-                output.citations_json = []
-                output.missing_fields = self._field_labels_for_workstream(str(workstream["key"]))
-                output.confidence = 0
-                output.error_message = error_message
-                output.started_at = output.started_at or now
-                output.completed_at = datetime.now(timezone.utc)
-            run.status = "failed"
-            run.error_message = error_message
-            if run.retry_count < run.max_retries:
-                run.retry_count += 1
-                run.next_retry_at = datetime.now(timezone.utc) + timedelta(seconds=self.settings.ai_kyc_retry_backoff_seconds * max(run.retry_count, 1))
+            log_kyc_verbose(
+                logger,
+                self.settings,
+                "kyc_service.execute_agent_run.gateway_failure",
+                {"run_id": run.id, "account_id": account.id, "error_message": error_message},
+            )
+            fallback_response = self._gateway_failure_fallback_response(account, gateway_request, error_message, started_at=now)
+            if fallback_response is not None:
+                gateway_response = fallback_response
             else:
-                run.next_retry_at = None
-            run.completed_at = datetime.now(timezone.utc)
-            return
+                for workstream in WORKSTREAMS:
+                    output = self._existing_or_new_workstream(run, account, workstream)
+                    output.status = "failed"
+                    output.output_json = {}
+                    output.citations_json = []
+                    output.missing_fields = self._field_labels_for_workstream(str(workstream["key"]))
+                    output.confidence = 0
+                    output.error_message = error_message
+                    output.started_at = output.started_at or now
+                    output.completed_at = datetime.now(timezone.utc)
+                run.status = "failed"
+                run.error_message = error_message
+                run.detailed_description = self._append_raw_detailed_description(run.detailed_description, error_message)
+                if run.retry_count < run.max_retries:
+                    run.retry_count += 1
+                    run.next_retry_at = datetime.now(timezone.utc) + timedelta(seconds=self.settings.ai_kyc_retry_backoff_seconds * max(run.retry_count, 1))
+                else:
+                    run.next_retry_at = None
+                run.completed_at = datetime.now(timezone.utc)
+                return
+        log_kyc_verbose(
+            logger,
+            self.settings,
+            "kyc_service.execute_agent_run.gateway_response",
+            {
+                "run_id": run.id,
+                "status": gateway_response.status,
+                "error_message": gateway_response.error_message,
+                "metadata": gateway_response.metadata,
+                "workstreams": [
+                    {
+                        "workstream_key": item.workstream_key,
+                        "status": item.status,
+                        "confidence": item.confidence,
+                        "missing_fields": item.missing_fields,
+                        "output": item.output,
+                        "citations": item.citations,
+                        "error_message": item.error_message,
+                    }
+                    for item in gateway_response.workstreams
+                ],
+            },
+        )
         for workstream in gateway_response.workstreams:
             reviewer_notes = self._reviewer_notes_from_output(workstream.output)
             follow_up_questions = self._follow_up_questions_from_output(workstream.output)
@@ -1198,12 +1800,42 @@ class KycService:
         run.cost_json = dict(gateway_response.metadata.get("cost") or {})
         run.provider_response_id = gateway_response.metadata.get("provider_response_id")
         run.model_name = gateway_response.metadata.get("model")
+        detailed_text = self._append_raw_detailed_description(
+            self._web_research_detailed_description(gateway_request.retrieved_context),
+            str(gateway_response.metadata.get("detailed_description") or ""),
+        )
+        run.detailed_description = self._append_raw_detailed_description(run.detailed_description, detailed_text)
         run.retrieval_summary_json = {
             "retrieved_context_count": gateway_response.metadata.get("retrieved_context_count"),
             "source_document_ids": [document.id for document in source_documents],
             "source_coverage": self._source_coverage_summary(source_documents, gateway_response),
         }
         run.completed_at = datetime.now(timezone.utc)
+        log_kyc_verbose(
+            logger,
+            self.settings,
+            "kyc_service.execute_agent_run.persisted",
+            {
+                "run_id": run.id,
+                "status": run.status,
+                "provider_json": run.provider_json,
+                "usage_json": run.usage_json,
+                "cost_json": run.cost_json,
+                "retrieval_summary_json": run.retrieval_summary_json,
+                "workstreams": [
+                    {
+                        "workstream_key": item.workstream_key,
+                        "status": item.status,
+                        "confidence": item.confidence,
+                        "missing_fields": item.missing_fields,
+                        "output_json": item.output_json,
+                        "citations_json": item.citations_json,
+                        "error_message": item.error_message,
+                    }
+                    for item in self._workstream_outputs_for_run(run)
+                ],
+            },
+        )
 
     def _should_queue_ai_run(self) -> bool:
         return bool(getattr(self.gateway, "is_async_preferred", False)) and self.settings.kyc_queue_backend == "local"
@@ -1258,13 +1890,167 @@ class KycService:
             for item in FIELD_CATALOG
         ]
 
+    def _prefill_fields_from_sources(
+        self,
+        account: Account,
+        fields: list[dict[str, Any]],
+        source_documents: list[SourceDocument],
+        current_user: User,
+        latest_snapshot: KycSnapshot | None,
+    ) -> list[dict[str, Any]]:
+        contexts = KycRetrievalService(self.kyc.db).prepare_context(
+            account=account,
+            source_documents=source_documents,
+            current_user=current_user,
+            workstreams=[dict(item) for item in WORKSTREAMS],
+            can_view_sensitive=self._can_view_sensitive(current_user),
+            prior_snapshot=latest_snapshot,
+        )
+        if not contexts:
+            return fields
+        for field in fields:
+            field_contexts = self._contexts_for_field(str(field["key"]), contexts)
+            if not field_contexts:
+                continue
+            value = self._source_prefill_value(account, str(field["key"]), field_contexts)
+            if not value:
+                continue
+            field["value"] = value
+            field["confidence"] = min(82, max(62, int(field_contexts[0].get("confidence") or field_contexts[0].get("trust_score") or 68)))
+            field["missing"] = False
+            field["citations"] = [self._citation_from_context(context, str(field["key"])) for context in field_contexts[:3]]
+            field["missing_evidence_note"] = "Immediate source prefill from uploaded SOW/platform evidence. Background AI enrichment may expand this with approved public research."
+            field["suggested_follow_up_questions"] = self._source_prefill_follow_ups(str(field["key"]))
+        return fields
+
+    @staticmethod
+    def _contexts_for_field(field_key: str, contexts: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        terms_by_field = {
+            "industry_overview": ["industry", "market", "sector", "restaurant", "retail", "commerce"],
+            "market_trends": ["trend", "digital", "automation", "ai", "mobile", "loyalty", "consumer"],
+            "market_size_growth": ["market size", "growth", "cagr", "revenue", "locations", "stores"],
+            "business_drivers": ["driver", "objective", "goal", "success metric", "business outcome"],
+            "competitors": ["competitor", "peer", "market segment", "served segment"],
+            "regulatory": ["compliance", "security", "privacy", "pci", "gdpr", "regulatory", "audit"],
+            "company_snapshot": ["account", "customer", "client", "company", "overview"],
+            "company_profile": ["company", "headquarters", "website", "founded", "employee", "revenue"],
+            "strategy": ["strategy", "objective", "vision", "goal", "modernization", "transformation"],
+            "company_history": ["history", "founded", "milestone", "evolution"],
+            "core_offerings": ["offering", "product", "service", "restaurant", "platform", "solution"],
+            "monetization_model": ["monetization", "revenue", "fees", "billing", "subscription", "franchise"],
+            "key_achievements": ["achievement", "award", "milestone", "success metric"],
+            "clients_and_segments": ["segment", "customer", "geography", "region", "market"],
+            "digital_products": ["digital", "mobile", "app", "platform", "portal", "integration", "api"],
+            "website_and_social": ["website", "url", "profile", "public link"],
+            "stakeholder_map": ["stakeholder", "sponsor", "owner", "contact", "decision maker"],
+            "technical_landscape": ["technology", "architecture", "integration", "api", "cloud", "data", "security"],
+            "client_stakeholders": ["client stakeholder", "sponsor", "decision maker", "contact"],
+            "tkxel_stakeholders": ["tkxel", "account manager", "delivery lead", "owner", "ops lead"],
+            "project_charters": ["statement of work", "sow", "charter", "scope", "project"],
+            "engagement_models": ["engagement", "delivery model", "governance", "cadence", "team"],
+            "obligations": ["obligation", "sla", "deliverable", "acceptance", "support", "out of scope"],
+            "past_engagements": ["timeline", "meeting", "summary", "fathom", "action item", "past engagement"],
+            "renewal_cycle": ["renewal", "end date", "expiration", "notice", "auto renewal"],
+            "payment_behaviour": ["payment", "invoice", "billing", "net", "terms"],
+            "gross_margins": ["margin", "commercial", "financial", "cost"],
+            "billing_models": ["billing", "fee", "contract value", "commercial", "payment"],
+        }
+        terms = terms_by_field.get(field_key, [field_key.replace("_", " ")])
+        matched = [
+            context
+            for context in contexts
+            if any(term in str(context.get("text") or context.get("excerpt") or "").lower() for term in terms)
+        ]
+        return (matched or contexts)[:4]
+
+    @staticmethod
+    def _source_prefill_value(account: Account, field_key: str, contexts: list[dict[str, Any]]) -> str:
+        snippets = []
+        for context in contexts[:3]:
+            text = " ".join(str(context.get("text") or context.get("excerpt") or "").split())
+            if not text:
+                continue
+            snippets.append(f"- {text[:700]}")
+        if not snippets:
+            return ""
+        heading_by_field = {
+            "company_snapshot": f"{account.name} source-backed snapshot",
+            "company_profile": f"{account.name} profile details found in source material",
+            "project_charters": "Uploaded charter/SOW context",
+            "obligations": "SOW obligations and delivery commitments",
+            "billing_models": "Commercial and billing evidence",
+            "renewal_cycle": "Renewal and notice evidence",
+        }
+        heading = heading_by_field.get(field_key, "Immediate source-backed prefill")
+        return f"{heading}:\n" + "\n".join(snippets)
+
+    @staticmethod
+    def _citation_from_context(context: dict[str, Any], field_key: str) -> dict[str, Any]:
+        return {
+            "source_document_id": context.get("source_document_id"),
+            "source_chunk_id": context.get("source_chunk_id"),
+            "source_record_id": context.get("source_record_id"),
+            "source_type": context.get("source_type"),
+            "label": context.get("label") or context.get("source_kind") or "Source evidence",
+            "page_number": context.get("page_number"),
+            "excerpt": str(context.get("excerpt") or context.get("text") or "")[:900],
+            "field_key": field_key,
+            "confidence": context.get("confidence") or context.get("trust_score") or 65,
+            "source_route": context.get("source_route"),
+        }
+
+    @staticmethod
+    def _source_prefill_follow_ups(field_key: str) -> list[str]:
+        questions = {
+            "market_size_growth": ["Do we have approved public market-size or growth evidence for this account's industry?"],
+            "competitors": ["Which peer companies should be compared for this account?"],
+            "gross_margins": ["Should margin details be added by an authorized commercial reviewer?"],
+            "payment_behaviour": ["Has Finance confirmed payment behavior and invoice history?"],
+            "client_stakeholders": ["Who is the economic buyer, technical decision maker, and executive sponsor?"],
+        }
+        return questions.get(field_key, ["Should the account owner confirm this source-backed prefill before approval?"])
+
+    @staticmethod
+    def _citations_from_fields(fields: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        citations: list[dict[str, Any]] = []
+        for field in fields:
+            for citation in field.get("citations") or []:
+                if isinstance(citation, dict):
+                    citations.append(citation)
+        return citations
+
     def _update_linked_drafts_from_run(self, account: Account, run: KycAgentRun, current_user: User) -> None:
         drafts = [draft for draft in self.kyc.drafts_for_run(run.id) if draft.status == "ready_for_review"]
         if not drafts:
+            log_kyc_verbose(
+                logger,
+                self.settings,
+                "kyc_service.update_linked_drafts.skipped",
+                {"run_id": run.id, "reason": "no ready_for_review linked drafts"},
+            )
             return
         latest_snapshot = self.kyc.latest_snapshot(account.id)
         source_documents = self._documents_by_ids(account, list(run.source_document_ids))
         for draft in drafts:
+            if run.status == "failed":
+                draft.conflicts = list(dict.fromkeys([*list(draft.conflicts or []), "KYC AI run failed. Existing draft content was preserved for review."]))
+                draft.source_context = self._source_context(source_documents, run)
+                draft.detailed_description = self._append_detailed_description(
+                    draft.detailed_description,
+                    run.detailed_description or run.error_message or "KYC AI run failed.",
+                    run,
+                )
+                flag_modified(draft, "conflicts")
+                flag_modified(draft, "source_context")
+                self.audit.log(
+                    module="kyc",
+                    action="draft_ai_run_failed_preserved",
+                    entity_type="kyc_draft",
+                    entity_id=draft.id,
+                    actor=current_user,
+                    after_value={"agent_run_id": run.id, "run_status": run.status, "error_message": run.error_message},
+                )
+                continue
             fields = self._fields_from_run(account, run, latest_snapshot)
             quality = self._quality(fields, source_documents, self._configuration())
             draft.fields_json = fields
@@ -1273,6 +2059,7 @@ class KycService:
             draft.conflicts = self._conflicts(source_documents, run)
             draft.difference_summary = self._difference_summary(fields, latest_snapshot)
             draft.source_context = self._source_context(source_documents, run)
+            draft.detailed_description = self._append_detailed_description(draft.detailed_description, run.detailed_description, run)
             draft.confidence = quality["confidence"]
             draft.completeness = quality["completeness"]
             draft.source_coverage = quality["source_coverage"]
@@ -1289,6 +2076,25 @@ class KycService:
                 entity_id=draft.id,
                 actor=current_user,
                 after_value={"agent_run_id": run.id, "run_status": run.status, "confidence": draft.confidence, "completeness": draft.completeness},
+            )
+            log_kyc_verbose(
+                logger,
+                self.settings,
+                "kyc_service.update_linked_drafts.populated",
+                {
+                    "draft_id": draft.id,
+                    "run_id": run.id,
+                    "run_status": run.status,
+                    "confidence": draft.confidence,
+                    "completeness": draft.completeness,
+                    "source_coverage": draft.source_coverage,
+                    "fields_json": draft.fields_json,
+                    "citations_json": draft.citations_json,
+                    "missing_fields": draft.missing_fields,
+                    "conflicts": draft.conflicts,
+                    "difference_summary": draft.difference_summary,
+                    "source_context": draft.source_context,
+                },
             )
 
     @staticmethod
@@ -1325,6 +2131,286 @@ class KycService:
             "chunks_cited": len(cited_chunk_ids),
             "source_types": sorted({document.source_type for document in source_documents}),
         }
+
+    def _gateway_failure_fallback_response(
+        self,
+        account: Account,
+        gateway_request: KycGatewayRequest,
+        error_message: str,
+        *,
+        started_at: datetime,
+    ) -> KycGatewayResponse | None:
+        contexts = list(gateway_request.retrieved_context or [])
+        if not contexts:
+            return None
+        results: list[KycGatewayWorkstreamResult] = []
+        for workstream in WORKSTREAMS:
+            workstream_key = str(workstream["key"])
+            output: dict[str, dict[str, Any]] = {}
+            citations: list[dict[str, Any]] = []
+            missing_fields: list[str] = []
+            for field in FIELD_CATALOG:
+                if str(field["workstream_key"]) != workstream_key:
+                    continue
+                field_key = str(field["key"])
+                field_contexts = self._contexts_for_field(field_key, contexts)
+                value = self._source_prefill_value(account, field_key, field_contexts)
+                if not value:
+                    missing_fields.append(str(field["label"]))
+                    continue
+                field_citations = [self._citation_from_context(context, field_key) for context in field_contexts[:3]]
+                confidence = min(72, max(45, int(field_contexts[0].get("confidence") or field_contexts[0].get("trust_score") or 55)))
+                output[field_key] = {
+                    "value": value,
+                    "confidence": confidence,
+                    "citations": field_citations,
+                    "missing_evidence_note": "AI provider failed; this field was populated from retrieved SOW, internal, or approved web research context for human review.",
+                    "conflicts": [error_message],
+                    "reviewer_notes": ["Review this fallback source-backed output before approval."],
+                    "suggested_follow_up_questions": self._source_prefill_follow_ups(field_key),
+                }
+                citations.extend(field_citations)
+            results.append(
+                KycGatewayWorkstreamResult(
+                    workstream_key=workstream_key,
+                    title=str(workstream["title"]),
+                    status="complete" if output else "failed",
+                    sort_order=int(workstream["sort_order"]),
+                    output=output,
+                    citations=citations,
+                    missing_fields=missing_fields,
+                    confidence=round(sum(int(value.get("confidence") or 0) for value in output.values()) / len(output)) if output else 0,
+                    error_message=None if output else error_message,
+                    started_at=started_at,
+                    completed_at=datetime.now(timezone.utc),
+                )
+            )
+        completed = sum(1 for result in results if result.status == "complete")
+        if not completed:
+            return None
+        detailed_description = self._detailed_description_from_retrieved_contexts(account, contexts, error_message)
+        return KycGatewayResponse(
+            status="partial",
+            workstreams=results,
+            error_message=error_message,
+            metadata={
+                "adapter": f"{getattr(self.gateway, 'name', 'unknown')}-retrieved-context-fallback",
+                "model": self.settings.ai_kyc_model,
+                "retrieved_context_count": len(contexts),
+                "fallback_reason": error_message,
+                "detailed_description": detailed_description,
+                "request_id": f"fallback-{account.id}-{int(started_at.timestamp())}",
+            },
+        )
+
+    @staticmethod
+    def _detailed_description_from_retrieved_contexts(account: Account, contexts: list[dict[str, Any]], error_message: str) -> str:
+        ordered = sorted(
+            contexts,
+            key=lambda item: (
+                1 if item.get("source_type") == "web_research" else 0,
+                float(item.get("retrieval_score") or item.get("confidence") or item.get("trust_score") or 0),
+            ),
+            reverse=True,
+        )
+        parts = [
+            f"KYC provider fallback for {account.name}.",
+            f"Provider issue: {error_message}",
+            "The following source-backed context was available for reviewer use:",
+        ]
+        for index, context in enumerate(ordered[:12], start=1):
+            label = str(context.get("label") or context.get("source_type") or "KYC source")
+            route = str(context.get("source_route") or "").strip()
+            excerpt = str(context.get("text") or context.get("excerpt") or "").strip()
+            if not excerpt:
+                continue
+            source_line = f"{index}. {label}"
+            if route:
+                source_line += f" ({route})"
+            parts.append(f"{source_line}\n{excerpt[:4000]}")
+        return "\n\n".join(parts)
+
+    @staticmethod
+    def _web_research_detailed_description(contexts: list[dict[str, Any]]) -> str:
+        web_contexts = [context for context in contexts if context.get("source_type") == "web_research"]
+        if not web_contexts:
+            return ""
+        parts = ["## Approved Web Research Context"]
+        for index, context in enumerate(web_contexts, start=1):
+            label = str(context.get("label") or "OpenAI web research")
+            route = str(context.get("source_route") or "").strip()
+            text = str(context.get("text") or context.get("excerpt") or "").strip()
+            if not text:
+                continue
+            heading = f"{index}. {label}"
+            if route:
+                heading += f" ({route})"
+            parts.append(f"{heading}\n{text[:6000]}")
+        return "\n\n".join(parts)
+
+    @staticmethod
+    def _research_detailed_description(account: Account, run: KycAgentRun, research_result: KycResearchResult, summary: KycResearchSummary) -> str:
+        parts = [
+            f"Tavily + Ollama KYC research for {account.name}.",
+            f"Run ID: {run.id}",
+            f"Search provider: Tavily",
+            f"Summarizer: {summary.provider} / {summary.model or 'local model'}",
+            f"Sources used: {len(research_result.contexts)}",
+        ]
+        custom_query = (run.provider_json or {}).get("custom_query") or (run.retrieval_summary_json or {}).get("custom_query")
+        if custom_query:
+            parts.append(f"Research question: {custom_query}")
+        parts.extend(["", "## Research Summary", summary.summary_markdown])
+        if summary.missing_evidence_notes:
+            parts.append("## Missing Evidence Notes")
+            parts.extend(f"- {item}" for item in summary.missing_evidence_notes)
+        if summary.follow_up_questions:
+            parts.append("## Suggested Follow-Up Questions")
+            parts.extend(f"- {item}" for item in summary.follow_up_questions)
+        if research_result.queries:
+            parts.append("## Tavily Search Queries")
+            parts.extend(f"- {query}" for query in research_result.queries)
+        if research_result.contexts:
+            parts.append("## Tavily Sources")
+            for index, context in enumerate(research_result.contexts, start=1):
+                route = f" ({context.source_route})" if context.source_route else ""
+                parts.append(f"{index}. {context.label}{route} - confidence {context.confidence}%")
+        return "\n".join(str(part) for part in parts if part is not None)
+
+    @staticmethod
+    def _append_research_detailed_description(existing: str | None, addition: str | None, run: KycAgentRun) -> str:
+        current = (existing or "").strip()
+        value = (addition or "").strip()
+        if not value:
+            return current
+        marker = f"kyc-research-run:{run.id}"
+        if marker in current:
+            return current
+        provider = dict(run.provider_json or {})
+        timestamp = (run.completed_at or run.updated_at or datetime.now(timezone.utc)).isoformat()
+        title = " - ".join(
+            item
+            for item in [
+                "Tavily + Ollama KYC research",
+                str(provider.get("summarizer_model") or run.model_name or "").strip(),
+            ]
+            if item
+        )
+        body = KycService._research_text_to_html(value)
+        section = (
+            f'<!-- {marker} -->'
+            f'<section data-kyc-research-run-id="{escape(run.id)}" data-kyc-research-provider="tavily" data-kyc-model="{escape(str(provider.get("summarizer_model") or run.model_name or ""))}">'
+            f"<h4>{escape(title)}</h4>"
+            f"<p><strong>Captured at:</strong> {escape(timestamp)}</p>"
+            f"{body}"
+            "</section>"
+        )
+        return f"{current}\n\n{section}".strip() if current else section
+
+    @staticmethod
+    def _research_text_to_html(value: str) -> str:
+        blocks: list[str] = []
+        list_type: str | None = None
+        list_items: list[str] = []
+
+        def flush_list() -> None:
+            nonlocal list_type, list_items
+            if list_type and list_items:
+                blocks.append(f"<{list_type}>" + "".join(f"<li>{item}</li>" for item in list_items) + f"</{list_type}>")
+            list_type = None
+            list_items = []
+
+        def add_list_item(kind: str, text: str) -> None:
+            nonlocal list_type, list_items
+            if list_type != kind:
+                flush_list()
+                list_type = kind
+            list_items.append(escape(text))
+
+        for raw_line in value.replace("\r\n", "\n").replace("\r", "\n").split("\n"):
+            line = raw_line.strip()
+            if not line:
+                flush_list()
+                continue
+            if line.startswith("### "):
+                flush_list()
+                blocks.append(f"<h6>{escape(line[4:].strip())}</h6>")
+                continue
+            if line.startswith("## "):
+                flush_list()
+                blocks.append(f"<h5>{escape(line[3:].strip())}</h5>")
+                continue
+            if line.startswith("- "):
+                add_list_item("ul", line[2:].strip())
+                continue
+            dot_index = line.find(". ")
+            if dot_index > 0 and line[:dot_index].isdigit():
+                add_list_item("ol", line[dot_index + 2 :].strip())
+                continue
+            flush_list()
+            blocks.append(f"<p>{escape(line)}</p>")
+        flush_list()
+        return '<div class="kyc-research-brief">' + "".join(blocks) + "</div>"
+
+    @staticmethod
+    def _citations_from_research_contexts(contexts: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        citations: list[dict[str, Any]] = []
+        for context in contexts:
+            citations.append(
+                {
+                    "source_document_id": None,
+                    "source_chunk_id": None,
+                    "source_record_id": context.get("source_record_id"),
+                    "source_type": context.get("source_type"),
+                    "label": context.get("label") or "Tavily web research",
+                    "page_number": None,
+                    "section_label": "Tavily web research",
+                    "excerpt": str(context.get("excerpt") or context.get("text") or "")[:900],
+                    "field_key": "web_research_summary",
+                    "confidence": context.get("confidence") or context.get("trust_score") or 62,
+                    "source_route": context.get("source_route"),
+                    "is_sensitive": False,
+                }
+            )
+        return citations
+
+    @staticmethod
+    def _append_raw_detailed_description(existing: str | None, addition: str | None) -> str:
+        current = (existing or "").strip()
+        value = (addition or "").strip()
+        if not value:
+            return current
+        if current and value in current:
+            return current
+        return f"{current}\n\n{value}".strip() if current else value
+
+    @staticmethod
+    def _append_detailed_description(existing: str | None, addition: str | None, run: KycAgentRun | None) -> str:
+        current = (existing or "").strip()
+        value = (addition or "").strip()
+        if not value:
+            return current
+        marker = f"kyc-run:{run.id}" if run is not None else f"kyc-run:{datetime.now(timezone.utc).isoformat()}"
+        if marker in current:
+            return current
+        provider = dict(run.provider_json or {}) if run is not None else {}
+        model = run.model_name if run is not None else None
+        title_bits = [
+            "AI KYC detailed response",
+            str(provider.get("adapter") or "").strip(),
+            str(model or provider.get("model") or "").strip(),
+        ]
+        title = " - ".join(bit for bit in title_bits if bit)
+        timestamp = (run.completed_at or run.updated_at or datetime.now(timezone.utc)).isoformat() if run is not None else datetime.now(timezone.utc).isoformat()
+        section = (
+            f'<!-- {marker} -->'
+            f'<section data-kyc-run-id="{escape(run.id if run is not None else "")}">'
+            f"<h4>{escape(title)}</h4>"
+            f"<p><strong>Captured at:</strong> {escape(timestamp)}</p>"
+            f"<pre>{escape(value)}</pre>"
+            "</section>"
+        )
+        return f"{current}\n\n{section}".strip() if current else section
 
     def _fields_from_run(self, account: Account, run: KycAgentRun, latest_snapshot: KycSnapshot | None) -> list[dict[str, Any]]:
         output_by_key: dict[str, dict[str, Any]] = {}
@@ -1395,6 +2481,12 @@ class KycService:
         confidence = round(sum(confidences) / len(confidences)) if confidences else 0
         missing_fields = self._missing_required_fields(fields, config)
         field_keys_with_citation = {citation.field_key for document in source_documents for citation in document.citations if citation.field_key}
+        field_keys_with_citation.update(
+            str(citation.get("field_key"))
+            for field in fields
+            for citation in field.get("citations", [])
+            if isinstance(citation, dict) and citation.get("field_key")
+        )
         source_coverage = round((len(field_keys_with_citation) / max(len(required), 1)) * 100) if source_documents else 0
         if source_documents and source_coverage < 35:
             source_coverage = min(100, round((len(source_documents) / max(len(WORKSTREAMS), 1)) * 100))
@@ -1602,6 +2694,7 @@ class KycService:
             conflicts=list(draft.conflicts),
             difference_summary=list(draft.difference_summary),
             source_context=self._source_context_read(draft.source_context, current_user),
+            detailed_description=draft.detailed_description,
             confidence=draft.confidence,
             completeness=draft.completeness,
             source_coverage=draft.source_coverage,
@@ -1633,6 +2726,7 @@ class KycService:
             fields=self._fields_read(snapshot.fields_json, current_user),
             citations=self._citations_read(snapshot.citations_json, current_user),
             source_context=self._source_context_read(snapshot.source_context, current_user),
+            detailed_description=snapshot.detailed_description,
             source_document_ids=list(snapshot.source_document_ids),
             research_sources=list(snapshot.research_sources),
             confidence=snapshot.confidence,
@@ -1667,6 +2761,7 @@ class KycService:
             retrieval_summary=dict(run.retrieval_summary_json or {}),
             provider_response_id=run.provider_response_id,
             model_name=run.model_name,
+            detailed_description=run.detailed_description,
             started_at=run.started_at,
             completed_at=run.completed_at,
             created_at=run.created_at,

@@ -438,6 +438,15 @@ class SourceDocument(Base):
     extractions: Mapped[list["SourceDocumentExtraction"]] = relationship(back_populates="source_document", cascade="all, delete-orphan")
     chunks: Mapped[list["SourceDocumentChunk"]] = relationship(back_populates="source_document", cascade="all, delete-orphan")
 
+    @property
+    def extracted_text(self) -> str | None:
+        completed = [item for item in self.extractions if item.status == "completed" and (item.raw_text or item.normalized_text)]
+        candidates = completed or [item for item in self.extractions if item.raw_text or item.normalized_text]
+        if not candidates:
+            return None
+        latest = sorted(candidates, key=lambda item: item.completed_at or item.created_at, reverse=True)[0]
+        return latest.raw_text or latest.normalized_text
+
 
 class SourceCitation(Base):
     __tablename__ = "source_citations"
@@ -448,6 +457,7 @@ class SourceCitation(Base):
     page_number: Mapped[int | None] = mapped_column(Integer, nullable=True)
     excerpt: Mapped[str] = mapped_column(Text, nullable=False)
     field_key: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    confidence: Mapped[int] = mapped_column(Integer, nullable=False, default=75)
 
     source_document: Mapped[SourceDocument] = relationship(back_populates="citations")
 
@@ -472,6 +482,26 @@ class SourceDocumentExtraction(Base):
 
     source_document: Mapped[SourceDocument] = relationship(back_populates="extractions")
     chunks: Mapped[list["SourceDocumentChunk"]] = relationship(back_populates="extraction", cascade="all, delete-orphan")
+
+
+class DocumentExtraction(Base):
+    __tablename__ = "document_extractions"
+    __table_args__ = (UniqueConstraint("document_id", "page_number", "checksum", name="uq_document_extractions_document_page_checksum"),)
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid4()))
+    document_id: Mapped[str] = mapped_column(ForeignKey("source_documents.id", ondelete="CASCADE"), index=True, nullable=False)
+    extraction_id: Mapped[str | None] = mapped_column(ForeignKey("source_document_extractions.id", ondelete="CASCADE"), index=True, nullable=True)
+    raw_text: Mapped[str] = mapped_column(Text, nullable=False)
+    page_number: Mapped[int] = mapped_column(Integer, index=True, nullable=False, default=1)
+    source_file: Mapped[str] = mapped_column(String(255), index=True, nullable=False)
+    checksum: Mapped[str] = mapped_column(String(64), index=True, nullable=False)
+    extractor_name: Mapped[str] = mapped_column(String(120), nullable=False, default="local-document-extractor")
+    extractor_version: Mapped[str] = mapped_column(String(40), nullable=False, default="v1")
+    metadata_json: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utc_now)
+
+    source_document: Mapped[SourceDocument] = relationship()
+    extraction: Mapped[SourceDocumentExtraction | None] = relationship()
 
 
 class SourceDocumentChunk(Base):
@@ -524,6 +554,7 @@ class KycDraft(Base):
     conflicts: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
     difference_summary: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
     source_context: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    detailed_description: Mapped[str] = mapped_column(Text, nullable=False, default="")
     confidence: Mapped[int] = mapped_column(Integer, nullable=False, default=75)
     completeness: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     source_coverage: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
@@ -570,6 +601,7 @@ class KycSnapshot(Base):
     fields_json: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
     citations_json: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
     source_context: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    detailed_description: Mapped[str] = mapped_column(Text, nullable=False, default="")
     source_document_ids: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
     research_sources: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
     confidence: Mapped[int] = mapped_column(Integer, nullable=False, default=75)
@@ -608,6 +640,7 @@ class KycAgentRun(Base):
     provider_json: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
     usage_json: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
     cost_json: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    detailed_description: Mapped[str] = mapped_column(Text, nullable=False, default="")
     provider_response_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
     model_name: Mapped[str | None] = mapped_column(String(160), nullable=True)
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

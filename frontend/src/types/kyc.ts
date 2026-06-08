@@ -54,6 +54,7 @@ export interface KycDraft {
   conflicts: string[]
   difference_summary: string[]
   source_context: Record<string, unknown>
+  detailed_description: string
   confidence: number
   completeness: number
   source_coverage: number
@@ -84,6 +85,7 @@ export interface KycSnapshot {
   fields: KycField[]
   citations: KycCitation[]
   source_context: Record<string, unknown>
+  detailed_description: string
   source_document_ids: string[]
   research_sources: string[]
   confidence: number
@@ -166,6 +168,7 @@ export interface KycAgentRun {
   retrieval_summary?: Record<string, unknown>
   provider_response_id?: string | null
   model_name?: string | null
+  detailed_description?: string
   started_at?: string | null
   completed_at?: string | null
   created_at: string

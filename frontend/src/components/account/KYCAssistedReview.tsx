@@ -15,8 +15,10 @@ import {
 } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { toast } from 'sonner'
+import { DocumentExtractionReviewPanel, DocumentReviewSource } from '@/components/account/DocumentExtractionReviewPanel'
 import { useAuth } from '@/contexts/AuthContext'
 import { ApiError } from '@/services/api'
+import { createAccountAttachmentPreviewUrl, listAccountAttachments } from '@/services/accountWorkspace'
 import {
   approveKycDraft,
   createKycDraft,
@@ -24,20 +26,24 @@ import {
   listKycAgentRuns,
   listKycDrafts,
   listKycSnapshots,
+  queueKycWebResearch,
   rejectKycDraft,
+  retryKycAgentRun,
   runPendingKycJobs,
   restoreKycSnapshot,
   updateKycDraft,
 } from '@/services/kyc'
 import { Account } from '@/types/account'
 import { KycAgentRun, KycDraft, KycDraftStatus, KycFreshness, KycPage, KycSnapshot } from '@/types/kyc'
+import { SourceDocument } from '@/types/v3'
 import { EmptyState } from '@/components/ui/EmptyState'
+import { RichTextEditor } from '@/components/ui/RichTextEditor'
 import { cn } from '@/utils/cn'
 
 const DRAFT_PAGE_SIZE = 5
 const SNAPSHOT_PAGE_SIZE = 3
 
-type ActionState = 'initial' | 'refresh' | 'create' | 'save' | 'approve' | 'reject' | 'restore' | 'runPending' | ''
+type ActionState = 'initial' | 'refresh' | 'create' | 'save' | 'approve' | 'reject' | 'restore' | 'retryRun' | 'runPending' | 'webResearch' | ''
 
 export function KYCAssistedReview({ account }: { account: Account }) {
   const { token } = useAuth()
@@ -51,6 +57,13 @@ export function KYCAssistedReview({ account }: { account: Account }) {
   const [ackConflicts, setAckConflicts] = useState(false)
   const [overrideReason, setOverrideReason] = useState('')
   const [reviewNotes, setReviewNotes] = useState('')
+  const [detailedDescription, setDetailedDescription] = useState('')
+  const [sourceDocuments, setSourceDocuments] = useState<SourceDocument[]>([])
+  const [selectedSourceDocumentId, setSelectedSourceDocumentId] = useState('')
+  const [sourcePreviewUrl, setSourcePreviewUrl] = useState('')
+  const [sourcePreviewError, setSourcePreviewError] = useState('')
+  const [sourceReviewHtml, setSourceReviewHtml] = useState('')
+  const [webResearchQuery, setWebResearchQuery] = useState('')
   const [rejectionReason, setRejectionReason] = useState('')
   const [rejectModalOpen, setRejectModalOpen] = useState(false)
   const [restoreSnapshot, setRestoreSnapshot] = useState<KycSnapshot | null>(null)
@@ -76,6 +89,11 @@ export function KYCAssistedReview({ account }: { account: Account }) {
   const sourceCoverage = activeDraft?.source_coverage ?? freshness?.source_coverage ?? 0
   const hasInitialLoading = loading === 'initial' && !drafts
   const { sort, direction } = parseSort(sortOption)
+  const sourceDocumentKey = activeDraft?.source_document_ids.join('|') ?? ''
+  const selectedSourceDocument = useMemo(
+    () => sourceDocuments.find(document => document.id === selectedSourceDocumentId) ?? sourceDocuments[0] ?? null,
+    [selectedSourceDocumentId, sourceDocuments],
+  )
 
   const loadKyc = useCallback(
     async (mode: ActionState = 'refresh') => {
@@ -138,6 +156,13 @@ export function KYCAssistedReview({ account }: { account: Account }) {
       setAckConflicts(false)
       setOverrideReason('')
       setReviewNotes('')
+      setDetailedDescription('')
+      setSourceDocuments([])
+      setSelectedSourceDocumentId('')
+      setSourcePreviewUrl('')
+      setSourcePreviewError('')
+      setSourceReviewHtml('')
+      setWebResearchQuery('')
       setRejectionReason('')
       return
     }
@@ -146,9 +171,74 @@ export function KYCAssistedReview({ account }: { account: Account }) {
     setAckConflicts(activeDraft.conflicts_acknowledged)
     setOverrideReason(activeDraft.override_reason ?? '')
     setReviewNotes(activeDraft.review_notes ?? '')
+    setDetailedDescription(activeDraft.detailed_description ?? '')
+    setWebResearchQuery('')
     setRejectionReason(activeDraft.rejection_reason ?? '')
     setFieldErrors([])
   }, [activeDraft])
+
+  useEffect(() => {
+    if (!token || !activeDraft || !activeDraft.source_document_ids.length) {
+      setSourceDocuments([])
+      setSelectedSourceDocumentId('')
+      return
+    }
+    let active = true
+    const allowedIds = new Set(activeDraft.source_document_ids)
+    listAccountAttachments(token, account.id, new URLSearchParams({ page: '1', page_size: '100', sort: 'uploaded_date', direction: 'desc' }))
+      .then(page => {
+        if (!active) return
+        const matched = page.items.filter(document => allowedIds.has(document.id))
+        setSourceDocuments(matched)
+        setSelectedSourceDocumentId(current => (current && matched.some(document => document.id === current) ? current : matched[0]?.id ?? ''))
+      })
+      .catch(() => {
+        if (!active) return
+        setSourceDocuments([])
+        setSelectedSourceDocumentId('')
+      })
+    return () => {
+      active = false
+    }
+  }, [account.id, activeDraft, sourceDocumentKey, token])
+
+  useEffect(() => {
+    if (!activeDraft) {
+      setSourceReviewHtml('')
+      return
+    }
+    setSourceReviewHtml(buildKycRuntimeReviewHtml(activeDraft, selectedSourceDocument))
+  }, [activeDraft, selectedSourceDocument])
+
+  useEffect(() => {
+    if (!token || !selectedSourceDocument) {
+      setSourcePreviewUrl('')
+      setSourcePreviewError('')
+      return
+    }
+    let active = true
+    let objectUrl = ''
+    setSourcePreviewError('')
+    createAccountAttachmentPreviewUrl(token, account.id, selectedSourceDocument)
+      .then(url => {
+        if (!active) {
+          if (typeof URL.revokeObjectURL === 'function') URL.revokeObjectURL(url)
+          return
+        }
+        objectUrl = url
+        setSourcePreviewUrl(url)
+      })
+      .catch(error => {
+        if (active) {
+          setSourcePreviewUrl('')
+          setSourcePreviewError(error instanceof Error ? error.message : 'Source document preview failed')
+        }
+      })
+    return () => {
+      active = false
+      if (objectUrl && typeof URL.revokeObjectURL === 'function') URL.revokeObjectURL(objectUrl)
+    }
+  }, [account.id, selectedSourceDocument, token])
 
   function updateField(fieldKey: string, value: string) {
     setFieldValues(values => ({ ...values, [fieldKey]: value }))
@@ -184,6 +274,7 @@ export function KYCAssistedReview({ account }: { account: Account }) {
         conflicts_acknowledged: ackConflicts,
         override_reason: overrideReason || null,
         review_notes: reviewNotes || null,
+        detailed_description: detailedDescription || '',
       })
       toast.success('KYC review edits saved')
       setActiveDraftId(updated.id)
@@ -247,6 +338,37 @@ export function KYCAssistedReview({ account }: { account: Account }) {
       await loadKyc('refresh')
     } catch (requestError) {
       setError(errorMessage(requestError))
+    } finally {
+      setLoading('')
+    }
+  }
+
+  async function retryLatestRun() {
+    if (!token || !latestRun) return
+    setLoading('retryRun')
+    setError(null)
+    try {
+      await retryKycAgentRun(token, account.id, latestRun.id)
+      toast.success('KYC retry queued. The local Qwen worker will re-run it shortly.')
+      await loadKyc('refresh')
+    } catch (requestError) {
+      setError(errorMessage(requestError))
+    } finally {
+      setLoading('')
+    }
+  }
+
+  async function runWebResearch() {
+    if (!token || !activeDraft) return
+    setLoading('webResearch')
+    setError(null)
+    setFieldErrors([])
+    try {
+      await queueKycWebResearch(token, account.id, { draft_id: activeDraft.id, query: webResearchQuery.trim() || null })
+      toast.success('Tavily web research queued. The local Ollama worker will append it shortly.')
+      await loadKyc('refresh')
+    } catch (requestError) {
+      handleMutationError(requestError)
     } finally {
       setLoading('')
     }
@@ -341,8 +463,30 @@ export function KYCAssistedReview({ account }: { account: Account }) {
                 Run pending job
               </button>
             ) : null}
+            {['failed', 'partial', 'cancelled'].includes(latestRun.status) ? (
+              <button type="button" className="tk-button-secondary bg-white" onClick={retryLatestRun} disabled={Boolean(loading)}>
+                {loading === 'retryRun' ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCcw className="h-4 w-4" />}
+                {latestRun.model_name?.toLowerCase().includes('qwen') ? 'Retry with Qwen' : 'Retry KYC run'}
+              </button>
+            ) : null}
           </div>
         </section>
+      ) : null}
+
+      {activeDraft ? (
+        <DocumentExtractionReviewPanel
+          title="Runtime source and KYC extraction review"
+          eyebrow="KYC source review"
+          documentName={selectedSourceDocument?.fileName || selectedSourceDocument?.name || sourceContextSources(activeDraft)[0]?.name}
+          previewUrl={sourcePreviewUrl}
+          mimeType={selectedSourceDocument?.mimeType}
+          extractedHtml={sourceReviewHtml}
+          onExtractedHtmlChange={setSourceReviewHtml}
+          sources={sourceDocuments.length ? sourceDocuments.map(sourceDocumentToReviewSource) : sourceContextSources(activeDraft)}
+          selectedSourceId={selectedSourceDocumentId}
+          onSelectSource={setSelectedSourceDocumentId}
+          previewError={sourcePreviewError}
+        />
       ) : null}
 
       {error ? (
@@ -390,10 +534,32 @@ export function KYCAssistedReview({ account }: { account: Account }) {
                     </div>
                     <p className="mt-3 text-sm leading-6 text-ink-secondary">{activeDraft.ai_disclaimer}</p>
                   </div>
-                  <button type="button" className="tk-button-secondary bg-white" onClick={createDraft} disabled={Boolean(loading)}>
-                    {loading === 'create' ? <Loader2 className="h-4 w-4 animate-spin" /> : <PlusCircle className="h-4 w-4" />}
-                    New draft
-                  </button>
+                  <div className="flex shrink-0 flex-wrap gap-2">
+                    <button type="button" className="tk-button-secondary bg-white" onClick={createDraft} disabled={Boolean(loading)}>
+                      {loading === 'create' ? <Loader2 className="h-4 w-4 animate-spin" /> : <PlusCircle className="h-4 w-4" />}
+                      New draft
+                    </button>
+                  </div>
+                </div>
+                <div className="mt-4 rounded-lg border border-surface-border bg-surface-secondary p-3">
+                  <label className="block">
+                    <span className="text-xs font-semibold uppercase tracking-wider text-ink-secondary">Research question</span>
+                    <textarea
+                      className="mt-2 min-h-20 w-full rounded-lg border border-surface-border bg-white px-3 py-2 text-sm leading-6 text-ink outline-none transition-colors placeholder:text-ink-muted focus:border-brand-blue focus:ring-2 focus:ring-brand-blue/20"
+                      value={webResearchQuery}
+                      onChange={event => setWebResearchQuery(event.target.value)}
+                      disabled={!canEditDraft || Boolean(loading)}
+                      maxLength={500}
+                      placeholder={`Tell me about ${account.name} in USA, including company profile, news, blogs, services, and risks.`}
+                    />
+                  </label>
+                  <div className="mt-3 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                    <span className="text-xs text-ink-secondary">{webResearchQuery.trim().length}/500 characters</span>
+                    <button type="button" className="tk-button-secondary bg-white" onClick={runWebResearch} disabled={!canEditDraft || Boolean(loading)}>
+                      {loading === 'webResearch' ? <Loader2 className="h-4 w-4 animate-spin" /> : <Search className="h-4 w-4" />}
+                      Run web research
+                    </button>
+                  </div>
                 </div>
               </section>
 
@@ -420,12 +586,14 @@ export function KYCAssistedReview({ account }: { account: Account }) {
                           {field.confidence < 70 ? <Badge tone="orange">{`${field.confidence}%`}</Badge> : <Badge tone="green">{`${field.confidence}%`}</Badge>}
                           {field.is_sensitive ? <Badge tone="blue">Restricted</Badge> : null}
                         </span>
-                        <textarea
-                          className="mt-2 min-h-[104px] w-full resize-y rounded-md border border-surface-border bg-surface-secondary px-3 py-2 text-sm leading-6 text-ink outline-none transition-colors focus:border-brand-blue focus:bg-white focus:ring-2 focus:ring-brand-blue/20 disabled:cursor-not-allowed disabled:opacity-70"
-                          value={fieldValues[field.key] ?? ''}
-                          onChange={event => updateField(field.key, event.target.value)}
-                          disabled={!canEditDraft}
-                        />
+                        <div className="mt-2">
+                          <RichTextEditor
+                            value={fieldValues[field.key] ?? ''}
+                            onChange={value => updateField(field.key, value)}
+                            disabled={!canEditDraft}
+                            ariaLabel={field.label}
+                          />
+                        </div>
                         <span className="mt-2 flex items-start gap-2 text-xs leading-5 text-ink-secondary">
                           <FileSearch className="mt-0.5 h-3.5 w-3.5 shrink-0 text-brand-blue" />
                           {citationText(field)}
@@ -441,6 +609,27 @@ export function KYCAssistedReview({ account }: { account: Account }) {
                 </article>
               ))}
             </>
+          ) : null}
+
+          {activeDraft ? (
+            <section className="tk-card p-5">
+              <div className="flex flex-col gap-2">
+                <h3 className="text-base font-semibold text-ink">Detailed AI description</h3>
+                <p className="text-sm leading-6 text-ink-secondary">
+                  Full Qwen/OpenAI/Tavily research and provider response detail is appended here for reviewer traceability.
+                </p>
+              </div>
+              <div className="mt-3">
+                <RichTextEditor
+                  value={detailedDescription}
+                  onChange={setDetailedDescription}
+                  disabled={!canEditDraft}
+                  placeholder="AI research and raw provider response details will appear here after the run completes."
+                  ariaLabel="Detailed AI description"
+                  editorHeight="520px"
+                />
+              </div>
+            </section>
           ) : null}
         </section>
 
@@ -519,11 +708,15 @@ export function KYCAssistedReview({ account }: { account: Account }) {
                 </label>
                 <label className="block">
                   <span className="text-xs font-semibold uppercase tracking-wider text-ink-secondary">Override reason</span>
-                  <textarea className="tk-input mt-2 min-h-[86px]" value={overrideReason} onChange={event => setOverrideReason(event.target.value)} disabled={!canEditDraft} />
+                  <div className="mt-2">
+                    <RichTextEditor value={overrideReason} onChange={setOverrideReason} disabled={!canEditDraft} ariaLabel="Override reason" />
+                  </div>
                 </label>
                 <label className="block">
                   <span className="text-xs font-semibold uppercase tracking-wider text-ink-secondary">Review notes</span>
-                  <textarea className="tk-input mt-2 min-h-[86px]" value={reviewNotes} onChange={event => setReviewNotes(event.target.value)} disabled={!canEditDraft} />
+                  <div className="mt-2">
+                    <RichTextEditor value={reviewNotes} onChange={setReviewNotes} disabled={!canEditDraft} ariaLabel="Review notes" />
+                  </div>
                 </label>
               </div>
             </section>
@@ -613,7 +806,9 @@ export function KYCAssistedReview({ account }: { account: Account }) {
             <div className="p-5">
               <label className="block">
                 <span className="text-xs font-semibold uppercase tracking-wider text-ink-secondary">Rejection reason</span>
-                <textarea className="tk-input mt-2 min-h-[120px]" value={rejectionReason} onChange={event => setRejectionReason(event.target.value)} />
+                <div className="mt-2">
+                  <RichTextEditor value={rejectionReason} onChange={setRejectionReason} ariaLabel="Rejection reason" />
+                </div>
               </label>
             </div>
             <div className="flex flex-col-reverse gap-2 border-t border-surface-border p-5 sm:flex-row sm:justify-end">
@@ -641,7 +836,9 @@ export function KYCAssistedReview({ account }: { account: Account }) {
             <div className="p-5">
               <label className="block">
                 <span className="text-xs font-semibold uppercase tracking-wider text-ink-secondary">Restore reason</span>
-                <textarea className="tk-input mt-2 min-h-[120px]" value={restoreReason} onChange={event => setRestoreReason(event.target.value)} />
+                <div className="mt-2">
+                  <RichTextEditor value={restoreReason} onChange={setRestoreReason} ariaLabel="Restore reason" />
+                </div>
               </label>
             </div>
             <div className="flex flex-col-reverse gap-2 border-t border-surface-border p-5 sm:flex-row sm:justify-end">
@@ -658,6 +855,82 @@ export function KYCAssistedReview({ account }: { account: Account }) {
       ) : null}
     </div>
   )
+}
+
+function sourceDocumentToReviewSource(document: SourceDocument): DocumentReviewSource {
+  return {
+    id: document.id,
+    name: document.fileName || document.name,
+    status: document.extractionStatus || document.status,
+    confidence: document.confidence,
+    pages: document.pages,
+  }
+}
+
+function sourceContextSources(draft: KycDraft): DocumentReviewSource[] {
+  const documents = Array.isArray(draft.source_context.source_documents) ? draft.source_context.source_documents : []
+  return documents.flatMap(item => {
+    if (!isRecord(item)) return []
+    return [{
+      id: typeof item.id === 'string' ? item.id : undefined,
+      name: typeof item.title === 'string' ? item.title : 'Source document',
+      status: typeof item.source_type === 'string' ? item.source_type : 'source',
+      confidence: typeof item.confidence === 'number' ? item.confidence : undefined,
+    }]
+  })
+}
+
+function buildKycRuntimeReviewHtml(draft: KycDraft, document: SourceDocument | null) {
+  const documentId = document?.id
+  const relatedFields = documentId
+    ? draft.fields.filter(field => field.citations.some(citation => citation.source_document_id === documentId))
+    : draft.fields
+  const fields = (relatedFields.length ? relatedFields : draft.fields).slice(0, 20)
+  const fieldItems = fields.map(field => (
+    `<li><strong>${escapeHtml(field.label)}</strong> · ${field.confidence}% confidence<br/>${escapeHtml(toPlainText(field.value || 'No value extracted yet.'))}</li>`
+  )).join('')
+  const citations = draft.citations
+    .filter(citation => !documentId || citation.source_document_id === documentId)
+    .slice(0, 16)
+  const citationItems = citations.map(citation => (
+    `<li><strong>${escapeHtml(citation.label)}</strong>${citation.page_number ? ` · page ${citation.page_number}` : ''}: ${escapeHtml(citation.excerpt)}</li>`
+  )).join('')
+  const issues = [...draft.missing_fields.map(item => `Missing: ${item}`), ...draft.conflicts.map(item => `Conflict: ${item}`)]
+
+  return [
+    document?.extractedText?.trim()
+      ? `<h4>Full extracted PDF text</h4><h5>${escapeHtml(document.fileName || document.name)}</h5><p>${textWithLineBreaks(document.extractedText)}</p>`
+      : '<h4>Full extracted PDF text</h4><p>No extracted document text is available for the selected source yet.</p>',
+    '<h4>KYC runtime extraction review</h4>',
+    '<ul>',
+    `<li><strong>Status:</strong> ${escapeHtml(draft.status.replace(/_/g, ' '))}</li>`,
+    `<li><strong>Completeness:</strong> ${draft.completeness}%</li>`,
+    `<li><strong>Confidence:</strong> ${draft.confidence}%</li>`,
+    `<li><strong>Source coverage:</strong> ${draft.source_coverage}%</li>`,
+    document ? `<li><strong>Selected source:</strong> ${escapeHtml(document.fileName || document.name)}</li>` : '',
+    '</ul>',
+    '<h4>Extracted KYC fields</h4>',
+    fieldItems ? `<ul>${fieldItems}</ul>` : '<p>No KYC fields are available for this source yet.</p>',
+    citationItems ? `<h4>Citations</h4><ul>${citationItems}</ul>` : '<h4>Citations</h4><p>No citations are attached to the selected source yet.</p>',
+    issues.length ? `<h4>Review issues</h4><ul>${issues.map(item => `<li>${escapeHtml(item)}</li>`).join('')}</ul>` : '<p>No open KYC review issues are currently flagged.</p>',
+    draft.detailed_description ? `<h4>Detailed AI description</h4>${draft.detailed_description}` : '',
+  ].filter(Boolean).join('')
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null
+}
+
+function toPlainText(value: string) {
+  return value.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim()
+}
+
+function escapeHtml(value: string) {
+  return value.replace(/[&<>"']/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[char] ?? char))
+}
+
+function textWithLineBreaks(value: string) {
+  return escapeHtml(value).replace(/\n/g, '<br/>')
 }
 
 function groupFields(draft: KycDraft | null) {
@@ -758,6 +1031,11 @@ function providerText(run: KycAgentRun) {
 }
 
 function sourceCoverageSummary(run: KycAgentRun) {
+  if (run.provider?.research_only) {
+    const sourceCount = typeof run.retrieval_summary?.source_count === 'number' ? run.retrieval_summary.source_count : 0
+    const queryCount = typeof run.retrieval_summary?.query_count === 'number' ? run.retrieval_summary.query_count : 0
+    return `${sourceCount} Tavily source${sourceCount === 1 ? '' : 's'}, ${queryCount} quer${queryCount === 1 ? 'y' : 'ies'}`
+  }
   const summary = run.retrieval_summary?.source_coverage
   if (!summary || typeof summary !== 'object') return 'not calculated yet'
   const record = summary as { documents_available?: number; documents_cited?: number; chunks_cited?: number }
