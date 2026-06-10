@@ -3,6 +3,7 @@ import { useAuth } from '@/contexts/AuthContext'
 import {
   archiveEngagement as archiveEngagementRequest,
   createEngagement as createEngagementRequest,
+  createEngagementFromCharter as createEngagementFromCharterRequest,
   getEngagement as getEngagementRequest,
   getEngagementTimeline as getEngagementTimelineRequest,
   listEngagements as listEngagementsRequest,
@@ -95,6 +96,34 @@ export function useCreateEngagement(): MutationState & { createEngagement: (acco
   )
 
   return { createEngagement, isLoading, error }
+}
+
+export function useCreateEngagementFromCharter(): MutationState & { createEngagementFromCharter: (accountId: string, file: File) => Promise<EngagementRecord> } {
+  const { token } = useAuth()
+  const [isLoading, setIsLoading] = useState(false)
+  const [error, setError] = useState<Error | null>(null)
+
+  const createEngagementFromCharter = useCallback(
+    async (accountId: string, file: File) => {
+      if (!token) throw new Error('You must be logged in to import a project charter')
+      setIsLoading(true)
+      setError(null)
+      try {
+        const engagement = await createEngagementFromCharterRequest(token, accountId, file)
+        invalidateEngagementCache({ accountId, engagementId: engagement.id })
+        return engagement
+      } catch (err) {
+        const nextError = toError(err)
+        setError(nextError)
+        throw nextError
+      } finally {
+        setIsLoading(false)
+      }
+    },
+    [token],
+  )
+
+  return { createEngagementFromCharter, isLoading, error }
 }
 
 export function useUpdateEngagement(): MutationState & { updateEngagement: (engagementId: string, payload: EngagementUpdatePayload) => Promise<EngagementRecord> } {

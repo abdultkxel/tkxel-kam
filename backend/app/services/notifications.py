@@ -449,13 +449,16 @@ class NotificationsService:
         priority: str = "medium",
         delivery_metadata: dict[str, Any] | None = None,
         deduplication_key: str | None = None,
+        in_app_only: bool = False,
     ) -> QueueNotificationResult:
         config = self.repository.get_trigger_config(trigger)
         if config is None or not config.is_active:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Notification trigger '{trigger}' is not active")
         preference = self.repository.get_preference(recipient.id, trigger)
         mode = preference.mode if preference else config.default_mode
-        if config.mandatory and "email" in (config.supported_channels or []):
+        if in_app_only:
+            mode = "in_app"
+        elif config.mandatory and "email" in (config.supported_channels or []):
             mode = "in_app_email"
         key = deduplication_key or self._dedup_key(recipient.id, trigger, source_record_type, source_record_id)
         if mode == "off" and not config.mandatory:

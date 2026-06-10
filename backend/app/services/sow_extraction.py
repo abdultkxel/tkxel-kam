@@ -53,21 +53,112 @@ class SowExtractionService:
         self.db = db
         self.settings = get_settings()
 
-    def extract_structured_fields(self, document: SourceDocument, extraction: SourceDocumentExtraction) -> SowStructuredExtraction:
+    def extract_structured_fields(
+        self,
+        document: SourceDocument,
+        extraction: SourceDocumentExtraction,
+        *,
+        allow_ai: bool = True,
+    ) -> SowStructuredExtraction:
         page_rows = self._page_rows(document.id)
         source_text = "\n\n".join(f"[Page {row.page_number}]\n{row.raw_text}" for row in page_rows)
         fallback = self._deterministic_extract(source_text)
-        if not self.settings.sow_ai_extraction_enabled or not source_text.strip():
+        if not allow_ai or not self.settings.sow_ai_extraction_enabled or not source_text.strip():
             result = SowStructuredExtraction(fields=self._enrich_fields(fallback, page_rows), provider="deterministic", model=None, status="complete")
             self._store_result(extraction, result, page_rows)
             return result
 
+        result: SowStructuredExtraction | None = None
         try:
-            result = self._extract_with_qwen(source_text, fallback, page_rows)
+            if self._openai_enabled():
+                result = self._extract_with_openai(source_text, fallback, page_rows)
         except Exception as exc:  # pragma: no cover - provider boundary
-            logger.warning("Qwen SOW extraction failed for source document %s: %s", document.id, exc)
-            result = SowStructuredExtraction(fields=self._enrich_fields(fallback, page_rows), provider="deterministic_fallback", model=None, status="partial", error_message=str(exc)[:500])
+            logger.warning("OpenAI SOW extraction failed for source document %s: %s", document.id, exc)
+        if result is None:
+            try:
+                result = self._extract_with_qwen(source_text, fallback, page_rows)
+            except Exception as exc:  # pragma: no cover - provider boundary
+                logger.warning("Qwen SOW extraction failed for source document %s: %s", document.id, exc)
+                result = SowStructuredExtraction(fields=self._enrich_fields(fallback, page_rows), provider="deterministic_fallback", model=None, status="partial", error_message=str(exc)[:500])
         self._store_result(extraction, result, page_rows)
+        return result
+
+    def extract_structured_fields_from_text(
+        self,
+        source_text: str,
+        *,
+        source_name: str = "uploaded source document",
+        allow_ai: bool = True,
+    ) -> SowStructuredExtraction:
+        fallback = self._deterministic_extract(source_text)
+        if not allow_ai or not self.settings.sow_ai_extraction_enabled or not source_text.strip():
+            return SowStructuredExtraction(fields=self._fields_without_page_validation(fallback), provider="deterministic", model=None, status="complete")
+        try:
+            if self._openai_enabled():
+                return self._extract_with_openai_text(source_text, fallback, source_name=source_name)
+        except Exception as exc:  # pragma: no cover - provider boundary
+            logger.warning("OpenAI SOW preview extraction failed for %s: %s", source_name, exc)
+        try:
+            return self._extract_with_qwen_text(source_text, fallback, source_name=source_name)
+        except Exception as exc:  # pragma: no cover - provider boundary
+            logger.warning("Qwen SOW preview extraction failed for %s: %s", source_name, exc)
+            return SowStructuredExtraction(fields=self._fields_without_page_validation(fallback), provider="deterministic_fallback", model=None, status="partial", error_message=str(exc)[:500])
+
+    def _openai_enabled(self) -> bool:
+        return bool(self.settings.ai_kyc_provider == "openai" and self.settings.ai_kyc_api_key)
+
+    def _extract_with_openai(self, source_text: str, fallback: dict[str, dict[str, Any]], page_rows: list[DocumentExtraction]) -> SowStructuredExtraction:
+        prompt = self._prompt(source_text)
+        log_kyc_verbose(
+            logger,
+            self.settings,
+            "sow_extraction.openai.start",
+            {
+                "provider": "openai",
+                "model": self.settings.sow_ai_extraction_model or self.settings.ai_kyc_model,
+                "prompt_tokens_estimate": estimate_tokens(prompt),
+            },
+        )
+        log_kyc_verbose_text(logger, self.settings, "sow_extraction.openai.prompt", prompt)
+        started = time.monotonic()
+        response_text = self._call_openai(prompt)
+        parsed = self._json_object_from_response(response_text)
+        normalized = self._normalize_ai_fields(parsed, fallback)
+        enriched = self._enrich_fields(normalized, page_rows)
+        result = SowStructuredExtraction(
+            fields=enriched,
+            provider="openai",
+            model=self.settings.sow_ai_extraction_model or self.settings.ai_kyc_model,
+            status="complete",
+            raw_response=response_text[:5000],
+        )
+        log_kyc_verbose(
+            logger,
+            self.settings,
+            "sow_extraction.openai.complete",
+            {"latency_ms": round((time.monotonic() - started) * 1000), "fields": result.fields},
+        )
+        return result
+
+    def _extract_with_openai_text(self, source_text: str, fallback: dict[str, dict[str, Any]], *, source_name: str) -> SowStructuredExtraction:
+        prompt = self._prompt(source_text)
+        started = time.monotonic()
+        response_text = self._call_openai(prompt)
+        parsed = self._json_object_from_response(response_text)
+        normalized = self._normalize_ai_fields(parsed, fallback)
+        result = SowStructuredExtraction(
+            fields=self._fields_without_page_validation(normalized, source_name=source_name),
+            provider="openai",
+            model=self.settings.sow_ai_extraction_model or self.settings.ai_kyc_model,
+            status="complete",
+            raw_response=response_text[:5000],
+        )
+        log_kyc_verbose(
+            logger,
+            self.settings,
+            "sow_extraction.openai.preview_complete",
+            {"latency_ms": round((time.monotonic() - started) * 1000), "source_name": source_name, "fields": result.fields},
+        )
         return result
 
     def _extract_with_qwen(self, source_text: str, fallback: dict[str, dict[str, Any]], page_rows: list[DocumentExtraction]) -> SowStructuredExtraction:
@@ -103,6 +194,41 @@ class SowExtractionService:
             {"latency_ms": round((time.monotonic() - started) * 1000), "fields": result.fields},
         )
         return result
+
+    def _extract_with_qwen_text(self, source_text: str, fallback: dict[str, dict[str, Any]], *, source_name: str) -> SowStructuredExtraction:
+        prompt = self._prompt(source_text)
+        response_text = self._call_local_ai(prompt)
+        parsed = self._json_object_from_response(response_text)
+        normalized = self._normalize_ai_fields(parsed, fallback)
+        return SowStructuredExtraction(
+            fields=self._fields_without_page_validation(normalized, source_name=source_name),
+            provider="qwen",
+            model=self.settings.sow_ai_extraction_model,
+            status="complete",
+            raw_response=response_text[:5000],
+        )
+
+    def _call_openai(self, prompt: str) -> str:
+        from openai import OpenAI
+
+        client_kwargs: dict[str, Any] = {"api_key": self.settings.ai_kyc_api_key, "timeout": self.settings.ai_kyc_timeout_seconds}
+        if self.settings.ai_kyc_base_url:
+            client_kwargs["base_url"] = self.settings.ai_kyc_base_url
+        if self.settings.ai_kyc_organization:
+            client_kwargs["organization"] = self.settings.ai_kyc_organization
+        if self.settings.ai_kyc_project:
+            client_kwargs["project"] = self.settings.ai_kyc_project
+        client = OpenAI(**client_kwargs)
+        model = self.settings.sow_ai_extraction_model or self.settings.ai_kyc_model
+        request_kwargs: dict[str, Any] = {
+            "model": model,
+            "input": prompt,
+            "max_output_tokens": self.settings.sow_ai_extraction_max_output_tokens,
+        }
+        if not str(model).lower().startswith("gpt-5"):
+            request_kwargs["temperature"] = 0
+        response = client.responses.create(**request_kwargs)
+        return getattr(response, "output_text", "") or ""
 
     def _prompt(self, source_text: str) -> str:
         return (
@@ -153,6 +279,29 @@ class SowExtractionService:
             parsed = json.loads(response.read().decode("utf-8"))
         message = parsed.get("message") if isinstance(parsed, dict) else {}
         return str((message or {}).get("content") or "")
+
+    def _fields_without_page_validation(self, fields: dict[str, dict[str, Any]], *, source_name: str = "uploaded source document") -> dict[str, dict[str, Any]]:
+        normalized: dict[str, dict[str, Any]] = {}
+        for key, field in fields.items():
+            value = field.get("value")
+            confidence = self._confidence(field.get("confidence"), 0)
+            next_field = dict(field)
+            next_field["confidence"] = confidence
+            next_field["missing_evidence"] = None if self._has_value(value) else self._missing_evidence_note(key)
+            next_field["conflicts"] = list(next_field.get("conflicts") or [])
+            if self._has_value(value) and not isinstance(next_field.get("citation"), dict):
+                next_field["citation"] = {
+                    "document": source_name,
+                    "source_file": source_name,
+                    "page": None,
+                    "page_number": None,
+                    "excerpt": str(value)[:500],
+                    "field_key": key,
+                    "confidence": confidence,
+                    "validation_status": "preview_unvalidated",
+                }
+            normalized[key] = next_field
+        return normalized
 
     def _ollama_chat_endpoint(self) -> str:
         base = (self.settings.ai_kyc_base_url or "http://ollama:11434").rstrip("/")
@@ -474,6 +623,10 @@ class SowExtractionService:
 
     @staticmethod
     def _stakeholders(text: str) -> list[str]:
+        section = re.search(r"(?is)Stakeholders?\s*[:\n]\s*(.+?)(?=\n\s*(?:Deliverables?|Risks?|Assumptions?|Service Lines?|Commercial|Start Date|End Date)\s*:|\Z)", text)
+        if section:
+            items = [item.strip(" -•\t\r") for item in re.split(r"[\n;•]+", section.group(1)) if item.strip(" -•\t\r")]
+            return items[:12]
         return [line.strip() for line in re.findall(r"(?im)^(?:Name|Title|Customer shall identify|Client has to).*", text)[:12]]
 
     @staticmethod

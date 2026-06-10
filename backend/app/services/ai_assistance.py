@@ -629,6 +629,7 @@ class AiAssistanceService:
                     source_record_route=f"/accounts/{account.id}",
                     priority="medium",
                     deduplication_key=f"ai-stage-change:{timeline_entry_id}:{recipient.id}",
+                    in_app_only=True,
                 )
             except Exception:
                 logger.exception("Failed to queue AI stage-change notification for user %s", recipient.id)

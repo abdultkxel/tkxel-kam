@@ -618,6 +618,7 @@ class TaskService:
             priority=task.priority,
             delivery_metadata={"task_id": task.id, "created_by_id": current_user.id},
             deduplication_key=f"task_created:{task.id}:{owner.id}",
+            in_app_only=True,
         )
 
     def _notify_task_assigned(self, task: Task, account: Account, current_user: User, *, previous_owner_id: str | None) -> None:
@@ -636,6 +637,7 @@ class TaskService:
                 priority=task.priority,
                 delivery_metadata={"task_id": task.id, "previous_owner_id": previous_owner_id},
                 deduplication_key=f"task_assigned:{task.id}:{owner.id}:{task.updated_at.isoformat()}",
+                in_app_only=True,
             )
         if previous_owner is not None and previous_owner.id not in {current_user.id, owner.id if owner else None}:
             self.notifications.queue_notification(
@@ -650,6 +652,7 @@ class TaskService:
                 priority=task.priority,
                 delivery_metadata={"task_id": task.id, "new_owner_id": task.owner_id},
                 deduplication_key=f"task_reassigned:{task.id}:{previous_owner.id}:{task.updated_at.isoformat()}",
+                in_app_only=True,
             )
 
     def _notification_user(self, user_id: str | None) -> User | None:

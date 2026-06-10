@@ -39,6 +39,7 @@ from app.schemas import (
     SystemHealthRead,
 )
 from app.services.audit import AuditService
+from app.services.in_app_notifications import InAppNotificationService
 from app.services.user_management import page_count
 
 
@@ -48,6 +49,7 @@ class AdminSecurityService:
         self.repository = AdminSecurityRepository(db)
         self.rbac = RbacRepository(db)
         self.audit = AuditService(AuditRepository(db))
+        self.in_app_notifications = InAppNotificationService(db)
 
     def list_audit_logs(self, current_user: User, **filters: Any) -> AuditLogPageRead:
         self._require(current_user, "view")
@@ -106,6 +108,7 @@ class AdminSecurityService:
         permission = FieldPermission(**payload.model_dump(), created_by_id=current_user.id, updated_by_id=current_user.id)
         self.repository.save_field_permission(permission)
         self.audit.log(module=ADMIN_MODULE, action="create_field_permission", entity_type="field_permission", entity_id=permission.id, actor=current_user, after_value=payload.model_dump())
+        self._notify_admins("admin_field_permission_changed", "Field permission created", f"{payload.role} field permission was created for {payload.module}.{payload.field_key}.", "field_permission", permission.id, current_user)
         self.repository.commit()
         return FieldPermissionRead.model_validate(permission)
 
@@ -122,6 +125,7 @@ class AdminSecurityService:
             setattr(permission, key, value)
         permission.updated_by_id = current_user.id
         self.audit.log(module=ADMIN_MODULE, action="update_field_permission", entity_type="field_permission", entity_id=permission.id, actor=current_user, before_value=before, after_value=payload.model_dump())
+        self._notify_admins("admin_field_permission_changed", "Field permission updated", f"{payload.role} field permission changed for {payload.module}.{payload.field_key}.", "field_permission", permission.id, current_user)
         self.repository.commit()
         return FieldPermissionRead.model_validate(permission)
 
@@ -133,6 +137,7 @@ class AdminSecurityService:
         before = FieldPermissionRead.model_validate(permission).model_dump(mode="json")
         self.repository.delete_field_permission(permission)
         self.audit.log(module=ADMIN_MODULE, action="delete_field_permission", entity_type="field_permission", entity_id=permission_id, actor=current_user, before_value=before)
+        self._notify_admins("admin_field_permission_changed", "Field permission deleted", f"{before.get('role')} field permission was deleted for {before.get('module')}.{before.get('field_key')}.", "field_permission", permission_id, current_user)
         self.repository.commit()
         return {"message": "Field permission deleted"}
 
@@ -180,6 +185,7 @@ class AdminSecurityService:
         change.published_by_name = current_user.full_name
         change.published_at = utc_now()
         self.audit.log(module=ADMIN_MODULE, action="publish_configuration_change", entity_type="configuration_change", entity_id=change.id, actor=current_user, before_value=before, after_value=ConfigurationChangeRead.model_validate(change).model_dump(mode="json"))
+        self._notify_admins("admin_configuration_published", "Configuration published", f"{change.module} configuration was published.", "configuration_change", change.id, current_user, priority="low")
         self.repository.commit()
         return ConfigurationChangeRead.model_validate(change)
 
@@ -194,6 +200,7 @@ class AdminSecurityService:
         change.rolled_back_by_name = current_user.full_name
         change.rolled_back_at = utc_now()
         self.audit.log(module=ADMIN_MODULE, action="rollback_configuration_change", entity_type="configuration_change", entity_id=change.id, actor=current_user, before_value=before, after_value=ConfigurationChangeRead.model_validate(change).model_dump(mode="json"))
+        self._notify_admins("admin_configuration_failed", "Configuration rolled back", f"{change.module} configuration was rolled back and needs review.", "configuration_change", change.id, current_user, priority="high")
         self.repository.commit()
         return ConfigurationChangeRead.model_validate(change)
 
@@ -270,6 +277,20 @@ class AdminSecurityService:
     def _require(self, current_user: User, action: str) -> None:
         if not self.rbac.role_has_permission(current_user.role, ADMIN_MODULE, action):
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="You do not have permission to perform this action")
+
+    def _notify_admins(self, trigger: str, title: str, body: str, source_record_type: str, source_record_id: str, current_user: User, *, priority: str = "high") -> None:
+        self.in_app_notifications.queue_many(
+            self.in_app_notifications.admins(),
+            trigger=trigger,
+            title=title,
+            body=body,
+            source_record_type=source_record_type,
+            source_record_id=source_record_id,
+            source_record_route="/admin?tab=security",
+            priority=priority,
+            dedupe_scope=f"{trigger}:{source_record_id}:{datetime.now(timezone.utc).isoformat()}",
+            exclude_user_ids={current_user.id},
+        )
 
     @staticmethod
     def _safe_filters(filters: dict[str, Any]) -> dict[str, Any]:

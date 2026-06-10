@@ -217,11 +217,11 @@ export function GrowthWhitespacePanel({ account }: { account: Account }) {
     }
   }
 
-  if (loading) return <PanelShell title="Whitespace and recommendations"><LoadingRow label="Loading service coverage" /></PanelShell>
-  if (error) return <PanelShell title="Whitespace and recommendations"><ErrorRow message={error} onRetry={load} /></PanelShell>
+  if (loading) return <PanelShell title="Recommendations"><LoadingRow label="Loading service coverage" /></PanelShell>
+  if (error) return <PanelShell title="Recommendations"><ErrorRow message={error} onRetry={load} /></PanelShell>
 
   return (
-    <PanelShell title="Whitespace and recommendations" detail={`${catalog.length} configured services · ${recommendations.length} recommendations`}>
+    <PanelShell title="Recommendations" detail={`${catalog.length} configured services · ${recommendations.length} recommendations`}>
       {!catalog.length ? <EmptyState icon={BriefcaseBusiness} heading="No services configured" body="Configure the service catalog in Admin Settings to capture whitespace." className="py-8" /> : null}
       <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
         {catalog.map(service => (

@@ -46,6 +46,7 @@ export function SortableTable<T extends { id: string }>({
     selectedIds: string[]
     onToggle: (id: string) => void
     onToggleAll: (ids: string[]) => void
+    getLabel?: (item: T) => string
   }
 }) {
   const { sorted: locallySorted, sort: localSort, setSort } = useSortableData(items, defaultSort)
@@ -107,35 +108,38 @@ export function SortableTable<T extends { id: string }>({
             </tr>
           </thead>
           <tbody>
-            {sorted.map(item => (
-              <tr
-                key={item.id}
-                className={cn('border-b border-surface-border transition-colors last:border-b-0', onRowClick ? 'cursor-pointer hover:bg-surface-tertiary' : '')}
-                onClick={() => onRowClick?.(item)}
-              >
-                {selection ? (
-                  <td className="px-4 py-3" onClick={event => event.stopPropagation()}>
-                    <label className="relative flex min-h-[44px] min-w-[44px] cursor-pointer items-center justify-center rounded-md hover:bg-surface-secondary">
-                      <input
-                        type="checkbox"
-                        checked={selection.selectedIds.includes(item.id)}
-                        onChange={() => selection.onToggle(item.id)}
-                        className="peer sr-only"
-                        aria-label={`Select ${item.id}`}
-                      />
-                      <span className={cn('flex h-5 w-5 items-center justify-center rounded-sm border peer-focus-visible:ring-2 peer-focus-visible:ring-brand-blue/30 peer-focus-visible:ring-offset-2 peer-focus-visible:ring-offset-white', selection.selectedIds.includes(item.id) ? 'border-brand-blue bg-brand-blue text-white' : 'border-surface-border bg-white')}>
-                        {selection.selectedIds.includes(item.id) ? <Check className="h-3 w-3" /> : null}
-                      </span>
-                    </label>
-                  </td>
-                ) : null}
-                {columns.map(column => (
-                  <td key={column.key} className={cn('px-4 py-3 text-sm text-ink', column.className)}>
-                    {column.render ? column.render(item) : String((item as Record<string, unknown>)[column.key] ?? '')}
-                  </td>
-                ))}
-              </tr>
-            ))}
+            {sorted.map(item => {
+              const rowLabel = selection?.getLabel?.(item) ?? item.id
+              return (
+                <tr
+                  key={item.id}
+                  className={cn('border-b border-surface-border transition-colors last:border-b-0', onRowClick ? 'cursor-pointer hover:bg-surface-tertiary' : '')}
+                  onClick={() => onRowClick?.(item)}
+                >
+                  {selection ? (
+                    <td className="px-4 py-3" onClick={event => event.stopPropagation()}>
+                      <label className="relative flex min-h-[44px] min-w-[44px] cursor-pointer items-center justify-center rounded-md hover:bg-surface-secondary">
+                        <input
+                          type="checkbox"
+                          checked={selection.selectedIds.includes(item.id)}
+                          onChange={() => selection.onToggle(item.id)}
+                          className="peer sr-only"
+                          aria-label={`Select ${rowLabel}`}
+                        />
+                        <span className={cn('flex h-5 w-5 items-center justify-center rounded-sm border peer-focus-visible:ring-2 peer-focus-visible:ring-brand-blue/30 peer-focus-visible:ring-offset-2 peer-focus-visible:ring-offset-white', selection.selectedIds.includes(item.id) ? 'border-brand-blue bg-brand-blue text-white' : 'border-surface-border bg-white')}>
+                          {selection.selectedIds.includes(item.id) ? <Check className="h-3 w-3" /> : null}
+                        </span>
+                      </label>
+                    </td>
+                  ) : null}
+                  {columns.map(column => (
+                    <td key={column.key} className={cn('px-4 py-3 text-sm text-ink', column.className)}>
+                      {column.render ? column.render(item) : String((item as Record<string, unknown>)[column.key] ?? '')}
+                    </td>
+                  ))}
+                </tr>
+              )
+            })}
           </tbody>
         </table>
       </div>

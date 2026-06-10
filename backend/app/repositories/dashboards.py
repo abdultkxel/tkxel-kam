@@ -228,6 +228,8 @@ class DashboardRepository:
             conditions.append(Account.region == region)
         if lifecycle_status:
             conditions.append(Account.lifecycle_status == lifecycle_status)
-        if risk:
+        if risk == "at_risk":
+            conditions.append(Account.risk_status.in_(("warning", "critical")))
+        elif risk:
             conditions.append(Account.risk_status == risk)
         return conditions

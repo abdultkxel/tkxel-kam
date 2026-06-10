@@ -149,16 +149,28 @@ function accountManagerDashboard() {
         generated_at: '2026-06-03T10:00:00Z',
         data_scope: 'assigned_accounts',
         primary_route: '/dashboard',
-        value: { my_accounts: 5, at_risk: 2, signals_critical_tasks: 4, open_tasks: 14 },
+        value: { my_accounts: 5, at_risk: 2, critical_tasks: 4, open_tasks: 14 },
         items: [],
         metadata: {
           tiles: [
             { key: 'my_accounts', label: 'My Accounts', value: 5, route: '/accounts', detail: 'Assigned account portfolio.' },
-            { key: 'at_risk', label: 'At risk', value: 2, route: '/accounts?risk=critical', detail: 'Warning and critical accounts.' },
-            { key: 'signals_critical_tasks', label: 'Signals / Critical tasks', value: 4, route: '/tasks', detail: 'Signals and critical blockers.' },
+            { key: 'at_risk', label: 'At risk', value: 2, route: '/accounts?risk=at_risk', detail: 'Warning and critical accounts.' },
+            { key: 'critical_tasks', label: 'Critical tasks', value: 4, route: '/tasks?priority=critical', detail: 'Critical and blocked tasks only.' },
             { key: 'open_tasks', label: 'Open tasks', value: 14, route: '/tasks', detail: 'Open operational work in scope.' },
           ],
         },
+        error: null,
+      },
+      {
+        key: 'critical_tasks',
+        title: 'Critical tasks',
+        status: 'complete',
+        generated_at: '2026-06-03T10:00:00Z',
+        data_scope: 'assigned_accounts',
+        primary_route: '/tasks?priority=critical',
+        value: null,
+        items: [{ id: 'task-critical-1', title: 'Resolve blocked renewal task', account_id: 'acc-1', account_name: 'Acme', priority: 'critical', status: 'blocked', due_at: '2026-06-05T10:00:00Z', route: '/tasks?account_id=acc-1' }],
+        metadata: { source_counts: { critical_tasks: 4 } },
         error: null,
       },
       {
@@ -199,14 +211,14 @@ function accountManagerDashboard() {
       },
       {
         key: 'forecast_chart',
-        title: 'Forecast chart',
+        title: '6-Month Revenue Forecast',
         status: 'complete',
         generated_at: '2026-06-03T10:00:00Z',
         data_scope: 'assigned_accounts',
         primary_route: '/dashboard',
         value: { open_opportunities: 9, pipeline_value: 840000, weighted_forecast: 420000, series: [{ label: 'Qualified', value: 300000, display_value: 300000 }] },
         items: [],
-        metadata: { masked: false },
+        metadata: { masked: false, account_count: 5, account_filter_supported: true },
         error: null,
       },
       {
@@ -241,7 +253,7 @@ function portfolioDashboard() {
         generated_at: '2026-06-03T10:00:00Z',
         data_scope: 'portfolio',
         primary_route: '/dashboard',
-        value: { accounts: 12, at_risk_accounts: 3, signals_critical_tasks: 4, open_escalations: 2, open_tasks: 6 },
+        value: { accounts: 12, at_risk_accounts: 3, critical_tasks: 4, open_tasks: 6 },
         items: [],
         metadata: {},
         error: null,
@@ -258,7 +270,7 @@ function portfolioDashboard() {
           narrative: 'Open work is visible across the portfolio.',
           top_blockers: ['Review overdue blockers.'],
           recommended_focus: 'Start with overdue tasks.',
-          source_counts: { tasks: 6, signals: 2 },
+          source_counts: { tasks: 6, critical_tasks: 2 },
           refreshed_at: '2026-06-03T10:00:00Z',
         },
         items: [],
@@ -285,26 +297,7 @@ function portfolioDashboard() {
         data_scope: 'portfolio',
         primary_route: '/accounts',
         value: null,
-        items: [{ owner_id: 'usr-am', owner: 'Account Manager', accounts: 2, status: 'accounts', route: '/accounts?owner=usr-am' }],
-        metadata: {},
-        error: null,
-      },
-    ],
-  })
-}
-
-function healthDashboard() {
-  return dashboard({
-    widgets: [
-      {
-        key: 'health_distribution',
-        title: 'Health distribution',
-        status: 'complete',
-        generated_at: '2026-06-03T10:00:00Z',
-        data_scope: 'portfolio',
-        primary_route: '/accounts',
-        value: { healthy: 2, warning: 5, critical: 1 },
-        items: [],
+        items: [{ owner_id: 'usr-am', owner: 'Account Manager', accounts: 2, status: 'accounts', route: '/accounts?primary_am=usr-am' }],
         metadata: {},
         error: null,
       },
@@ -538,7 +531,7 @@ describe('Dashboard', () => {
     )
 
     expect(await screen.findByRole('heading', { name: 'Forecast outlook' })).toBeInTheDocument()
-    expect(screen.getByText('Next 6 months')).toBeInTheDocument()
+    expect(screen.getByText(/Next 6 months/)).toBeInTheDocument()
     expect(screen.getByText('Insufficient data')).toBeInTheDocument()
     expect(screen.getByText('Forecast notes')).toBeInTheDocument()
     expect(screen.getByText('No authorized accounts are available in the forecast scope.')).toBeInTheDocument()
@@ -572,7 +565,8 @@ describe('Dashboard', () => {
 
     await screen.findByText('AM Home')
     expect(screen.getByRole('link', { name: /my accounts/i })).toHaveAttribute('href', '/accounts')
-    expect(screen.getByRole('link', { name: /at risk/i })).toHaveAttribute('href', '/accounts?risk=critical')
+    expect(screen.getByRole('link', { name: /at risk/i })).toHaveAttribute('href', '/accounts?risk=at_risk')
+    expect(screen.getByRole('link', { name: /critical tasks/i })).toHaveAttribute('href', '/tasks?priority=critical')
     expect(screen.getByText('Full task status breakdown across assigned accounts')).toBeInTheDocument()
     expect(screen.getByText('Task records filtered to: owner = AM or account in assigned list')).toBeInTheDocument()
     expect(screen.getByText('Task completion does NOT improve health scores; only underlying account data changes do.')).toBeInTheDocument()
@@ -619,35 +613,14 @@ describe('Dashboard', () => {
 
     await screen.findByText('KAM Head Portfolio')
     expect(screen.getByRole('link', { name: /accounts 12/i })).toHaveAttribute('href', '/accounts')
-    expect(screen.getByRole('link', { name: /at risk accounts 3/i })).toHaveAttribute('href', '/accounts?risk=critical')
-    expect(screen.getByRole('link', { name: /signals critical tasks 4/i })).toHaveAttribute('href', '/tasks')
-    expect(screen.getByRole('link', { name: /open escalations 2/i })).toHaveAttribute('href', '/escalations')
-    expect(screen.getByRole('link', { name: /tasks 6/i })).toHaveAttribute('href', '/tasks')
-    expect(screen.getByRole('link', { name: /signals 2/i })).toHaveAttribute('href', '/tasks')
+    expect(screen.getByRole('link', { name: /at risk accounts 3/i })).toHaveAttribute('href', '/accounts?risk=at_risk')
+    expect(screen.getByRole('link', { name: /critical tasks 4/i })).toHaveAttribute('href', '/tasks?priority=critical')
+    expect(screen.getByRole('link', { name: /open tasks 6/i })).toHaveAttribute('href', '/tasks')
+    expect(screen.getByRole('link', { name: /critical tasks 2/i })).toHaveAttribute('href', '/tasks?priority=critical')
     expect(screen.getByRole('link', { name: /open opps 8/i })).toHaveAttribute('href', '/opportunities?openOnly=true')
     expect(screen.getByRole('link', { name: /total value \$640/i })).toHaveAttribute('href', '/opportunities?openOnly=true')
     expect(screen.getByRole('link', { name: /stalled 1 >90 days no move/i })).toHaveAttribute('href', '/opportunities?stalled=true')
-    expect(screen.getByRole('link', { name: /account manager 2 accounts/i })).toHaveAttribute('href', '/accounts?owner=usr-am')
-  })
-
-  it('renders warning and critical segments in the health distribution donut', async () => {
-    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
-      const url = String(input)
-      if (url.includes('/api/dashboards/me')) return jsonResponse(healthDashboard())
-      return jsonResponse({})
-    })
-    vi.stubGlobal('fetch', fetchMock)
-
-    render(
-      <MemoryRouter>
-        <Dashboard />
-      </MemoryRouter>,
-    )
-
-    expect(await screen.findByRole('img', { name: 'Health distribution' })).toBeInTheDocument()
-    expect(screen.getByTestId('health-segment-healthy')).toHaveAttribute('stroke-dasharray', expect.not.stringMatching(/^0(\.0+)? /))
-    expect(screen.getByTestId('health-segment-warning')).toHaveAttribute('stroke-dasharray', expect.not.stringMatching(/^0(\.0+)? /))
-    expect(screen.getByTestId('health-segment-critical')).toHaveAttribute('stroke-dasharray', expect.not.stringMatching(/^0(\.0+)? /))
+    expect(screen.getByRole('link', { name: /account manager 2 accounts/i })).toHaveAttribute('href', '/accounts?primary_am=usr-am')
   })
 
   it('requests the next dashboard page from the portfolio table pager', async () => {

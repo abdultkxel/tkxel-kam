@@ -27,7 +27,6 @@ import {
   listKycAgentRuns,
   listKycDrafts,
   listKycSnapshots,
-  queueKycWebResearch,
   rejectKycDraft,
   refreshKycAgentRun,
   retryKycAgentRun,
@@ -45,10 +44,10 @@ import { cn } from '@/utils/cn'
 const DRAFT_PAGE_SIZE = 5
 const SNAPSHOT_PAGE_SIZE = 3
 
-type ActionState = 'initial' | 'refresh' | 'create' | 'save' | 'approve' | 'reject' | 'restore' | 'retryRun' | 'rerunRun' | 'runPending' | 'webResearch' | ''
+type ActionState = 'initial' | 'refresh' | 'create' | 'save' | 'approve' | 'reject' | 'restore' | 'retryRun' | 'rerunRun' | 'runPending' | ''
 
 export function KYCAssistedReview({ account }: { account: Account }) {
-  const { token } = useAuth()
+  const { token, user } = useAuth()
   const [drafts, setDrafts] = useState<KycPage<KycDraft> | null>(null)
   const [snapshots, setSnapshots] = useState<KycPage<KycSnapshot> | null>(null)
   const [freshness, setFreshness] = useState<KycFreshness | null>(null)
@@ -69,7 +68,6 @@ export function KYCAssistedReview({ account }: { account: Account }) {
   const [sourcePreviewUrl, setSourcePreviewUrl] = useState('')
   const [sourcePreviewError, setSourcePreviewError] = useState('')
   const [sourceReviewHtml, setSourceReviewHtml] = useState('')
-  const [webResearchQuery, setWebResearchQuery] = useState('')
   const [rejectionReason, setRejectionReason] = useState('')
   const [rejectModalOpen, setRejectModalOpen] = useState(false)
   const [restoreSnapshot, setRestoreSnapshot] = useState<KycSnapshot | null>(null)
@@ -90,6 +88,7 @@ export function KYCAssistedReview({ account }: { account: Account }) {
   const groupedFields = useMemo(() => groupFields(activeDraft), [activeDraft])
   const lowConfidenceFields = useMemo(() => activeDraft?.fields.filter(field => !field.missing && field.confidence < 70) ?? [], [activeDraft])
   const canEditDraft = activeDraft?.status === 'ready_for_review'
+  const isSuperAdmin = user?.role === 'super_admin'
   const completion = activeDraft?.completeness ?? freshness?.completeness ?? 0
   const confidence = activeDraft?.confidence ?? freshness?.confidence ?? 0
   const sourceCoverage = activeDraft?.source_coverage ?? freshness?.source_coverage ?? 0
@@ -207,7 +206,6 @@ export function KYCAssistedReview({ account }: { account: Account }) {
       setSourcePreviewUrl('')
       setSourcePreviewError('')
       setSourceReviewHtml('')
-      setWebResearchQuery('')
       setRejectionReason('')
       return
     }
@@ -217,7 +215,6 @@ export function KYCAssistedReview({ account }: { account: Account }) {
     setOverrideReason(activeDraft.override_reason ?? '')
     setReviewNotes(activeDraft.review_notes ?? '')
     setDetailedDescription(activeDraft.detailed_description ?? '')
-    setWebResearchQuery('')
     setRejectionReason(activeDraft.rejection_reason ?? '')
     setFieldErrors([])
   }, [activeDraft])
@@ -338,14 +335,15 @@ export function KYCAssistedReview({ account }: { account: Account }) {
 
   async function approveDraft() {
     if (!token || !activeDraft) return
+    const approvalOverrideReason = overrideReason || (activeDraft.missing_fields.length ? 'Approved from simplified KYC review after field-level verification.' : null)
     setLoading('approve')
     setFieldErrors([])
     setError(null)
     try {
       await approveKycDraft(token, account.id, activeDraft.id, {
-        low_confidence_acknowledged: ackLowConfidence,
-        conflicts_acknowledged: ackConflicts,
-        override_reason: overrideReason || null,
+        low_confidence_acknowledged: ackLowConfidence || lowConfidenceFields.length > 0,
+        conflicts_acknowledged: ackConflicts || activeDraft.conflicts.length > 0,
+        override_reason: approvalOverrideReason,
         change_summary: activeDraft.difference_summary,
       })
       toast.success('KYC approved')
@@ -418,22 +416,6 @@ export function KYCAssistedReview({ account }: { account: Account }) {
       await loadKyc('refresh')
     } catch (requestError) {
       setError(errorMessage(requestError))
-    } finally {
-      setLoading('')
-    }
-  }
-
-  async function runWebResearch() {
-    if (!token || !activeDraft) return
-    setLoading('webResearch')
-    setError(null)
-    setFieldErrors([])
-    try {
-      await queueKycWebResearch(token, account.id, { draft_id: activeDraft.id, query: webResearchQuery.trim() || null })
-      toast.success('Web research queued.')
-      await loadKyc('refresh')
-    } catch (requestError) {
-      handleMutationError(requestError)
     } finally {
       setLoading('')
     }
@@ -513,6 +495,7 @@ export function KYCAssistedReview({ account }: { account: Account }) {
         </div>
       </section>
 
+      {isSuperAdmin ? (
       <section className="tk-card p-5">
         <div>
           <p className="text-[10px] font-extrabold uppercase tracking-widest text-brand-blue">Editable KYC prompt</p>
@@ -568,8 +551,9 @@ export function KYCAssistedReview({ account }: { account: Account }) {
           </div>
         </div>
       </section>
+      ) : null}
 
-      {(latestRun || activeDraft) ? (
+      {isSuperAdmin && (latestRun || activeDraft) ? (
         <details className="tk-card overflow-hidden">
           <summary className="flex cursor-pointer list-none items-center justify-between gap-3 border-b border-surface-border bg-surface-secondary p-4">
             <div>
@@ -655,7 +639,7 @@ export function KYCAssistedReview({ account }: { account: Account }) {
         </details>
       ) : null}
 
-      {activeDraft ? (
+      {isSuperAdmin && activeDraft ? (
         <DocumentExtractionReviewPanel
           title="Runtime source and KYC extraction review"
           eyebrow="KYC source review"
@@ -717,26 +701,6 @@ export function KYCAssistedReview({ account }: { account: Account }) {
                     <p className="mt-3 text-sm leading-6 text-ink-secondary">{activeDraft.ai_disclaimer}</p>
                   </div>
                 </div>
-                <div className="mt-4 rounded-lg border border-surface-border bg-surface-secondary p-3">
-                  <label className="block">
-                    <span className="text-xs font-semibold uppercase tracking-wider text-ink-secondary">Research question</span>
-                    <textarea
-                      className="mt-2 min-h-20 w-full rounded-lg border border-surface-border bg-white px-3 py-2 text-sm leading-6 text-ink outline-none transition-colors placeholder:text-ink-muted focus:border-brand-blue focus:ring-2 focus:ring-brand-blue/20"
-                      value={webResearchQuery}
-                      onChange={event => setWebResearchQuery(event.target.value)}
-                      disabled={!canEditDraft || Boolean(loading)}
-                      maxLength={500}
-                      placeholder={`Tell me about ${account.name} in USA, including company profile, news, blogs, services, and risks.`}
-                    />
-                  </label>
-                  <div className="mt-3 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-                    <span className="text-xs text-ink-secondary">{webResearchQuery.trim().length}/500 characters</span>
-                    <button type="button" className="tk-button-secondary bg-white" onClick={runWebResearch} disabled={!canEditDraft || Boolean(loading)}>
-                      {loading === 'webResearch' ? <Loader2 className="h-4 w-4 animate-spin" /> : <Search className="h-4 w-4" />}
-                      Run web research
-                    </button>
-                  </div>
-                </div>
               </section>
 
               {groupedFields.map((group, groupIndex) => (
@@ -768,6 +732,7 @@ export function KYCAssistedReview({ account }: { account: Account }) {
                             onChange={value => updateField(field.key, value)}
                             disabled={!canEditDraft}
                             ariaLabel={field.label}
+                            clickToEdit
                           />
                         </div>
                         <span className="mt-2 flex items-start gap-2 text-xs leading-5 text-ink-secondary">
@@ -787,26 +752,6 @@ export function KYCAssistedReview({ account }: { account: Account }) {
             </>
           ) : null}
 
-          {activeDraft ? (
-            <section className="tk-card p-5">
-              <div className="flex flex-col gap-2">
-                <h3 className="text-base font-semibold text-ink">Detailed AI description</h3>
-                <p className="text-sm leading-6 text-ink-secondary">
-                  Full AI research and provider response detail is appended here for reviewer traceability.
-                </p>
-              </div>
-              <div className="mt-3">
-                <RichTextEditor
-                  value={detailedDescription}
-                  onChange={setDetailedDescription}
-                  disabled={!canEditDraft}
-                  placeholder="AI research and raw provider response details will appear here after the run completes."
-                  ariaLabel="Detailed AI description"
-                  editorHeight="520px"
-                />
-              </div>
-            </section>
-          ) : null}
         </section>
 
         <aside className="space-y-4">
@@ -869,34 +814,6 @@ export function KYCAssistedReview({ account }: { account: Account }) {
             </div>
             <PaginationControls page={drafts?.page ?? draftPage} pages={drafts?.pages ?? 1} onPrevious={() => setDraftPage(page => Math.max(1, page - 1))} onNext={() => setDraftPage(page => Math.min(drafts?.pages ?? page + 1, page + 1))} />
           </section>
-
-          {activeDraft ? (
-            <section className="tk-card p-5">
-              <h3 className="text-base font-semibold text-ink">Review gates</h3>
-              <div className="mt-3 space-y-3">
-                <label className="flex items-start gap-2 rounded-lg border border-surface-border p-3 text-sm text-ink-secondary">
-                  <input type="checkbox" className="mt-1" checked={ackLowConfidence} onChange={event => setAckLowConfidence(event.target.checked)} disabled={!canEditDraft} />
-                  <span>Low-confidence fields acknowledged ({lowConfidenceFields.length})</span>
-                </label>
-                <label className="flex items-start gap-2 rounded-lg border border-surface-border p-3 text-sm text-ink-secondary">
-                  <input type="checkbox" className="mt-1" checked={ackConflicts} onChange={event => setAckConflicts(event.target.checked)} disabled={!canEditDraft} />
-                  <span>Conflicts acknowledged ({activeDraft.conflicts.length})</span>
-                </label>
-                <label className="block">
-                  <span className="text-xs font-semibold uppercase tracking-wider text-ink-secondary">Override reason</span>
-                  <div className="mt-2">
-                    <RichTextEditor value={overrideReason} onChange={setOverrideReason} disabled={!canEditDraft} ariaLabel="Override reason" />
-                  </div>
-                </label>
-                <label className="block">
-                  <span className="text-xs font-semibold uppercase tracking-wider text-ink-secondary">Review notes</span>
-                  <div className="mt-2">
-                    <RichTextEditor value={reviewNotes} onChange={setReviewNotes} disabled={!canEditDraft} ariaLabel="Review notes" />
-                  </div>
-                </label>
-              </div>
-            </section>
-          ) : null}
 
           {activeDraft?.difference_summary.length ? (
             <section className="tk-card p-5">
@@ -1179,7 +1096,6 @@ function buildAiDebugLogsHtml(draft: KycDraft | null, latestRun: KycAgentRun | n
     `<li><strong>Status:</strong> ${escapeHtml(linkedRun.status)}</li>`,
     `<li><strong>Model:</strong> ${escapeHtml(linkedRun.model_name || 'unknown')}</li>`,
     `<li><strong>Provider:</strong> ${escapeHtml(providerText(linkedRun))}</li>`,
-    `<li><strong>Run ID:</strong> ${escapeHtml(linkedRun.id)}</li>`,
     `<li><strong>Started:</strong> ${linkedRun.started_at ? escapeHtml(formatDateTime(linkedRun.started_at)) : 'Not recorded'}</li>`,
     `<li><strong>Completed:</strong> ${linkedRun.completed_at ? escapeHtml(formatDateTime(linkedRun.completed_at)) : 'Not recorded'}</li>`,
     `<li><strong>Retrieved context:</strong> ${escapeHtml(String(retrieval.retrieved_context_count ?? 'not recorded'))}</li>`,

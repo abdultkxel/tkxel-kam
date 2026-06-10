@@ -235,10 +235,12 @@ BACKEND_HOST_PORT=8002 FRONTEND_HOST_PORT=5174 VITE_API_BASE_URL=http://127.0.0.
 ```bash
 make migrate
 make seed
+make reset-db
 ```
 
 `make migrate` creates/updates tables from SQLAlchemy metadata.
 `make seed` creates required default data, including the hidden super admin user, PRD roles, one visible user for every non-super-admin seeded role, and the module/action permission catalog.
+`make reset-db` drops and recreates the local database schema, then seeds basic roles, permissions, allowed domains, and users. Use it only for local/demo refreshes.
 
 Default seeded roles from `requirements/KAM PRD.pdf`:
 
@@ -246,12 +248,9 @@ Default seeded roles from `requirements/KAM PRD.pdf`:
 super_admin
 admin
 account_manager
-ops_lead
 kam_head
+delivery_lead
 leadership_viewer
-content_specialist
-commercial_stakeholder
-delivery_stakeholder
 ```
 
 `super_admin` is kept out of Admin user/role listings and assignment dropdowns. Seeded visible role users use this pattern:
@@ -259,12 +258,9 @@ delivery_stakeholder
 ```text
 admin.user@tkxel.com
 account.manager.user@tkxel.com
-ops.lead.user@tkxel.com
 kam.head.user@tkxel.com
+delivery.lead.user@tkxel.com
 leadership.viewer.user@tkxel.com
-content.specialist.user@tkxel.com
-commercial.stakeholder.user@tkxel.com
-delivery.stakeholder.user@tkxel.com
 Password: User@12345
 ```
 

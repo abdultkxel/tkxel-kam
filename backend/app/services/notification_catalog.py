@@ -4,7 +4,6 @@ from dataclasses import dataclass
 
 
 OPTIONAL_TRIGGERS = {
-    "account_attachment_added",
     "content_recommended",
     "content_sent",
     "content_recommendation_stale",
@@ -14,7 +13,6 @@ OPTIONAL_TRIGGERS = {
     "playbook_template_published",
     "timeline_comment",
     "timeline_retention_run_completed",
-    "governance_decision_recorded",
     "integration_recovered",
     "integration_sync_completed",
     "fathom_item_approved",

@@ -1126,6 +1126,7 @@ def apply_additive_migrations() -> None:
         ]
     )
     backfill_user_primary_calendar_ids()
+    backfill_account_numbers()
     normalize_task_statuses()
     encrypt_existing_integration_credentials()
 
@@ -1142,6 +1143,31 @@ def backfill_user_primary_calendar_ids() -> None:
             connection.execute(text("UPDATE users SET primary_google_calendar_id = email WHERE primary_google_calendar_id IS NULL OR primary_google_calendar_id = ''"))
         else:
             connection.execute(text("UPDATE users SET primary_google_calendar_id = email WHERE primary_google_calendar_id IS NULL OR primary_google_calendar_id = ''"))
+
+
+def backfill_account_numbers() -> None:
+    with engine.begin() as connection:
+        inspector = inspect(connection)
+        if not inspector.has_table("accounts"):
+            return
+        columns = {column["name"] for column in inspector.get_columns("accounts")}
+        if "account_number" not in columns:
+            return
+
+        next_number = connection.execute(text("SELECT COALESCE(MAX(account_number), 100000) FROM accounts")).scalar_one()
+        rows = connection.execute(
+            text(
+                "SELECT id FROM accounts "
+                "WHERE account_number IS NULL "
+                "ORDER BY CASE WHEN created_at IS NULL THEN 1 ELSE 0 END, created_at, name, id"
+            )
+        ).all()
+        for row in rows:
+            next_number += 1
+            connection.execute(
+                text("UPDATE accounts SET account_number = :account_number WHERE id = :account_id"),
+                {"account_number": next_number, "account_id": row._mapping["id"]},
+            )
 
 
 def normalize_task_statuses() -> None:

@@ -1,5 +1,5 @@
-import { AlertTriangle, Archive, ArrowRight, BriefcaseBusiness, CalendarClock, FileText, Pencil, Plus, Search, ShieldCheck, UserRound } from 'lucide-react'
-import { useCallback, useMemo, useState } from 'react'
+import { AlertTriangle, Archive, ArrowRight, BriefcaseBusiness, CalendarClock, FileText, Loader2, Pencil, Plus, Search, ShieldCheck, Upload, UserRound } from 'lucide-react'
+import { useCallback, useMemo, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { toast } from 'sonner'
 import { EngagementFormDialog } from '@/components/account/EngagementFormDialog'
@@ -9,7 +9,7 @@ import { FilterBar } from '@/components/ui/FilterBar'
 import { Skeleton } from '@/components/ui/Skeleton'
 import { SortableTable } from '@/components/ui/SortableTable'
 import type { Column } from '@/components/ui/SortableTable'
-import { useArchiveEngagement, useEngagements } from '@/hooks/useEngagements'
+import { useArchiveEngagement, useCreateEngagementFromCharter, useEngagements } from '@/hooks/useEngagements'
 import type { Account } from '@/types/account'
 import type { EngagementHealthStatus, EngagementRecord, EngagementRenewalRisk, EngagementRenewalStatus, EngagementStatus } from '@/types/v3'
 import { cn } from '@/utils/cn'
@@ -31,8 +31,10 @@ export function EngagementsPanel({ account }: { account: Account }) {
   const [formOpen, setFormOpen] = useState(false)
   const [editingEngagement, setEditingEngagement] = useState<EngagementRecord | null>(null)
   const [archiveTarget, setArchiveTarget] = useState<EngagementRecord | null>(null)
+  const charterInputRef = useRef<HTMLInputElement | null>(null)
   const { engagements, isLoading, error, refetch } = useEngagements(account.id, { page: 1, page_size: 100 })
   const { archiveEngagement, isLoading: archiving } = useArchiveEngagement()
+  const { createEngagementFromCharter, isLoading: importingCharter } = useCreateEngagementFromCharter()
 
   const ownerOptions = useMemo(() => {
     const owners = new Map<string, string>()
@@ -210,6 +212,19 @@ export function EngagementsPanel({ account }: { account: Account }) {
     }
   }
 
+  async function importCharter(file?: File | null) {
+    if (!file) return
+    try {
+      const engagement = await createEngagementFromCharter(account.id, file)
+      toast.success(`Engagement created from charter: ${engagement.name}`)
+      await refetch().catch(() => undefined)
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Project charter could not be imported')
+    } finally {
+      if (charterInputRef.current) charterInputRef.current.value = ''
+    }
+  }
+
   return (
     <div className="space-y-5">
       <section className="tk-card overflow-hidden">
@@ -220,10 +235,23 @@ export function EngagementsPanel({ account }: { account: Account }) {
               <h2 className="mt-1 text-xl font-semibold text-ink">Account engagements</h2>
               <p className="mt-2 max-w-3xl text-sm leading-6 text-ink-secondary">Track SOW-backed ownership, delivery posture, contract exposure, renewal windows, and open risks for this account.</p>
             </div>
-            <button className="tk-button-primary shrink-0" onClick={openCreate}>
-              <Plus className="h-4 w-4" />
-              Add Engagement
-            </button>
+            <div className="flex flex-wrap gap-2">
+              <input
+                ref={charterInputRef}
+                type="file"
+                className="hidden"
+                accept=".xlsx,.xlsm,.xls,.pdf,.docx,.txt,.csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                onChange={event => void importCharter(event.target.files?.[0])}
+              />
+              <button className="tk-button-secondary bg-white shrink-0" type="button" onClick={() => charterInputRef.current?.click()} disabled={importingCharter}>
+                {importingCharter ? <Loader2 className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />}
+                Import Charter
+              </button>
+              <button className="tk-button-primary shrink-0" onClick={openCreate}>
+                <Plus className="h-4 w-4" />
+                Add Engagement
+              </button>
+            </div>
           </div>
         </div>
         <div className="grid gap-0 divide-y divide-surface-border md:grid-cols-4 md:divide-x md:divide-y-0">

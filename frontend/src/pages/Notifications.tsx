@@ -143,7 +143,7 @@ export function Notifications() {
             <option value="medium">Medium</option>
             <option value="low">Low</option>
           </select>
-          <input className="tk-input md:col-span-2 xl:col-span-1" value={accountId} onChange={event => { setAccountId(event.target.value); setPage(1) }} placeholder="Account ID" />
+          <input className="tk-input md:col-span-2 xl:col-span-1" value={accountId} onChange={event => { setAccountId(event.target.value); setPage(1) }} placeholder="Account filter" />
           <select className="tk-input" value={sort} onChange={event => { setSort(event.target.value); setPage(1) }}>
             <option value="created_at">Created date</option>
             <option value="unread_first">Unread first</option>

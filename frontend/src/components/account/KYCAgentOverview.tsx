@@ -91,7 +91,7 @@ export function KYCAgentOverview({ accountId, compact = false, onReview }: { acc
   const [searchTerm, setSearchTerm] = useState('')
   const [statusFilter, setStatusFilter] = useState<KycRunStatus | 'all'>('all')
   const [page, setPage] = useState(1)
-  const [openStep, setOpenStep] = useState(kycAgentSteps[0].workstream_key)
+  const [openSteps, setOpenSteps] = useState<string[]>(() => kycAgentSteps.map(step => step.workstream_key))
   const [loading, setLoading] = useState<'initial' | 'refresh' | 'retry' | 'cancel' | 'runPending' | ''>('initial')
   const [error, setError] = useState<string | null>(null)
 
@@ -124,9 +124,12 @@ export function KYCAgentOverview({ accountId, compact = false, onReview }: { acc
         ])
         setRuns(runPage)
         setFreshnessStatus(freshness.freshness_status)
-        setOpenStep(current => {
-          if (runPage.items[0]?.workstreams.some(item => item.workstream_key === current)) return current
-          return runPage.items[0]?.workstreams[0]?.workstream_key ?? kycAgentSteps[0].workstream_key
+        setOpenSteps(current => {
+          const keys = runPage.items[0]?.workstreams.length
+            ? runPage.items[0].workstreams.map(item => item.workstream_key)
+            : kycAgentSteps.map(step => step.workstream_key)
+          const retained = current.filter(item => keys.includes(item))
+          return retained.length ? retained : keys
         })
       } catch (requestError) {
         setError(requestError instanceof Error ? requestError.message : 'KYC agent request failed')
@@ -303,13 +306,17 @@ export function KYCAgentOverview({ accountId, compact = false, onReview }: { acc
         <>
           <div className={cn('grid gap-3 p-5', compact ? 'xl:grid-cols-1' : 'xl:grid-cols-5')}>
             {workstreams.map((step, index) => {
-              const expanded = openStep === step.workstream_key
+              const expanded = openSteps.includes(step.workstream_key)
               return (
                 <article key={step.workstream_key} className="rounded-lg border border-surface-border bg-white">
                   <button
                     type="button"
                     className="flex min-h-[88px] w-full items-start justify-between gap-3 p-4 text-left transition-colors hover:bg-surface-secondary"
-                    onClick={() => setOpenStep(expanded ? '' : step.workstream_key)}
+                    onClick={() => setOpenSteps(current => (
+                      current.includes(step.workstream_key)
+                        ? current.filter(item => item !== step.workstream_key)
+                        : [...current, step.workstream_key]
+                    ))}
                     aria-expanded={expanded}
                   >
                     <div className="min-w-0">

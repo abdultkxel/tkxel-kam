@@ -1,720 +1,452 @@
-import * as Collapsible from '@radix-ui/react-collapsible'
 import * as Dialog from '@radix-ui/react-dialog'
-import { ArrowRight, BarChart3, Check, ChevronDown, FileSearch, History, Loader2, Search, Sparkles, X } from 'lucide-react'
-import { FormEvent, useEffect, useMemo, useState } from 'react'
+import { Archive, Check, ExternalLink, FileText, Loader2, MessageSquare, Plus, Send, Sparkles, X } from 'lucide-react'
+import { Fragment, FormEvent, useEffect, useMemo, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { useAuth } from '@/contexts/AuthContext'
-import { useRole } from '@/hooks/useRole'
-import { runKamAiForecast, runKamAiSearch, type KamAiForecastResult } from '@/services/aiAssistance'
-import { AISearchResult, AISearchScope, AISearchState, runAISearch } from '@/services/aiSearch'
-import { searchDocumentChunks, SemanticDocumentChunk } from '@/services/semanticDocumentSearch'
-import { useAccountStore } from '@/stores/accountStore'
-import { AIQueryRun, useAIStore } from '@/stores/aiStore'
-import { useOpportunityStore } from '@/stores/opportunityStore'
-import { useTimelineStore } from '@/stores/timelineStore'
+import {
+  createKamAiChatSession,
+  getKamAiChatSession,
+  KamAiChatMessage,
+  KamAiChatSession,
+  KamAiChatSessionDetail,
+  listKamAiChatSessions,
+  sendKamAiChatMessage,
+  updateKamAiChatSession,
+} from '@/services/kamAiChat'
 import { useUIStore } from '@/stores/uiStore'
-import { Account } from '@/types/account'
-import { TimelineEntry, UserRole } from '@/types/timeline'
 import { cn } from '@/utils/cn'
-import { formatCompactCurrency, formatRelative, titleize } from '@/utils/formatters'
+import { formatRelative, titleize } from '@/utils/formatters'
 
-const scopeOptions: { label: string; value: AISearchScope }[] = [
+const DEFAULT_SCOPES = ['timeline', 'opportunities', 'governance', 'notes', 'kyc', 'documents']
+const SCOPE_OPTIONS = [
   { label: 'Timeline', value: 'timeline' },
   { label: 'Opportunities', value: 'opportunities' },
   { label: 'Governance', value: 'governance' },
   { label: 'Notes', value: 'notes' },
   { label: 'KYC', value: 'kyc' },
+  { label: 'Documents', value: 'documents' },
+  { label: 'Signals', value: 'signals' },
+  { label: 'Tasks', value: 'tasks' },
 ]
-
-const EMPTY_QUERY_RUNS: AIQueryRun[] = []
-const ASK_FIRST_PROMPTS = [
-  { label: 'Prioritize my book', query: 'Prioritize my assigned projects by risk and next action' },
-  { label: 'Prep for QBR', query: 'Prepare me for upcoming QBRs across my assigned projects' },
-  { label: 'Renewal risks', query: 'Show renewal risks and notice windows across my assigned projects' },
-  { label: 'Forecast next 6 months', query: 'Forecast the next 6 months as a chart for my assigned projects' },
-]
-
-type ForecastResult = KamAiForecastResult
 
 export function KAMAIPanel() {
   const open = useUIStore(state => state.aiOpen)
   const prefill = useUIStore(state => state.aiPrefill)
+  const setAIPrefill = useUIStore(state => state.setAIPrefill)
+  const activeAccountId = useUIStore(state => state.activeAccountId)
   const closeAI = useUIStore(state => state.closeAI)
-  const [input, setInput] = useState(prefill)
-  const [scopes, setScopes] = useState<AISearchScope[]>(['timeline', 'opportunities', 'governance', 'notes', 'kyc'])
-  const [searchDocuments, setSearchDocuments] = useState(true)
-  const [loading, setLoading] = useState(false)
-  const [error, setError] = useState('')
-  const [result, setResult] = useState<AISearchResult | null>(null)
-  const [docResults, setDocResults] = useState<SemanticDocumentChunk[]>([])
-  const [forecastResult, setForecastResult] = useState<ForecastResult | null>(null)
-  const [sourcesOpen, setSourcesOpen] = useState(false)
-  const [documentsOpen, setDocumentsOpen] = useState(false)
-  const [sourceControlsOpen, setSourceControlsOpen] = useState(false)
-  const [historyOpen, setHistoryOpen] = useState(false)
-  const user = useRole()
   const { token } = useAuth()
-  const bookKey = `assigned-book-${user.id}`
-  const queryRuns = useAIStore(state => state.queryRuns[bookKey] ?? EMPTY_QUERY_RUNS)
-  const addQueryRun = useAIStore(state => state.addQueryRun)
-  const accounts = useAccountStore(state => state.accounts)
-  const opportunities = useOpportunityStore(state => state.opportunities)
-  const timelineEntries = useTimelineStore(state => state.entries)
-
-  const assignedAccounts = useMemo(() => {
-    const owned = accounts.filter(account => account.ownerId === user.id)
-    return user.role === 'am' || user.role === 'account_manager' ? owned : accounts
-  }, [accounts, user.id, user.role])
-  const assignedAccountIds = useMemo(() => new Set(assignedAccounts.map(account => account.id)), [assignedAccounts])
-  const assignedTimeline = useMemo(() => timelineEntries.filter(entry => assignedAccountIds.has(entry.accountId)), [assignedAccountIds, timelineEntries])
-  const assignedOpportunities = useMemo(() => opportunities.filter(opportunity => assignedAccountIds.has(opportunity.accountId)), [assignedAccountIds, opportunities])
+  const [sessions, setSessions] = useState<KamAiChatSession[]>([])
+  const [activeSession, setActiveSession] = useState<KamAiChatSessionDetail | null>(null)
+  const [scopes, setScopes] = useState<string[]>(DEFAULT_SCOPES)
+  const [loadingSessions, setLoadingSessions] = useState(false)
+  const [sending, setSending] = useState(false)
+  const [error, setError] = useState('')
+  const messagesEndRef = useRef<HTMLDivElement | null>(null)
+  const input = prefill
 
   useEffect(() => {
-    setInput(prefill)
-  }, [prefill])
+    if (!open || !token) return
+    void loadSessions()
+  }, [open, token])
 
   useEffect(() => {
-    setResult(null)
-    setDocResults([])
-    setForecastResult(null)
+    if (typeof messagesEndRef.current?.scrollIntoView === 'function') {
+      messagesEndRef.current.scrollIntoView({ behavior: 'smooth', block: 'end' })
+    }
+  }, [activeSession?.messages.length, sending])
+
+  const activeMessages = activeSession?.messages ?? []
+  const selectedScopeSet = useMemo(() => new Set(scopes), [scopes])
+
+  async function loadSessions() {
+    if (!token) return
+    setLoadingSessions(true)
     setError('')
-  }, [bookKey])
+    try {
+      const page = await listKamAiChatSessions(token, { pageSize: 50 })
+      setSessions(page.items)
+      if (page.items.length) {
+        const detail = await getKamAiChatSession(token, page.items[0].id)
+        setActiveSession(detail)
+        setScopes(detail.scope_json.length ? detail.scope_json : DEFAULT_SCOPES)
+      } else {
+        const detail = await createKamAiChatSession(token, { title: 'New KAM AI chat', account_id: activeAccountId === 'amd-001' ? undefined : activeAccountId, scopes: DEFAULT_SCOPES })
+        setActiveSession(detail)
+        setSessions([detail])
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Unable to load KAM AI sessions')
+    } finally {
+      setLoadingSessions(false)
+    }
+  }
 
-  function toggleScope(scope: AISearchScope) {
+  async function createNewChat() {
+    if (!token) return
+    setSending(false)
+    setError('')
+    try {
+      const detail = await createKamAiChatSession(token, { title: 'New KAM AI chat', account_id: activeAccountId === 'amd-001' ? undefined : activeAccountId, scopes })
+      setActiveSession(detail)
+      setSessions(current => [detail, ...current])
+      setAIPrefill('')
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Unable to create a new KAM AI chat')
+    }
+  }
+
+  async function loadSession(sessionId: string) {
+    if (!token) return
+    setError('')
+    try {
+      const detail = await getKamAiChatSession(token, sessionId)
+      setActiveSession(detail)
+      setScopes(detail.scope_json.length ? detail.scope_json : DEFAULT_SCOPES)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Unable to load KAM AI chat')
+    }
+  }
+
+  async function archiveActiveSession() {
+    if (!token || !activeSession) return
+    setError('')
+    try {
+      await updateKamAiChatSession(token, activeSession.id, { archived: true })
+      const remaining = sessions.filter(session => session.id !== activeSession.id)
+      setSessions(remaining)
+      if (remaining.length) await loadSession(remaining[0].id)
+      else await createNewChat()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Unable to archive KAM AI chat')
+    }
+  }
+
+  async function submit(event?: FormEvent) {
+    event?.preventDefault()
+    const content = input.trim()
+    if (!content || !token) return
+    let session = activeSession
+    setSending(true)
+    setError('')
+    setAIPrefill('')
+    try {
+      if (!session) {
+        session = await createKamAiChatSession(token, { title: 'New KAM AI chat', scopes })
+        setActiveSession(session)
+      }
+      const optimistic: KamAiChatSessionDetail = {
+        ...session,
+        messages: [
+          ...session.messages,
+          {
+            id: `pending-user-${Date.now()}`,
+            session_id: session.id,
+            role: 'user',
+            content,
+            status: 'complete',
+            token_usage_json: {},
+            metadata_json: {},
+            sources: [],
+            created_at: new Date().toISOString(),
+          },
+          {
+            id: `pending-assistant-${Date.now()}`,
+            session_id: session.id,
+            role: 'assistant',
+            content: 'Thinking across authorized source records...',
+            status: 'running',
+            token_usage_json: {},
+            metadata_json: {},
+            sources: [],
+            created_at: new Date().toISOString(),
+          },
+        ],
+      }
+      setActiveSession(optimistic)
+      const detail = await sendKamAiChatMessage(token, session.id, {
+        content,
+        scopes,
+        document_search: scopes.includes('documents'),
+        limit: 12,
+      })
+      setActiveSession(detail)
+      setSessions(current => [detail, ...current.filter(item => item.id !== detail.id)])
+    } catch (err) {
+      setAIPrefill(content)
+      setError(err instanceof Error ? err.message : 'KAM AI could not answer this message')
+    } finally {
+      setSending(false)
+    }
+  }
+
+  function toggleScope(scope: string) {
     setScopes(current => {
       if (current.includes(scope)) return current.length === 1 ? current : current.filter(item => item !== scope)
       return [...current, scope]
     })
   }
 
-  async function runQuery(nextQuery = input) {
-    const trimmed = nextQuery.trim()
-    if (!trimmed) return
-    setInput(trimmed)
-    if (!token && !assignedAccounts.length) {
-      setResult(null)
-      setDocResults([])
-      setForecastResult(null)
-      setError('No assigned project data is loaded locally. Sign in or refresh the dashboard, then try again.')
-      return
-    }
-    setLoading(true)
-    setError('')
-    setSourcesOpen(false)
-    setDocumentsOpen(false)
-
-    try {
-      await new Promise(resolve => window.setTimeout(resolve, 320))
-      const targetAccounts = accountsMatchingQuery(trimmed, assignedAccounts)
-      const targetAccountIds = new Set(targetAccounts.map(account => account.id))
-      const targetTimeline = timelineEntries.filter(entry => targetAccountIds.has(entry.accountId))
-      const forecast = shouldRenderForecast(trimmed)
-        ? await runBackendForecast({
-            token,
-            targetAccounts,
-          })
-        : null
-      const answer = forecast
-        ? buildForecastAISearchResult(forecast, targetTimeline)
-        : await runBackendOrLocalAISearch({
-            token,
-            query: trimmed,
-            targetAccounts,
-            scopes,
-            searchDocuments,
-            user,
-            state: { timeline: timelineEntries, opportunities, accounts },
-          })
-      const documentMatches = searchDocuments
-        ? targetAccounts.flatMap(account =>
-            searchDocumentChunks({
-              accountId: account.id,
-              query: trimmed,
-              role: user.role,
-              userId: user.id,
-              entries: timelineEntries,
-            }),
-          ).sort((a, b) => b.score - a.score).slice(0, 8)
-        : []
-
-      setResult(answer)
-      setDocResults(documentMatches)
-      setForecastResult(forecast)
-      addQueryRun({
-        id: `ai-run-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
-        accountId: bookKey,
-        query: trimmed,
-        answer: answer.answer,
-        intent: answer.queryIntent,
-        confidence: answer.confidence,
-        sourceEntryIds: answer.sourceEntries.map(entry => entry.id),
-        documentSourceIds: documentMatches.map(chunk => chunk.id),
-        createdAt: new Date().toISOString(),
-      })
-    } catch (err) {
-      setResult(null)
-      setDocResults([])
-      setForecastResult(null)
-      setError(err instanceof Error ? err.message : 'KAM AI forecast could not be generated')
-    } finally {
-      setLoading(false)
-    }
-  }
-
-  function submit(event: FormEvent) {
-    event.preventDefault()
-    runQuery()
-  }
-
   return (
     <Dialog.Root open={open} onOpenChange={value => !value && closeAI()}>
       <Dialog.Portal>
         <Dialog.Overlay className="fixed inset-0 z-40 bg-ink/25 backdrop-blur-sm" />
-        <Dialog.Content className="v4-ai-panel fixed inset-y-0 right-0 z-50 flex h-[100dvh] w-full max-w-[760px] flex-col overflow-hidden rounded-none border-l border-surface-border">
-          <div className="flex items-start justify-between gap-4 border-b border-surface-border px-5 py-4">
-            <div className="min-w-0">
-              <p className="text-[10px] font-extrabold uppercase tracking-widest text-brand-blue">Copilot</p>
-              <Dialog.Title className="font-display text-2xl font-bold leading-tight text-ink">KAM AI</Dialog.Title>
-              <Dialog.Description className="mt-1 text-sm text-ink-secondary">
-                Ask across your assigned projects and source records.
-              </Dialog.Description>
+        <Dialog.Content className="fixed inset-y-0 right-0 z-50 grid h-[100dvh] w-full max-w-[1100px] grid-cols-1 overflow-hidden border-l border-surface-border bg-white shadow-2xl md:grid-cols-[280px_minmax(0,1fr)]">
+          <aside className="hidden min-h-0 border-r border-surface-border bg-surface-secondary md:flex md:flex-col">
+            <div className="border-b border-surface-border p-3">
+              <button type="button" onClick={createNewChat} className="inline-flex min-h-[44px] w-full items-center justify-center gap-2 rounded-md bg-brand-blue px-3 text-sm font-semibold text-white hover:bg-brand-blue-dark">
+                <Plus className="h-4 w-4" />
+                New chat
+              </button>
             </div>
-            <Dialog.Close className="tk-icon-button shrink-0" aria-label="Close KAM AI">
-              <X className="h-5 w-5" />
-            </Dialog.Close>
-          </div>
-
-          <div className="flex-1 space-y-4 overflow-y-auto p-5">
-            <section className="rounded-xl border border-surface-border bg-surface-secondary px-4 py-3">
-              <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                <div>
-                  <p className="text-sm font-semibold text-ink">Searching your assigned projects</p>
-                  <p className="text-xs text-ink-secondary">{assignedAccounts.length} account{assignedAccounts.length === 1 ? '' : 's'} | {assignedOpportunities.length} open and active opportunities | {assignedTimeline.length} timeline records</p>
-                </div>
+            <div className="min-h-0 flex-1 overflow-y-auto p-2">
+              {loadingSessions ? <SessionSkeleton /> : null}
+              {!loadingSessions && sessions.length === 0 ? <p className="p-3 text-sm text-ink-secondary">No KAM AI sessions yet.</p> : null}
+              {sessions.map(session => (
                 <button
+                  key={session.id}
                   type="button"
-                  className="inline-flex min-h-[44px] items-center gap-1 rounded-md border border-surface-border bg-white px-3 text-xs font-semibold text-brand-blue transition-colors hover:bg-blue-tint-20"
-                  onClick={() => setSourceControlsOpen(open => !open)}
-                  aria-expanded={sourceControlsOpen}
+                  onClick={() => loadSession(session.id)}
+                  className={cn(
+                    'mb-1 w-full rounded-md border px-3 py-2 text-left transition-colors',
+                    activeSession?.id === session.id ? 'border-brand-blue bg-white text-ink shadow-sm' : 'border-transparent text-ink-secondary hover:bg-white hover:text-ink',
+                  )}
                 >
-                  Refine sources
-                  <ChevronDown className={cn('h-3.5 w-3.5 transition-transform', sourceControlsOpen ? 'rotate-180' : '')} />
+                  <span className="block truncate text-sm font-semibold">{session.title}</span>
+                  <span className="mt-1 block truncate text-xs">{session.last_message_preview || 'Empty chat'}</span>
+                  <span className="mt-1 block text-[11px] text-ink-tertiary">{session.last_message_at ? formatRelative(session.last_message_at) : formatRelative(session.created_at)}</span>
                 </button>
-              </div>
-            </section>
+              ))}
+            </div>
+          </aside>
 
-            <section className="rounded-xl border border-surface-border p-4">
-              <form onSubmit={submit} className="grid gap-2 sm:relative sm:block">
-                <div className="relative min-w-0">
-                  <Search className="pointer-events-none absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-ink-tertiary" />
-                  <input
-                    value={input}
-                    onChange={event => setInput(event.target.value)}
-                    className="tk-input min-h-[52px] rounded-full pl-10 focus:ring-brand-blue/30 sm:pr-32"
-                    placeholder="Ask about risk, renewals, QBR prep, SOWs, or next actions"
-                  />
-                </div>
-                <button type="submit" disabled={loading || !input.trim()} className="inline-flex min-h-[44px] w-full items-center justify-center gap-2 rounded-full bg-brand-blue px-4 text-sm font-semibold text-white hover:bg-brand-blue-dark disabled:opacity-60 sm:absolute sm:right-1 sm:top-1/2 sm:w-auto sm:min-w-[104px] sm:-translate-y-1/2">
-                  {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
-                  Query
+          <section className="flex min-h-0 flex-col">
+            <header className="flex items-start justify-between gap-4 border-b border-surface-border px-4 py-3">
+              <div className="min-w-0">
+                <p className="text-[10px] font-extrabold uppercase tracking-widest text-brand-blue">KAM AI</p>
+                <Dialog.Title className="truncate font-display text-xl font-bold text-ink">{activeSession?.title ?? 'New KAM AI chat'}</Dialog.Title>
+                <Dialog.Description className="mt-1 text-sm text-ink-secondary">
+                  Ask across your assigned projects and authorized source records.
+                </Dialog.Description>
+              </div>
+              <div className="flex shrink-0 items-center gap-2">
+                <button type="button" className="tk-icon-button md:hidden" onClick={createNewChat} aria-label="New KAM AI chat">
+                  <Plus className="h-4 w-4" />
+                </button>
+                {activeSession ? (
+                  <button type="button" className="tk-icon-button" onClick={archiveActiveSession} aria-label="Archive KAM AI chat" title="Archive chat">
+                    <Archive className="h-4 w-4" />
+                  </button>
+                ) : null}
+                <Dialog.Close className="tk-icon-button" aria-label="Close KAM AI">
+                  <X className="h-5 w-5" />
+                </Dialog.Close>
+              </div>
+            </header>
+
+            <div className="border-b border-surface-border bg-white px-4 py-2">
+              <div className="flex gap-2 overflow-x-auto pb-1">
+                {SCOPE_OPTIONS.map(option => {
+                  const selected = selectedScopeSet.has(option.value)
+                  return (
+                    <button
+                      key={option.value}
+                      type="button"
+                      onClick={() => toggleScope(option.value)}
+                      aria-pressed={selected}
+                      className={cn(
+                        'inline-flex min-h-[36px] shrink-0 items-center gap-1.5 rounded-full border px-3 text-xs font-semibold transition-colors',
+                        selected ? 'border-brand-blue bg-blue-tint-20 text-brand-blue' : 'border-surface-border bg-white text-ink-secondary hover:bg-surface-tertiary',
+                      )}
+                    >
+                      {selected ? <Check className="h-3.5 w-3.5" /> : null}
+                      {option.label}
+                    </button>
+                  )
+                })}
+              </div>
+            </div>
+
+            <main className="min-h-0 flex-1 overflow-y-auto bg-surface-secondary px-4 py-5">
+              {error ? <div className="mb-4 rounded-md border border-rag-red/20 bg-rag-red/10 p-3 text-sm font-medium text-rag-red">{error}</div> : null}
+              {!activeMessages.length && !loadingSessions ? <EmptyChat onPrompt={value => setAIPrefill(value)} /> : null}
+              <div className="mx-auto flex max-w-3xl flex-col gap-4">
+                {activeMessages.map(message => <ChatMessage key={message.id} message={message} />)}
+                {sending && activeMessages.every(message => message.status !== 'running') ? <ThinkingMessage /> : null}
+                <div ref={messagesEndRef} />
+              </div>
+            </main>
+
+            <footer className="border-t border-surface-border bg-white p-3">
+              <form onSubmit={submit} className="mx-auto flex max-w-3xl items-end gap-2">
+                <textarea
+                  value={input}
+                  onChange={event => setAIPrefill(event.target.value)}
+                  onKeyDown={event => {
+                    if (event.key === 'Enter' && !event.shiftKey) {
+                      event.preventDefault()
+                      void submit()
+                    }
+                  }}
+                  className="tk-input max-h-36 min-h-[52px] flex-1 resize-none rounded-2xl px-4 py-3"
+                  placeholder="Ask about risks, renewals, QBR prep, SOWs, KYC, tasks, or next actions"
+                  rows={1}
+                />
+                <button type="submit" disabled={sending || !input.trim() || !token} className="inline-flex min-h-[52px] min-w-[52px] items-center justify-center rounded-full bg-brand-blue text-white hover:bg-brand-blue-dark disabled:opacity-60" aria-label="Send KAM AI message">
+                  {sending ? <Loader2 className="h-5 w-5 animate-spin" /> : <Send className="h-5 w-5" />}
                 </button>
               </form>
-
-              <div className="mt-4 flex flex-wrap gap-2">
-                {ASK_FIRST_PROMPTS.map(prompt => (
-                  <button
-                    key={prompt.label}
-                    type="button"
-                    onClick={() => runQuery(prompt.query)}
-                    className="inline-flex min-h-[44px] items-center rounded-full border border-surface-border bg-white px-3 text-xs font-medium text-ink-secondary transition-colors hover:bg-surface-tertiary hover:text-ink"
-                  >
-                    {prompt.label}
-                  </button>
-                ))}
-              </div>
-            </section>
-
-            <Collapsible.Root open={sourceControlsOpen} onOpenChange={setSourceControlsOpen}>
-              <Collapsible.Content className="rounded-xl border border-surface-border bg-white p-3">
-                <p className="mb-2 text-xs font-semibold uppercase tracking-wider text-ink-secondary">Sources</p>
-                <div className="flex flex-wrap gap-2">
-                  {scopeOptions.map(option => {
-                    const selected = scopes.includes(option.value)
-                    return (
-                      <button
-                        key={option.value}
-                        type="button"
-                        onClick={() => toggleScope(option.value)}
-                        aria-pressed={selected}
-                        className={cn(
-                          'inline-flex min-h-[44px] items-center gap-2 rounded-full border px-3 text-xs font-semibold transition-colors',
-                          selected ? 'border-brand-blue bg-blue-tint-20 text-brand-blue' : 'border-surface-border bg-white text-ink-secondary hover:bg-surface-tertiary hover:text-ink',
-                        )}
-                      >
-                        <span className={cn('flex h-4 w-4 items-center justify-center rounded-full border', selected ? 'border-brand-blue bg-brand-blue text-white' : 'border-surface-border')}>
-                          {selected ? <Check className="h-3 w-3" /> : null}
-                        </span>
-                        {option.label}
-                      </button>
-                    )
-                  })}
-                  <button
-                    type="button"
-                    onClick={() => setSearchDocuments(value => !value)}
-                    aria-pressed={searchDocuments}
-                    className={cn(
-                      'inline-flex min-h-[44px] items-center gap-2 rounded-full border px-3 text-xs font-semibold transition-colors',
-                      searchDocuments ? 'border-brand-orange/20 bg-brand-orange/10 text-brand-orange' : 'border-surface-border bg-white text-ink-secondary hover:bg-surface-tertiary hover:text-ink',
-                    )}
-                  >
-                    <FileSearch className="h-4 w-4" />
-                    Documents
-                  </button>
-                </div>
-              </Collapsible.Content>
-            </Collapsible.Root>
-
-            {loading ? <KAMAILoading /> : null}
-
-            {error && !loading ? (
-              <section className="rounded-xl border border-rag-red/20 bg-rag-red/10 p-4 text-sm font-medium text-rag-red">
-                {error}
-              </section>
-            ) : null}
-
-            {result && !loading ? (
-              <section className="rounded-xl border border-brand-blue/20 bg-white p-4 shadow-card">
-                <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
-                  <div className="min-w-0">
-                    <p className="text-sm leading-6 text-ink">{result.answer}</p>
-                    <p className="mt-3 text-xs font-medium text-ink-secondary">
-                      Based on {result.sourceEntries.length + docResults.length} source{result.sourceEntries.length + docResults.length === 1 ? '' : 's'} | {result.confidence} confidence | {result.queryIntent}
-                    </p>
-                    {forecastResult ? <ForecastChart forecast={forecastResult} /> : null}
-                  </div>
-                  <button className="tk-icon-button bg-white" onClick={() => { setResult(null); setForecastResult(null); setError('') }} aria-label="Clear KAM AI answer">
-                    <X className="h-4 w-4" />
-                  </button>
-                </div>
-
-                <SourceCollapsible
-                  open={sourcesOpen}
-                  onOpenChange={setSourcesOpen}
-                  title={`View sources (${result.sourceEntries.length})`}
-                >
-                  {result.sourceEntries.length ? result.sourceEntries.map(entry => <TimelineSourceCard key={entry.id} entry={entry} />) : (
-                    <p className="rounded-lg border border-surface-border bg-white p-3 text-sm text-ink-secondary">No visible timeline sources matched this query.</p>
-                  )}
-                </SourceCollapsible>
-
-                {searchDocuments ? (
-                  <SourceCollapsible
-                    open={documentsOpen}
-                    onOpenChange={setDocumentsOpen}
-                    title={`Document sources (${docResults.length})`}
-                    icon={<FileSearch className="h-3.5 w-3.5" />}
-                  >
-                    {docResults.length ? docResults.map(chunk => <DocumentSourceCard key={chunk.id} chunk={chunk} />) : (
-                      <p className="rounded-lg border border-surface-border bg-white p-3 text-sm text-ink-secondary">No visible document sources matched this query.</p>
-                    )}
-                  </SourceCollapsible>
-                ) : null}
-              </section>
-            ) : null}
-
-            <Collapsible.Root open={historyOpen} onOpenChange={setHistoryOpen}>
-              <Collapsible.Trigger className="flex min-h-[44px] w-full items-center justify-between rounded-lg border border-surface-border bg-white px-4 text-sm font-semibold text-ink">
-                <span>History</span>
-                <ChevronDown className={cn('h-4 w-4 transition-transform', historyOpen ? 'rotate-180' : '')} />
-              </Collapsible.Trigger>
-              <Collapsible.Content className="mt-2">
-                <RecentQueries runs={queryRuns} onRunAgain={runQuery} />
-              </Collapsible.Content>
-            </Collapsible.Root>
-          </div>
+            </footer>
+          </section>
         </Dialog.Content>
       </Dialog.Portal>
     </Dialog.Root>
   )
 }
 
-async function runBackendOrLocalAISearch({
-  token,
-  query,
-  targetAccounts,
-  scopes,
-  searchDocuments,
-  user,
-  state,
-}: {
-  token: string | null
-  query: string
-  targetAccounts: Account[]
-  scopes: AISearchScope[]
-  searchDocuments: boolean
-  user: { id: string; role: UserRole }
-  state: AISearchState
-}) {
-  if (token) {
-    try {
-      return await runKamAiSearch(token, {
-        query,
-        accountId: targetAccounts.length === 1 ? targetAccounts[0].id : undefined,
-        scopes,
-        documentSearch: searchDocuments,
-        limit: 10,
-      })
-    } catch {
-      // Fall back to the local deterministic search so the panel remains usable during local backend restarts.
-    }
-  }
-  return runAssignedBookAISearch(query, targetAccounts, scopes, user, state)
-}
-
-async function runBackendForecast({
-  token,
-  targetAccounts,
-}: {
-  token: string | null
-  targetAccounts: Account[]
-}) {
-  if (!token) {
-    throw new Error('Sign in is required to generate the shared forecast.')
-  }
-  return runKamAiForecast(token, {
-    accountId: targetAccounts.length === 1 ? targetAccounts[0].id : undefined,
-    months: 6,
-  })
-}
-
-function KAMAILoading() {
-  return (
-    <div className="overflow-hidden rounded-xl border border-surface-border bg-surface-tertiary p-4">
-      <div className="h-4 w-2/3 animate-pulse-soft rounded bg-surface-border" />
-      <div className="mt-3 h-4 w-full animate-pulse-soft rounded bg-surface-border" />
-      <div className="mt-2 h-4 w-5/6 animate-pulse-soft rounded bg-surface-border" />
-    </div>
-  )
-}
-
-function normalizeSearch(value: string) {
-  return value.toLowerCase().replace(/[^\w\s]/g, ' ').replace(/\s+/g, ' ').trim()
-}
-
-function accountsMatchingQuery(query: string, accounts: Account[]) {
-  const normalized = normalizeSearch(query)
-  const matched = accounts.filter(account => {
-    const names = [account.name, account.projectName ?? '', ...account.tags].map(normalizeSearch).filter(Boolean)
-    return names.some(name => normalized.includes(name))
-  })
-  return matched.length ? matched : accounts
-}
-
-async function runAssignedBookAISearch(
-  query: string,
-  targetAccounts: Account[],
-  scopes: AISearchScope[],
-  user: { id: string; role: UserRole },
-  state: AISearchState,
-): Promise<AISearchResult> {
-  const results = await Promise.all(
-    targetAccounts.map(account =>
-      runAISearch(
-        {
-          accountId: account.id,
-          query,
-          scope: scopes,
-          role: user.role,
-          userId: user.id,
-        },
-        state,
-      ),
-    ),
-  )
-  const sourceEntries = uniqueTimelineEntries(results.flatMap(result => result.sourceEntries))
-    .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())
-    .slice(0, 10)
-  const sourceAccountNames = Array.from(
-    new Set(sourceEntries.map(entry => state.accounts.find(account => account.id === entry.accountId)?.name).filter(Boolean)),
-  )
-  const topSources = sourceEntries.slice(0, 4).map(entry => {
-    const accountName = state.accounts.find(account => account.id === entry.accountId)?.name ?? 'Account'
-    return `${accountName}: ${entry.title}`
-  })
-
-  return {
-    answer: sourceEntries.length
-      ? `Across ${targetAccounts.length} assigned project${targetAccounts.length === 1 ? '' : 's'}, I found ${sourceEntries.length} relevant source${sourceEntries.length === 1 ? '' : 's'}${sourceAccountNames.length ? ` across ${sourceAccountNames.join(', ')}` : ''}. Top signals: ${topSources.join('; ')}.`
-      : `I could not find enough visible assigned-project records to answer that with confidence.`,
-    sourceEntries,
-    queryIntent: targetAccounts.length === 1 ? `Assigned project: ${targetAccounts[0].name}` : 'Assigned-book search',
-    confidence: sourceEntries.length >= 4 ? 'medium' : sourceEntries.length ? 'low' : 'low',
-    disclaimer: `This answer is based on ${sourceEntries.length} visible source${sourceEntries.length === 1 ? '' : 's'} from assigned projects. Verify before use in client communications.`,
-  }
-}
-
-function uniqueTimelineEntries(entries: TimelineEntry[]) {
-  const seen = new Set<string>()
-  return entries.filter(entry => {
-    if (seen.has(entry.id)) return false
-    seen.add(entry.id)
-    return true
-  })
-}
-
-function ForecastChart({ forecast }: { forecast: ForecastResult }) {
-  const hasRevenue = forecast.totals.forecastRevenue > 0
-  const maxRevenue = Math.max(
-    1,
-    ...forecast.points.map(point => Math.max(point.forecastRevenue, point.baselineRevenue + point.weightedOpportunity + point.growthAdjustment)),
-  )
-  const chartWidth = 620
-  const chartHeight = 260
-  const left = 48
-  const right = 28
-  const top = 30
-  const bottom = 48
-  const plotWidth = chartWidth - left - right
-  const plotHeight = chartHeight - top - bottom
-  const plotBottom = top + plotHeight
-  const xFor = (index: number) => left + (plotWidth / Math.max(1, forecast.points.length - 1)) * index
-  const yFor = (value: number) => top + plotHeight - (Math.max(0, value) / maxRevenue) * plotHeight
-  const forecastLine = forecast.points.map((point, index) => `${xFor(index)},${yFor(point.forecastRevenue)}`).join(' ')
-  const metricCards = [
-    ['Forecast', forecast.totals.forecastRevenue],
-    ['Baseline', forecast.totals.baselineRevenue],
-    ['Weighted opps', forecast.totals.weightedOpportunity],
-    ['Risk drag', -forecast.totals.riskAdjustment],
+function EmptyChat({ onPrompt }: { onPrompt: (value: string) => void }) {
+  const prompts = [
+    'Prioritize my assigned projects by risk and next action',
+    'Show renewal risks and notice windows across my projects',
+    'Prepare me for upcoming QBRs',
+    'Find open escalations and critical tasks',
   ]
-
   return (
-    <div className="mt-4 rounded-xl border border-surface-border bg-white p-4">
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-        <div>
-          <div className="flex items-center gap-2">
-            <BarChart3 className="h-4 w-4 text-brand-blue" />
-            <h3 className="text-sm font-semibold text-ink">{forecast.title}</h3>
-          </div>
-          <p className="mt-1 text-xs leading-5 text-ink-secondary">{forecast.summary}</p>
-        </div>
-        <div className="flex flex-wrap gap-2 text-xs font-medium text-ink-secondary">
-          <span className="rounded-full border border-surface-border bg-surface-secondary px-2 py-1 capitalize">{forecast.confidence.replace('_', ' ')} confidence</span>
-          <span className="rounded-full border border-surface-border bg-surface-secondary px-2 py-1 capitalize">{forecast.trendLabel.replace('_', ' ')}</span>
-        </div>
+    <div className="mx-auto max-w-3xl rounded-lg border border-surface-border bg-white p-5">
+      <div className="flex items-center gap-2">
+        <Sparkles className="h-5 w-5 text-brand-blue" />
+        <h3 className="text-base font-semibold text-ink">Start a KAM AI chat</h3>
       </div>
-
-      {hasRevenue ? (
-        <div className="mt-4 overflow-x-auto">
-          <svg viewBox={`0 0 ${chartWidth} ${chartHeight}`} className="h-[280px] min-w-[620px] text-ink-secondary" role="img" aria-label="Six-month revenue forecast chart">
-            {[0, 1, 2, 3].map(index => {
-              const y = top + (plotHeight / 3) * index
-              return <line key={index} x1={left} x2={chartWidth - right} y1={y} y2={y} className="stroke-surface-border" strokeWidth="1" />
-            })}
-            {forecast.points.map((point, index) => {
-              const x = xFor(index)
-              const segments = [
-                { key: 'baseline', value: point.baselineRevenue, className: 'fill-blue-tint-40' },
-                { key: 'opportunity', value: point.weightedOpportunity, className: 'fill-brand-orange/45' },
-                { key: 'growth', value: point.growthAdjustment, className: 'fill-rag-green/45' },
-              ]
-              let cursor = plotBottom
-              return (
-                <g key={point.month}>
-                  {segments.map(segment => {
-                    const height = (Math.max(0, segment.value) / maxRevenue) * plotHeight
-                    cursor -= height
-                    return <rect key={segment.key} x={x - 15} y={cursor} width="30" height={height} rx="4" className={segment.className} />
-                  })}
-                  {point.riskAdjustment > 0 ? (
-                    <rect x={x - 15} y={Math.min(plotBottom, yFor(point.forecastRevenue))} width="30" height={Math.max(3, (point.riskAdjustment / maxRevenue) * plotHeight)} rx="4" className="fill-rag-red/35" />
-                  ) : null}
-                  <text x={x} y={chartHeight - 18} textAnchor="middle" className="fill-ink-secondary text-[11px] font-semibold">{point.month.split(' ')[0]}</text>
-                </g>
-              )
-            })}
-            <polyline points={forecastLine} fill="none" className="stroke-brand-blue" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" />
-            {forecast.points.map((point, index) => (
-              <circle key={`${point.month}-forecast`} cx={xFor(index)} cy={yFor(point.forecastRevenue)} r="4" className="fill-brand-blue" />
-            ))}
-            <text x={left} y="18" className="fill-ink-secondary text-[11px] font-semibold">Revenue</text>
-          </svg>
-        </div>
-      ) : (
-        <p className="mt-4 rounded-lg border border-surface-border bg-surface-secondary p-4 text-sm text-ink-secondary">No reliable revenue chart is available for this source scope.</p>
-      )}
-
-      <div className="mt-3 grid gap-2 md:grid-cols-3">
-        {metricCards.map(([label, value]) => (
-          <p key={String(label)} className="rounded-md bg-surface-secondary px-3 py-2 text-xs leading-5 text-ink-secondary">
-            <span className="block font-semibold text-ink">{label}</span>
-            {formatCompactCurrency(Number(value))}
-          </p>
-        ))}
-        {forecast.highlights.map(item => (
-          <p key={item} className="rounded-md bg-surface-secondary px-3 py-2 text-xs leading-5 text-ink-secondary">{item}</p>
+      <p className="mt-2 text-sm leading-6 text-ink-secondary">Ask across authorized source records. Each answer is saved to this session with citations.</p>
+      <div className="mt-4 grid gap-2 md:grid-cols-2">
+        {prompts.map(prompt => (
+          <button key={prompt} type="button" onClick={() => onPrompt(prompt)} className="min-h-[44px] rounded-md border border-surface-border bg-surface-secondary px-3 text-left text-sm font-medium text-ink hover:bg-white">
+            {prompt}
+          </button>
         ))}
       </div>
-
-      <div className="mt-3 flex flex-wrap gap-3 text-xs font-medium text-ink-secondary">
-        <span className="inline-flex items-center gap-1.5"><span className="h-2.5 w-2.5 rounded-full bg-blue-tint-40" />Baseline</span>
-        <span className="inline-flex items-center gap-1.5"><span className="h-2.5 w-2.5 rounded-full bg-brand-orange/60" />Weighted opportunities</span>
-        <span className="inline-flex items-center gap-1.5"><span className="h-2.5 w-2.5 rounded-full bg-rag-green/60" />Growth</span>
-        <span className="inline-flex items-center gap-1.5"><span className="h-2.5 w-2.5 rounded-full bg-rag-red/50" />Risk</span>
-      </div>
-
-      {forecast.missingData.length ? (
-        <div className="mt-3 rounded-md border border-brand-orange/20 bg-brand-orange/10 p-3">
-          <p className="text-xs font-semibold uppercase tracking-wider text-brand-orange">Missing data / fallback notes</p>
-          <ul className="mt-2 grid gap-1 text-xs leading-5 text-ink-secondary">
-            {forecast.missingData.slice(0, 3).map(item => <li key={item}>{item}</li>)}
-          </ul>
-        </div>
-      ) : null}
     </div>
   )
 }
 
-function SourceCollapsible({
-  open,
-  onOpenChange,
-  title,
-  icon,
-  children,
-}: {
-  open: boolean
-  onOpenChange: (open: boolean) => void
-  title: string
-  icon?: JSX.Element
-  children: React.ReactNode
-}) {
+function ChatMessage({ message }: { message: KamAiChatMessage }) {
+  const isUser = message.role === 'user'
+  const metadata = message.metadata_json ?? {}
+  const recommended = Array.isArray(metadata.recommended_actions) ? metadata.recommended_actions.map(String) : []
+  const missing = Array.isArray(metadata.missing_evidence) ? metadata.missing_evidence.map(String) : []
   return (
-    <Collapsible.Root open={open} onOpenChange={onOpenChange} className="mt-4">
-      <Collapsible.Trigger className="inline-flex min-h-[44px] items-center gap-1 text-xs font-semibold text-brand-blue">
-        {title}
-        {icon}
-        <ChevronDown className={cn('h-3.5 w-3.5 transition-transform', open ? 'rotate-180' : '')} />
-      </Collapsible.Trigger>
-      <Collapsible.Content className="grid gap-2 md:grid-cols-2">
-        {children}
-      </Collapsible.Content>
-    </Collapsible.Root>
-  )
-}
-
-function TimelineSourceCard({ entry }: { entry: TimelineEntry }) {
-  return (
-    <article className="rounded-lg border border-surface-border bg-white p-3">
-      <p className="text-[10px] font-semibold uppercase tracking-wider text-brand-blue">{titleize(entry.eventType)} | {entry.id}</p>
-      <h4 className="mt-1 text-sm font-semibold text-ink">{entry.title}</h4>
-      <p className="mt-1 line-clamp-2 text-xs leading-5 text-ink-secondary">{entry.description}</p>
-      <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
-        <p className="text-xs text-ink-tertiary">{formatRelative(entry.timestamp)} by {entry.performedByName}</p>
-        {entry.sourceRecordRoute ? (
-          <Link to={entry.sourceRecordRoute} className="text-xs font-semibold text-brand-blue hover:text-brand-blue-dark">View source</Link>
-        ) : null}
-      </div>
-    </article>
-  )
-}
-
-function DocumentSourceCard({ chunk }: { chunk: SemanticDocumentChunk }) {
-  return (
-    <article className="rounded-lg border border-surface-border bg-white p-3">
-      <p className="text-[10px] font-semibold uppercase tracking-wider text-brand-blue">{chunk.sourceLabel}</p>
-      <h4 className="mt-1 text-sm font-semibold text-ink">{chunk.documentName}</h4>
-      <p className="mt-1 line-clamp-3 text-xs leading-5 text-ink-secondary">{chunk.excerpt}</p>
-    </article>
-  )
-}
-
-function RecentQueries({ runs, onRunAgain }: { runs: AIQueryRun[]; onRunAgain: (query: string) => void }) {
-  return (
-    <section className="rounded-xl border border-surface-border p-4">
-      <div className="mb-3 flex items-center gap-2">
-        <History className="h-4 w-4 text-brand-blue" />
-        <h3 className="text-sm font-semibold text-ink">Recent queries</h3>
-      </div>
-      {runs.length ? (
-        <div className="grid gap-2">
-          {runs.slice(0, 4).map(run => (
-            <article key={run.id} className="rounded-lg border border-surface-border bg-surface-secondary p-3">
-              <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-                <div className="min-w-0">
-                  <p className="truncate text-sm font-semibold text-ink">{run.query}</p>
-                  <p className="mt-1 line-clamp-2 text-xs leading-5 text-ink-secondary">{run.answer}</p>
-                  <p className="mt-2 text-[11px] font-medium text-ink-tertiary">{run.intent} | {run.confidence} confidence | {run.sourceEntryIds.length + run.documentSourceIds.length} sources | {formatRelative(run.createdAt)}</p>
-                </div>
-                <button type="button" className="tk-button-secondary min-h-[44px] shrink-0 px-3 py-1.5 text-xs" onClick={() => onRunAgain(run.query)}>
-                  Run again <ArrowRight className="h-3.5 w-3.5" />
-                </button>
-              </div>
-            </article>
-          ))}
+    <article className={cn('flex', isUser ? 'justify-end' : 'justify-start')}>
+      <div className={cn('max-w-[92%] rounded-2xl border px-4 py-3 shadow-sm', isUser ? 'border-brand-blue bg-brand-blue text-white' : 'border-surface-border bg-white text-ink')}>
+        <div className="mb-2 flex items-center gap-2 text-xs font-semibold">
+          {isUser ? <MessageSquare className="h-3.5 w-3.5" /> : <Sparkles className="h-3.5 w-3.5 text-brand-blue" />}
+          <span>{isUser ? 'You' : 'KAM AI'}</span>
+          {!isUser && message.status === 'running' ? <Loader2 className="h-3.5 w-3.5 animate-spin text-brand-blue" /> : null}
         </div>
-      ) : (
-        <p className="rounded-lg bg-surface-secondary p-4 text-sm text-ink-secondary">Ask a question to build account-scoped KAM AI history.</p>
-      )}
-    </section>
+        <MessageContent content={message.content} />
+        {!isUser && message.status === 'failed' && message.error_message ? <p className="mt-2 rounded-md bg-rag-red/10 p-2 text-xs text-rag-red">{message.error_message}</p> : null}
+        {!isUser ? (
+          <div className="mt-3 flex flex-wrap gap-2 text-[11px] font-semibold text-ink-secondary">
+            {message.confidence ? <span className="rounded-full bg-surface-secondary px-2 py-1 capitalize">{message.confidence} confidence</span> : null}
+            {message.intent ? <span className="rounded-full bg-surface-secondary px-2 py-1">{titleize(message.intent)}</span> : null}
+            {message.model_name ? <span className="rounded-full bg-surface-secondary px-2 py-1">{message.model_name}</span> : null}
+          </div>
+        ) : null}
+        {!isUser && recommended.length ? <MessageList title="Recommended actions" items={recommended} /> : null}
+        {!isUser && missing.length ? <MessageList title="Missing evidence" items={missing} muted /> : null}
+        {!isUser && message.sources.length ? <SourceList sources={message.sources} /> : null}
+      </div>
+    </article>
   )
 }
 
-function shouldRenderForecast(query: string) {
-  const normalized = query.toLowerCase()
-  const asksProjection = /forecast|predict|projection|trend|next\s+6|next\s+six|six\s+months|6\s+months/.test(normalized)
-  const asksVisual = /chart|graph|forecast|predict|projection/.test(normalized)
-  return asksProjection && asksVisual
+function MessageContent({ content }: { content: string }) {
+  const lines = content.split('\n')
+  return (
+    <div className="whitespace-pre-wrap text-sm leading-6">
+      {lines.map((line, index) => (
+        <Fragment key={`${index}-${line.slice(0, 24)}`}>
+          {renderInlineBold(line)}
+          {index < lines.length - 1 ? '\n' : null}
+        </Fragment>
+      ))}
+    </div>
+  )
 }
 
-function buildForecastAISearchResult(forecast: ForecastResult, timeline: TimelineEntry[]): AISearchResult {
-  const sources = [...timeline].sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()).slice(0, 6)
-  const citationSources = forecastCitationsToTimelineEntries(forecast)
-  return {
-    answer: forecast.summary,
-    sourceEntries: uniqueTimelineEntries([...citationSources, ...sources]).slice(0, 10),
-    queryIntent: `Shared ${forecast.months}-month forecast`,
-    confidence: forecast.confidence === 'not_available' ? 'low' : forecast.confidence,
-    disclaimer: forecast.disclaimer,
+function renderInlineBold(value: string) {
+  const nodes: Array<string | JSX.Element> = []
+  const pattern = /\*\*([^*]+)\*\*/g
+  let lastIndex = 0
+  let match: RegExpExecArray | null = pattern.exec(value)
+  while (match) {
+    if (match.index > lastIndex) nodes.push(value.slice(lastIndex, match.index))
+    nodes.push(
+      <strong key={`${match.index}-${match[1]}`} className="font-semibold">
+        {match[1]}
+      </strong>,
+    )
+    lastIndex = match.index + match[0].length
+    match = pattern.exec(value)
   }
+  if (lastIndex < value.length) nodes.push(value.slice(lastIndex))
+  return nodes.length ? nodes : value
 }
 
-function forecastCitationsToTimelineEntries(forecast: ForecastResult): TimelineEntry[] {
-  const timestamp = new Date().toISOString()
-  return forecast.citations.flatMap((citation, index) => {
-    const type = typeof citation.type === 'string' ? citation.type : 'forecast_source'
-    const id = typeof citation.id === 'string' ? citation.id : `${type}-${index}`
-    const label = typeof citation.label === 'string' ? citation.label : titleize(type)
-    return [{
-      id: `forecast-${type}-${id}`,
-      accountId: typeof citation.account_id === 'string' ? citation.account_id : id,
-      eventType: forecastSourceTypeToEventType(type),
-      module: forecastSourceTypeToModule(type),
-      title: label,
-      description: `Forecast source: ${titleize(type)}`,
-      performedBy: 'kam-ai',
-      performedByName: 'KAM AI',
-      timestamp,
-      sourceRecordId: id,
-      sourceRecordType: type,
-      sourceRecordRoute: typeof citation.source_route === 'string' ? citation.source_route : undefined,
-      isSensitive: false,
-      isSystemGenerated: true,
-      isImmutable: true,
-    }]
-  })
+function MessageList({ title, items, muted = false }: { title: string; items: string[]; muted?: boolean }) {
+  return (
+    <div className={cn('mt-3 rounded-md p-3', muted ? 'bg-brand-orange/10 text-ink-secondary' : 'bg-blue-tint-20 text-ink')}>
+      <p className="text-xs font-bold uppercase tracking-wider">{title}</p>
+      <ul className="mt-2 grid gap-1 text-sm leading-5">
+        {items.slice(0, 5).map(item => <li key={item}>- {item}</li>)}
+      </ul>
+    </div>
+  )
 }
 
-function forecastSourceTypeToEventType(sourceType: string): TimelineEntry['eventType'] {
-  if (sourceType.includes('opportunity')) return 'opportunity_event'
-  if (sourceType.includes('kyc')) return 'kyc_update'
-  if (sourceType.includes('score') || sourceType.includes('csat')) return 'score_change'
-  if (sourceType.includes('engagement')) return 'engagement_updated'
-  return 'ai_event'
+function SourceList({ sources }: { sources: KamAiChatMessage['sources'] }) {
+  return (
+    <details className="mt-3 rounded-md border border-surface-border bg-surface-secondary p-3">
+      <summary className="cursor-pointer text-xs font-bold uppercase tracking-wider text-brand-blue">Sources ({sources.length})</summary>
+      <div className="mt-3 grid gap-2">
+        {sources.map(source => (
+          <article key={source.id} className="rounded-md border border-surface-border bg-white p-3">
+            <div className="flex items-start justify-between gap-3">
+              <div className="min-w-0">
+                <p className="text-[11px] font-bold uppercase tracking-wider text-brand-blue">[{source.citation_index}] {titleize(source.source_type)}</p>
+                <h4 className="mt-1 text-sm font-semibold text-ink">{source.title}</h4>
+                <p className="mt-1 line-clamp-3 text-xs leading-5 text-ink-secondary">{source.excerpt}</p>
+                <p className="mt-2 text-[11px] text-ink-tertiary">{source.account_name || 'Account'} | score {Math.round(source.relevance_score)}</p>
+              </div>
+              {source.source_route ? (
+                <Link to={source.source_route} className="tk-icon-button shrink-0 bg-white" title="Open source">
+                  <ExternalLink className="h-4 w-4" />
+                </Link>
+              ) : <FileText className="h-4 w-4 shrink-0 text-ink-tertiary" />}
+            </div>
+          </article>
+        ))}
+      </div>
+    </details>
+  )
 }
 
-function forecastSourceTypeToModule(sourceType: string): TimelineEntry['module'] {
-  if (sourceType.includes('opportunity')) return 'opportunity'
-  if (sourceType.includes('kyc')) return 'kyc'
-  if (sourceType.includes('score') || sourceType.includes('csat')) return 'scoring'
-  if (sourceType.includes('engagement')) return 'engagements'
-  return 'ai'
+function ThinkingMessage() {
+  return (
+    <article className="flex justify-start">
+      <div className="rounded-2xl border border-surface-border bg-white px-4 py-3 shadow-sm">
+        <div className="flex items-center gap-2 text-sm font-medium text-ink-secondary">
+          <Loader2 className="h-4 w-4 animate-spin text-brand-blue" />
+          Searching authorized sources and preparing an answer...
+        </div>
+      </div>
+    </article>
+  )
+}
+
+function SessionSkeleton() {
+  return (
+    <div className="grid gap-2 p-2">
+      {[0, 1, 2].map(item => <div key={item} className="h-16 animate-pulse-soft rounded-md bg-surface-border" />)}
+    </div>
+  )
 }

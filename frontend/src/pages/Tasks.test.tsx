@@ -119,6 +119,8 @@ describe('Tasks page backend work queue', () => {
     expect(await screen.findByText(/loading tasks/i)).toBeInTheDocument()
     resolveTasks(jsonResponse(page([task])))
     expect(await screen.findByText('Backend recovery task')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /kanban/i })).toHaveAttribute('aria-pressed', 'true')
+    expect(screen.getAllByText('Open').length).toBeGreaterThan(0)
     expect(screen.getAllByText('Opportunity action').length).toBeGreaterThan(0)
 
     await userEvent.type(screen.getByPlaceholderText(/search title/i), 'recovery')
@@ -126,7 +128,7 @@ describe('Tasks page backend work queue', () => {
 
     await userEvent.click(screen.getByRole('button', { name: /start/i }))
 
-    await waitFor(() => expect(screen.getByText('in progress')).toBeInTheDocument())
+    await waitFor(() => expect(screen.getAllByText(/in progress/i).length).toBeGreaterThan(2))
   })
 
   it('applies dashboard tile query filters to the backend task request', async () => {
@@ -139,12 +141,13 @@ describe('Tasks page backend work queue', () => {
     vi.stubGlobal('fetch', fetchMock)
 
     render(
-      <MemoryRouter initialEntries={['/tasks?status=in_progress&due=overdue&my_items=true&account_id=acct-1']}>
+      <MemoryRouter initialEntries={['/tasks?status=in_progress&due=overdue&my_items=true&account_id=acct-1&view=list']}>
         <Tasks />
       </MemoryRouter>,
     )
 
     await screen.findByText('Backend recovery task')
+    expect(screen.getByRole('button', { name: /list/i })).toHaveAttribute('aria-pressed', 'true')
     expect(screen.getByRole('option', { name: /opportunity action/i })).toHaveValue('opportunity_action_item')
     await waitFor(() => {
       const taskRequest = fetchMock.mock.calls.find(call => String(call[0]).includes('/api/tasks'))
