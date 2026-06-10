@@ -22,6 +22,7 @@ import { createAccountAttachmentPreviewUrl, listAccountAttachments } from '@/ser
 import {
   approveKycDraft,
   createKycDraft,
+  getKycDefaultPrompt,
   getKycFreshness,
   listKycAgentRuns,
   listKycDrafts,
@@ -59,6 +60,10 @@ export function KYCAssistedReview({ account }: { account: Account }) {
   const [overrideReason, setOverrideReason] = useState('')
   const [reviewNotes, setReviewNotes] = useState('')
   const [detailedDescription, setDetailedDescription] = useState('')
+  const [kycPrompt, setKycPrompt] = useState('')
+  const [promptSourceDocumentIds, setPromptSourceDocumentIds] = useState<string[]>([])
+  const [promptLoading, setPromptLoading] = useState(false)
+  const [promptError, setPromptError] = useState('')
   const [sourceDocuments, setSourceDocuments] = useState<SourceDocument[]>([])
   const [selectedSourceDocumentId, setSelectedSourceDocumentId] = useState('')
   const [sourcePreviewUrl, setSourcePreviewUrl] = useState('')
@@ -95,12 +100,12 @@ export function KYCAssistedReview({ account }: { account: Account }) {
     () => sourceDocuments.find(document => document.id === selectedSourceDocumentId) ?? sourceDocuments[0] ?? null,
     [selectedSourceDocumentId, sourceDocuments],
   )
-  const ollamaGeneratedKycHtml = useMemo(
-    () => buildOllamaGeneratedKycHtml(activeDraft, latestRun),
+  const aiGeneratedKycHtml = useMemo(
+    () => buildAiGeneratedKycHtml(activeDraft, latestRun),
     [activeDraft, latestRun],
   )
-  const ollamaDebugLogsHtml = useMemo(
-    () => buildOllamaDebugLogsHtml(activeDraft, latestRun),
+  const aiDebugLogsHtml = useMemo(
+    () => buildAiDebugLogsHtml(activeDraft, latestRun),
     [activeDraft, latestRun],
   )
 
@@ -157,6 +162,29 @@ export function KYCAssistedReview({ account }: { account: Account }) {
   useEffect(() => {
     void loadKyc('initial')
   }, [loadKyc])
+
+  useEffect(() => {
+    if (!token) return
+    let active = true
+    setPromptLoading(true)
+    setPromptError('')
+    getKycDefaultPrompt(token, account.id)
+      .then(response => {
+        if (!active) return
+        setKycPrompt(response.prompt)
+        setPromptSourceDocumentIds(response.source_document_ids)
+      })
+      .catch(error => {
+        if (!active) return
+        setPromptError(errorMessage(error))
+      })
+      .finally(() => {
+        if (active) setPromptLoading(false)
+      })
+    return () => {
+      active = false
+    }
+  }, [account.id, token])
 
   useEffect(() => {
     if (!latestRun || !['pending', 'running'].includes(latestRun.status)) return
@@ -267,8 +295,13 @@ export function KYCAssistedReview({ account }: { account: Account }) {
     setFieldErrors([])
     setError(null)
     try {
-      const draft = await createKycDraft(token, account.id, { trigger_source: 'kyc_page', notes: reviewNotes || undefined })
-      toast.success('KYC draft created')
+      const draft = await createKycDraft(token, account.id, {
+        trigger_source: 'kyc_page',
+        source_document_ids: promptSourceDocumentIds,
+        notes: reviewNotes || undefined,
+        prompt: kycPrompt || undefined,
+      })
+      toast.success('KYC draft queued from editable prompt')
       setDraftPage(1)
       setActiveDraftId(draft.id)
       await loadKyc('refresh')
@@ -366,7 +399,7 @@ export function KYCAssistedReview({ account }: { account: Account }) {
     setError(null)
     try {
       await retryKycAgentRun(token, account.id, latestRun.id)
-      toast.success('KYC retry queued. The local Qwen worker will re-run it shortly.')
+      toast.success('KYC retry queued.')
       await loadKyc('refresh')
     } catch (requestError) {
       setError(errorMessage(requestError))
@@ -381,7 +414,7 @@ export function KYCAssistedReview({ account }: { account: Account }) {
     setError(null)
     try {
       await refreshKycAgentRun(token, account.id, latestRun.id)
-      toast.success('Qwen KYC re-run queued. The local worker will prepare a fresh source-backed prompt.')
+      toast.success('KYC re-run queued.')
       await loadKyc('refresh')
     } catch (requestError) {
       setError(errorMessage(requestError))
@@ -397,7 +430,7 @@ export function KYCAssistedReview({ account }: { account: Account }) {
     setFieldErrors([])
     try {
       await queueKycWebResearch(token, account.id, { draft_id: activeDraft.id, query: webResearchQuery.trim() || null })
-      toast.success('Tavily web research queued. The local Ollama worker will append it shortly.')
+      toast.success('Web research queued.')
       await loadKyc('refresh')
     } catch (requestError) {
       handleMutationError(requestError)
@@ -480,11 +513,76 @@ export function KYCAssistedReview({ account }: { account: Account }) {
         </div>
       </section>
 
-      {latestRun ? (
-        <section className="tk-card p-4">
-          <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+      <section className="tk-card p-5">
+        <div>
+          <p className="text-[10px] font-extrabold uppercase tracking-widest text-brand-blue">Editable KYC prompt</p>
+          <h3 className="mt-1 text-base font-semibold text-ink">Run KYC for this account</h3>
+          <p className="mt-1 max-w-3xl text-sm leading-6 text-ink-secondary">
+            The prompt is prepared from account details, SOW/charter extraction, stakeholders, engagement records, and prior KYC context. Edit it before running OpenAI.
+          </p>
+        </div>
+        {promptError ? (
+          <div className="mt-3 flex items-start gap-2 rounded-lg border border-brand-orange/20 bg-brand-orange/10 p-3 text-sm text-brand-orange">
+            <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+            {promptError}
+          </div>
+        ) : null}
+        <div className="mt-4 grid gap-4 xl:grid-cols-[minmax(0,0.95fr)_minmax(0,1.05fr)]">
+          <div className="flex min-h-0 flex-col">
+            <label className="block">
+              <span className="text-xs font-semibold uppercase tracking-wider text-ink-secondary">Prompt</span>
+              <textarea
+                className="mt-2 h-[260px] w-full resize-none rounded-lg border border-surface-border bg-white px-3 py-2 text-sm leading-6 text-ink outline-none transition-colors placeholder:text-ink-muted focus:border-brand-blue focus:ring-2 focus:ring-brand-blue/20"
+                value={promptLoading ? 'Preparing source-backed KYC prompt...' : kycPrompt}
+                onChange={event => setKycPrompt(event.target.value)}
+                disabled={promptLoading || Boolean(loading)}
+                placeholder="Prompt will be prepared from account details and uploaded SOW/charter evidence."
+                aria-label="Editable KYC prompt"
+              />
+            </label>
+            <div className="mt-3 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+              <p className="text-xs text-ink-secondary">
+                Source documents selected: {promptSourceDocumentIds.length || 'all available account sources'}
+              </p>
+              <button type="button" className="tk-button-primary shrink-0" onClick={createDraft} disabled={Boolean(loading) || promptLoading || !kycPrompt.trim()}>
+                {loading === 'create' ? <Loader2 className="h-4 w-4 animate-spin" /> : <FileSearch className="h-4 w-4" />}
+                Run KYC
+              </button>
+            </div>
+          </div>
+          <div className="min-h-0">
+            <div className="mb-2 flex items-center justify-between gap-2">
+              <span className="text-xs font-semibold uppercase tracking-wider text-ink-secondary">OpenAI response</span>
+              <span className="rounded-md bg-surface-secondary px-2 py-1 text-[11px] font-semibold text-ink-secondary">
+                {openAiResponseLabel(latestRun)}
+              </span>
+            </div>
+            <RichTextEditor
+              value={aiGeneratedKycHtml}
+              onChange={() => undefined}
+              disabled
+              placeholder="Run KYC to show the OpenAI response and mapped KYC output here."
+              ariaLabel="OpenAI KYC response"
+              editorHeight="260px"
+            />
+          </div>
+        </div>
+      </section>
+
+      {(latestRun || activeDraft) ? (
+        <details className="tk-card overflow-hidden">
+          <summary className="flex cursor-pointer list-none items-center justify-between gap-3 border-b border-surface-border bg-surface-secondary p-4">
             <div>
-              <p className="text-[10px] font-semibold uppercase tracking-wider text-ink-secondary">Local AI run status</p>
+              <p className="text-[10px] font-semibold uppercase tracking-wider text-ink-secondary">Provider details</p>
+              <h3 className="mt-1 text-sm font-semibold text-ink">Advanced run status, generated body, and logs</h3>
+            </div>
+            <span className="rounded-md bg-white px-2 py-1 text-xs font-semibold text-ink-secondary">Open / close</span>
+          </summary>
+          {latestRun ? (
+            <div className="border-b border-surface-border p-4">
+              <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+            <div>
+              <p className="text-[10px] font-semibold uppercase tracking-wider text-ink-secondary">AI run status</p>
               <p className="mt-1 text-sm font-semibold text-ink">
                 {latestRun.status.replace(/_/g, ' ')}
                 {latestRun.model_name ? ` · ${latestRun.model_name}` : ''}
@@ -502,17 +600,59 @@ export function KYCAssistedReview({ account }: { account: Account }) {
             {['failed', 'partial', 'cancelled'].includes(latestRun.status) ? (
               <button type="button" className="tk-button-secondary bg-white" onClick={retryLatestRun} disabled={Boolean(loading)}>
                 {loading === 'retryRun' ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCcw className="h-4 w-4" />}
-                {latestRun.model_name?.toLowerCase().includes('qwen') ? 'Retry with Qwen' : 'Retry KYC run'}
+                Retry KYC run
               </button>
             ) : null}
             {['complete', 'running'].includes(latestRun.status) ? (
               <button type="button" className="tk-button-secondary bg-white" onClick={rerunLatestRun} disabled={Boolean(loading)}>
                 {loading === 'rerunRun' ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCcw className="h-4 w-4" />}
-                {latestRun.model_name?.toLowerCase().includes('qwen') ? 'Re-run Qwen' : 'Re-run KYC'}
+                Re-run KYC
               </button>
             ) : null}
-          </div>
-        </section>
+              </div>
+            </div>
+          ) : null}
+          {activeDraft ? (
+            <div className="p-5">
+              <div className="flex flex-col gap-2 lg:flex-row lg:items-start lg:justify-between">
+                <div>
+                  <p className="text-[10px] font-extrabold uppercase tracking-widest text-brand-blue">AI output</p>
+                  <h3 className="mt-1 text-base font-semibold text-ink">Generated KYC body and logs</h3>
+                  <p className="mt-1 text-sm leading-6 text-ink-secondary">
+                    Full generated KYC response from the selected draft/run, plus current extracted fields, citations, and provider logs.
+                  </p>
+                </div>
+                <span className="rounded-md bg-surface-secondary px-2 py-1 text-xs font-semibold text-ink-secondary">
+                  {runMatchesDraft(latestRun, activeDraft) && latestRun?.model_name ? latestRun.model_name : 'Stored draft response'}
+                </span>
+              </div>
+              <div className="mt-3 grid gap-4 xl:grid-cols-[minmax(0,1fr)_420px]">
+                <div>
+                  <p className="mb-2 text-xs font-semibold uppercase tracking-wider text-ink-secondary">Generated KYC body</p>
+                  <RichTextEditor
+                    value={aiGeneratedKycHtml}
+                    onChange={() => undefined}
+                    disabled
+                    placeholder="Create or retry a KYC draft, then refresh after the AI run completes."
+                    ariaLabel="Generated KYC body"
+                    editorHeight="520px"
+                  />
+                </div>
+                <aside>
+                  <p className="mb-2 text-xs font-semibold uppercase tracking-wider text-ink-secondary">Prompt, response, and processing logs</p>
+                  <RichTextEditor
+                    value={aiDebugLogsHtml}
+                    onChange={() => undefined}
+                    disabled
+                    placeholder="Prompt and raw response logs will appear after a new KYC or web research run completes."
+                    ariaLabel="AI KYC logs"
+                    editorHeight="520px"
+                  />
+                </aside>
+              </div>
+            </div>
+          ) : null}
+        </details>
       ) : null}
 
       {activeDraft ? (
@@ -529,47 +669,6 @@ export function KYCAssistedReview({ account }: { account: Account }) {
           onSelectSource={setSelectedSourceDocumentId}
           previewError={sourcePreviewError}
         />
-      ) : null}
-
-      {activeDraft ? (
-        <section className="tk-card p-5">
-          <div className="flex flex-col gap-2 lg:flex-row lg:items-start lg:justify-between">
-            <div>
-              <p className="text-[10px] font-extrabold uppercase tracking-widest text-brand-blue">Local AI output</p>
-              <h3 className="mt-1 text-base font-semibold text-ink">Ollama generated KYC</h3>
-              <p className="mt-1 text-sm leading-6 text-ink-secondary">
-                Full generated KYC response from the selected draft/run, plus current extracted fields, citations, and compliant research context.
-              </p>
-            </div>
-            <span className="rounded-md bg-surface-secondary px-2 py-1 text-xs font-semibold text-ink-secondary">
-              {runMatchesDraft(latestRun, activeDraft) && latestRun?.model_name ? latestRun.model_name : 'Stored draft response'}
-            </span>
-          </div>
-          <div className="mt-3 grid gap-4 xl:grid-cols-[minmax(0,1fr)_420px]">
-            <div>
-              <p className="mb-2 text-xs font-semibold uppercase tracking-wider text-ink-secondary">Generated KYC body</p>
-              <RichTextEditor
-                value={ollamaGeneratedKycHtml}
-                onChange={() => undefined}
-                disabled
-                placeholder="Create or retry a KYC draft, then refresh after the Ollama run completes."
-                ariaLabel="Ollama generated KYC"
-                editorHeight="520px"
-              />
-            </div>
-            <aside>
-              <p className="mb-2 text-xs font-semibold uppercase tracking-wider text-ink-secondary">Prompt, response, and processing logs</p>
-              <RichTextEditor
-                value={ollamaDebugLogsHtml}
-                onChange={() => undefined}
-                disabled
-                placeholder="Prompt and raw response logs will appear after a new KYC or web research run completes."
-                ariaLabel="Ollama KYC logs"
-                editorHeight="520px"
-              />
-            </aside>
-          </div>
-        </section>
       ) : null}
 
       {error ? (
@@ -693,7 +792,7 @@ export function KYCAssistedReview({ account }: { account: Account }) {
               <div className="flex flex-col gap-2">
                 <h3 className="text-base font-semibold text-ink">Detailed AI description</h3>
                 <p className="text-sm leading-6 text-ink-secondary">
-                  Full Qwen/OpenAI/Tavily research and provider response detail is appended here for reviewer traceability.
+                  Full AI research and provider response detail is appended here for reviewer traceability.
                 </p>
               </div>
               <div className="mt-3">
@@ -994,7 +1093,7 @@ function buildKycRuntimeReviewHtml(draft: KycDraft, document: SourceDocument | n
   ].filter(Boolean).join('')
 }
 
-function buildOllamaGeneratedKycHtml(draft: KycDraft | null, latestRun: KycAgentRun | null) {
+function buildAiGeneratedKycHtml(draft: KycDraft | null, latestRun: KycAgentRun | null) {
   if (!draft) return ''
   const linkedRun = runMatchesDraft(latestRun, draft) ? latestRun : null
   const linkedRunResponse = linkedRun?.detailed_description ?? ''
@@ -1029,7 +1128,7 @@ function buildOllamaGeneratedKycHtml(draft: KycDraft | null, latestRun: KycAgent
     '<h4>Full response</h4>',
     storedResponse
       ? richTextFromStoredKycText(storedResponse)
-      : '<p>No Ollama generated KYC response has been stored yet. Create or retry the KYC draft, run the pending job if needed, then refresh this page.</p>',
+      : '<p>No generated KYC response has been stored yet. Create or retry the KYC draft, run the pending job if needed, then refresh this page.</p>',
     '<h4>Current extracted KYC fields</h4>',
     fieldSections || '<p>No KYC fields are available yet.</p>',
     '<h4>Citations and web sources</h4>',
@@ -1045,7 +1144,7 @@ function buildOllamaGeneratedKycHtml(draft: KycDraft | null, latestRun: KycAgent
   ].join('')
 }
 
-function buildOllamaDebugLogsHtml(draft: KycDraft | null, latestRun: KycAgentRun | null) {
+function buildAiDebugLogsHtml(draft: KycDraft | null, latestRun: KycAgentRun | null) {
   if (!draft) return ''
   const linkedRun = runMatchesDraft(latestRun, draft) ? latestRun : null
   if (!linkedRun) {
@@ -1055,7 +1154,7 @@ function buildOllamaDebugLogsHtml(draft: KycDraft | null, latestRun: KycAgentRun
       '<h4>Processing notes</h4>',
       '<ul>',
       '<li>Existing drafts created before log persistence may only show stored detailed response text.</li>',
-      '<li>New Ollama KYC runs persist prompt sections, raw response sections, workstream call metadata, and processing notes.</li>',
+    '<li>New AI KYC runs persist prompt sections, raw response sections, workstream call metadata, and processing notes.</li>',
       '</ul>',
     ].join('')
   }
@@ -1087,14 +1186,14 @@ function buildOllamaDebugLogsHtml(draft: KycDraft | null, latestRun: KycAgentRun
     `<li><strong>Schema fallbacks:</strong> ${escapeHtml(String(ollamaDebug.schema_fallback_count ?? 0))}</li>`,
     '</ul>',
     processingNotes.length ? `<h4>Processing notes</h4><ul>${processingNotes.map(note => `<li>${escapeHtml(note)}</li>`).join('')}</ul>` : '',
-    runtimeEvents.length ? `<h4>Runtime Qwen/Ollama events</h4>${runtimeEvents.map(event => runtimeEventBlock(event)).join('')}` : '',
+    runtimeEvents.length ? `<h4>Runtime AI events</h4>${runtimeEvents.map(event => runtimeEventBlock(event)).join('')}` : '',
     researchQueries.length ? `<h4>Tavily/web research queries</h4><ul>${researchQueries.map(query => `<li>${escapeHtml(String(query))}</li>`).join('')}</ul>` : '',
     researchSources.length ? `<h4>Tavily/web research sources</h4><ul>${researchSources.map(source => sourceListItem(source)).join('')}</ul>` : '',
     workstreamCalls.length ? `<h4>Workstream call metadata</h4>${workstreamCalls.map(call => debugBlock(callTitle(call), jsonText(call))).join('')}` : '',
-    promptSections.length ? `<h4>Ollama prompts</h4>${promptSections.map(section => promptBlock(section)).join('')}` : '',
-    rawSections.length ? `<h4>Ollama raw workstream responses</h4>${rawSections.map(section => rawResponseBlock(section)).join('')}` : '',
-    typeof researchDebug.ollama_prompt === 'string' && researchDebug.ollama_prompt.trim() ? `<h4>Ollama web-research prompt</h4>${debugBlock('Tavily/Ollama summarizer prompt', researchDebug.ollama_prompt)}` : '',
-    typeof researchDebug.ollama_raw_response === 'string' && researchDebug.ollama_raw_response.trim() ? `<h4>Ollama web-research raw response</h4>${debugBlock('Tavily/Ollama summarizer response', researchDebug.ollama_raw_response)}` : '',
+    promptSections.length ? `<h4>AI prompts</h4>${promptSections.map(section => promptBlock(section)).join('')}` : '',
+    rawSections.length ? `<h4>AI raw workstream responses</h4>${rawSections.map(section => rawResponseBlock(section)).join('')}` : '',
+    typeof researchDebug.ollama_prompt === 'string' && researchDebug.ollama_prompt.trim() ? `<h4>Web-research summarizer prompt</h4>${debugBlock('Research summarizer prompt', researchDebug.ollama_prompt)}` : '',
+    typeof researchDebug.ollama_raw_response === 'string' && researchDebug.ollama_raw_response.trim() ? `<h4>Web-research summarizer raw response</h4>${debugBlock('Research summarizer response', researchDebug.ollama_raw_response)}` : '',
     !promptSections.length && !rawSections.length && !researchDebug.ollama_prompt
       ? '<p>No prompt/raw response logs are stored for this run yet. Run a new KYC or web-research job after this update to populate the sidebar.</p>'
       : '',
@@ -1140,7 +1239,7 @@ function arrayValue(value: unknown): unknown[] {
 
 function promptBlock(value: unknown) {
   const record = recordValue(value)
-  const title = [record.title, record.workstream_key].filter(item => typeof item === 'string' && item).join(' - ') || 'Ollama prompt'
+  const title = [record.title, record.workstream_key].filter(item => typeof item === 'string' && item).join(' - ') || 'AI prompt'
   const tokens = typeof record.input_tokens_estimate === 'number' ? ` · ${record.input_tokens_estimate} estimated tokens` : ''
   const context = typeof record.retrieved_context_count === 'number' ? ` · ${record.retrieved_context_count} context item(s)` : ''
   return debugBlock(`${title}${tokens}${context}`, String(record.prompt || 'Prompt not stored.'))
@@ -1148,7 +1247,7 @@ function promptBlock(value: unknown) {
 
 function rawResponseBlock(value: unknown) {
   const record = recordValue(value)
-  const title = [record.title, record.workstream_key].filter(item => typeof item === 'string' && item).join(' - ') || 'Ollama raw response'
+  const title = [record.title, record.workstream_key].filter(item => typeof item === 'string' && item).join(' - ') || 'AI raw response'
   return debugBlock(title, String(record.raw_response || 'Raw response not stored.'))
 }
 
@@ -1283,6 +1382,17 @@ function providerText(run: KycAgentRun) {
   const adapter = typeof provider.adapter === 'string' ? provider.adapter : 'AI provider'
   const baseUrl = typeof provider.base_url === 'string' && provider.base_url ? ` via ${provider.base_url}` : ''
   return `${adapter}${baseUrl}`
+}
+
+function openAiResponseLabel(run: KycAgentRun | null) {
+  if (!run) return 'Waiting for OpenAI run'
+  const model = String(run.model_name || '').trim()
+  const provider = providerText(run).toLowerCase()
+  const modelLower = model.toLowerCase()
+  const isOpenAi = provider.includes('openai') || modelLower.startsWith('gpt-')
+  if (isOpenAi) return model || 'OpenAI run'
+  if (['pending', 'running'].includes(run.status)) return 'KYC run in progress'
+  return 'Previous run stored'
 }
 
 function sourceCoverageSummary(run: KycAgentRun) {

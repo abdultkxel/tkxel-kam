@@ -1106,6 +1106,7 @@ class KycDraftCreateRequest(BaseModel):
     source_document_ids: list[str] = Field(default_factory=list)
     research_sources: list[str] = Field(default_factory=list)
     notes: str | None = None
+    prompt: str | None = None
 
     @field_validator("source_document_ids")
     @classmethod
@@ -1123,6 +1124,18 @@ class KycDraftCreateRequest(BaseModel):
     @classmethod
     def notes_are_valid(cls, value: str | None) -> str | None:
         return validate_optional_long_text(value, "KYC notes")
+
+    @field_validator("prompt")
+    @classmethod
+    def draft_prompt_is_valid(cls, value: str | None) -> str | None:
+        return validate_optional_long_text(value, "KYC prompt", max_length=200000)
+
+
+class KycDefaultPromptRead(BaseModel):
+    account_id: str
+    prompt: str
+    source_document_ids: list[str] = Field(default_factory=list)
+    source_summary: list[dict[str, Any]] = Field(default_factory=list)
 
 
 class KycFieldUpdateRequest(BaseModel):
@@ -1359,6 +1372,7 @@ class KycAgentRunCreateRequest(BaseModel):
     trigger_source: KycTriggerSource = "kyc_page"
     source_document_ids: list[str] = Field(default_factory=list)
     research_sources: list[str] = Field(default_factory=list)
+    prompt: str | None = None
 
     @field_validator("source_document_ids")
     @classmethod
@@ -1371,6 +1385,11 @@ class KycAgentRunCreateRequest(BaseModel):
     @classmethod
     def research_sources_are_valid(cls, value: list[str]) -> list[str]:
         return validate_research_source_list(value)
+
+    @field_validator("prompt")
+    @classmethod
+    def prompt_is_valid(cls, value: str | None) -> str | None:
+        return validate_optional_long_text(value, "KYC prompt", max_length=200000)
 
 
 class EngagementDraftRequest(BaseModel):

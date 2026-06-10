@@ -11,10 +11,12 @@ from app.models import (
     AccountOwner,
     AccountOwnershipHistory,
     Engagement,
+    KycDraft,
     OnboardingDraft,
     OnboardingDraftEngagement,
     SourceCitation,
     SourceDocument,
+    Stakeholder,
     User,
 )
 from app.repositories.accounts import AccountRepository
@@ -47,8 +49,9 @@ from app.services.custom_fields import CustomFieldService
 from app.services.engagements import calculate_notice_deadline
 from app.services.engagement_health_rollup import notify_account_health_impacted_by_engagement_change
 from app.services.kyc_document_extraction import KycDocumentExtractionService
+from app.services.kyc import DEFAULT_RESEARCH_SOURCES, KycService
 from app.services.notifications import NotificationsService
-from app.services.source_document_contract import ONBOARDING_DRAFT_LIFECYCLE_DEFAULT, infer_service_lines_from_text
+from app.services.source_document_contract import ONBOARDING_DRAFT_LIFECYCLE_DEFAULT, STRUCTURED_SOW_METADATA_KEY, infer_service_lines_from_text
 from app.services.sow_extraction import SowExtractionService
 from app.services.storage import ContentStorageService
 from app.services.timeline import TimelineService
@@ -382,6 +385,8 @@ class OnboardingService:
         created_engagements = [self._create_engagement(account, engagement_draft, primary_owner, current_user) for engagement_draft in draft.engagement_drafts]
         self._link_source_documents_to_created_engagements(draft, created_engagements)
         self._notify_account_health_impacted_by_engagement_creation(account, created_engagements)
+        self._create_default_stakeholder_from_approval(account, draft, current_user, created_engagements)
+        self._create_default_kyc_from_approval(account, draft, current_user)
         draft.status = "approved"
         draft.approved_by_id = current_user.id
         draft.approved_account_id = account.id
@@ -1843,6 +1848,164 @@ class OnboardingService:
         for document in draft.source_documents:
             if document.source_type in {"sow", "project_charter", "commercial_note", "attachment"}:
                 document.engagement_id = engagement.id
+
+    def _create_default_stakeholder_from_approval(
+        self,
+        account: Account,
+        draft: OnboardingDraft,
+        actor: User,
+        engagements: list[Engagement],
+    ) -> None:
+        if account.stakeholders:
+            return
+        structured = self._first_structured_sow_fields(draft)
+        stakeholder_name = self._first_structured_stakeholder_name(structured) or "Client Executive Sponsor"
+        stakeholder = Stakeholder(
+            account_id=account.id,
+            engagement_id=engagements[0].id if engagements else None,
+            name=stakeholder_name,
+            title="Executive Sponsor" if stakeholder_name == "Client Executive Sponsor" else None,
+            company=account.name,
+            role="executive_sponsor",
+            influence="high",
+            relationship_strength="unknown",
+            sentiment="neutral",
+            political_risk="unknown",
+            status="active",
+            notes=(
+                "Automatically created from approved SOW onboarding. "
+                "Review and replace with the named client sponsor when confirmed."
+            ),
+            is_sensitive=False,
+            created_by_id=actor.id,
+            updated_by_id=actor.id,
+        )
+        self.onboarding.db.add(stakeholder)
+        self.onboarding.db.flush()
+        self.audit.log(
+            module="stakeholder_relationship",
+            action="auto_create_from_onboarding",
+            entity_type="stakeholder",
+            entity_id=stakeholder.id,
+            actor=actor,
+            after_value={"account_id": account.id, "name": stakeholder.name, "role": stakeholder.role},
+        )
+        self.timeline.add_account_event(
+            account_id=account.id,
+            event_type="stakeholder_added",
+            module="stakeholder_relationship",
+            title=f"Default stakeholder created: {stakeholder.name}",
+            description="A default stakeholder was created from approved SOW onboarding for review.",
+            actor=actor,
+            source_record_id=stakeholder.id,
+            source_record_type="stakeholder",
+            source_record_route=f"/accounts/{account.id}?tab=stakeholders&stakeholder={stakeholder.id}",
+            metadata={"source": "onboarding_approval", "draft_id": draft.id},
+        )
+
+    def _create_default_kyc_from_approval(self, account: Account, draft: OnboardingDraft, actor: User) -> None:
+        kyc = KycService(self.onboarding.db)
+        if kyc.kyc.latest_ready_draft(account.id) is not None or kyc.kyc.latest_snapshot(account.id) is not None:
+            return
+        source_documents = list(draft.source_documents)
+        latest_snapshot = None
+        fields = kyc._pending_fields(latest_snapshot)
+        fields = kyc._prefill_fields_from_sources(account, fields, source_documents, actor, latest_snapshot)
+        config = kyc._configuration()
+        quality = kyc._quality(fields, source_documents, config)
+        detailed = self._default_kyc_description_from_draft(account, draft)
+        default_draft = KycDraft(
+            account_id=account.id,
+            trigger_source="onboarding_draft",
+            previous_snapshot_id=None,
+            source_document_ids=[document.id for document in source_documents],
+            research_sources=list(DEFAULT_RESEARCH_SOURCES),
+            fields_json=fields,
+            citations_json=kyc._citations_from_fields(fields) or kyc._citations_from_documents(source_documents),
+            missing_fields=quality["missing_fields"],
+            conflicts=["Default KYC draft was source-prefilled during account approval. Run AI KYC before approval if deeper enrichment is required."],
+            difference_summary=["Initial default KYC draft created from approved onboarding SOW."],
+            source_context={
+                "source_documents": [
+                    {
+                        "id": document.id,
+                        "title": document.title,
+                        "source_type": document.source_type,
+                        "confidence": document.confidence,
+                        "is_sensitive": document.is_sensitive,
+                    }
+                    for document in source_documents
+                ],
+                "trigger_source": "onboarding_draft",
+                "provider": {"adapter": "source_prefill", "provider": "stored_sow"},
+            },
+            detailed_description=detailed,
+            confidence=quality["confidence"],
+            completeness=quality["completeness"],
+            source_coverage=quality["source_coverage"],
+            freshness_status="fresh",
+            created_by_id=actor.id,
+            created_by_name=actor.full_name,
+            review_notes="Default KYC draft created automatically from approved onboarding. Run AI KYC for deeper enrichment before final approval.",
+        )
+        kyc.kyc.save_draft(default_draft)
+        self.onboarding.db.flush()
+        self.audit.log(
+            module="kyc",
+            action="default_draft_create_from_onboarding",
+            entity_type="kyc_draft",
+            entity_id=default_draft.id,
+            actor=actor,
+            after_value={"account_id": account.id, "source_document_ids": default_draft.source_document_ids, "completeness": default_draft.completeness},
+        )
+        self.timeline.add_account_event(
+            account_id=account.id,
+            event_type="kyc_draft_created",
+            module="kyc",
+            title="Default KYC draft created",
+            description="A default source-prefilled KYC draft was created after account onboarding approval.",
+            actor=actor,
+            source_record_id=default_draft.id,
+            source_record_type="kyc_draft",
+            source_record_route=f"/accounts/{account.id}?tab=kyc",
+            metadata={"draft_id": draft.id, "source": "onboarding_approval"},
+        )
+
+    def _default_kyc_description_from_draft(self, account: Account, draft: OnboardingDraft) -> str:
+        document_sections: list[str] = []
+        for document in draft.source_documents[:5]:
+            excerpt = " ".join(str(document.extracted_text or "").split())[:2200]
+            if excerpt:
+                document_sections.append(f"<h4>{document.title}</h4><p>{excerpt}</p>")
+        return (
+            f"<h3>{account.name} default KYC draft</h3>"
+            "<p>This draft was automatically created when the source-backed onboarding account was approved. "
+            "It is not an approved KYC snapshot until KAM Head review and approval.</p>"
+            f"{''.join(document_sections)}"
+        )
+
+    @staticmethod
+    def _first_structured_sow_fields(draft: OnboardingDraft) -> dict:
+        for document in draft.source_documents:
+            for extraction in sorted(document.extractions, key=lambda item: item.completed_at or item.created_at, reverse=True):
+                metadata = dict(extraction.metadata_json or {})
+                structured = metadata.get(STRUCTURED_SOW_METADATA_KEY)
+                if isinstance(structured, dict) and isinstance(structured.get("fields"), dict):
+                    return structured["fields"]
+        return {}
+
+    @staticmethod
+    def _first_structured_stakeholder_name(structured: dict) -> str | None:
+        item = structured.get("stakeholders") if isinstance(structured, dict) else None
+        values = item.get("value") if isinstance(item, dict) else None
+        if isinstance(values, list):
+            for value in values:
+                text = " ".join(str(value).split())
+                if text:
+                    return text[:180]
+        if isinstance(values, str) and values.strip():
+            return values.strip()[:180]
+        return None
 
     def _log_approval(self, account: Account, draft: OnboardingDraft, actor: User, engagements: list[Engagement]) -> None:
         self.audit.log(

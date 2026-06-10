@@ -429,6 +429,44 @@ Reset Docker volumes:
 make clean
 ```
 
+## SonarQube Local Analysis
+
+Start local SonarQube:
+
+```bash
+make sonar-up
+```
+
+Open SonarQube:
+
+```text
+http://127.0.0.1:9000
+```
+
+Run a scan after creating a local SonarQube user token:
+
+```bash
+make sonar-scan SONAR_TOKEN=your_token
+```
+
+Stop SonarQube:
+
+```bash
+make sonar-down
+```
+
+The project dashboard is available at:
+
+```text
+http://127.0.0.1:9000/dashboard?id=tkxel-kam
+```
+
+The latest generated local report summary is stored at:
+
+```text
+review/sonarqube-analysis-report.md
+```
+
 ## Local Non-Docker Fallback
 
 Docker is the standard workflow. If you need to debug outside Docker, use:

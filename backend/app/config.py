@@ -69,6 +69,11 @@ class Settings:
         self.ai_kyc_api_key = os.getenv("AI_KYC_API_KEY", "")
         self.ai_kyc_base_url = os.getenv("AI_KYC_BASE_URL", "").strip()
         self.ai_kyc_model = os.getenv("AI_KYC_MODEL", "gpt-5-mini")
+        self.ai_kyc_fallback_enabled = os.getenv("AI_KYC_FALLBACK_ENABLED", "false").lower() == "true"
+        self.ai_kyc_fallback_provider = os.getenv("AI_KYC_FALLBACK_PROVIDER", "ollama").strip().lower()
+        self.ai_kyc_fallback_api_key = os.getenv("AI_KYC_FALLBACK_API_KEY", "local-demo")
+        self.ai_kyc_fallback_base_url = os.getenv("AI_KYC_FALLBACK_BASE_URL", "http://ollama:11434/v1").strip()
+        self.ai_kyc_fallback_model = os.getenv("AI_KYC_FALLBACK_MODEL", "qwen3:0.6b").strip()
         self.ai_kyc_organization = os.getenv("AI_KYC_ORGANIZATION", "").strip()
         self.ai_kyc_project = os.getenv("AI_KYC_PROJECT", "").strip()
         self.ai_kyc_timeout_seconds = int(os.getenv("AI_KYC_TIMEOUT_SECONDS", "45"))

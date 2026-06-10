@@ -21,6 +21,7 @@ from app.schemas import (
     KycConfigurationFieldRead,
     KycConfigurationRead,
     KycConfigurationUpdateRequest,
+    KycDefaultPromptRead,
     KycDraftApproveRequest,
     KycDraftCreateRequest,
     KycDraftPageRead,
@@ -41,6 +42,7 @@ from app.services.audit import AuditService
 from app.services.kyc_debug_logging import log_kyc_verbose
 from app.services.kyc_gateway import DeterministicKycGatewayAdapter, KycGatewayAdapter, KycGatewayRequest, KycGatewayResponse, KycGatewayWorkstreamResult
 from app.services.kyc_retrieval import KycRetrievalService
+from app.services.source_document_contract import STRUCTURED_SOW_METADATA_KEY
 from app.services.kyc_web_research import KycWebResearchService
 from app.services.tavily_research import KycResearchResult, KycResearchSummary, OllamaKycResearchSummarizer, TavilyKycResearchProvider
 from app.services.timeline import TimelineService
@@ -149,8 +151,9 @@ class KycService:
         source_documents = self._authorized_source_documents(account, payload.source_document_ids, current_user)
         latest_snapshot = self.kyc.latest_snapshot(account.id)
         research_sources = self._normalize_research_sources(payload.research_sources or list(config.research_sources))
+        reviewer_prompt = payload.prompt or payload.notes
         if self._should_queue_ai_run():
-            agent_run = self._queue_agent_run(account, source_documents, research_sources, payload.trigger_source, current_user, latest_snapshot=latest_snapshot)
+            agent_run = self._queue_agent_run(account, source_documents, research_sources, payload.trigger_source, current_user, latest_snapshot=latest_snapshot, reviewer_prompt=reviewer_prompt)
             fields = self._pending_fields(latest_snapshot)
             fields = self._prefill_fields_from_sources(account, fields, source_documents, current_user, latest_snapshot)
             fields = self._apply_note_to_fields(fields, payload.notes)
@@ -201,7 +204,7 @@ class KycService:
             self.kyc.commit()
             return self.get_draft(account.id, draft.id, current_user)
 
-        agent_run = self._build_agent_run(account, source_documents, research_sources, payload.trigger_source, current_user, latest_snapshot=latest_snapshot)
+        agent_run = self._build_agent_run(account, source_documents, research_sources, payload.trigger_source, current_user, latest_snapshot=latest_snapshot, reviewer_prompt=reviewer_prompt)
         self._log_agent_run(account, agent_run, current_user, "kyc_ai_extraction")
         fields = self._fields_from_run(account, agent_run, latest_snapshot)
         fields = self._apply_note_to_fields(fields, payload.notes)
@@ -251,6 +254,19 @@ class KycService:
         )
         self.kyc.commit()
         return self.get_draft(account.id, draft.id, current_user)
+
+    def default_prompt(self, account_id: str, current_user: User) -> KycDefaultPromptRead:
+        account = self._require_account_view(account_id, current_user)
+        source_documents = self._authorized_source_documents(account, [], current_user)
+        latest_snapshot = self.kyc.latest_snapshot(account.id)
+        source_summary = [self._prompt_source_summary(document) for document in source_documents]
+        prompt = self._default_prompt_text(account, source_documents, latest_snapshot)
+        return KycDefaultPromptRead(
+            account_id=account.id,
+            prompt=prompt,
+            source_document_ids=[document.id for document in source_documents],
+            source_summary=source_summary,
+        )
 
     def get_draft(self, account_id: str, draft_id: str, current_user: User) -> KycDraftRead:
         account = self._require_account_view(account_id, current_user)
@@ -745,9 +761,9 @@ class KycService:
         research_sources = self._normalize_research_sources(payload.research_sources or list(self._configuration().research_sources))
         latest_snapshot = self.kyc.latest_snapshot(account.id)
         if self._should_queue_ai_run():
-            run = self._queue_agent_run(account, source_documents, research_sources, payload.trigger_source, current_user, latest_snapshot=latest_snapshot)
+            run = self._queue_agent_run(account, source_documents, research_sources, payload.trigger_source, current_user, latest_snapshot=latest_snapshot, reviewer_prompt=payload.prompt)
         else:
-            run = self._build_agent_run(account, source_documents, research_sources, payload.trigger_source, current_user, latest_snapshot=latest_snapshot)
+            run = self._build_agent_run(account, source_documents, research_sources, payload.trigger_source, current_user, latest_snapshot=latest_snapshot, reviewer_prompt=payload.prompt)
             self._log_agent_run(account, run, current_user, "kyc_agent_run_create")
         self.kyc.commit()
         return self.get_agent_run(account.id, run.id, current_user)
@@ -767,6 +783,7 @@ class KycService:
         source_documents = self._authorized_source_documents(account, previous.source_document_ids, current_user)
         research_sources = self._normalize_research_sources(list(previous.research_sources))
         latest_snapshot = self.kyc.latest_snapshot(account.id)
+        reviewer_prompt = self._reviewer_prompt_from_run(previous)
         if self._should_queue_ai_run():
             run = self._queue_agent_run(
                 account,
@@ -776,6 +793,7 @@ class KycService:
                 current_user,
                 previous_run_id=previous.id,
                 latest_snapshot=latest_snapshot,
+                reviewer_prompt=reviewer_prompt,
             )
         else:
             run = self._build_agent_run(
@@ -786,6 +804,7 @@ class KycService:
                 current_user,
                 previous_run_id=previous.id,
                 latest_snapshot=latest_snapshot,
+                reviewer_prompt=reviewer_prompt,
             )
             self._log_agent_run(account, run, current_user, "kyc_agent_run_refresh")
         self.kyc.commit()
@@ -937,7 +956,16 @@ class KycService:
             return run
         source_documents = self._authorized_source_documents(account, list(run.source_document_ids), current_user)
         latest_snapshot = self.kyc.latest_snapshot(account.id)
-        self._execute_agent_run(account, run, source_documents, list(run.research_sources), run.trigger_source, current_user, latest_snapshot)
+        self._execute_agent_run(
+            account,
+            run,
+            source_documents,
+            list(run.research_sources),
+            run.trigger_source,
+            current_user,
+            latest_snapshot,
+            reviewer_prompt=self._reviewer_prompt_from_run(run),
+        )
         self._update_linked_drafts_from_run(account, run, current_user)
         self._log_agent_run(account, run, current_user, "kyc_agent_run_complete" if run.status in {"complete", "partial"} else "kyc_agent_run_failed")
         self.kyc.commit()
@@ -1132,6 +1160,7 @@ class KycService:
         trigger_source: str,
         current_user: User,
         latest_snapshot: KycSnapshot | None,
+        reviewer_prompt: str | None = None,
     ) -> KycGatewayRequest:
         retrieved_context: list[dict[str, Any]] = []
         if getattr(self.gateway, "requires_retrieval_context", False):
@@ -1223,6 +1252,7 @@ class KycService:
             trigger_source=trigger_source,
             can_view_sensitive=self._can_view_sensitive(current_user),
             workstreams=[dict(item) for item in WORKSTREAMS],
+            reviewer_prompt=reviewer_prompt,
             retrieved_context=retrieved_context,
         )
         log_kyc_verbose(
@@ -1252,6 +1282,7 @@ class KycService:
         current_user: User,
         previous_run_id: str | None = None,
         latest_snapshot: KycSnapshot | None = None,
+        reviewer_prompt: str | None = None,
     ) -> KycAgentRun:
         now = datetime.now(timezone.utc)
         run = KycAgentRun(
@@ -1266,9 +1297,10 @@ class KycService:
             queued_at=now,
             max_retries=0,
             started_at=now,
+            retrieval_summary_json={"reviewer_prompt": reviewer_prompt} if reviewer_prompt else {},
         )
         self.kyc.save_agent_run(run)
-        self._execute_agent_run(account, run, source_documents, research_sources, trigger_source, current_user, latest_snapshot)
+        self._execute_agent_run(account, run, source_documents, research_sources, trigger_source, current_user, latest_snapshot, reviewer_prompt=reviewer_prompt)
         return run
 
     def _queue_agent_run(
@@ -1280,6 +1312,7 @@ class KycService:
         current_user: User,
         previous_run_id: str | None = None,
         latest_snapshot: KycSnapshot | None = None,
+        reviewer_prompt: str | None = None,
     ) -> KycAgentRun:
         active = self._active_agent_run_or_release_stale(account.id, current_user)
         if active is not None:
@@ -1301,12 +1334,14 @@ class KycService:
                 "provider": self.settings.ai_kyc_provider,
                 "model": self.settings.ai_kyc_model,
                 "base_url": self._safe_base_url(),
+                "reviewer_prompt": reviewer_prompt,
             },
             model_name=self.settings.ai_kyc_model,
             retrieval_summary_json={
                 "source_document_ids": [document.id for document in source_documents],
                 "status": "queued",
                 "latest_snapshot_id": latest_snapshot.id if latest_snapshot else None,
+                "reviewer_prompt": reviewer_prompt,
             },
         )
         self.kyc.save_agent_run(run)
@@ -1669,6 +1704,7 @@ class KycService:
         trigger_source: str,
         current_user: User,
         latest_snapshot: KycSnapshot | None,
+        reviewer_prompt: str | None = None,
     ) -> None:
         now = datetime.now(timezone.utc)
         log_kyc_verbose(
@@ -1733,7 +1769,8 @@ class KycService:
                 ],
             },
         )
-        gateway_request = self._gateway_request(account, source_documents, research_sources, trigger_source, current_user, latest_snapshot)
+        reviewer_prompt = reviewer_prompt or self._reviewer_prompt_from_run(run)
+        gateway_request = self._gateway_request(account, source_documents, research_sources, trigger_source, current_user, latest_snapshot, reviewer_prompt=reviewer_prompt)
         self._persist_runtime_prompt_debug(run, gateway_request, source_documents)
         try:
             gateway_response = self.gateway.run(gateway_request)
@@ -1819,9 +1856,14 @@ class KycService:
         run.error_message = gateway_response.error_message
         run.provider_json = {
             "adapter": gateway_response.metadata.get("adapter"),
-            "provider": self.settings.ai_kyc_provider,
+            "provider": gateway_response.metadata.get("provider") or self.settings.ai_kyc_provider,
             "model": gateway_response.metadata.get("model"),
-            "base_url": self._safe_base_url(),
+            "base_url": gateway_response.metadata.get("base_url") or self._safe_base_url(),
+            "primary_adapter": gateway_response.metadata.get("primary_adapter"),
+            "fallback_adapter": gateway_response.metadata.get("fallback_adapter"),
+            "fallback_attempted": gateway_response.metadata.get("fallback_attempted"),
+            "primary_error": gateway_response.metadata.get("primary_error"),
+            "reviewer_prompt": reviewer_prompt,
         }
         run.usage_json = dict(gateway_response.metadata.get("usage") or {})
         run.cost_json = dict(gateway_response.metadata.get("cost") or {})
@@ -1849,6 +1891,7 @@ class KycService:
         run.retrieval_summary_json = {
             "retrieved_context_count": gateway_response.metadata.get("retrieved_context_count"),
             "source_document_ids": [document.id for document in source_documents],
+            "reviewer_prompt": reviewer_prompt,
             "source_coverage": self._source_coverage_summary(source_documents, gateway_response),
             "ollama_debug": {
                 "request_id": gateway_response.metadata.get("request_id"),
@@ -2666,6 +2709,115 @@ class KycService:
             "provider": provider,
             "retrieval_summary": dict(run.retrieval_summary_json or {}),
         }
+
+    @staticmethod
+    def _reviewer_prompt_from_run(run: KycAgentRun) -> str | None:
+        for source in (run.retrieval_summary_json or {}, run.provider_json or {}):
+            value = source.get("reviewer_prompt") if isinstance(source, dict) else None
+            if isinstance(value, str) and value.strip():
+                return value.strip()
+        return None
+
+    @staticmethod
+    def _prompt_source_summary(document: SourceDocument) -> dict[str, Any]:
+        structured = KycService._structured_sow_fields(document)
+        return {
+            "id": document.id,
+            "title": document.title,
+            "source_type": document.source_type,
+            "file_name": document.file_name,
+            "pages": document.pages,
+            "confidence": document.confidence,
+            "extraction_status": document.extraction_status,
+            "structured_fields": structured,
+            "text_excerpt": KycService._document_text_excerpt(document, max_chars=1200),
+        }
+
+    def _default_prompt_text(self, account: Account, source_documents: list[SourceDocument], latest_snapshot: KycSnapshot | None) -> str:
+        source_lines: list[str] = []
+        for document in source_documents[:8]:
+            structured = self._structured_sow_fields(document)
+            structured_lines = self._structured_prompt_lines(structured)
+            excerpt = self._document_text_excerpt(document, max_chars=1600)
+            source_lines.append(
+                "\n".join(
+                    item
+                    for item in [
+                        f"Source document: {document.title} ({document.file_name or document.source_type})",
+                        f"Extraction status: {document.extraction_status}; pages: {document.pages}; confidence: {document.confidence}%",
+                        structured_lines,
+                        f"Document excerpt:\n{excerpt}" if excerpt else "Document excerpt: not available",
+                    ]
+                    if item
+                )
+            )
+        stakeholder_lines = [
+            f"- {stakeholder.name} | {stakeholder.title or 'Title not recorded'} | role: {stakeholder.role} | company: {stakeholder.company or account.name}"
+            for stakeholder in account.stakeholders
+            if stakeholder.status == "active"
+        ]
+        engagement_lines = [
+            f"- {engagement.name}: service lines {', '.join(engagement.service_lines or []) or 'not recorded'}; renewal {engagement.renewal_date.date().isoformat() if engagement.renewal_date else 'not recorded'}"
+            for engagement in account.engagements
+        ]
+        prior = ""
+        if latest_snapshot:
+            prior = f"\nPrior approved KYC snapshot: version {latest_snapshot.version}, approved {latest_snapshot.approved_at.isoformat()}, completeness {latest_snapshot.completeness}%."
+        return (
+            f"Create a detailed, source-cited KYC for {account.name}.\n"
+            "Use only the supplied SOW/charter/account/stakeholder/timeline/retrieval context and approved API-backed web research context already provided by the system.\n"
+            "Do not invent facts. If evidence is missing, return low confidence, missing evidence notes, and follow-up questions.\n\n"
+            "Account context:\n"
+            f"- Client/account name: {account.name}\n"
+            f"- Project name: {account.project_name or 'not recorded'}\n"
+            f"- Website/reference URL: {account.company_url or 'not recorded'}\n"
+            f"- Public profile URL: {account.linkedin_url or 'not recorded'}\n"
+            f"- Segment/region/lifecycle: {account.segment}; {account.region}; {account.lifecycle_status}\n"
+            f"- Service context: {account.service_context or 'not recorded'}\n"
+            f"- Commercial summary: {account.commercial_summary or 'not recorded'}\n"
+            f"- Initial notes: {account.initial_notes or 'not recorded'}\n"
+            f"{prior}\n\n"
+            "Stakeholders currently recorded:\n"
+            f"{chr(10).join(stakeholder_lines) if stakeholder_lines else '- No active stakeholder records yet. Extract stakeholder hints from the SOW and suggest follow-up questions.'}\n\n"
+            "Engagement records:\n"
+            f"{chr(10).join(engagement_lines) if engagement_lines else '- No engagement records are attached yet. Use SOW source text when available.'}\n\n"
+            "Uploaded SOW/charter/document evidence:\n"
+            f"{chr(10).join(source_lines) if source_lines else 'No source documents are attached yet.'}\n\n"
+            "Required output:\n"
+            "- Populate all five KYC workstreams: Market Research, Client Research, Stakeholder Details, Tkxel Engagement with Client, Financial Landscape.\n"
+            "- Fill every mapped field with value, confidence, citations, missing evidence notes, conflicts, reviewer notes, and suggested follow-up questions.\n"
+            "- Also produce a detailed narrative suitable for the KYC detailed description editor, following the depth of requirements/Account Informationn Reference .pdf.\n"
+        )
+
+    @staticmethod
+    def _structured_prompt_lines(structured: dict[str, Any]) -> str:
+        if not structured:
+            return ""
+        lines: list[str] = ["Structured SOW extraction:"]
+        for key in ("client_name", "start_date", "end_date", "renewal_terms", "notice_period", "commercial_value", "service_lines", "stakeholders", "deliverables", "risks"):
+            field = structured.get(key)
+            if not isinstance(field, dict):
+                continue
+            value = field.get("value")
+            if value in (None, "", []):
+                continue
+            confidence = field.get("confidence")
+            lines.append(f"- {key.replace('_', ' ').title()}: {value} ({confidence or 0}% confidence)")
+        return "\n".join(lines)
+
+    @staticmethod
+    def _structured_sow_fields(document: SourceDocument) -> dict[str, Any]:
+        for extraction in sorted(document.extractions, key=lambda item: item.completed_at or item.created_at, reverse=True):
+            metadata = dict(extraction.metadata_json or {})
+            structured = metadata.get(STRUCTURED_SOW_METADATA_KEY)
+            if isinstance(structured, dict) and isinstance(structured.get("fields"), dict):
+                return structured["fields"]
+        return {}
+
+    @staticmethod
+    def _document_text_excerpt(document: SourceDocument, *, max_chars: int) -> str:
+        text = " ".join(str(document.extracted_text or "").split())
+        return text[:max_chars].strip()
 
     @staticmethod
     def _field_confidence(run: KycAgentRun, workstream_key: str) -> int:

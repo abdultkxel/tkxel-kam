@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import logging
 import time
+from types import SimpleNamespace
 from urllib.parse import urlparse
 from urllib.request import Request as UrlRequest
 from urllib.request import urlopen
@@ -115,6 +116,7 @@ class KycGatewayRequest:
     trigger_source: str
     can_view_sensitive: bool
     workstreams: list[dict[str, Any]]
+    reviewer_prompt: str | None = None
     retrieved_context: list[dict[str, Any]] = field(default_factory=list)
 
 
@@ -405,6 +407,7 @@ class OpenAiKycGatewayAdapter:
             error_message="One or more OpenAI KYC workstreams failed." if failed else None,
             metadata={
                 "adapter": self.name,
+                "provider": "openai",
                 "model": self.settings.ai_kyc_model,
                 "provider_response_id": metadata.get("response_id"),
                 "usage": metadata.get("usage", {}),
@@ -412,6 +415,21 @@ class OpenAiKycGatewayAdapter:
                 "estimated_input_tokens": input_tokens,
                 "retrieved_context_count": len(request.retrieved_context),
                 "detailed_description": response_text,
+                "raw_response_sections": [
+                    {
+                        "workstream_key": "all",
+                        "title": "OpenAI KYC response",
+                        "raw_response": response_text,
+                    }
+                ],
+                "workstream_calls": [
+                    {
+                        "workstream_key": item.workstream_key,
+                        "status": item.status,
+                        "confidence": item.confidence,
+                    }
+                    for item in results
+                ],
                 "request_id": str(uuid4()),
             },
         )
@@ -441,6 +459,7 @@ class OpenAiKycGatewayAdapter:
             "prior_snapshot_fields": request.prior_snapshot_fields,
             "workstreams": request.workstreams,
             "field_catalog": field_catalog,
+            "reviewer_prompt": request.reviewer_prompt,
             "reference_kyc_style_guide": REFERENCE_KYC_STYLE_GUIDE,
             "field_detail_guidance": self._field_detail_guidance_payload(field_catalog),
             "retrieved_context": context,
@@ -459,10 +478,24 @@ class OpenAiKycGatewayAdapter:
             "Return only valid JSON. Do not wrap in markdown. Do not perform additional web search or use outside knowledge beyond the supplied source payload.\n"
             "Use the Account Information Reference style guide for structure and depth only; never copy its facts into this account.\n"
             "Every field must include value, citations, confidence, missing_evidence_note, conflicts, reviewer_notes, and suggested_follow_up_questions.\n"
+            "If reviewer_prompt is present, treat it as the KYC reviewer's editable instruction, but still obey source-grounding, citation, and no-invention rules.\n"
             "Citation objects must reference supplied source_document_id, source_chunk_id, or source_record_id.\n"
             "Required JSON shape: {\"status\":\"complete|partial|failed\", \"workstreams\":[{\"workstream_key\":\"...\", \"title\":\"...\", \"status\":\"complete|failed\", \"fields\":[{\"key\":\"...\", \"value\":\"...\", \"citations\":[], \"confidence\":0, \"missing_evidence_note\":\"...\", \"conflicts\":[], \"reviewer_notes\":[], \"suggested_follow_up_questions\":[]}], \"missing_fields\":[], \"conflicts\":[], \"reviewer_notes\":[], \"suggested_follow_up_questions\":[], \"confidence\":0}], \"global_conflicts\":[], \"global_missing_evidence\":[], \"model_metadata\":{}}.\n"
             f"Source payload:\n{json.dumps(payload, default=str)}"
         )
+
+    def debug_prompt_sections(self, request: KycGatewayRequest) -> list[dict[str, Any]]:
+        prompt = self._prompt(request)
+        return [
+            {
+                "workstream_key": "all",
+                "title": "OpenAI KYC prompt",
+                "prompt": prompt,
+                "input_tokens_estimate": estimate_tokens(prompt),
+                "retrieved_context_count": len(request.retrieved_context),
+                "status": "prompt_prepared",
+            }
+        ]
 
     @staticmethod
     def _field_detail_guidance_payload(field_catalog: list[dict[str, Any]]) -> dict[str, str]:
@@ -694,8 +727,8 @@ class LocalOpenAiCompatibleKycGatewayAdapter(OpenAiKycGatewayAdapter):
 
     name = "local-openai-compatible"
 
-    def __init__(self) -> None:
-        self.settings = get_settings()
+    def __init__(self, settings_override: Any | None = None) -> None:
+        self.settings = settings_override or get_settings()
         if not self.settings.ai_kyc_base_url:
             raise KycGatewayConfigurationError("AI_KYC_BASE_URL is required for local OpenAI-compatible AI KYC.")
 
@@ -1118,6 +1151,7 @@ class LocalOpenAiCompatibleKycGatewayAdapter(OpenAiKycGatewayAdapter):
             "fields": fields,
             "reference_kyc_style_guide": REFERENCE_KYC_STYLE_GUIDE,
             "reference_output_template": REFERENCE_KYC_OUTPUT_TEMPLATE.get(str(workstream.get("key") or ""), []),
+            "reviewer_prompt": request.reviewer_prompt,
             "context": context,
             "reviewer_enrichment_request": {
                 "instruction": (
@@ -1144,6 +1178,7 @@ class LocalOpenAiCompatibleKycGatewayAdapter(OpenAiKycGatewayAdapter):
             "Return only valid JSON. Do not use markdown. Do not explain your reasoning.\n"
             f"{prompt_depth}\n"
             "Use only the supplied account context and retrieved context, including approved web research records when present. If a fact is not in source context, do not invent it.\n"
+            "If reviewer_prompt is supplied, follow it as the reviewer instruction while still obeying source-grounding, citation, and no-invention rules.\n"
             "The reviewer asked for maximum detail from the extracted document text and approved web research. Use the provided SOW/charter text chunks and Tavily/API-backed web context when present; direct Google scraping, unofficial LinkedIn scraping, and uncredentialed ZoomInfo access are not allowed.\n"
             "Preserve useful line breaks inside string values using \\n when it improves reviewability.\n"
             "Use this exact compact shape: "
@@ -1413,9 +1448,87 @@ class LocalOpenAiCompatibleKycGatewayAdapter(OpenAiKycGatewayAdapter):
         }
 
 
+class OpenAiFirstFallbackKycGatewayAdapter:
+    """Try OpenAI first, then a configured local OpenAI-compatible provider."""
+
+    name = "openai-first-fallback"
+    requires_retrieval_context = True
+    is_async_preferred = True
+
+    def __init__(self) -> None:
+        self.settings = get_settings()
+        self.primary = OpenAiKycGatewayAdapter()
+        settings_values = self.settings.model_dump() if hasattr(self.settings, "model_dump") else dict(self.settings.__dict__)
+        fallback_settings = SimpleNamespace(
+            **{
+                **settings_values,
+                "ai_kyc_provider": self.settings.ai_kyc_fallback_provider,
+                "ai_kyc_api_key": self.settings.ai_kyc_fallback_api_key or "local-demo",
+                "ai_kyc_base_url": self.settings.ai_kyc_fallback_base_url,
+                "ai_kyc_model": self.settings.ai_kyc_fallback_model or self.settings.ai_kyc_model,
+            }
+        )
+        self.fallback = LocalOpenAiCompatibleKycGatewayAdapter(fallback_settings)
+
+    def run(self, request: KycGatewayRequest) -> KycGatewayResponse:
+        try:
+            response = self.primary.run(request)
+            response.metadata.update(
+                {
+                    "adapter": self.name,
+                    "provider": "openai",
+                    "primary_adapter": self.primary.name,
+                    "fallback_attempted": False,
+                    "fallback_provider": self.settings.ai_kyc_fallback_provider,
+                    "fallback_model": self.settings.ai_kyc_fallback_model,
+                }
+            )
+            return response
+        except Exception as primary_exc:
+            primary_error = str(primary_exc)[:500]
+            log_kyc_verbose(
+                logger,
+                self.settings,
+                "openai_first_fallback.primary_failed",
+                {
+                    "primary_adapter": self.primary.name,
+                    "fallback_adapter": self.fallback.name,
+                    "fallback_provider": self.settings.ai_kyc_fallback_provider,
+                    "fallback_model": self.settings.ai_kyc_fallback_model,
+                    "error": primary_error,
+                },
+            )
+            response = self.fallback.run(request)
+            response.metadata.update(
+                {
+                    "adapter": self.name,
+                    "provider": self.settings.ai_kyc_fallback_provider,
+                    "primary_adapter": self.primary.name,
+                    "fallback_adapter": self.fallback.name,
+                    "fallback_attempted": True,
+                    "primary_error": primary_error,
+                    "base_url": self.settings.ai_kyc_fallback_base_url,
+                    "model": response.metadata.get("model") or self.settings.ai_kyc_fallback_model,
+                }
+            )
+            if response.error_message:
+                response = replace(response, error_message=f"OpenAI failed first: {primary_error}. {response.error_message}")
+            return response
+
+    def debug_prompt_sections(self, request: KycGatewayRequest) -> list[dict[str, Any]]:
+        sections: list[dict[str, Any]] = []
+        for section in self.primary.debug_prompt_sections(request):
+            sections.append({**section, "provider_order": "1_openai"})
+        for section in self.fallback.debug_prompt_sections(request):
+            sections.append({**section, "provider_order": "2_local_fallback"})
+        return sections
+
+
 def build_kyc_gateway_adapter() -> KycGatewayAdapter:
     settings = get_settings()
     if settings.ai_kyc_provider == "openai":
+        if settings.ai_kyc_fallback_enabled and settings.ai_kyc_fallback_provider in {"local_openai_compatible", "ollama", "lm_studio", "lmstudio"}:
+            return OpenAiFirstFallbackKycGatewayAdapter()
         return OpenAiKycGatewayAdapter()
     if settings.ai_kyc_provider in {"local_openai_compatible", "ollama", "lm_studio", "lmstudio"}:
         return LocalOpenAiCompatibleKycGatewayAdapter()
