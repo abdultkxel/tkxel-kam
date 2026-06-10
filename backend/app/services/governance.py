@@ -62,6 +62,7 @@ from app.services.account_access import AccountAccessService, GLOBAL_EDIT_ROLES,
 from app.services.audit import AuditService
 from app.services.custom_fields import CustomFieldService
 from app.services.email_domains import field_validation_error
+from app.services.in_app_notifications import InAppNotificationService
 from app.services.integrations import IntegrationService
 from app.services.timeline import TimelineService
 from app.services.user_management import page_count
@@ -81,6 +82,7 @@ class GovernanceService:
         self.settings = get_settings()
         self.custom_fields = CustomFieldService(db, CustomFieldRepository(db))
         self.meeting_capture = MeetingCaptureRepository(db)
+        self.in_app_notifications = InAppNotificationService(db)
 
     def list_events(
         self,
@@ -200,6 +202,7 @@ class GovernanceService:
         self._mirror_calendar_event(event, current_user)
         self.audit.log(module="governance_reviews", action="create", entity_type="governance_event", entity_id=event.id, actor=current_user, after_value=self._event_snapshot(event))
         self._update_next_governance(event.account)
+        self._notify_governance_event(event, "governance_scheduled", "Governance scheduled", current_user)
         self.repository.commit()
         return self._event_read(event)
 
@@ -231,6 +234,10 @@ class GovernanceService:
             self._mirror_calendar_event(event, current_user)
         self.audit.log(module="governance_reviews", action="update", entity_type="governance_event", entity_id=event.id, actor=current_user, before_value=before, after_value=self._event_snapshot(event))
         self._update_next_governance(event.account)
+        if str(before.get("status", "")).lower() != "cancelled" and str(event.status).lower() == "cancelled":
+            self._notify_governance_event(event, "governance_cancelled", "Governance cancelled", current_user)
+        elif before.get("scheduled_at") != (event.scheduled_at.isoformat() if event.scheduled_at else None):
+            self._notify_governance_event(event, "governance_rescheduled", "Governance rescheduled", current_user)
         self.repository.commit()
         return self._event_read(event)
 
@@ -256,10 +263,12 @@ class GovernanceService:
                     source_record_type="governance_decision",
                 )
                 decision.timeline_entry_id = timeline_entry.id if timeline_entry else None
+                self._notify_governance_decision(event, decision, current_user)
             for action_payload in payload.action_items:
                 action_item = self.repository.add_action_item(self._action_item_from_payload(event, action_payload, current_user))
                 if action_payload.create_task:
                     self._sync_governance_action_task(event, action_item, current_user)
+                self._notify_governance_action_assigned(event, action_item, current_user)
             if meeting_artifact:
                 self._attach_meeting_artifact(event, meeting_artifact)
         if not event.notes and not event.decisions:
@@ -359,6 +368,7 @@ class GovernanceService:
         )
         decision.timeline_entry_id = timeline_entry.id if timeline_entry else None
         self.audit.log(module="governance_reviews", action="add_decision", entity_type="governance_decision", entity_id=decision.id, actor=current_user)
+        self._notify_governance_decision(event, decision, current_user)
         self.repository.commit()
         return self._decision_read(decision)
 
@@ -374,6 +384,7 @@ class GovernanceService:
         action_item = self._action_item_from_payload(event, payload, current_user)
         self.repository.add_action_item(action_item)
         self.audit.log(module="governance_reviews", action="add_action_item", entity_type="governance_action_item", entity_id=action_item.id, actor=current_user)
+        self._notify_governance_action_assigned(event, action_item, current_user)
         self.repository.commit()
         return self._action_item_read(action_item)
 
@@ -527,6 +538,59 @@ class GovernanceService:
         self.access.require_module_permission(current_user, "integrations", "view")
         items, total = self.repository.list_sync_logs(provider=provider, status=status_filter, page=page, page_size=page_size)
         return IntegrationSyncLogPageRead(items=[IntegrationSyncLogRead.model_validate(item) for item in items], total=total, page=page, page_size=page_size, pages=page_count(total, page_size))
+
+    def _governance_recipients(self, event: GovernanceEvent) -> list[User]:
+        return [
+            self.in_app_notifications.active_user(event.owner_id),
+            *self.in_app_notifications.users_by_emails(event.attendees or []),
+        ]
+
+    def _notify_governance_event(self, event: GovernanceEvent, trigger: str, label: str, current_user: User) -> None:
+        account = self.accounts.get_by_id(event.account_id) if event.account_id else None
+        scheduled = event.scheduled_at.strftime("%Y-%m-%d %H:%M") if event.scheduled_at else "unscheduled"
+        self.in_app_notifications.queue_many(
+            self._governance_recipients(event),
+            trigger=trigger,
+            title=f"{label}: {account.name if account else event.governance_type}",
+            body=f"{event.governance_type} is scheduled for {scheduled}.",
+            account=account,
+            source_record_type="governance_event",
+            source_record_id=event.id,
+            source_record_route=f"/accounts/{event.account_id}?tab=governance" if event.account_id else f"/governance?selected={event.id}",
+            priority="medium",
+            dedupe_scope=f"{trigger}:{event.updated_at.isoformat() if event.updated_at else event.id}",
+            exclude_user_ids={current_user.id},
+        )
+
+    def _notify_governance_decision(self, event: GovernanceEvent, decision: GovernanceDecision, current_user: User) -> None:
+        account = self.accounts.get_by_id(event.account_id) if event.account_id else None
+        self.in_app_notifications.queue_many(
+            self.in_app_notifications.account_owners(account),
+            trigger="governance_decision_recorded",
+            title=f"Governance decision recorded: {account.name if account else event.governance_type}",
+            body=decision.decision_text,
+            account=account,
+            source_record_type="governance_decision",
+            source_record_id=decision.id,
+            source_record_route=f"/accounts/{event.account_id}?tab=governance" if event.account_id else f"/governance?selected={event.id}",
+            priority="low",
+            exclude_user_ids={current_user.id},
+        )
+
+    def _notify_governance_action_assigned(self, event: GovernanceEvent, action_item: GovernanceActionItem, current_user: User) -> None:
+        account = self.accounts.get_by_id(event.account_id) if event.account_id else None
+        self.in_app_notifications.queue(
+            recipient=self.in_app_notifications.active_user(action_item.owner_id),
+            trigger="governance_action_assigned",
+            title=f"Governance action assigned: {action_item.title}",
+            body=f"You have a governance action for {account.name if account else event.governance_type}.",
+            account=account,
+            source_record_type="governance_action_item",
+            source_record_id=action_item.id,
+            source_record_route=f"/accounts/{event.account_id}?tab=governance" if event.account_id else f"/governance?selected={event.id}",
+            priority=action_item.priority or "medium",
+            dedupe_scope="assigned",
+        )
 
     def _sync_governance_reminder_task(self, event: GovernanceEvent, actor: User) -> None:
         if not event.account_id or event.review_required:

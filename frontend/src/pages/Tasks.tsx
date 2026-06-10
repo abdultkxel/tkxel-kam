@@ -1,5 +1,5 @@
 import * as Dialog from '@radix-ui/react-dialog'
-import { CalendarClock, Check, CheckCircle2, ClipboardCheck, ExternalLink, FileUp, Filter, Link as LinkIcon, Loader2, Plus, Save, X, XCircle } from 'lucide-react'
+import { CalendarClock, Check, CheckCircle2, ClipboardCheck, ExternalLink, FileUp, Filter, LayoutGrid, Link as LinkIcon, List, Loader2, Plus, Save, X, XCircle } from 'lucide-react'
 import { FormEvent, useEffect, useMemo, useState } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
 import { toast } from 'sonner'
@@ -15,6 +15,15 @@ import { cn } from '@/utils/cn'
 import { formatDate, formatRelative } from '@/utils/formatters'
 
 type DueFilter = 'all' | 'overdue' | 'today' | 'next7'
+type TaskViewMode = 'kanban' | 'list'
+
+const taskStatusColumns: Array<{ status: TaskStatus; label: string }> = [
+  { status: 'open', label: 'Open' },
+  { status: 'in_progress', label: 'In progress' },
+  { status: 'blocked', label: 'Blocked' },
+  { status: 'done', label: 'Done' },
+  { status: 'cancelled', label: 'Cancelled' },
+]
 
 export function Tasks() {
   const [searchParams] = useSearchParams()
@@ -34,6 +43,7 @@ export function Tasks() {
   const [myItems, setMyItems] = useState(() => boolParam(searchParams.get('myItems') ?? searchParams.get('my_items')))
   const [sort, setSort] = useState<'due_at' | 'priority' | 'status' | 'updated_at'>('due_at')
   const [direction, setDirection] = useState<'asc' | 'desc'>('asc')
+  const [viewMode, setViewMode] = useState<TaskViewMode>(() => viewModeParam(searchParams.get('view')))
   const [page, setPage] = useState(1)
   const [total, setTotal] = useState(0)
   const readOnly = user.role === 'leadership_viewer'
@@ -47,6 +57,7 @@ export function Tasks() {
     setSourceType(searchParams.get('sourceType') ?? searchParams.get('source_type') ?? '')
     setDue(dueFilterParam(searchParams.get('due')))
     setMyItems(boolParam(searchParams.get('myItems') ?? searchParams.get('my_items')))
+    setViewMode(viewModeParam(searchParams.get('view')))
     setPage(positivePage(searchParams.get('page')))
   }, [searchParams])
 
@@ -232,10 +243,30 @@ export function Tasks() {
       <section className="mt-5">
         <div className="mb-4 flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
           <div>
-            <p className="text-[10px] font-extrabold uppercase tracking-widest text-brand-blue">Task list</p>
+            <p className="text-[10px] font-extrabold uppercase tracking-widest text-brand-blue">{viewMode === 'kanban' ? 'Task board' : 'Task list'}</p>
             <h2 className="text-base font-semibold text-ink">{total} matching tasks</h2>
           </div>
-          <div className="flex gap-2">
+          <div className="flex flex-wrap gap-2">
+            <div className="inline-flex min-h-[44px] overflow-hidden rounded-md border border-surface-border bg-white p-1" aria-label="Task view mode">
+              <button
+                type="button"
+                className={cn('inline-flex min-w-[112px] items-center justify-center gap-2 rounded px-3 text-sm font-semibold transition', viewMode === 'kanban' ? 'bg-brand-blue text-white shadow-sm' : 'text-ink-secondary hover:bg-surface-secondary hover:text-ink')}
+                aria-pressed={viewMode === 'kanban'}
+                onClick={() => setViewMode('kanban')}
+              >
+                <LayoutGrid className="h-4 w-4" />
+                Kanban
+              </button>
+              <button
+                type="button"
+                className={cn('inline-flex min-w-[96px] items-center justify-center gap-2 rounded px-3 text-sm font-semibold transition', viewMode === 'list' ? 'bg-brand-blue text-white shadow-sm' : 'text-ink-secondary hover:bg-surface-secondary hover:text-ink')}
+                aria-pressed={viewMode === 'list'}
+                onClick={() => setViewMode('list')}
+              >
+                <List className="h-4 w-4" />
+                List
+              </button>
+            </div>
             <button className="tk-button-secondary" disabled={page <= 1} onClick={() => setPage(value => Math.max(1, value - 1))}>Previous</button>
             <button className="tk-button-secondary" disabled={page * pageSize >= total} onClick={() => setPage(value => value + 1)}>Next</button>
           </div>
@@ -250,14 +281,104 @@ export function Tasks() {
             <EmptyState icon={ClipboardCheck} heading="No tasks match these filters" body="Clear filters or create a task for the selected account." action={{ label: 'Clear filters', onClick: clearFilters }} />
           </div>
         ) : (
-          <div className="grid gap-4">
-            {tasks.map(task => (
-              <TaskCard key={task.id} task={task} token={token} readOnly={readOnly} onStatus={changeStatus} onUpdated={upsertTask} />
-            ))}
-          </div>
+          viewMode === 'kanban' ? (
+            <TaskKanbanBoard tasks={tasks} readOnly={readOnly} onStatus={changeStatus} />
+          ) : (
+            <div className="grid gap-4">
+              {tasks.map(task => (
+                <TaskCard key={task.id} task={task} token={token} readOnly={readOnly} onStatus={changeStatus} onUpdated={upsertTask} />
+              ))}
+            </div>
+          )
         )}
       </section>
     </div>
+  )
+}
+
+function TaskKanbanBoard({ tasks, readOnly, onStatus }: { tasks: PlaybookTask[]; readOnly: boolean; onStatus: (task: PlaybookTask, status: TaskStatus, patch?: Partial<PlaybookTask>) => Promise<void> }) {
+  const grouped = useMemo(() => {
+    return taskStatusColumns.map(column => ({
+      ...column,
+      tasks: tasks.filter(task => task.status === column.status),
+    }))
+  }, [tasks])
+
+  return (
+    <div className="overflow-x-auto pb-2">
+      <div className="grid min-w-[1120px] grid-cols-5 gap-3 xl:min-w-0">
+        {grouped.map(column => (
+          <section key={column.status} className="flex min-h-[420px] flex-col rounded-lg border border-surface-border bg-surface-secondary">
+            <div className="flex min-h-[58px] items-center justify-between border-b border-surface-border px-3">
+              <div className="min-w-0">
+                <h3 className="truncate text-sm font-semibold text-ink">{column.label}</h3>
+                <p className="text-xs font-medium text-ink-secondary">{column.tasks.length} task{column.tasks.length === 1 ? '' : 's'}</p>
+              </div>
+              <span className={cn('inline-flex rounded-full border px-2 py-1 text-[11px] font-semibold uppercase tracking-wider', statusClass(column.status))}>{column.status.replace('_', ' ')}</span>
+            </div>
+            <div className="grid flex-1 content-start gap-3 p-3">
+              {column.tasks.length ? column.tasks.map(task => (
+                <TaskKanbanCard key={task.id} task={task} readOnly={readOnly} onStatus={onStatus} />
+              )) : (
+                <div className="rounded-md border border-dashed border-surface-border bg-white/60 p-4 text-center text-xs font-medium text-ink-secondary">
+                  No tasks
+                </div>
+              )}
+            </div>
+          </section>
+        ))}
+      </div>
+    </div>
+  )
+}
+
+function TaskKanbanCard({ task, readOnly, onStatus }: { task: PlaybookTask; readOnly: boolean; onStatus: (task: PlaybookTask, status: TaskStatus, patch?: Partial<PlaybookTask>) => Promise<void> }) {
+  const locked = readOnly || ['done', 'cancelled'].includes(task.status)
+  const overdue = new Date(task.due_at) < new Date() && !['done', 'cancelled'].includes(task.status)
+
+  return (
+    <article className="rounded-md border border-surface-border bg-white p-3 shadow-card">
+      <div className="flex flex-wrap items-center gap-2">
+        <span className={cn('inline-flex rounded-full border px-2 py-1 text-[11px] font-semibold uppercase tracking-wider', priorityClass(task.priority))}>{task.priority}</span>
+        {overdue ? <span className="inline-flex rounded-full border border-rag-red/20 bg-rag-red/10 px-2 py-1 text-[11px] font-semibold uppercase tracking-wider text-rag-red">Overdue</span> : null}
+      </div>
+      <h3 className="mt-3 line-clamp-2 text-sm font-semibold text-ink">{task.title}</h3>
+      <p className="mt-2 line-clamp-3 text-xs leading-5 text-ink-secondary">{task.description || 'No task description recorded.'}</p>
+      <div className="mt-3 grid gap-2 text-xs font-medium text-ink-secondary">
+        <span className="truncate">{task.owner_name}</span>
+        <span className="inline-flex items-center gap-1"><CalendarClock className="h-3.5 w-3.5 text-brand-orange" />{formatDate(task.due_at)}</span>
+        <span className={cn('w-fit rounded-full border px-2 py-1 text-[11px] font-semibold uppercase tracking-wider', sourceClass(task.source_type))}>{sourceLabel(task.source_type)}</span>
+      </div>
+      <div className="mt-4 grid gap-2">
+        <Link className="tk-button-secondary justify-center px-3 py-2 text-xs" to={`/accounts/${task.account_id}`}>
+          <ExternalLink className="h-3.5 w-3.5" />
+          Open account
+        </Link>
+        {task.status === 'open' ? (
+          <button type="button" className="tk-button-secondary justify-center px-3 py-2 text-xs" onClick={() => onStatus(task, 'in_progress')} disabled={readOnly}>
+            <ClipboardCheck className="h-3.5 w-3.5" />
+            Start
+          </button>
+        ) : null}
+        {!['done', 'cancelled'].includes(task.status) ? (
+          <div className="grid grid-cols-2 gap-2">
+            {task.status !== 'blocked' ? (
+              <button type="button" className="tk-button-secondary justify-center px-3 py-2 text-xs text-brand-orange" onClick={() => onStatus(task, 'blocked')} disabled={readOnly}>
+                Block
+              </button>
+            ) : (
+              <button type="button" className="tk-button-secondary justify-center px-3 py-2 text-xs" onClick={() => onStatus(task, 'in_progress')} disabled={readOnly}>
+                Resume
+              </button>
+            )}
+            <button type="button" className="tk-button-primary justify-center px-3 py-2 text-xs" onClick={() => onStatus(task, 'done', { outcome: task.outcome || 'Completed from task board.' })} disabled={locked}>
+              <CheckCircle2 className="h-3.5 w-3.5" />
+              Done
+            </button>
+          </div>
+        ) : null}
+      </div>
+    </article>
   )
 }
 
@@ -553,6 +674,10 @@ function dueRange(due: DueFilter) {
 
 function dueFilterParam(value: string | null): DueFilter {
   return value === 'overdue' || value === 'today' || value === 'next7' ? value : 'all'
+}
+
+function viewModeParam(value: string | null): TaskViewMode {
+  return value === 'list' ? 'list' : 'kanban'
 }
 
 function boolParam(value: string | null): boolean {

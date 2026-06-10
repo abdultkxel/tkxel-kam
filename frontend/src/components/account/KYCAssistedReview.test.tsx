@@ -10,11 +10,11 @@ import {
 import {
   approveKycDraft,
   createKycDraft,
+  getKycDefaultPrompt,
   getKycFreshness,
   listKycAgentRuns,
   listKycDrafts,
   listKycSnapshots,
-  queueKycWebResearch,
   rejectKycDraft,
   refreshKycAgentRun,
   retryKycAgentRun,
@@ -25,8 +25,18 @@ import {
 import { Account } from '@/types/account'
 import { KycAgentRun, KycDraft, KycFreshness, KycSnapshot } from '@/types/kyc'
 
+const authMock = vi.hoisted(() => ({
+  user: {
+    id: 'usr-super-admin',
+    name: 'Super Admin',
+    email: 'admin@tkxel.com',
+    role: 'super_admin',
+    avatarInitials: 'SA',
+  },
+}))
+
 vi.mock('@/contexts/AuthContext', () => ({
-  useAuth: () => ({ token: 'test-token' }),
+  useAuth: () => ({ token: 'test-token', user: authMock.user }),
 }))
 
 vi.mock('sonner', () => ({
@@ -40,11 +50,11 @@ vi.mock('sonner', () => ({
 vi.mock('@/services/kyc', () => ({
   approveKycDraft: vi.fn(),
   createKycDraft: vi.fn(),
+  getKycDefaultPrompt: vi.fn(),
   getKycFreshness: vi.fn(),
   listKycAgentRuns: vi.fn(),
   listKycDrafts: vi.fn(),
   listKycSnapshots: vi.fn(),
-  queueKycWebResearch: vi.fn(),
   rejectKycDraft: vi.fn(),
   refreshKycAgentRun: vi.fn(),
   retryKycAgentRun: vi.fn(),
@@ -272,6 +282,13 @@ const freshness: KycFreshness = {
 
 describe('KYCAssistedReview', () => {
   beforeEach(() => {
+    authMock.user = {
+      id: 'usr-super-admin',
+      name: 'Super Admin',
+      email: 'admin@tkxel.com',
+      role: 'super_admin',
+      avatarInitials: 'SA',
+    }
     vi.mocked(listAccountAttachments).mockResolvedValue({
       items: [{
         id: 'doc-1',
@@ -302,7 +319,12 @@ describe('KYCAssistedReview', () => {
     vi.mocked(approveKycDraft).mockResolvedValue(draft({ status: 'approved' }))
     vi.mocked(rejectKycDraft).mockResolvedValue(draft({ status: 'rejected' }))
     vi.mocked(createKycDraft).mockResolvedValue(draft({ id: 'draft-2' }))
-    vi.mocked(queueKycWebResearch).mockResolvedValue(agentRun({ id: 'research-run-1', status: 'pending', provider: { research_only: true, adapter: 'tavily-ollama-research' }, model_name: 'qwen3:8b' }))
+    vi.mocked(getKycDefaultPrompt).mockResolvedValue({
+      account_id: account.id,
+      prompt: 'Create a source-backed KYC for Acme Corp using uploaded SOW evidence.',
+      source_document_ids: ['doc-1'],
+      source_summary: [],
+    })
     vi.mocked(refreshKycAgentRun).mockResolvedValue(agentRun({ id: 'run-2', previous_run_id: 'run-1', status: 'pending' }))
     vi.mocked(retryKycAgentRun).mockResolvedValue(agentRun({ status: 'pending' }))
     vi.mocked(runPendingKycJobs).mockResolvedValue({ processed_count: 0, failed_count: 0, processed_runs: [], failures: [] })
@@ -360,7 +382,7 @@ describe('KYCAssistedReview', () => {
     await waitFor(() => expect(createKycDraft).toHaveBeenCalledWith('test-token', account.id, expect.objectContaining({ trigger_source: 'kyc_page' })))
   })
 
-  it('retries a failed local Qwen KYC run from the local AI status card', async () => {
+  it('retries a failed KYC run from the super admin provider details panel', async () => {
     const user = userEvent.setup()
     vi.mocked(listKycAgentRuns).mockResolvedValue({
       items: [agentRun({ status: 'failed', error_message: 'Local AI KYC request failed' })],
@@ -373,12 +395,12 @@ describe('KYCAssistedReview', () => {
     render(<KYCAssistedReview account={account} />)
 
     expect(await screen.findByText(/failed · qwen3:8b/i)).toBeInTheDocument()
-    await user.click(screen.getByRole('button', { name: /Retry with Qwen/i }))
+    await user.click(screen.getByRole('button', { name: /Retry KYC run/i }))
 
     await waitFor(() => expect(retryKycAgentRun).toHaveBeenCalledWith('test-token', account.id, 'run-1'))
   })
 
-  it('re-runs a completed local Qwen KYC run from the local AI status card', async () => {
+  it('re-runs a completed KYC run from the super admin provider details panel', async () => {
     const user = userEvent.setup()
     vi.mocked(listKycAgentRuns).mockResolvedValue({
       items: [agentRun({ status: 'complete' })],
@@ -391,12 +413,12 @@ describe('KYCAssistedReview', () => {
     render(<KYCAssistedReview account={account} />)
 
     expect(await screen.findByText(/complete · qwen3:8b/i)).toBeInTheDocument()
-    await user.click(screen.getByRole('button', { name: /Re-run Qwen/i }))
+    await user.click(screen.getByRole('button', { name: /Re-run KYC/i }))
 
     await waitFor(() => expect(refreshKycAgentRun).toHaveBeenCalledWith('test-token', account.id, 'run-1'))
   })
 
-  it('re-runs a stale running local Qwen KYC run from the local AI status card', async () => {
+  it('re-runs a stale running KYC run from the super admin provider details panel', async () => {
     const user = userEvent.setup()
     vi.mocked(listKycAgentRuns).mockResolvedValue({
       items: [agentRun({ status: 'running', completed_at: null })],
@@ -409,30 +431,46 @@ describe('KYCAssistedReview', () => {
     render(<KYCAssistedReview account={account} />)
 
     expect(await screen.findByText(/running · qwen3:8b/i)).toBeInTheDocument()
-    await user.click(screen.getByRole('button', { name: /Re-run Qwen/i }))
+    await user.click(screen.getByRole('button', { name: /Re-run KYC/i }))
 
     await waitFor(() => expect(refreshKycAgentRun).toHaveBeenCalledWith('test-token', account.id, 'run-1'))
   })
 
-  it('queues Tavily web research for the active draft', async () => {
-    const user = userEvent.setup()
+  it('shows super admin KYC prompt, runtime source review, and AI logs without legacy research fields', async () => {
     vi.mocked(listKycAgentRuns).mockResolvedValue({ items: [agentRun()], total: 1, page: 1, page_size: 1, pages: 1 })
 
     render(<KYCAssistedReview account={account} />)
 
-    expect(await screen.findByText('Ollama generated KYC')).toBeInTheDocument()
-    expect((screen.getByLabelText(/Ollama generated KYC/i) as HTMLTextAreaElement).value).toContain('Raw Qwen response')
-    expect((screen.getByLabelText(/Ollama generated KYC/i) as HTMLTextAreaElement).value).toContain('Current extracted KYC fields')
-    const logValue = (screen.getByLabelText(/Ollama KYC logs/i) as HTMLTextAreaElement).value
+    expect(await screen.findByText('Run KYC for this account')).toBeInTheDocument()
+    expect(screen.getByText('Runtime source and KYC extraction review')).toBeInTheDocument()
+    expect((screen.getByLabelText(/Generated KYC body/i) as HTMLTextAreaElement).value).toContain('Raw Qwen response')
+    expect((screen.getByLabelText(/Generated KYC body/i) as HTMLTextAreaElement).value).toContain('Current extracted KYC fields')
+    const logValue = (screen.getByLabelText(/AI KYC logs/i) as HTMLTextAreaElement).value
     expect(logValue).toContain('Return only valid JSON for Acme KYC.')
     expect(logValue).toContain('ollama run started')
     expect(logValue).toContain('Direct Google scraping is not performed.')
-    expect(await screen.findByText('Detailed AI description')).toBeInTheDocument()
     expect(screen.getByDisplayValue(/Acme Corp Statement of Work/i)).toBeInTheDocument()
-    await user.type(screen.getByRole('textbox', { name: /Research question/i }), 'Tell me about Acme Inc in USA')
-    await user.click(screen.getByRole('button', { name: /Run web research/i }))
+    expect(screen.queryByText('Detailed AI description')).not.toBeInTheDocument()
+    expect(screen.queryByText('Research question')).not.toBeInTheDocument()
+    expect(screen.queryByText('Review gates')).not.toBeInTheDocument()
+  })
 
-    await waitFor(() => expect(queueKycWebResearch).toHaveBeenCalledWith('test-token', account.id, { draft_id: 'draft-1', query: 'Tell me about Acme Inc in USA' }))
+  it('hides prompt, runtime review, and provider debug panels from non-super-admin users', async () => {
+    authMock.user = {
+      id: 'usr-am',
+      name: 'Account Manager',
+      email: 'am@tkxel.com',
+      role: 'account_manager',
+      avatarInitials: 'AM',
+    }
+    vi.mocked(listKycAgentRuns).mockResolvedValue({ items: [agentRun()], total: 1, page: 1, page_size: 1, pages: 1 })
+
+    render(<KYCAssistedReview account={account} />)
+
+    expect(await screen.findByText('Company snapshot')).toBeInTheDocument()
+    expect(screen.queryByText('Run KYC for this account')).not.toBeInTheDocument()
+    expect(screen.queryByText('Runtime source and KYC extraction review')).not.toBeInTheDocument()
+    expect(screen.queryByText('Advanced run status, generated body, and logs')).not.toBeInTheDocument()
   })
 
   it('restores an older snapshot as the active KYC version', async () => {

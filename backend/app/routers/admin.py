@@ -249,10 +249,10 @@ def list_roles(
 )
 def create_role(
     payload: RoleCreateRequest,
-    _: AdminAccess,
+    current_user: AdminAccess,
     service: Annotated[RbacService, Depends(get_rbac_service)],
 ) -> Role:
-    return service.create_role(payload)
+    return service.create_role(payload, current_user)
 
 
 @router.get(
@@ -291,10 +291,10 @@ def read_role(
 def update_role(
     role_slug: str,
     payload: RoleUpdateRequest,
-    _: AdminAccess,
+    current_user: AdminAccess,
     service: Annotated[RbacService, Depends(get_rbac_service)],
 ) -> Role:
-    return service.update_role(role_slug, payload)
+    return service.update_role(role_slug, payload, current_user)
 
 
 @router.delete(
@@ -315,10 +315,10 @@ def update_role(
 )
 def delete_role(
     role_slug: str,
-    _: AdminAccess,
+    current_user: AdminAccess,
     service: Annotated[RbacService, Depends(get_rbac_service)],
 ) -> MessageResponse:
-    return service.delete_role(role_slug)
+    return service.delete_role(role_slug, current_user)
 
 
 @router.get(
@@ -359,10 +359,10 @@ def list_permissions(_: AdminAccess, service: Annotated[RbacService, Depends(get
 def update_role_permissions(
     role_slug: str,
     payload: RolePermissionsUpdateRequest,
-    _: AdminAccess,
+    current_user: AdminAccess,
     service: Annotated[RbacService, Depends(get_rbac_service)],
 ) -> Role:
-    return service.update_role_permissions(role_slug, payload)
+    return service.update_role_permissions(role_slug, payload, current_user)
 
 
 @router.get(

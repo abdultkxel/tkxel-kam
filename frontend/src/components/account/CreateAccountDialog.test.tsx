@@ -82,7 +82,7 @@ function apiDraft(status: 'ready_for_review' | 'approved' = 'ready_for_review') 
         source_type: 'project_charter',
         uploaded_by_name: 'Admin',
         extraction_status: 'completed',
-        extracted_text: 'Page 1\nAcme Corp Statement of Work\nScope includes customer intelligence modernization.',
+        extracted_text: 'Page 1\nAcme Corp Statement of Work\nScope  includes customer intelligence modernization.\nRenewal Terms\nAuto renewal requires 90 days notice.',
         confidence: 82,
         pages: 1,
         is_sensitive: false,
@@ -92,6 +92,21 @@ function apiDraft(status: 'ready_for_review' | 'approved' = 'ready_for_review') 
       },
     ],
     engagement_drafts: [],
+  }
+}
+
+function apiUploadExtraction() {
+  return {
+    account_name: 'Acme Corp',
+    project_name: 'Customer intelligence',
+    company_url: 'https://acme.example.com',
+    linkedin_url: 'https://www.linkedin.com/company/acme-corp',
+    confidence: 82,
+    missing_fields: [],
+    conflicts: [],
+    source_citation: 'Acme_SOW.pdf: onboarding fields inferred from extracted document text.',
+    source_file_names: ['Acme_SOW.pdf'],
+    extraction_status: 'completed',
   }
 }
 
@@ -187,14 +202,14 @@ describe('CreateAccountDialog', () => {
     expect(toast.success).toHaveBeenCalledWith('Account draft created for onboarding review.')
   })
 
-  it('uploads SOW files, shows split extraction review, saves reviewed draft fields, and opens onboarding', async () => {
+  it('uploads SOW files, auto-fills fields without showing the extraction preview, and opens onboarding', async () => {
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input)
       const method = init?.method ?? 'GET'
       if (url.endsWith('/api/accounts/custom-fields') && method === 'GET') return jsonResponse([])
       if (url.endsWith('/api/onboarding/account-managers') && method === 'GET') return jsonResponse(apiManagers())
+      if (url.endsWith('/api/onboarding/uploads/extract') && method === 'POST') return jsonResponse(apiUploadExtraction())
       if (url.endsWith('/api/onboarding/drafts/upload') && method === 'POST') return jsonResponse(apiDraft())
-      if (url.endsWith('/api/onboarding/drafts/draft-1') && method === 'PATCH') return jsonResponse(apiDraft())
       return jsonResponse({})
     })
     vi.stubGlobal('fetch', fetchMock)
@@ -212,16 +227,27 @@ describe('CreateAccountDialog', () => {
     await userEvent.selectOptions(await screen.findByLabelText(/account manager/i), 'usr-am')
     await userEvent.upload(screen.getByLabelText(/upload sow or project charter/i), new File(['%PDF-1.4'], 'Acme_SOW.pdf', { type: 'application/pdf' }))
 
-    expect(await screen.findByText('SOW extraction preview')).toBeInTheDocument()
-    await userEvent.click(screen.getByRole('button', { name: /extract details/i }))
-    expect(await screen.findByDisplayValue(/Full extracted PDF text/i)).toBeInTheDocument()
-    expect(screen.getByDisplayValue(/Acme Corp Statement of Work/i)).toBeInTheDocument()
+    expect(await screen.findByText('Details filled from the uploaded source.')).toBeInTheDocument()
+    expect(screen.queryByText('SOW extraction preview')).not.toBeInTheDocument()
+    expect(screen.queryByLabelText('Extracted document data')).not.toBeInTheDocument()
+    expect(screen.getByLabelText(/name of account/i)).toHaveValue('Acme Corp')
+    expect(screen.getByLabelText(/name of project/i)).toHaveValue('Customer intelligence')
+    expect(screen.getByLabelText(/company url/i)).toHaveValue('https://acme.example.com')
+    expect(screen.getByLabelText(/linkedin url/i)).toHaveValue('https://www.linkedin.com/company/acme-corp')
+    expect(fetchMock.mock.calls.some(call => String(call[0]).endsWith('/api/onboarding/uploads/extract'))).toBe(true)
+    expect(fetchMock.mock.calls.some(call => String(call[0]).endsWith('/api/onboarding/drafts/upload'))).toBe(false)
 
-    await userEvent.click(screen.getByRole('button', { name: /open onboarding review/i }))
+    await userEvent.click(screen.getByRole('button', { name: /create draft/i }))
 
     expect(await screen.findByText('Onboarding review loaded')).toBeInTheDocument()
-    expect(fetchMock.mock.calls.some(call => String(call[0]).endsWith('/api/onboarding/drafts/upload'))).toBe(true)
-    expect(fetchMock.mock.calls.some(call => String(call[0]).endsWith('/api/onboarding/drafts/draft-1') && call[1]?.method === 'PATCH')).toBe(true)
+    const uploadCall = fetchMock.mock.calls.find(call => String(call[0]).endsWith('/api/onboarding/drafts/upload'))
+    expect(uploadCall).toBeTruthy()
+    const uploadBody = uploadCall?.[1]?.body as FormData
+    expect(uploadBody.get('account_name')).toBe('Acme Corp')
+    expect(uploadBody.get('project_name')).toBe('Customer intelligence')
+    expect(uploadBody.get('company_url')).toBe('https://acme.example.com')
+    expect(uploadBody.get('linkedin_url')).toBe('https://www.linkedin.com/company/acme-corp')
+    expect(fetchMock.mock.calls.some(call => String(call[0]).endsWith('/api/onboarding/drafts/draft-1') && call[1]?.method === 'PATCH')).toBe(false)
   })
 
   it('requires a LinkedIn URL before creating the onboarding draft', async () => {

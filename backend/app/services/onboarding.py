@@ -38,6 +38,7 @@ from app.schemas import (
     OnboardingDraftRead,
     OnboardingDraftRejectRequest,
     OnboardingDraftUpdateRequest,
+    OnboardingUploadExtractionRead,
     SourceDocumentExtractionRead,
     UserRead,
     validate_linkedin_url,
@@ -50,6 +51,7 @@ from app.services.engagements import calculate_notice_deadline
 from app.services.engagement_health_rollup import notify_account_health_impacted_by_engagement_change
 from app.services.kyc_document_extraction import KycDocumentExtractionService
 from app.services.kyc import DEFAULT_RESEARCH_SOURCES, KycService
+from app.services.in_app_notifications import InAppNotificationService
 from app.services.notifications import NotificationsService
 from app.services.source_document_contract import ONBOARDING_DRAFT_LIFECYCLE_DEFAULT, STRUCTURED_SOW_METADATA_KEY, infer_service_lines_from_text
 from app.services.sow_extraction import SowExtractionService
@@ -73,6 +75,7 @@ class OnboardingService:
         self.custom_fields = CustomFieldService(db, CustomFieldRepository(db))
         self.account_service = AccountService(db)
         self.notifications = NotificationsService(db)
+        self.in_app_notifications = InAppNotificationService(db)
 
     def list_drafts(
         self,
@@ -129,7 +132,7 @@ class OnboardingService:
 
     def create_draft(self, payload: OnboardingDraftCreateRequest, current_user: User) -> OnboardingDraftRead:
         self.access.require_module_permission(current_user, "account_onboarding_workspace", "create")
-        duplicate = self.accounts.find_duplicate_by_name(payload.account_name)
+        duplicate = self._find_duplicate_account(payload.account_name, payload.company_url)
         primary_owner = self._resolve_owner_from_payload(payload, current_user)
         self._ensure_owner_selection_allowed(current_user, primary_owner)
         conflicts = list(payload.conflicts)
@@ -181,6 +184,9 @@ class OnboardingService:
         uploads: list[UploadFile],
         current_user: User,
         *,
+        account_name: str | None = None,
+        project_name: str | None = None,
+        company_url: str | None = None,
         manager_id: str | None = None,
         manager_name: str | None = None,
         manager_email: str | None = None,
@@ -208,19 +214,12 @@ class OnboardingService:
         documents: list[SourceDocument] = []
         extracted_parts: list[str] = []
         structured_extractions: list[dict] = []
-        request_checksums: set[str] = set()
         stored_files_to_cleanup: list[str] = []
         try:
             for upload in uploads:
                 stored = await storage.save_upload(upload)
                 stored_files_to_cleanup.append(stored.file_path)
                 checksum = self.account_service.file_checksum_for_upload(stored.file_path)
-                self._ensure_uploaded_source_is_unique(
-                    checksum,
-                    storage=storage,
-                    stored_file_path=stored.file_path,
-                    request_checksums=request_checksums,
-                )
                 document = SourceDocument(
                     title=self._title_from_file(stored.file_name),
                     source_type=self._source_type_from_file(stored.file_name),
@@ -242,7 +241,7 @@ class OnboardingService:
                 extraction = extraction_service.extract_document(document, force=True)
                 if extraction.status == "completed":
                     extraction_service.chunk_document(document, extraction=extraction, force=True)
-                    structured = SowExtractionService(self.onboarding.db).extract_structured_fields(document, extraction)
+                    structured = SowExtractionService(self.onboarding.db).extract_structured_fields(document, extraction, allow_ai=True)
                     structured_extractions.append(structured.fields)
                     extracted_text = extraction.raw_text or extraction.normalized_text
                     if extracted_text:
@@ -265,15 +264,38 @@ class OnboardingService:
             manager_email=resolved_manager_email,
             current_user=current_user,
         )
-        duplicate = self.accounts.find_duplicate_by_name(inferred["account_name"])
+        submitted_account_name = self._clean_short(account_name, default="") if account_name is not None else inferred["account_name"]
+        submitted_project_name = self._clean_short(project_name, default="") if project_name is not None else inferred["project_name"]
+        submitted_company_url = self._normalize_url(company_url) if company_url is not None else inferred["company_url"]
+        submitted_linkedin_url = normalized_linkedin_url if linkedin_url is not None else inferred["linkedin_url"]
+        source_name = documents[0].file_name if documents else "uploaded source document"
+        form_values_submitted = any(value is not None for value in (account_name, project_name, company_url, linkedin_url))
+        source_citation = (
+            f"{source_name}: source document stored for KYC context; account fields submitted in the creation form."
+            if form_values_submitted
+            else inferred["source_citation"]
+        )
+        missing_fields = self._missing_fields_after_submitted_values(
+            inferred["missing_fields"],
+            account_name=submitted_account_name,
+            project_name=submitted_project_name,
+            company_url=submitted_company_url,
+        )
+        duplicate = self._find_duplicate_account(submitted_account_name, submitted_company_url)
         conflicts = list(inferred["conflicts"])
         if duplicate:
             conflicts.append(f"Possible duplicate account: {duplicate.name}")
+        engagement_inferred = {
+            **inferred,
+            "project_name": submitted_project_name or inferred["project_name"],
+            "primary_owner_name": resolved_manager_name or inferred["primary_owner_name"],
+            "primary_owner_email": resolved_manager_email or inferred["primary_owner_email"],
+        }
 
         draft = OnboardingDraft(
-            account_name=inferred["account_name"],
-            project_name=inferred["project_name"],
-            company_url=inferred["company_url"],
+            account_name=submitted_account_name,
+            project_name=submitted_project_name,
+            company_url=submitted_company_url,
             lifecycle_status=ONBOARDING_DRAFT_LIFECYCLE_DEFAULT,
             segment=inferred["segment"],
             region=inferred["region"],
@@ -282,15 +304,15 @@ class OnboardingService:
             initial_notes=inferred["initial_notes"],
             commercial_value=inferred["commercial_value"],
             currency=inferred["currency"],
-            linkedin_url=normalized_linkedin_url,
+            linkedin_url=submitted_linkedin_url,
             primary_owner_id=primary_owner.id if primary_owner else None,
-            primary_owner_name=inferred["primary_owner_name"],
-            primary_owner_email=inferred["primary_owner_email"],
+            primary_owner_name=engagement_inferred["primary_owner_name"],
+            primary_owner_email=engagement_inferred["primary_owner_email"],
             confidence=inferred["confidence"],
-            missing_fields=inferred["missing_fields"],
+            missing_fields=missing_fields,
             conflicts=conflicts,
             duplicate_account_id=duplicate.id if duplicate else None,
-            source_citation=inferred["source_citation"],
+            source_citation=source_citation,
             created_by_id=current_user.id,
             created_by_name=current_user.full_name,
             extraction_status="completed" if combined_text.strip() else "needs_review",
@@ -299,7 +321,8 @@ class OnboardingService:
         for document in documents:
             document.draft_id = draft.id
             self._add_inferred_citations(document, combined_text, inferred)
-        self._add_uploaded_engagement_draft(draft, inferred)
+            self._notify_uploaded_source_status(draft, document, current_user)
+        self._add_uploaded_engagement_draft(draft, engagement_inferred)
         self.audit.log(
             module="account_onboarding_workspace",
             action="draft_create_from_upload",
@@ -313,8 +336,104 @@ class OnboardingService:
                 "used_filename_for_account_name": False,
             },
         )
+        self._notify_draft_created(draft, current_user)
         self.onboarding.commit()
         return OnboardingDraftRead.model_validate(self._get_draft_or_404(draft.id))
+
+    async def extract_fields_from_uploads(
+        self,
+        uploads: list[UploadFile],
+        current_user: User,
+        *,
+        manager_name: str | None = None,
+        manager_email: str | None = None,
+        linkedin_url: str | None = None,
+    ) -> OnboardingUploadExtractionRead:
+        self.access.require_module_permission(current_user, "account_onboarding_workspace", "create")
+        if not uploads:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Upload at least one SOW or source document")
+        if len(uploads) > 10:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="At most 10 source documents can be inspected at one time")
+        try:
+            normalized_linkedin_url = validate_linkedin_url(linkedin_url) if linkedin_url else None
+        except ValueError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail={"message": "Validation failed", "errors": [{"field": "linkedin_url", "message": str(exc)}]},
+            ) from exc
+
+        storage = ContentStorageService()
+        extraction_service = KycDocumentExtractionService(self.onboarding.db)
+        stored_files_to_cleanup: list[str] = []
+        documents: list[SourceDocument] = []
+        extracted_parts: list[str] = []
+        structured_extractions: list[dict] = []
+        try:
+            for upload in uploads:
+                stored = await storage.save_upload(upload)
+                stored_files_to_cleanup.append(stored.file_path)
+                result = extraction_service.extract_stored_file(Path(stored.file_path), stored.mime_type)
+                status_value = KycDocumentExtractionService._status_for_extracted_text(result)
+                document = SourceDocument(
+                    title=self._title_from_file(stored.file_name),
+                    source_type=self._source_type_from_file(stored.file_name),
+                    file_name=stored.file_name,
+                    file_url=stored.file_path,
+                    storage_backend=stored.storage_backend,
+                    storage_path=stored.file_path,
+                    mime_type=stored.mime_type,
+                    size_bytes=stored.size_bytes,
+                    checksum_sha256=self.account_service.file_checksum_for_upload(stored.file_path),
+                    uploaded_by_id=current_user.id,
+                    uploaded_by_name=current_user.full_name,
+                    extraction_status=status_value,
+                    confidence=75,
+                    pages=result.page_count,
+                    is_sensitive=False,
+                )
+                documents.append(document)
+                extracted_text = result.raw_text or result.normalized_text
+                if extracted_text:
+                    extracted_parts.append(f"Source: {stored.file_name}\n{extracted_text}")
+        except HTTPException:
+            raise
+        except Exception as exc:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Source document extraction failed: {str(exc)[:300]}",
+            ) from exc
+        finally:
+            for path in stored_files_to_cleanup:
+                storage.delete_stored_file(path)
+
+        combined_text = "\n\n".join(extracted_parts)
+        if combined_text.strip():
+            structured = SowExtractionService(self.onboarding.db).extract_structured_fields_from_text(
+                combined_text,
+                source_name=documents[0].file_name if documents else "uploaded source document",
+                allow_ai=True,
+            )
+            structured_extractions.append(structured.fields)
+        inferred = self._infer_uploaded_draft_fields(
+            combined_text,
+            documents,
+            structured_extractions=structured_extractions,
+            manager_name=manager_name,
+            manager_email=manager_email,
+            current_user=current_user,
+        )
+        return OnboardingUploadExtractionRead(
+            account_name=inferred["account_name"],
+            project_name=inferred["project_name"],
+            company_url=inferred["company_url"],
+            linkedin_url=normalized_linkedin_url or inferred["linkedin_url"],
+            confidence=inferred["confidence"],
+            missing_fields=inferred["missing_fields"],
+            conflicts=inferred["conflicts"],
+            source_citation=inferred["source_citation"],
+            source_file_names=[document.file_name or document.title for document in documents],
+            extraction_status="completed" if combined_text.strip() else "needs_review",
+        )
 
     def update_draft(self, draft_id: str, payload: OnboardingDraftUpdateRequest, current_user: User) -> OnboardingDraftRead:
         draft = self._get_draft_or_404(draft_id)
@@ -357,6 +476,7 @@ class OnboardingService:
         self._ensure_open_draft(draft)
         self._ensure_not_duplicate(draft)
         primary_owner = self._resolve_primary_owner_for_approval(draft, current_user)
+        self._apply_approval_defaults(draft, current_user)
         self._validate_approval(draft)
 
         account = Account(
@@ -769,46 +889,9 @@ class OnboardingService:
                 "force": force,
             },
         )
+        self._notify_uploaded_source_status(draft, document, current_user)
         self.onboarding.commit()
         return SourceDocumentExtractionRead.model_validate(extraction)
-
-    def _ensure_uploaded_source_is_unique(
-        self,
-        checksum: str | None,
-        *,
-        storage: ContentStorageService,
-        stored_file_path: str,
-        request_checksums: set[str],
-    ) -> None:
-        if not checksum:
-            return
-        if checksum in request_checksums:
-            storage.delete_stored_file(stored_file_path)
-            raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT,
-                detail={
-                    "message": "The same source file was included more than once in this upload.",
-                    "duplicate_scope": "request",
-                    "checksum_sha256": checksum,
-                },
-            )
-        duplicate = self.accounts.find_source_document_by_checksum(checksum)
-        if duplicate:
-            storage.delete_stored_file(stored_file_path)
-            raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT,
-                detail={
-                    "message": "This source file was already uploaded. Reuse the existing source document or upload a different file.",
-                    "duplicate_scope": "global",
-                    "existing_document_id": duplicate.id,
-                    "existing_account_id": duplicate.account_id,
-                    "existing_draft_id": duplicate.draft_id,
-                    "existing_title": duplicate.title,
-                    "existing_file_name": duplicate.file_name,
-                    "checksum_sha256": duplicate.checksum_sha256,
-                },
-            )
-        request_checksums.add(checksum)
 
     def _infer_uploaded_draft_fields(
         self,
@@ -827,10 +910,11 @@ class OnboardingService:
             or
             self._extract_label(text, ["Account Name", "Customer", "Client", "Company Name", "Legal Entity", "Client Legal Name"])
             or self._extract_customer_from_legal_intro(text)
-            or "Unidentified Account from uploaded SOW"
+            or ""
         )
         project_name = self._extract_label(text, ["Project Name", "SOW Title", "Statement of Work Title", "Engagement Name", "Program Name"]) or self._extract_sow_heading(text)
         company_url = self._extract_label(text, ["Company URL", "Website", "Client Website"])
+        linkedin_url = self._extract_label(text, ["LinkedIn URL", "LinkedIn", "Company LinkedIn", "Client LinkedIn"]) or self._extract_linkedin_url(text)
         region = self._extract_label(text, ["Region", "Primary Region", "Geography"]) or self._extract_region_from_legal_intro(text) or "Global"
         segment = self._extract_label(text, ["Segment", "Account Segment", "Client Segment"]) or "Enterprise"
         structured_service_lines = self._structured_list(structured, "service_lines")
@@ -886,7 +970,7 @@ class OnboardingService:
 
         source_name = documents[0].file_name if documents else "uploaded source document"
         missing_fields = []
-        if account_name.startswith("Unidentified"):
+        if not account_name:
             missing_fields.append("Account name was not found in the uploaded source text.")
         if not project_name:
             missing_fields.append("Project name was not found in the uploaded source text.")
@@ -922,9 +1006,10 @@ class OnboardingService:
         )
 
         return {
-            "account_name": self._clean_short(account_name, default="Unidentified Account from uploaded SOW"),
-            "project_name": self._clean_short(project_name, default=f"{account_name} Engagement" if not account_name.startswith("Unidentified") else "Uploaded SOW Review"),
+            "account_name": self._clean_short(account_name, default=""),
+            "project_name": self._clean_short(project_name, default=""),
             "company_url": self._normalize_url(company_url),
+            "linkedin_url": self._normalize_linkedin_url(linkedin_url),
             "segment": self._clean_short(segment, default="Enterprise"),
             "region": self._clean_short(region, default="Global"),
             "service_context": service_context or self._summarize_text(text, "Service scope was extracted from the uploaded source document."),
@@ -1136,6 +1221,7 @@ class OnboardingService:
         return word_numbers[word_weeks.group(1).lower()] * 7
 
     def _add_uploaded_engagement_draft(self, draft: OnboardingDraft, inferred: dict) -> None:
+        start_date = inferred["start_date"] or self._default_engagement_start_date()
         self.onboarding.add_engagement_draft(
             OnboardingDraftEngagement(
                 draft_id=draft.id,
@@ -1145,7 +1231,7 @@ class OnboardingService:
                 value=inferred["commercial_value"],
                 currency=inferred["currency"],
                 delivery_status=inferred["delivery_status"],
-                start_date=inferred["start_date"],
+                start_date=start_date,
                 end_date=inferred["end_date"],
                 renewal_date=inferred["renewal_date"],
                 notice_deadline=calculate_notice_deadline(inferred["renewal_date"], inferred["end_date"], inferred["notice_period_days"]),
@@ -1173,6 +1259,42 @@ class OnboardingService:
         if start_date > now:
             return "planned"
         return "active"
+
+    @staticmethod
+    def _default_engagement_start_date() -> datetime:
+        return datetime.now(timezone.utc).replace(hour=12, minute=0, second=0, microsecond=0)
+
+    def _apply_approval_defaults(self, draft: OnboardingDraft, actor: User) -> None:
+        default_start_date = self._default_engagement_start_date()
+        applied: list[dict[str, str]] = []
+        for index, engagement in enumerate(draft.engagement_drafts):
+            prefix = f"engagement_drafts.{index}"
+            if not engagement.name:
+                engagement.name = draft.project_name or f"{draft.account_name} Engagement"
+                applied.append({"field": f"{prefix}.name", "value": engagement.name})
+            if not engagement.service_lines:
+                engagement.service_lines = ["Account onboarding"]
+                applied.append({"field": f"{prefix}.service_lines", "value": "Account onboarding"})
+            if not engagement.delivery_status:
+                engagement.delivery_status = self._inferred_delivery_status(engagement.start_date, engagement.end_date)
+                applied.append({"field": f"{prefix}.delivery_status", "value": engagement.delivery_status})
+            if not engagement.start_date:
+                engagement.start_date = default_start_date
+                applied.append({"field": f"{prefix}.start_date", "value": engagement.start_date.isoformat()})
+            if engagement.renewal_date is None and engagement.end_date is not None:
+                engagement.renewal_date = engagement.end_date
+                applied.append({"field": f"{prefix}.renewal_date", "value": engagement.renewal_date.isoformat()})
+            engagement.notice_deadline = calculate_notice_deadline(engagement.renewal_date, engagement.end_date, engagement.notice_period_days)
+        if not applied:
+            return
+        self.audit.log(
+            module="account_onboarding_workspace",
+            action="draft_approval_defaults_applied",
+            entity_type="onboarding_draft",
+            entity_id=draft.id,
+            actor=actor,
+            after_value={"defaults": applied},
+        )
 
     def _resource_dependency_from_risks(self, structured_risks: list[str], initial_notes: str | None) -> str | None:
         candidates = structured_risks or self._split_list(self._extract_label(initial_notes or "", ["Risks"]))
@@ -1216,6 +1338,31 @@ class OnboardingService:
         label_risks = self._split_list(self._extract_label(inferred["initial_notes"], ["Risks"]))
         return label_risks or ["KYC has not been completed yet"]
 
+    def _find_duplicate_account(self, account_name: str | None, company_url: str | None) -> Account | None:
+        duplicate_by_name = self.accounts.find_duplicate_by_name(account_name) if account_name else None
+        if duplicate_by_name:
+            return duplicate_by_name
+        return self.accounts.find_duplicate_by_company_url(company_url)
+
+    @staticmethod
+    def _missing_fields_after_submitted_values(
+        missing_fields: list[str],
+        *,
+        account_name: str | None,
+        project_name: str | None,
+        company_url: str | None,
+    ) -> list[str]:
+        filtered: list[str] = []
+        for field in missing_fields:
+            if account_name and "Account name was not found" in field:
+                continue
+            if project_name and "Project name was not found" in field:
+                continue
+            if company_url and "Company website was not found" in field:
+                continue
+            filtered.append(field)
+        return filtered
+
     def _add_inferred_citations(self, document: SourceDocument, combined_text: str, inferred: dict) -> None:
         citations = [
             ("Account name", "account_name", inferred["account_name"]),
@@ -1232,6 +1379,8 @@ class OnboardingService:
         ]
         structured_citations = inferred.get("field_citations") or {}
         for label, field_key, value in citations:
+            if value is None or (isinstance(value, str) and not value.strip()):
+                continue
             structured_citation = structured_citations.get(field_key)
             if structured_citation and structured_citation.get("document_id") and structured_citation.get("document_id") != document.id:
                 continue
@@ -1452,6 +1601,21 @@ class OnboardingService:
         return cleaned[:500]
 
     @staticmethod
+    def _extract_linkedin_url(text: str) -> str | None:
+        match = re.search(r"https?://(?:www\.)?linkedin\.com/company/[^\s<>)\"']+", text, re.IGNORECASE)
+        return match.group(0).rstrip(".,;") if match else None
+
+    @staticmethod
+    def _normalize_linkedin_url(value: str | None) -> str | None:
+        normalized = OnboardingService._normalize_url(value)
+        if not normalized:
+            return None
+        try:
+            return validate_linkedin_url(normalized)
+        except ValueError:
+            return None
+
+    @staticmethod
     def _summarize_text(text: str, fallback: str) -> str:
         cleaned = re.sub(r"\s+", " ", text).strip()
         return cleaned[:1600] if cleaned else fallback
@@ -1538,6 +1702,7 @@ class OnboardingService:
                 priority="high",
                 delivery_metadata={"draft_id": draft.id, "created_by_id": current_user.id},
                 deduplication_key=f"{trigger}:{draft.id}:{recipient.id}",
+                in_app_only=True,
             )
 
     def _notify_draft_outcome(self, draft: OnboardingDraft, actor: User, trigger: str, title: str, body: str, *, account_id: str | None = None) -> None:
@@ -1556,6 +1721,35 @@ class OnboardingService:
                 priority="high" if trigger == "account_draft_rejected" else "medium",
                 delivery_metadata={"draft_id": draft.id, "actor_id": actor.id, "approved_account_id": account_id},
                 deduplication_key=f"{trigger}:{draft.id}:{recipient.id}",
+                in_app_only=True,
+            )
+
+    def _notify_uploaded_source_status(self, draft: OnboardingDraft, document: SourceDocument, current_user: User) -> None:
+        recipients = [current_user, *self._draft_approvers(exclude_user_id=current_user.id)]
+        if document.extraction_status in {"failed", "error"}:
+            self.in_app_notifications.queue_many(
+                recipients,
+                trigger="source_document_failed",
+                title=f"Source extraction failed: {document.title}",
+                body=document.extraction_error or "A draft source document could not be extracted.",
+                source_record_type="source_document",
+                source_record_id=document.id,
+                source_record_route=f"/accounts/onboarding?draft={draft.id}",
+                priority="high",
+                dedupe_scope=f"failed:{document.updated_at.isoformat() if document.updated_at else document.id}",
+            )
+            return
+        if document.extraction_status in {"needs_review", "ocr_required"} or (document.confidence is not None and document.confidence < 70):
+            self.in_app_notifications.queue_many(
+                recipients,
+                trigger="source_document_low_confidence",
+                title=f"Source needs review: {document.title}",
+                body="A draft source document needs review before approval or KYC reuse.",
+                source_record_type="source_document",
+                source_record_id=document.id,
+                source_record_route=f"/accounts/onboarding?draft={draft.id}",
+                priority="medium",
+                dedupe_scope=f"review:{document.updated_at.isoformat() if document.updated_at else document.id}",
             )
 
     def _draft_approvers(self, *, exclude_user_id: str | None = None) -> list[User]:
@@ -1758,7 +1952,7 @@ class OnboardingService:
                     value=payload.value,
                     currency=payload.currency,
                     delivery_status=payload.delivery_status,
-                    start_date=payload.start_date,
+                    start_date=payload.start_date or self._default_engagement_start_date(),
                     end_date=payload.end_date,
                     renewal_date=payload.renewal_date,
                     notice_deadline=calculate_notice_deadline(payload.renewal_date, payload.end_date, payload.notice_period_days),

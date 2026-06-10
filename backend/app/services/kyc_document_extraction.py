@@ -153,6 +153,13 @@ class KycDocumentExtractionService:
             )
         )
 
+    def extract_stored_file(self, path: Path, mime_type: str | None) -> ExtractedText:
+        if not path.exists():
+            raise ValueError(f"Stored source document file was not found: {path.name}")
+        if path.stat().st_size > self.settings.kyc_document_extraction_max_file_mb * 1024 * 1024:
+            raise ValueError("Source document exceeds the configured extraction file-size limit.")
+        return self._extract_by_type(path, mime_type or mimetypes.guess_type(path.name)[0])
+
     def ensure_chunks(self, document: SourceDocument, *, force: bool = False) -> list[SourceDocumentChunk]:
         existing = self.chunks_for_document(document.id)
         if existing and not force:
@@ -233,6 +240,13 @@ class KycDocumentExtractionService:
             return self._extract_docx(path)
         if suffix in {".txt", ".csv"} or (mime_type or "").startswith("text/"):
             return self._extract_text(path)
+        if suffix in {".xlsx", ".xlsm"} or mime_type in {
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            "application/vnd.ms-excel.sheet.macroEnabled.12",
+        }:
+            return self._extract_xlsx(path)
+        if suffix == ".xls" or mime_type == "application/vnd.ms-excel":
+            return self._extract_xls(path)
         raise ValueError(f"Unsupported source document type: {suffix or mime_type or 'unknown'}")
 
     def _extract_pdf(self, path: Path) -> ExtractedText:
@@ -401,6 +415,84 @@ class KycDocumentExtractionService:
             metadata={"line_count": raw.count("\n") + 1, "pages": [{"page_number": 1, "char_count": len(raw)}]},
             ocr_status="not_required",
             page_texts=[PageText(page_number=1, raw_text=raw, metadata={"extractor": "plain-text"})] if raw.strip() else [],
+        )
+
+    @staticmethod
+    def _extract_xlsx(path: Path) -> ExtractedText:
+        from openpyxl import load_workbook
+
+        workbook = load_workbook(filename=str(path), read_only=True, data_only=True)
+        sheet_parts: list[str] = []
+        page_texts: list[PageText] = []
+        pages_metadata: list[dict[str, Any]] = []
+        for index, sheet in enumerate(workbook.worksheets, start=1):
+            rows: list[str] = []
+            for row in sheet.iter_rows(values_only=True):
+                values = [str(value).strip() for value in row if value is not None and str(value).strip()]
+                if values:
+                    rows.append(" | ".join(values))
+            sheet_text = "\n".join(rows)
+            if not sheet_text.strip():
+                continue
+            sheet_parts.append(f"[Sheet: {sheet.title}]\n{sheet_text}")
+            page_texts.append(
+                PageText(
+                    page_number=index,
+                    raw_text=sheet_text,
+                    metadata={"extractor": "openpyxl", "sheet_name": sheet.title},
+                )
+            )
+            pages_metadata.append({"page_number": index, "sheet_name": sheet.title, "char_count": len(sheet_text)})
+
+        raw = "\n\n".join(sheet_parts)
+        return ExtractedText(
+            raw_text=raw,
+            normalized_text=normalize_text(raw),
+            page_count=len(page_texts),
+            metadata={"extractor": "openpyxl", "sheet_count": len(workbook.worksheets), "pages": pages_metadata},
+            ocr_status="not_required",
+            page_texts=page_texts,
+        )
+
+    @staticmethod
+    def _extract_xls(path: Path) -> ExtractedText:
+        import xlrd
+
+        workbook = xlrd.open_workbook(str(path))
+        sheet_parts: list[str] = []
+        page_texts: list[PageText] = []
+        pages_metadata: list[dict[str, Any]] = []
+        for index, sheet in enumerate(workbook.sheets(), start=1):
+            rows: list[str] = []
+            for row_index in range(sheet.nrows):
+                values = [
+                    str(sheet.cell_value(row_index, column_index)).strip()
+                    for column_index in range(sheet.ncols)
+                    if str(sheet.cell_value(row_index, column_index)).strip()
+                ]
+                if values:
+                    rows.append(" | ".join(values))
+            sheet_text = "\n".join(rows)
+            if not sheet_text.strip():
+                continue
+            sheet_parts.append(f"[Sheet: {sheet.name}]\n{sheet_text}")
+            page_texts.append(
+                PageText(
+                    page_number=index,
+                    raw_text=sheet_text,
+                    metadata={"extractor": "xlrd", "sheet_name": sheet.name},
+                )
+            )
+            pages_metadata.append({"page_number": index, "sheet_name": sheet.name, "char_count": len(sheet_text)})
+
+        raw = "\n\n".join(sheet_parts)
+        return ExtractedText(
+            raw_text=raw,
+            normalized_text=normalize_text(raw),
+            page_count=len(page_texts),
+            metadata={"extractor": "xlrd", "sheet_count": workbook.nsheets, "pages": pages_metadata},
+            ocr_status="not_required",
+            page_texts=page_texts,
         )
 
     @staticmethod

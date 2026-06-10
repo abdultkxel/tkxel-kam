@@ -29,6 +29,7 @@ function page<T>(items: T[]) {
 }
 
 const fields = [
+  { data_source: 'accounts', field: 'id', label: 'Account ID', field_type: 'text', sortable: true, filterable: true, sensitive: false, custom_field: false },
   { data_source: 'accounts', field: 'name', label: 'Account', field_type: 'text', sortable: true, filterable: true, sensitive: false, custom_field: false },
   { data_source: 'accounts', field: 'risk_status', label: 'Risk', field_type: 'text', sortable: true, filterable: true, sensitive: false, custom_field: false },
   { data_source: 'accounts', field: 'health_overall', label: 'Health', field_type: 'number', sortable: true, filterable: true, sensitive: false, custom_field: false },
@@ -54,6 +55,7 @@ describe('Reports page', () => {
     render(<Reports />)
 
     expect(await screen.findByText('Report builder')).toBeInTheDocument()
+    expect(screen.queryByText('Account ID')).not.toBeInTheDocument()
     await userEvent.click(screen.getByRole('button', { name: /preview/i }))
     expect(await screen.findByText('Signal')).toBeInTheDocument()
 

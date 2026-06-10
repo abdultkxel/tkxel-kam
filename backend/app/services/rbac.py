@@ -21,6 +21,9 @@ def role_not_found(slug: str) -> HTTPException:
 class RbacService:
     def __init__(self, db: Session, repository: RbacRepository | None = None) -> None:
         self.repository = repository or RbacRepository(db)
+        from app.services.in_app_notifications import InAppNotificationService
+
+        self.in_app_notifications = InAppNotificationService(db)
 
     def seed_defaults(self) -> dict[str, int]:
         permissions_by_key = self._seed_permissions()
@@ -62,16 +65,17 @@ class RbacService:
     def list_permissions(self) -> list[Permission]:
         return self.repository.list_permissions()
 
-    def create_role(self, payload: RoleCreateRequest) -> Role:
+    def create_role(self, payload: RoleCreateRequest, actor: User | None = None) -> Role:
         existing_role = self.repository.get_role_by_slug(payload.slug)
         if existing_role is not None:
             raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="A role with this slug already exists")
 
         role = self.repository.upsert_role(payload.slug, payload.name, payload.description, is_system=False)
+        self._notify_admin_access_changed(actor, "Role created", f"Role {role.name} was created.", role.id or role.slug, role.slug)
         self.repository.commit()
         return self.get_role(role.slug)
 
-    def update_role(self, slug: str, payload: RoleUpdateRequest) -> Role:
+    def update_role(self, slug: str, payload: RoleUpdateRequest, actor: User | None = None) -> Role:
         role = self.get_role(slug)
         updates = payload.model_dump(exclude_unset=True)
         if "name" in updates and updates["name"] is not None:
@@ -79,10 +83,12 @@ class RbacService:
         if "description" in updates:
             role.description = updates["description"]
 
+        if updates:
+            self._notify_admin_access_changed(actor, "Role updated", f"Role {role.name} metadata was updated.", role.id or role.slug, role.slug)
         self.repository.commit()
         return self.get_role(slug)
 
-    def update_role_permissions(self, slug: str, payload: RolePermissionsUpdateRequest) -> Role:
+    def update_role_permissions(self, slug: str, payload: RolePermissionsUpdateRequest, actor: User | None = None) -> Role:
         role = self.get_role(slug)
         for grant in payload.permissions:
             permission = self.repository.get_permission(grant.module, grant.action)
@@ -90,19 +96,21 @@ class RbacService:
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
                     detail=f"Permission '{grant.module}:{grant.action}' is not defined in the PRD module catalog",
-                )
+            )
             self.repository.set_role_permission(role, permission, grant.allowed)
 
+        self._notify_admin_access_changed(actor, "Role permissions changed", f"{len(payload.permissions)} permission grant(s) changed for {role.name}.", role.id or role.slug, role.slug)
         self.repository.commit()
         return self.get_role(slug)
 
-    def delete_role(self, slug: str) -> MessageResponse:
+    def delete_role(self, slug: str, actor: User | None = None) -> MessageResponse:
         role = self.get_role(slug)
         if role.is_system:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="System roles cannot be deleted")
         if self.repository.count_users_for_role(role.slug):
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Role is assigned to users and cannot be deleted")
 
+        self._notify_admin_access_changed(actor, "Role deleted", f"Role {role.name} was deleted.", role.id or role.slug, role.slug)
         self.repository.delete_role(role)
         return MessageResponse(message="Role deleted successfully")
 
@@ -124,4 +132,20 @@ class RbacService:
         return any(
             item.permission is not None and permission_key(item.permission.module, item.permission.action) == key
             for item in role.permissions
+        )
+
+    def _notify_admin_access_changed(self, actor: User | None, title: str, body: str, source_record_id: str, role_slug: str) -> None:
+        if actor is None:
+            return
+        self.in_app_notifications.queue_many(
+            self.in_app_notifications.admins(),
+            trigger="admin_access_changed",
+            title=title,
+            body=body,
+            source_record_type="role",
+            source_record_id=source_record_id,
+            source_record_route="/admin?tab=roles",
+            priority="critical",
+            dedupe_scope=f"{role_slug}:{title}",
+            exclude_user_ids={actor.id},
         )

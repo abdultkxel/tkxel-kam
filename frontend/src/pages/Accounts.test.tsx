@@ -110,9 +110,6 @@ describe('Accounts', () => {
   beforeEach(() => {
     window.localStorage.clear()
     useAccountStore.setState({
-      savedFilters: [
-        { id: 'view-risk', name: 'At-risk book', query: '', stage: '', risk: 'warning', segments: [], sort: 'name', direction: 'asc', layout: 'cards', creatorId: 'usr-001', shared: true },
-      ],
       segmentTags: ['Strategic', 'Enterprise', 'Growth', 'APAC', 'Tier-1'],
     })
   })
@@ -142,7 +139,7 @@ describe('Accounts', () => {
     expect(screen.getByText('account.manager.user@tkxel.com')).toBeInTheDocument()
     expect(screen.getAllByText('$1.3M').length).toBeGreaterThan(0)
 
-    await userEvent.type(screen.getByPlaceholderText(/account, am, or email/i), 'Cafe')
+    await userEvent.type(screen.getByPlaceholderText(/account name, am, or email/i), 'Cafe')
     await userEvent.selectOptions(screen.getByLabelText(/stage/i), 'Onboarding')
     await userEvent.selectOptions(screen.getByLabelText(/risk/i), 'critical')
     await userEvent.selectOptions(screen.getByLabelText(/sort/i), 'commercial_value')
@@ -161,50 +158,6 @@ describe('Accounts', () => {
         url.includes('page=2')
       )
     })).toBe(true))
-  })
-
-  it('saves and reapplies account sorting and layout in saved views', async () => {
-    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
-      const url = new URL(String(input))
-      if (url.pathname.endsWith('/api/onboarding/drafts')) return jsonResponse(draftPage())
-      const page = Number(url.searchParams.get('page') ?? '1')
-      const pageSize = Number(url.searchParams.get('page_size') ?? '12')
-      return jsonResponse(paginated(page, pageSize))
-    })
-    vi.stubGlobal('fetch', fetchMock)
-
-    render(
-      <MemoryRouter initialEntries={['/accounts']}>
-        <Routes>
-          <Route path="/accounts" element={<Accounts />} />
-          <Route path="/accounts/:id" element={<div>Account detail</div>} />
-        </Routes>
-      </MemoryRouter>,
-    )
-
-    expect(await screen.findByText('Cafe Zupas')).toBeInTheDocument()
-    await userEvent.click(screen.getByRole('button', { name: /table view/i }))
-    await userEvent.selectOptions(screen.getByLabelText(/sort/i), 'owner_name')
-    await userEvent.selectOptions(screen.getByLabelText(/order/i), 'desc')
-    await userEvent.click(screen.getByRole('button', { name: /save view/i }))
-    await userEvent.clear(screen.getByLabelText(/saved view name/i))
-    await userEvent.type(screen.getByLabelText(/saved view name/i), 'Owner sort view')
-    await userEvent.click(screen.getByRole('button', { name: /^save$/i }))
-
-    await userEvent.selectOptions(screen.getByLabelText(/sort/i), 'name')
-    await userEvent.selectOptions(screen.getByLabelText(/order/i), 'asc')
-    await userEvent.click(screen.getByRole('button', { name: /owner sort view/i }))
-
-    await waitFor(() => expect(fetchMock.mock.calls.some(call => {
-      const url = String(call[0])
-      return (
-        url.includes('/api/accounts?') &&
-        url.includes('sort=owner_name') &&
-        url.includes('direction=desc') &&
-        url.includes('page=1')
-      )
-    })).toBe(true))
-    expect(screen.getByRole('button', { name: /table view/i })).toHaveAttribute('aria-pressed', 'true')
   })
 
   it('uses server-side sorting when sortable table headers are clicked', async () => {

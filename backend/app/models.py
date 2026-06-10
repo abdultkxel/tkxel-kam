@@ -213,6 +213,7 @@ class Account(Base):
     __tablename__ = "accounts"
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid4()))
+    account_number: Mapped[int | None] = mapped_column(Integer, unique=True, index=True, nullable=True)
     name: Mapped[str] = mapped_column(String(180), index=True, nullable=False)
     project_name: Mapped[str | None] = mapped_column(String(180), nullable=True)
     company_url: Mapped[str | None] = mapped_column(String(500), nullable=True)
@@ -2647,3 +2648,95 @@ class AiGatewayRun(Base):
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
     affected_records_json: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True, nullable=False, default=utc_now)
+
+
+class KamAiChatSession(Base):
+    __tablename__ = "kam_ai_chat_sessions"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid4()))
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True, nullable=False)
+    title: Mapped[str] = mapped_column(String(220), nullable=False, default="New KAM AI chat")
+    account_id: Mapped[str | None] = mapped_column(ForeignKey("accounts.id", ondelete="SET NULL"), index=True, nullable=True)
+    scope_json: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    status: Mapped[str] = mapped_column(String(40), index=True, nullable=False, default="active")
+    last_message_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), index=True, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utc_now, onupdate=utc_now)
+    archived_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    user: Mapped[User] = relationship()
+    account: Mapped[Account | None] = relationship()
+    messages: Mapped[list["KamAiChatMessage"]] = relationship(back_populates="session", cascade="all, delete-orphan")
+
+
+class KamAiChatMessage(Base):
+    __tablename__ = "kam_ai_chat_messages"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid4()))
+    session_id: Mapped[str] = mapped_column(ForeignKey("kam_ai_chat_sessions.id", ondelete="CASCADE"), index=True, nullable=False)
+    role: Mapped[str] = mapped_column(String(40), index=True, nullable=False)
+    content: Mapped[str] = mapped_column(Text, nullable=False)
+    status: Mapped[str] = mapped_column(String(40), index=True, nullable=False, default="complete")
+    intent: Mapped[str | None] = mapped_column(String(80), index=True, nullable=True)
+    confidence: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    model_provider: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    model_name: Mapped[str | None] = mapped_column(String(160), nullable=True)
+    token_usage_json: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    metadata_json: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    ai_gateway_run_id: Mapped[str | None] = mapped_column(ForeignKey("ai_gateway_runs.id", ondelete="SET NULL"), index=True, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True, nullable=False, default=utc_now)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    session: Mapped[KamAiChatSession] = relationship(back_populates="messages")
+    sources: Mapped[list["KamAiChatMessageSource"]] = relationship(back_populates="message", cascade="all, delete-orphan")
+    ai_gateway_run: Mapped[AiGatewayRun | None] = relationship()
+
+
+class KamAiChatMessageSource(Base):
+    __tablename__ = "kam_ai_chat_message_sources"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid4()))
+    message_id: Mapped[str] = mapped_column(ForeignKey("kam_ai_chat_messages.id", ondelete="CASCADE"), index=True, nullable=False)
+    account_id: Mapped[str | None] = mapped_column(ForeignKey("accounts.id", ondelete="SET NULL"), index=True, nullable=True)
+    account_name: Mapped[str | None] = mapped_column(String(180), nullable=True)
+    source_type: Mapped[str] = mapped_column(String(80), index=True, nullable=False)
+    source_record_id: Mapped[str] = mapped_column(String(80), index=True, nullable=False)
+    title: Mapped[str] = mapped_column(String(220), nullable=False)
+    excerpt: Mapped[str] = mapped_column(Text, nullable=False)
+    source_route: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    relevance_score: Mapped[float] = mapped_column(Float, nullable=False, default=0)
+    citation_index: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    metadata_json: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utc_now)
+
+    message: Mapped[KamAiChatMessage] = relationship(back_populates="sources")
+    account: Mapped[Account | None] = relationship()
+
+
+class KamAiSourceChunk(Base):
+    __tablename__ = "kam_ai_source_chunks"
+    __table_args__ = (UniqueConstraint("account_id", "source_type", "source_record_id", "chunk_hash", name="uq_kam_ai_source_chunks_identity"),)
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid4()))
+    account_id: Mapped[str] = mapped_column(ForeignKey("accounts.id", ondelete="CASCADE"), index=True, nullable=False)
+    source_type: Mapped[str] = mapped_column(String(80), index=True, nullable=False)
+    source_record_id: Mapped[str] = mapped_column(String(80), index=True, nullable=False)
+    source_route: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    title: Mapped[str] = mapped_column(String(220), nullable=False)
+    chunk_text: Mapped[str] = mapped_column(Text, nullable=False)
+    chunk_hash: Mapped[str] = mapped_column(String(64), index=True, nullable=False)
+    embedding_json: Mapped[list | None] = mapped_column(JSON, nullable=True)
+    embedding_provider: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    embedding_model: Mapped[str | None] = mapped_column(String(160), nullable=True)
+    embedding_dimensions: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    sensitivity_level: Mapped[str] = mapped_column(String(40), index=True, nullable=False, default="standard")
+    permission_module: Mapped[str | None] = mapped_column(String(120), index=True, nullable=True)
+    permission_action: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    source_trust_score: Mapped[int] = mapped_column(Integer, nullable=False, default=50)
+    metadata_json: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utc_now, onupdate=utc_now)
+    deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    account: Mapped[Account] = relationship()

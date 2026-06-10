@@ -5,6 +5,8 @@ from sqlalchemy.orm import Session, selectinload
 
 from app.models import Account, AccountOwner, AccountOwnershipHistory, KycSnapshot, Opportunity, SourceCitation, SourceDocument, User
 
+ACCOUNT_NUMBER_START = 100001
+
 
 class AccountRepository:
     def __init__(self, db: Session) -> None:
@@ -65,6 +67,7 @@ class AccountRepository:
             "lifecycle_status": Account.lifecycle_status,
             "risk_status": Account.risk_status,
             "owner_name": primary_owner_name,
+            "account_number": Account.account_number,
             "segment": Account.segment,
             "commercial_value": Account.commercial_value,
             "health": Account.health_overall,
@@ -101,7 +104,22 @@ class AccountRepository:
     def find_duplicate_by_name(self, name: str) -> Account | None:
         return self.db.scalar(select(Account).where(func.lower(Account.name) == name.strip().lower()))
 
+    def find_duplicate_by_company_url(self, company_url: str | None) -> Account | None:
+        if not company_url or not company_url.strip():
+            return None
+        return self.db.scalar(select(Account).where(func.lower(Account.company_url) == company_url.strip().lower()))
+
+    def next_account_number(self) -> int:
+        current = self.db.scalar(select(func.max(Account.account_number))) or (ACCOUNT_NUMBER_START - 1)
+        return max(int(current) + 1, ACCOUNT_NUMBER_START)
+
+    def assign_account_number(self, account: Account) -> Account:
+        if account.account_number is None:
+            account.account_number = self.next_account_number()
+        return account
+
     def save(self, account: Account, refresh: bool = False) -> Account:
+        self.assign_account_number(account)
         self.db.add(account)
         self.db.flush()
         if refresh:
@@ -306,19 +324,24 @@ class AccountRepository:
     ) -> list:
         conditions = []
         if search and search.strip():
-            term = f"%{search.strip()}%"
+            search_value = search.strip()
+            term = f"%{search_value}%"
+            numeric_reference = "".join(character for character in search_value if character.isdigit())
+            search_conditions = [
+                Account.name.ilike(term),
+                Account.project_name.ilike(term),
+                Account.service_context.ilike(term),
+                Account.owners.any(
+                    and_(
+                        AccountOwner.is_active.is_(True),
+                        or_(AccountOwner.user_name.ilike(term), AccountOwner.user_email.ilike(term)),
+                    )
+                ),
+            ]
+            if numeric_reference:
+                search_conditions.append(Account.account_number == int(numeric_reference))
             conditions.append(
-                or_(
-                    Account.name.ilike(term),
-                    Account.project_name.ilike(term),
-                    Account.service_context.ilike(term),
-                    Account.owners.any(
-                        and_(
-                            AccountOwner.is_active.is_(True),
-                            or_(AccountOwner.user_name.ilike(term), AccountOwner.user_email.ilike(term)),
-                        )
-                    ),
-                )
+                or_(*search_conditions)
             )
         if lifecycle_status:
             conditions.append(Account.lifecycle_status == lifecycle_status)
@@ -326,7 +349,9 @@ class AccountRepository:
             conditions.append(Account.segment == segment)
         if region:
             conditions.append(Account.region == region)
-        if risk_status:
+        if risk_status == "at_risk":
+            conditions.append(Account.risk_status.in_(("warning", "critical")))
+        elif risk_status:
             conditions.append(Account.risk_status == risk_status)
         for role, user_id in (
             ("primary_am", primary_am),

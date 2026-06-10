@@ -13,6 +13,7 @@ from app.schemas import (
     OnboardingDraftRead,
     OnboardingDraftRejectRequest,
     OnboardingDraftUpdateRequest,
+    OnboardingUploadExtractionRead,
     SourceDocumentExtractionRead,
     UserRead,
 )
@@ -116,12 +117,44 @@ def create_draft(
 
 
 @router.post(
+    "/uploads/extract",
+    response_model=OnboardingUploadExtractionRead,
+    summary="Extract account intake fields from uploaded source files",
+    description=(
+        "Temporarily reads uploaded PDF/DOCX/TXT/CSV/XLSX/XLS source documents and returns inferred account intake "
+        "fields for form auto-fill. This endpoint does not create an onboarding draft or persist source documents."
+    ),
+    responses={
+        400: {"description": "No file was supplied, file type is unsupported, or extraction cannot read the upload."},
+        401: {"description": "Missing, invalid, or expired bearer token."},
+        403: {"description": "Authenticated user cannot create onboarding drafts."},
+        422: {"description": "Field-level validation errors, including invalid LinkedIn URL."},
+    },
+)
+async def extract_upload_fields(
+    current_user: Annotated[User, Depends(get_current_user)],
+    service: Annotated[OnboardingService, Depends(get_onboarding_service)],
+    files: Annotated[list[UploadFile], File(description="One or more PDF, DOCX, TXT, CSV, XLSX, or XLS source documents to inspect.")],
+    manager_name: Annotated[str | None, Form(description="Optional primary account manager display name for owner context.")] = None,
+    manager_email: Annotated[str | None, Form(description="Optional primary account manager email for owner context.")] = None,
+    linkedin_url: Annotated[str | None, Form(description="Optional company LinkedIn profile URL.")] = None,
+) -> OnboardingUploadExtractionRead:
+    return await service.extract_fields_from_uploads(
+        files,
+        current_user,
+        manager_name=manager_name,
+        manager_email=manager_email,
+        linkedin_url=linkedin_url,
+    )
+
+
+@router.post(
     "/drafts/upload",
     response_model=OnboardingDraftRead,
     status_code=status.HTTP_201_CREATED,
     summary="Create onboarding draft from uploaded SOW or charter files",
     description=(
-        "Stores uploaded source documents, extracts readable PDF/DOCX/TXT text, and creates an onboarding draft from "
+        "Stores uploaded source documents, extracts readable PDF/DOCX/TXT/CSV/XLSX/XLS text, and creates an onboarding draft from "
         "document content instead of file names. Stored sources remain downloadable during review and after approval."
     ),
     responses={
@@ -134,7 +167,10 @@ def create_draft(
 async def create_draft_from_upload(
     current_user: Annotated[User, Depends(get_current_user)],
     service: Annotated[OnboardingService, Depends(get_onboarding_service)],
-    files: Annotated[list[UploadFile], File(description="One or more PDF, DOCX, TXT, or CSV source documents.")],
+    files: Annotated[list[UploadFile], File(description="One or more PDF, DOCX, TXT, CSV, XLSX, or XLS source documents.")],
+    account_name: Annotated[str | None, Form(description="Reviewed account name submitted from the account creation form.")] = None,
+    project_name: Annotated[str | None, Form(description="Reviewed project name submitted from the account creation form.")] = None,
+    company_url: Annotated[str | None, Form(description="Reviewed company website URL submitted from the account creation form.")] = None,
     manager_id: Annotated[str | None, Form(description="Optional primary account manager user ID.")] = None,
     manager_name: Annotated[str | None, Form(description="Optional primary account manager display name.")] = None,
     manager_email: Annotated[str | None, Form(description="Optional primary account manager email.")] = None,
@@ -143,6 +179,9 @@ async def create_draft_from_upload(
     return await service.create_draft_from_uploads(
         files,
         current_user,
+        account_name=account_name,
+        project_name=project_name,
+        company_url=company_url,
         manager_id=manager_id,
         manager_name=manager_name,
         manager_email=manager_email,

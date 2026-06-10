@@ -1,5 +1,5 @@
 import * as Dialog from '@radix-ui/react-dialog'
-import { AlertTriangle, Building2, ChevronLeft, ChevronRight, Download, FileText, LayoutGrid, Loader2, Save, Table2, Tags, Upload, UserRound, X } from 'lucide-react'
+import { AlertTriangle, Building2, ChevronLeft, ChevronRight, Download, FileText, LayoutGrid, Loader2, Table2, Tags, Upload, UserRound, X } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { AccountCard } from '@/components/account/AccountCard'
@@ -13,7 +13,7 @@ import { Column, SortableTable } from '@/components/ui/SortableTable'
 import { useAuth } from '@/contexts/AuthContext'
 import { users } from '@/data/mock'
 import { useRole } from '@/hooks/useRole'
-import { listAccounts, listOnboardingDrafts } from '@/services/accountWorkspace'
+import { listAccounts, listOnboardingAccountManagers, listOnboardingDrafts, type OnboardingAccountManager } from '@/services/accountWorkspace'
 import { useAccountStore } from '@/stores/accountStore'
 import { useTimelineStore } from '@/stores/timelineStore'
 import { Account } from '@/types/account'
@@ -51,8 +51,7 @@ export function Accounts() {
   const [error, setError] = useState('')
   const [view, setView] = useState<AccountLayout>('cards')
   const [selectedIds, setSelectedIds] = useState<string[]>([])
-  const [saveViewOpen, setSaveViewOpen] = useState(false)
-  const [draftViewName, setDraftViewName] = useState('')
+  const [accountManagers, setAccountManagers] = useState<OnboardingAccountManager[]>([])
   const [pagination, setPagination] = useState({ total: 0, page: 1, pageSize: 12, pages: 1 })
   const [params, setParams] = useSearchParams()
   const navigate = useNavigate()
@@ -61,15 +60,13 @@ export function Accounts() {
   const accounts = useAccountStore(state => state.accounts)
   const setAccounts = useAccountStore(state => state.setAccounts)
   const segmentTags = useAccountStore(state => state.segmentTags)
-  const savedFilters = useAccountStore(state => state.savedFilters)
-  const saveFilter = useAccountStore(state => state.saveFilter)
-  const toggleFilterShared = useAccountStore(state => state.toggleFilterShared)
   const assignOwner = useAccountStore(state => state.assignOwner)
   const addTagToAccounts = useAccountStore(state => state.addTagToAccounts)
   const timelineEntries = useTimelineStore(state => state.entries)
   const search = params.get('q') ?? ''
   const stage = params.get('stage') ?? ''
   const risk = params.get('risk') ?? ''
+  const primaryAm = params.get('primary_am') ?? params.get('am_id') ?? params.get('owner') ?? ''
   const segments = params.getAll('segment')
   const segmentsKey = segments.join('|')
   const requestedSort = params.get('sort') ?? 'name'
@@ -117,37 +114,7 @@ export function Accounts() {
     setSelectedIds([])
   }
 
-  function applySavedView(id: string) {
-    const viewConfig = savedFilters.find(filter => filter.id === id)
-    if (!viewConfig) return
-    const next = new URLSearchParams()
-    if (viewConfig.query) next.set('q', viewConfig.query)
-    if (viewConfig.stage) next.set('stage', viewConfig.stage)
-    if (viewConfig.risk) next.set('risk', viewConfig.risk)
-    viewConfig.segments.forEach(item => next.append('segment', item))
-    if (viewConfig.sort) next.set('sort', viewConfig.sort)
-    if (viewConfig.direction) next.set('direction', viewConfig.direction)
-    next.set('page', '1')
-    if (viewConfig.layout) setView(viewConfig.layout)
-    setParams(next, { replace: true })
-  }
-
-  function openSaveView() {
-    setSaveViewOpen(true)
-    if (!draftViewName) setDraftViewName(search || stage || risk || segments[0] || (sort !== 'name' ? 'Sorted portfolio' : view === 'table' ? 'Table view' : 'Portfolio view'))
-  }
-
-  function saveCurrentFilters() {
-    const name = draftViewName.trim()
-    if (!name) return
-    saveFilter({ name, query: search, stage, risk, segments, sort, direction, layout: view, creatorId: user.id, shared: user.role === 'admin' || user.role === 'super_admin' })
-    setDraftViewName('')
-    setSaveViewOpen(false)
-  }
-
-  const visibleSavedViews = savedFilters.filter(filter => filter.shared || filter.creatorId === user.id)
-  const activeFilterCount = [search, stage, risk].filter(Boolean).length + segments.length
-  const activeViewStateCount = activeFilterCount + (sort !== 'name' ? 1 : 0) + (direction !== 'asc' ? 1 : 0) + (view !== 'cards' ? 1 : 0)
+  const activeFilterCount = [search, stage, risk, primaryAm].filter(Boolean).length + segments.length
 
   const columns: Column<Account>[] = [
     { key: 'name', header: 'Account', sortable: true, render: account => <span className="font-semibold text-ink">{account.name}</span> },
@@ -197,10 +164,9 @@ export function Accounts() {
     const rows = selectedIds.map(id => accounts.find(account => account.id === id)).filter(Boolean) as Account[]
     const csvRows = rows.map(account => {
       const lastActivity = timelineEntries.filter(entry => entry.accountId === account.id).sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())[0]?.timestamp ?? ''
-      const openEscalations = timelineEntries.filter(entry => entry.accountId === account.id && entry.module === 'escalation' && !entry.title.toLowerCase().includes('closed')).length
-      return [account.name, account.stage, account.health.overall, account.arr, account.ownerName, lastActivity, openEscalations].join(',')
+      return [account.name, account.stage, account.health.overall, account.arr, account.ownerName, lastActivity].join(',')
     })
-    const blob = new Blob([['name,stage,health_score,arr,am,last_activity,open_escalations', ...csvRows].join('\n')], { type: 'text/csv' })
+    const blob = new Blob([['name,stage,health_score,arr,am,last_activity', ...csvRows].join('\n')], { type: 'text/csv' })
     const link = document.createElement('a')
     link.href = URL.createObjectURL(blob)
     link.download = 'kam-account-export.csv'
@@ -213,7 +179,8 @@ export function Accounts() {
     const query = new URLSearchParams()
     if (search) query.set('search', search)
     if (stage) query.set('lifecycle_status', stage)
-    if (risk) query.set('risk_status', risk === 'at_risk' ? 'critical' : risk)
+    if (risk) query.set('risk_status', risk)
+    if (primaryAm) query.set('primary_am', primaryAm)
     if (segments[0]) query.set('segment', segments[0])
     query.set('sort', sort)
     query.set('direction', direction)
@@ -247,7 +214,25 @@ export function Accounts() {
     return () => {
       active = false
     }
-  }, [canSeeDraftAccounts, direction, page, risk, search, segmentsKey, setAccounts, sort, stage, token])
+  }, [canSeeDraftAccounts, direction, page, primaryAm, risk, search, segmentsKey, setAccounts, sort, stage, token])
+
+  useEffect(() => {
+    if (!token || !privileged) {
+      setAccountManagers([])
+      return
+    }
+    let active = true
+    listOnboardingAccountManagers(token)
+      .then(managers => {
+        if (active) setAccountManagers(managers)
+      })
+      .catch(() => {
+        if (active) setAccountManagers([])
+      })
+    return () => {
+      active = false
+    }
+  }, [privileged, token])
 
   return (
     <div>
@@ -263,31 +248,13 @@ export function Accounts() {
         }
       />
 
-      {visibleSavedViews.length ? (
-        <section className="mb-4 flex flex-col gap-3 rounded-lg border border-surface-border bg-white p-3 sm:flex-row sm:items-center">
-          <span className="shrink-0 text-xs font-semibold uppercase tracking-wider text-ink-secondary">Saved views</span>
-          <div className="flex min-w-0 flex-wrap gap-2">
-            {visibleSavedViews.map(filter => (
-              <div key={filter.id} className="inline-flex min-h-[44px] items-center gap-1 rounded-md border border-surface-border bg-surface-secondary p-1">
-                <button className="min-h-[44px] rounded-md px-3 text-sm font-semibold text-ink transition-colors hover:bg-white" onClick={() => applySavedView(filter.id)}>{filter.name}</button>
-                {user.role === 'admin' || user.role === 'super_admin' ? (
-                  <button className="min-h-[44px] rounded-md px-2 text-xs font-semibold text-brand-blue transition-colors hover:bg-blue-tint-20" onClick={() => toggleFilterShared(filter.id)}>
-                    {filter.shared ? 'Shared' : 'Personal'}
-                  </button>
-                ) : null}
-              </div>
-            ))}
-          </div>
-        </section>
-      ) : null}
-
       <FilterBar
         onClear={clearFilters}
         contentClassName="lg:grid-cols-[minmax(220px,1fr)_minmax(150px,0.7fr)_minmax(150px,0.7fr)] xl:grid-cols-[minmax(240px,1.1fr)_160px_160px_minmax(320px,1fr)_auto]"
       >
         <label className="space-y-1">
           <span className="text-xs font-semibold uppercase tracking-wider text-ink-secondary">Search</span>
-          <input className="tk-input" value={search} onChange={event => setFilter('q', event.target.value)} placeholder="Account, AM, or email" />
+          <input className="tk-input" value={search} onChange={event => setFilter('q', event.target.value)} placeholder="Account name, AM, or email" />
         </label>
         <label className="space-y-1">
           <span className="text-xs font-semibold uppercase tracking-wider text-ink-secondary">Stage</span>
@@ -338,6 +305,15 @@ export function Accounts() {
             })}
           </div>
         </div>
+        {privileged ? (
+          <label className="space-y-1">
+            <span className="text-xs font-semibold uppercase tracking-wider text-ink-secondary">Account manager</span>
+            <select className="tk-input" value={primaryAm} onChange={event => setFilter('primary_am', event.target.value)}>
+              <option value="">All account managers</option>
+              {accountManagers.map(manager => <option key={manager.id} value={manager.id}>{manager.name}</option>)}
+            </select>
+          </label>
+        ) : null}
       </FilterBar>
 
       <section className="mb-4 flex flex-col gap-3 rounded-lg border border-surface-border bg-white p-3 lg:flex-row lg:items-center lg:justify-between">
@@ -383,23 +359,6 @@ export function Accounts() {
                 <Table2 className="h-4 w-4" />
               </button>
             </div>
-            {saveViewOpen ? (
-              <div className="flex flex-col gap-2 rounded-lg border border-surface-border bg-surface-secondary p-2 sm:flex-row sm:items-center">
-                <input className="tk-input sm:w-[220px]" value={draftViewName} onChange={event => setDraftViewName(event.target.value)} placeholder="View name" aria-label="Saved view name" />
-                <button className="tk-button-primary" onClick={saveCurrentFilters} disabled={!draftViewName.trim()}>
-                  <Save className="h-4 w-4" />
-                  Save
-                </button>
-                <button className="tk-button-secondary" onClick={() => setSaveViewOpen(false)}>
-                  Cancel
-                </button>
-              </div>
-            ) : (
-              <button className="tk-button-secondary" onClick={openSaveView} disabled={!activeViewStateCount}>
-                <Save className="h-4 w-4" />
-                Save view
-              </button>
-            )}
         </div>
       </section>
 
@@ -427,7 +386,7 @@ export function Accounts() {
           sort={tableSort}
           onSortChange={handleTableSort}
           onRowClick={account => navigate(account.detailPath ?? `/accounts/${account.id}`)}
-          selection={privileged ? { selectedIds, onToggle: toggleSelected, onToggleAll: toggleAll } : undefined}
+          selection={privileged ? { selectedIds, onToggle: toggleSelected, onToggleAll: toggleAll, getLabel: account => account.name } : undefined}
         />
       )}
       {!loading && !error && pagination.pages > 1 ? (

@@ -34,6 +34,7 @@ from app.schemas import (
 )
 from app.services.account_access import AccountAccessService, GLOBAL_EDIT_ROLES
 from app.services.audit import AuditService
+from app.services.in_app_notifications import InAppNotificationService
 from app.services.kyc_document_extraction import KycDocumentExtractionService
 from app.services.source_document_contract import SENSITIVE_SOURCE_TYPES
 from app.services.sow_extraction import SowExtractionService
@@ -51,6 +52,7 @@ class AccountService:
         self.access = AccountAccessService(self.accounts, RbacRepository(db))
         self.audit = AuditService(AuditRepository(db))
         self.timeline = TimelineService(TimelineRepository(db))
+        self.in_app_notifications = InAppNotificationService(db)
 
     def list_accounts(
         self,
@@ -162,6 +164,19 @@ class AccountService:
             source_record_type="account",
             source_record_route=f"/accounts/{account.id}",
         )
+        self.in_app_notifications.queue_many(
+            self.in_app_notifications.account_owners(account),
+            trigger="account_lifecycle_changed",
+            title=f"Account status changed: {account.name}",
+            body=f"Lifecycle status changed from {before['lifecycle_status']} to {account.lifecycle_status}.",
+            account=account,
+            source_record_type="account",
+            source_record_id=account.id,
+            source_record_route=f"/accounts/{account.id}",
+            priority="medium",
+            dedupe_scope=f"lifecycle:{account.lifecycle_status}:{datetime.now(timezone.utc).isoformat()}",
+            exclude_user_ids={current_user.id},
+        )
         self.accounts.commit()
         return self._account_read(account)
 
@@ -200,6 +215,9 @@ class AccountService:
         self.accounts.add_owner(owner)
         self._record_owner_history(account, owner, previous, user, current_user, payload.rationale, source="manual")
         self._log_owner_change(account, current_user, payload.rationale, previous, owner)
+        self._notify_owner_assigned(account, owner, current_user)
+        if previous and previous.user_id and previous.user_id != owner.user_id:
+            self._notify_owner_changed(account, owner, previous, current_user)
         self.accounts.commit()
         return AccountOwnerRead.model_validate(owner)
 
@@ -207,6 +225,8 @@ class AccountService:
         account = self._get_account_or_404(account_id)
         self.access.require_account_assign(current_user, account)
         owner = self._get_owner_for_account(owner_id, account_id)
+        previous_user_id = owner.user_id
+        previous_user_name = owner.user_name
         previous_owner_snapshot = {"user_id": owner.user_id, "user_name": owner.user_name, "ownership_role": owner.ownership_role, "is_active": owner.is_active}
         previous_for_history = owner
         new_user = None
@@ -239,6 +259,11 @@ class AccountService:
             )
         )
         self._log_owner_change(account, current_user, payload.rationale, previous_for_history, owner)
+        if previous_user_id != owner.user_id:
+            previous_user = self.in_app_notifications.active_user(previous_user_id)
+            self._notify_owner_changed(account, owner, AccountOwner(user_id=previous_user_id, user_name=previous_user_name, ownership_role=previous_owner_snapshot["ownership_role"]), current_user, previous_user=previous_user)
+        elif payload.is_active is False:
+            self._notify_owner_removed(account, owner, current_user)
         self.accounts.commit()
         return AccountOwnerRead.model_validate(owner)
 
@@ -267,6 +292,7 @@ class AccountService:
             )
         )
         self._log_owner_change(account, current_user, reason, owner, None)
+        self._notify_owner_removed(account, owner, current_user)
         self.accounts.commit()
         return MessageResponse(message="Owner removed successfully")
 
@@ -359,6 +385,7 @@ class AccountService:
             source_record_type="source_document",
             source_record_route=f"/accounts/{account_id}?tab=documents",
         )
+        self._notify_attachment_added(account, document, current_user)
         self.accounts.commit()
         return SourceDocumentRead.model_validate(document)
 
@@ -379,10 +406,6 @@ class AccountService:
             raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Source type is not supported for KYC extraction")
         stored = await ContentStorageService().save_upload(upload)
         checksum = self.file_checksum_for_upload(stored.file_path)
-        duplicate = self.accounts.find_source_document_by_checksum(checksum, account_id=account_id) if checksum else None
-        if duplicate:
-            ContentStorageService().delete_stored_file(stored)
-            raise self._duplicate_source_exception(duplicate, scope="account")
         document = SourceDocument(
             account_id=account_id,
             title=(title or stored.file_name).strip(),
@@ -439,6 +462,8 @@ class AccountService:
                 actor=current_user,
                 after_value={"extraction_status": document.extraction_status, "ocr_status": document.ocr_status, "pages": document.pages},
             )
+        self._notify_attachment_added(account, document, current_user)
+        self._notify_source_document_status(account, document, current_user)
         self.accounts.commit()
         return SourceDocumentRead.model_validate(document)
 
@@ -460,6 +485,7 @@ class AccountService:
             actor=current_user,
             after_value={"extraction_status": document.extraction_status, "ocr_status": document.ocr_status, "pages": document.pages},
         )
+        self._notify_source_document_status(account, document, current_user)
         self.accounts.commit()
         return SourceDocumentExtractionRead.model_validate(extraction)
 
@@ -534,9 +560,110 @@ class AccountService:
             actor=current_user,
             before_value={"title": document.title, "source_type": document.source_type},
         )
+        self.in_app_notifications.queue_many(
+            self.in_app_notifications.account_owners(account),
+            trigger="account_attachment_removed",
+            title=f"Source removed: {document.title}",
+            body=f"{document.source_type.replace('_', ' ')} source was removed from {account.name}.",
+            account=account,
+            source_record_type="source_document",
+            source_record_id=document.id,
+            source_record_route=f"/accounts/{account.id}?tab=documents",
+            priority="medium",
+            exclude_user_ids={current_user.id},
+        )
         self.accounts.delete_attachment(document)
         self.accounts.commit()
         return MessageResponse(message="Attachment deleted successfully")
+
+    def _notify_owner_assigned(self, account: Account, owner: AccountOwner, current_user: User) -> None:
+        self.in_app_notifications.queue(
+            recipient=self.in_app_notifications.active_user(owner.user_id),
+            trigger="account_owner_assigned",
+            title=f"You were assigned to {account.name}",
+            body=f"You were assigned as {owner.ownership_role.replace('_', ' ')} for {account.name}.",
+            account=account,
+            source_record_type="account_owner",
+            source_record_id=owner.id,
+            source_record_route=f"/accounts/{account.id}",
+            priority="medium",
+            dedupe_scope="assigned",
+        )
+
+    def _notify_owner_changed(self, account: Account, owner: AccountOwner, previous: AccountOwner, current_user: User, *, previous_user: User | None = None) -> None:
+        recipients = [self.in_app_notifications.active_user(owner.user_id), previous_user or self.in_app_notifications.active_user(previous.user_id)]
+        self.in_app_notifications.queue_many(
+            recipients,
+            trigger="account_owner_changed",
+            title=f"Owner changed for {account.name}",
+            body=f"{owner.ownership_role.replace('_', ' ')} moved from {previous.user_name or 'previous owner'} to {owner.user_name or 'new owner'}.",
+            account=account,
+            source_record_type="account_owner",
+            source_record_id=owner.id,
+            source_record_route=f"/accounts/{account.id}",
+            priority="medium",
+            dedupe_scope=f"changed:{datetime.now(timezone.utc).isoformat()}",
+            exclude_user_ids={current_user.id},
+        )
+
+    def _notify_owner_removed(self, account: Account, owner: AccountOwner, current_user: User) -> None:
+        self.in_app_notifications.queue_many(
+            [self.in_app_notifications.active_user(owner.user_id), *self.in_app_notifications.admins()],
+            trigger="account_owner_removed",
+            title=f"Owner removed from {account.name}",
+            body=f"{owner.user_name or 'An owner'} was removed as {owner.ownership_role.replace('_', ' ')} for {account.name}.",
+            account=account,
+            source_record_type="account_owner",
+            source_record_id=owner.id,
+            source_record_route=f"/accounts/{account.id}",
+            priority="high",
+            dedupe_scope=f"removed:{datetime.now(timezone.utc).isoformat()}",
+            exclude_user_ids={current_user.id},
+        )
+
+    def _notify_attachment_added(self, account: Account, document: SourceDocument, current_user: User) -> None:
+        self.in_app_notifications.queue_many(
+            self.in_app_notifications.account_owners(account),
+            trigger="account_attachment_added",
+            title=f"Source uploaded: {document.title}",
+            body=f"{document.source_type.replace('_', ' ')} source was uploaded for {account.name}.",
+            account=account,
+            source_record_type="source_document",
+            source_record_id=document.id,
+            source_record_route=f"/accounts/{account.id}?tab=documents",
+            priority="low",
+            exclude_user_ids={current_user.id},
+        )
+
+    def _notify_source_document_status(self, account: Account, document: SourceDocument, current_user: User) -> None:
+        recipients = [self.in_app_notifications.active_user(document.uploaded_by_id), *self.in_app_notifications.account_owners(account)]
+        if document.extraction_status in {"failed", "error"}:
+            self.in_app_notifications.queue_many(
+                recipients,
+                trigger="source_document_failed",
+                title=f"Source extraction failed: {document.title}",
+                body=document.extraction_error or "The source document could not be extracted. Review the file and retry extraction.",
+                account=account,
+                source_record_type="source_document",
+                source_record_id=document.id,
+                source_record_route=f"/accounts/{account.id}?tab=documents",
+                priority="high",
+                dedupe_scope=f"failed:{document.updated_at.isoformat() if document.updated_at else document.id}",
+            )
+            return
+        if document.extraction_status in {"needs_review", "ocr_required"} or (document.confidence is not None and document.confidence < 70):
+            self.in_app_notifications.queue_many(
+                recipients,
+                trigger="source_document_low_confidence",
+                title=f"Source needs review: {document.title}",
+                body="Document extraction completed with low confidence or requires manual review before it is used for KYC.",
+                account=account,
+                source_record_type="source_document",
+                source_record_id=document.id,
+                source_record_route=f"/accounts/{account.id}?tab=documents",
+                priority="medium",
+                dedupe_scope=f"review:{document.updated_at.isoformat() if document.updated_at else document.id}",
+            )
 
     def _get_attachment_for_account(self, account_id: str, attachment_id: str) -> SourceDocument:
         document = self.accounts.get_attachment(attachment_id)
@@ -562,22 +689,6 @@ class AccountService:
     @staticmethod
     def file_checksum_for_upload(path: str) -> str | None:
         return AccountService._file_checksum(path)
-
-    @staticmethod
-    def _duplicate_source_exception(document: SourceDocument, *, scope: str) -> HTTPException:
-        return HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail={
-                "message": "This source file was already uploaded. Reuse the existing source document or upload a different file.",
-                "duplicate_scope": scope,
-                "existing_document_id": document.id,
-                "existing_account_id": document.account_id,
-                "existing_draft_id": document.draft_id,
-                "existing_title": document.title,
-                "existing_file_name": document.file_name,
-                "checksum_sha256": document.checksum_sha256,
-            },
-        )
 
     def _get_account_or_404(self, account_id: str) -> Account:
         account = self.accounts.get_by_id(account_id)
@@ -652,6 +763,7 @@ class AccountService:
         primary = next((owner for owner in owners if owner.ownership_role == "primary_am"), None)
         return AccountRead(
             id=account.id,
+            account_number=account.account_number,
             name=account.name,
             project_name=account.project_name,
             company_url=account.company_url,

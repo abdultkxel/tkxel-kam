@@ -2,7 +2,7 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, Query, status
 
-from app.dependencies import get_ai_assistance_service, get_current_user
+from app.dependencies import get_ai_assistance_service, get_current_user, get_kam_ai_chat_service
 from app.models import User
 from app.schemas import (
     AiAccountBriefResponse,
@@ -23,10 +23,119 @@ from app.schemas import (
     AiTimelineNoteRequest,
     AiVocabularyTermRead,
     AiVocabularyTermRequest,
+    KamAiChatMessageCreateRequest,
+    KamAiChatSessionCreateRequest,
+    KamAiChatSessionDetailRead,
+    KamAiChatSessionPageRead,
+    KamAiChatSessionUpdateRequest,
+    KamAiIndexStatusRead,
+    KamAiReindexResponse,
 )
 from app.services.ai_assistance import AiAssistanceService
+from app.services.kam_ai_chat import KamAiChatService
 
 router = APIRouter(prefix="/api", tags=["AI Assistance"])
+
+
+@router.get(
+    "/ai/chat-sessions",
+    response_model=KamAiChatSessionPageRead,
+    summary="List KAM AI chat sessions",
+    description="Lists the logged-in user's persisted KAM AI chat sessions with pagination.",
+)
+def list_kam_ai_chat_sessions(
+    current_user: Annotated[User, Depends(get_current_user)],
+    service: Annotated[KamAiChatService, Depends(get_kam_ai_chat_service)],
+    include_archived: bool = False,
+    page: Annotated[int, Query(ge=1)] = 1,
+    page_size: Annotated[int, Query(ge=1, le=100)] = 25,
+) -> KamAiChatSessionPageRead:
+    return service.list_sessions(current_user, page=page, page_size=page_size, include_archived=include_archived)
+
+
+@router.post(
+    "/ai/chat-sessions",
+    response_model=KamAiChatSessionDetailRead,
+    status_code=status.HTTP_201_CREATED,
+    summary="Create KAM AI chat session",
+    description="Creates a new persisted KAM AI chat session for GPT-style conversations.",
+)
+def create_kam_ai_chat_session(
+    payload: KamAiChatSessionCreateRequest,
+    current_user: Annotated[User, Depends(get_current_user)],
+    service: Annotated[KamAiChatService, Depends(get_kam_ai_chat_service)],
+) -> KamAiChatSessionDetailRead:
+    return service.create_session(payload, current_user)
+
+
+@router.get(
+    "/ai/chat-sessions/{session_id}",
+    response_model=KamAiChatSessionDetailRead,
+    summary="Read KAM AI chat session",
+    description="Loads a persisted KAM AI chat session with messages and citations.",
+)
+def read_kam_ai_chat_session(
+    session_id: str,
+    current_user: Annotated[User, Depends(get_current_user)],
+    service: Annotated[KamAiChatService, Depends(get_kam_ai_chat_service)],
+) -> KamAiChatSessionDetailRead:
+    return service.get_session(session_id, current_user)
+
+
+@router.patch(
+    "/ai/chat-sessions/{session_id}",
+    response_model=KamAiChatSessionDetailRead,
+    summary="Update KAM AI chat session",
+    description="Renames or archives a persisted KAM AI chat session.",
+)
+def update_kam_ai_chat_session(
+    session_id: str,
+    payload: KamAiChatSessionUpdateRequest,
+    current_user: Annotated[User, Depends(get_current_user)],
+    service: Annotated[KamAiChatService, Depends(get_kam_ai_chat_service)],
+) -> KamAiChatSessionDetailRead:
+    return service.update_session(session_id, payload, current_user)
+
+
+@router.post(
+    "/ai/chat-sessions/{session_id}/messages",
+    response_model=KamAiChatSessionDetailRead,
+    summary="Send KAM AI chat message",
+    description="Appends a user message, retrieves authorized source records with vector search, and appends an OpenAI-backed assistant response.",
+)
+def send_kam_ai_chat_message(
+    session_id: str,
+    payload: KamAiChatMessageCreateRequest,
+    current_user: Annotated[User, Depends(get_current_user)],
+    service: Annotated[KamAiChatService, Depends(get_kam_ai_chat_service)],
+) -> KamAiChatSessionDetailRead:
+    return service.send_message(session_id, payload, current_user)
+
+
+@router.post(
+    "/admin/ai/reindex",
+    response_model=KamAiReindexResponse,
+    summary="Reindex KAM AI source records",
+    description="Admin/configure-only endpoint that refreshes KAM AI source chunks for vector search.",
+)
+def reindex_kam_ai_sources(
+    current_user: Annotated[User, Depends(get_current_user)],
+    service: Annotated[KamAiChatService, Depends(get_kam_ai_chat_service)],
+) -> KamAiReindexResponse:
+    return service.reindex(current_user)
+
+
+@router.get(
+    "/admin/ai/index-status",
+    response_model=KamAiIndexStatusRead,
+    summary="Read KAM AI index status",
+    description="Returns KAM AI source chunk count and embedding configuration.",
+)
+def get_kam_ai_index_status(
+    current_user: Annotated[User, Depends(get_current_user)],
+    service: Annotated[KamAiChatService, Depends(get_kam_ai_chat_service)],
+) -> KamAiIndexStatusRead:
+    return service.index_status(current_user)
 
 
 @router.post(

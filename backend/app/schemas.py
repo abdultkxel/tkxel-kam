@@ -1548,6 +1548,19 @@ class OnboardingDraftRead(BaseModel):
     engagement_drafts: list[EngagementDraftRead] = Field(default_factory=list)
 
 
+class OnboardingUploadExtractionRead(BaseModel):
+    account_name: str = ""
+    project_name: str = ""
+    company_url: str | None = None
+    linkedin_url: str | None = None
+    confidence: int
+    missing_fields: list[str]
+    conflicts: list[str]
+    source_citation: str | None = None
+    source_file_names: list[str] = Field(default_factory=list)
+    extraction_status: ExtractionStatus
+
+
 class OnboardingDraftPageRead(BaseModel):
     items: list[OnboardingDraftRead]
     total: int
@@ -1825,6 +1838,7 @@ class AccountStatusUpdateRequest(BaseModel):
 
 class AccountRead(BaseModel):
     id: str
+    account_number: int | None = None
     name: str
     project_name: str | None = None
     company_url: str | None = None
@@ -2567,6 +2581,130 @@ class AiAssistanceSearchResponse(BaseModel):
     source_entries: list[AiAssistanceSourceRead] = Field(default_factory=list)
     document_results: list[TimelineAiDocumentResultRead] = Field(default_factory=list)
     run_id: str | None = None
+
+
+class KamAiChatSourceRead(BaseModel):
+    id: str
+    account_id: str | None = None
+    account_name: str | None = None
+    source_type: str
+    source_record_id: str
+    title: str
+    excerpt: str
+    source_route: str | None = None
+    relevance_score: float = 0
+    citation_index: int = 0
+    metadata_json: dict[str, Any] = Field(default_factory=dict)
+
+
+class KamAiChatMessageRead(BaseModel):
+    id: str
+    session_id: str
+    role: Literal["user", "assistant", "system"]
+    content: str
+    status: Literal["pending", "running", "complete", "failed"] = "complete"
+    intent: str | None = None
+    confidence: Literal["high", "medium", "low", "not_available"] | None = None
+    model_provider: str | None = None
+    model_name: str | None = None
+    token_usage_json: dict[str, Any] = Field(default_factory=dict)
+    metadata_json: dict[str, Any] = Field(default_factory=dict)
+    error_message: str | None = None
+    ai_gateway_run_id: str | None = None
+    sources: list[KamAiChatSourceRead] = Field(default_factory=list)
+    created_at: datetime
+    completed_at: datetime | None = None
+
+
+class KamAiChatSessionRead(BaseModel):
+    id: str
+    user_id: str
+    title: str
+    account_id: str | None = None
+    account_name: str | None = None
+    scope_json: list[str] = Field(default_factory=list)
+    status: str
+    message_count: int = 0
+    last_message_preview: str | None = None
+    last_message_at: datetime | None = None
+    created_at: datetime
+    updated_at: datetime
+    archived_at: datetime | None = None
+
+
+class KamAiChatSessionDetailRead(KamAiChatSessionRead):
+    messages: list[KamAiChatMessageRead] = Field(default_factory=list)
+
+
+class KamAiChatSessionPageRead(BaseModel):
+    items: list[KamAiChatSessionRead]
+    total: int
+    page: int
+    page_size: int
+    pages: int
+
+
+class KamAiChatSessionCreateRequest(BaseModel):
+    title: str | None = None
+    account_id: str | None = None
+    scopes: list[str] = Field(default_factory=lambda: ["timeline", "opportunities", "governance", "notes", "kyc", "documents"])
+
+    @field_validator("title")
+    @classmethod
+    def chat_title_is_valid(cls, value: str | None) -> str | None:
+        return optional_text(value, "KAM AI chat title", max_length=220)
+
+    @field_validator("scopes")
+    @classmethod
+    def chat_scopes_are_valid(cls, value: list[str]) -> list[str]:
+        return validate_string_list(value, "KAM AI chat scopes", max_items=20)
+
+
+class KamAiChatSessionUpdateRequest(BaseModel):
+    title: str | None = None
+    archived: bool | None = None
+
+    @field_validator("title")
+    @classmethod
+    def updated_chat_title_is_valid(cls, value: str | None) -> str | None:
+        return optional_text(value, "KAM AI chat title", max_length=220)
+
+
+class KamAiChatMessageCreateRequest(BaseModel):
+    content: str
+    account_id: str | None = None
+    scopes: list[str] = Field(default_factory=lambda: ["timeline", "opportunities", "governance", "notes", "kyc", "documents"])
+    document_search: bool = True
+    limit: int = 12
+
+    @field_validator("content")
+    @classmethod
+    def chat_message_is_valid(cls, value: str) -> str:
+        return optional_text(value, "KAM AI message", max_length=4000, min_length=2) or value
+
+    @field_validator("scopes")
+    @classmethod
+    def message_scopes_are_valid(cls, value: list[str]) -> list[str]:
+        return validate_string_list(value, "KAM AI chat scopes", max_items=20)
+
+    @field_validator("limit")
+    @classmethod
+    def message_limit_is_valid(cls, value: int) -> int:
+        return validate_positive_int(value, "KAM AI source limit", max_value=50)
+
+
+class KamAiIndexStatusRead(BaseModel):
+    source_chunks: int
+    embedding_provider: str
+    embedding_model: str
+    updated_at: datetime
+
+
+class KamAiReindexResponse(BaseModel):
+    indexed_chunks: int
+    account_count: int
+    embedding_provider: str
+    embedding_model: str
 
 
 class AiAccountBriefResponse(BaseModel):

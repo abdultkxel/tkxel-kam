@@ -408,7 +408,7 @@ function SourceLinks({ engagement }: { engagement: EngagementRecord }) {
         </div>
       ) : null}
       {engagement.sourceDocumentIds.length ? (
-        <ChipSection label="Source documents" items={engagement.sourceDocumentIds} empty="No source document IDs recorded." />
+        <DescriptionBlock title="Source documents" value={`${engagement.sourceDocumentIds.length} source document${engagement.sourceDocumentIds.length === 1 ? '' : 's'} linked to this engagement.`} />
       ) : null}
       {engagement.sourceCitation ? <DescriptionBlock title="Source citation" value={engagement.sourceCitation} /> : null}
     </>

@@ -25,6 +25,7 @@ from app.schemas import (
 from app.services.account_access import AccountAccessService, GLOBAL_EDIT_ROLES, GLOBAL_VIEW_ROLES
 from app.services.audit import AuditService
 from app.services.custom_fields import CustomFieldService
+from app.services.in_app_notifications import InAppNotificationService
 from app.services.timeline import TimelineService
 from app.services.user_management import page_count
 
@@ -46,6 +47,7 @@ class EscalationService:
         self.audit = AuditService(AuditRepository(db))
         self.timeline = TimelineService(TimelineRepository(db))
         self.custom_fields = CustomFieldService(db, CustomFieldRepository(db))
+        self.in_app_notifications = InAppNotificationService(db)
 
     def list_escalations(
         self,
@@ -134,6 +136,9 @@ class EscalationService:
             metadata={"severity": escalation.severity, "priority": escalation.priority},
         )
         self.audit.log(module="escalation_management", action="create", entity_type="escalation", entity_id=escalation.id, actor=current_user, after_value=self._snapshot(escalation))
+        self._notify_escalation(escalation, current_user, "escalation_opened", f"Escalation opened: {escalation.summary}", escalation.impact, priority="high")
+        if escalation.severity == "critical":
+            self._notify_escalation(escalation, current_user, "escalation_rca_required", f"RCA will be required: {escalation.summary}", "Critical escalations require RCA before closure.", priority="high")
         self.repository.commit()
         return self._read(escalation)
 
@@ -161,6 +166,10 @@ class EscalationService:
             escalation.watchlist = True
         self.repository.add_update(EscalationUpdate(escalation_id=escalation.id, update_type="status_change", body="Escalation fields updated.", actor_id=current_user.id, actor_name=current_user.full_name, metadata_json={"before": before, "after": self._snapshot(escalation)}))
         self.audit.log(module="escalation_management", action="update", entity_type="escalation", entity_id=escalation.id, actor=current_user, before_value=before, after_value=self._snapshot(escalation))
+        if before.get("owner_id") != escalation.owner_id:
+            self._notify_escalation(escalation, current_user, "escalation_owner_changed", f"Escalation owner changed: {escalation.summary}", "Escalation ownership changed.", priority="high", extra_recipients=[self.in_app_notifications.active_user(before.get("owner_id"))])
+        else:
+            self._notify_escalation(escalation, current_user, "escalation_update_added", f"Escalation updated: {escalation.summary}", "Escalation details were updated.", priority="medium")
         self.repository.commit()
         return self._read(escalation)
 
@@ -171,6 +180,7 @@ class EscalationService:
         self.repository.add_update(update)
         escalation.updated_at = datetime.now(timezone.utc)
         self.audit.log(module="escalation_management", action="add_update", entity_type="escalation", entity_id=escalation.id, actor=current_user, after_value={"update_type": update.update_type})
+        self._notify_escalation(escalation, current_user, "escalation_update_added", f"Escalation update: {escalation.summary}", payload.body, priority="medium", source_record_id=update.id)
         self.repository.commit()
         return EscalationUpdateRead.model_validate(update)
 
@@ -209,6 +219,7 @@ class EscalationService:
             source_record_route=f"/escalations?selected={escalation.id}",
         )
         self.audit.log(module="escalation_management", action="close", entity_type="escalation", entity_id=escalation.id, actor=current_user, before_value=before, after_value=self._snapshot(escalation), reason=payload.override_reason)
+        self._notify_escalation(escalation, current_user, "escalation_closed", f"Escalation closed: {escalation.summary}", payload.resolution_summary, priority="low")
         self.repository.commit()
         return self._read(escalation)
 
@@ -222,6 +233,7 @@ class EscalationService:
         escalation.closed_by_id = None
         self.repository.add_update(EscalationUpdate(escalation_id=escalation.id, update_type="reopen", body="Escalation reopened.", actor_id=current_user.id, actor_name=current_user.full_name))
         self.audit.log(module="escalation_management", action="reopen", entity_type="escalation", entity_id=escalation.id, actor=current_user, before_value=before, after_value=self._snapshot(escalation))
+        self._notify_escalation(escalation, current_user, "escalation_reopened", f"Escalation reopened: {escalation.summary}", "Escalation was reopened and requires attention.", priority="high")
         self.repository.commit()
         return self._read(escalation)
 
@@ -295,6 +307,39 @@ class EscalationService:
         if escalation is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Escalation was not found")
         return escalation
+
+    def _escalation_recipients(self, escalation: Escalation, extra_recipients: list[User | None] | None = None) -> list[User | None]:
+        return [
+            self.in_app_notifications.active_user(escalation.owner_id),
+            *self.in_app_notifications.account_owners(escalation.account),
+            *(extra_recipients or []),
+        ]
+
+    def _notify_escalation(
+        self,
+        escalation: Escalation,
+        current_user: User,
+        trigger: str,
+        title: str,
+        body: str,
+        *,
+        priority: str,
+        source_record_id: str | None = None,
+        extra_recipients: list[User | None] | None = None,
+    ) -> None:
+        self.in_app_notifications.queue_many(
+            self._escalation_recipients(escalation, extra_recipients),
+            trigger=trigger,
+            title=title,
+            body=body,
+            account=escalation.account,
+            source_record_type="escalation",
+            source_record_id=source_record_id or escalation.id,
+            source_record_route=f"/accounts/{escalation.account_id}?tab=timeline",
+            priority=priority,
+            dedupe_scope=f"{trigger}:{source_record_id or escalation.id}:{datetime.now(timezone.utc).isoformat()}",
+            exclude_user_ids={current_user.id},
+        )
 
     def _read(self, escalation: Escalation) -> EscalationRead:
         return EscalationRead.model_validate(escalation).model_copy(

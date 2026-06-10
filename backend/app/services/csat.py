@@ -16,6 +16,7 @@ from app.schemas import CSAT_CATEGORY_KEYS, CsatScoreCreateRequest, CsatScorePag
 from app.services.account_access import AccountAccessService, GLOBAL_VIEW_ROLES
 from app.services.audit import AuditService
 from app.services.email_domains import field_validation_error
+from app.services.in_app_notifications import InAppNotificationService
 from app.services.timeline import TimelineService
 from app.services.user_management import page_count
 
@@ -38,6 +39,7 @@ class CsatService:
         self.access = AccountAccessService(self.accounts, RbacRepository(db))
         self.audit = AuditService(AuditRepository(db))
         self.timeline = TimelineService(TimelineRepository(db))
+        self.in_app_notifications = InAppNotificationService(db)
 
     def list_scores(
         self,
@@ -144,6 +146,7 @@ class CsatService:
         self.repository.save_score(score)
         self._attach_timeline_and_snapshot(score, current_user)
         self.audit.log(module=CSAT_MODULE, action="create_csat_score", entity_type="csat_score", entity_id=score.id, actor=current_user, after_value=CsatScoreRead.model_validate(score).model_dump(mode="json"))
+        self._notify_csat(score, current_user, created=True)
         self.repository.commit()
         return CsatScoreRead.model_validate(score)
 
@@ -183,6 +186,7 @@ class CsatService:
         score.updated_by_id = current_user.id
         self._attach_timeline_and_snapshot(score, current_user)
         self.audit.log(module=CSAT_MODULE, action="update_csat_score", entity_type="csat_score", entity_id=score.id, actor=current_user, before_value=before, after_value=CsatScoreRead.model_validate(score).model_dump(mode="json"))
+        self._notify_csat(score, current_user, created=False)
         self.repository.commit()
         return CsatScoreRead.model_validate(score)
 
@@ -258,6 +262,37 @@ class CsatService:
         self.db.add(snapshot)
         self.db.flush()
         score.scoring_snapshot_id = snapshot.id
+
+    def _notify_csat(self, score: CsatScore, current_user: User, *, created: bool) -> None:
+        account = self._account_or_404(score.account_id)
+        trigger = "csat_received" if created else "csat_corrected"
+        self.in_app_notifications.queue_many(
+            self.in_app_notifications.account_owners(account),
+            trigger=trigger,
+            title=f"CSAT {'received' if created else 'updated'}: {account.name}",
+            body=f"CSAT score is {score.weighted_score:g}/5 from {score.source_label}.",
+            account=account,
+            source_record_type="csat_score",
+            source_record_id=score.id,
+            source_record_route=f"/accounts/{account.id}?tab=health",
+            priority="medium" if not created else "low",
+            dedupe_scope=f"{trigger}:{score.normalized_score}:{score.updated_at.isoformat() if score.updated_at else utc_now().isoformat()}",
+            exclude_user_ids={current_user.id},
+        )
+        if score.normalized_score < 60:
+            self.in_app_notifications.queue_many(
+                [*self.in_app_notifications.account_owners(account), *self.in_app_notifications.admins()],
+                trigger="low_csat_detected",
+                title=f"Low CSAT detected: {account.name}",
+                body=f"CSAT normalized score is {score.normalized_score}/100 and needs review.",
+                account=account,
+                source_record_type="csat_score",
+                source_record_id=score.id,
+                source_record_route=f"/accounts/{account.id}?tab=health",
+                priority="high",
+                dedupe_scope=f"low:{score.normalized_score}:{score.updated_at.isoformat() if score.updated_at else utc_now().isoformat()}",
+                exclude_user_ids={current_user.id},
+            )
 
     def _previous_score(self, account_id: str, engagement_id: str | None, exclude_id: str | None = None) -> CsatScore | None:
         items, _ = self.repository.list_scores(account_id=account_id, engagement_id=engagement_id, page=1, page_size=10)

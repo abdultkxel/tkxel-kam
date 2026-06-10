@@ -11,6 +11,7 @@ interface UIStore {
   toggleSidebar: () => void
   setMobileNavOpen: (open: boolean) => void
   openAI: (query?: string, accountId?: string) => void
+  setAIPrefill: (query: string) => void
   closeAI: () => void
   setActiveAccountId: (accountId: string) => void
   setShortcutModalOpen: (open: boolean) => void
@@ -27,8 +28,9 @@ export const useUIStore = create<UIStore>(set => ({
   globalNoteOpen: false,
   toggleSidebar: () => set(state => ({ sidebarCollapsed: !state.sidebarCollapsed })),
   setMobileNavOpen: open => set({ mobileNavOpen: open }),
-  openAI: (query = '', accountId) => set(state => ({ aiOpen: true, aiPrefill: query, activeAccountId: accountId ?? state.activeAccountId })),
-  closeAI: () => set({ aiOpen: false, aiPrefill: '' }),
+  openAI: (query, accountId) => set(state => ({ aiOpen: true, aiPrefill: query ?? state.aiPrefill, activeAccountId: accountId ?? state.activeAccountId })),
+  setAIPrefill: query => set({ aiPrefill: query }),
+  closeAI: () => set({ aiOpen: false }),
   setActiveAccountId: accountId => set({ activeAccountId: accountId }),
   setShortcutModalOpen: open => set({ shortcutModalOpen: open }),
   setGlobalNoteOpen: open => set({ globalNoteOpen: open }),

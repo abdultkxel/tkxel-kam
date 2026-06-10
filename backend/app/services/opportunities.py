@@ -48,6 +48,7 @@ from app.schemas import (
 )
 from app.services.account_access import AccountAccessService, GLOBAL_VIEW_ROLES
 from app.services.audit import AuditService
+from app.services.in_app_notifications import InAppNotificationService
 from app.services.timeline import TimelineService
 from app.services.user_management import page_count
 
@@ -66,6 +67,7 @@ class OpportunityService:
         self.access = AccountAccessService(self.accounts, RbacRepository(db))
         self.audit = AuditService(AuditRepository(db))
         self.timeline = TimelineService(TimelineRepository(db))
+        self.in_app_notifications = InAppNotificationService(db)
 
     def list_opportunities(
         self,
@@ -216,6 +218,7 @@ class OpportunityService:
             )
         )
         self.audit.log(module=OPPORTUNITY_MODULE, action="create", entity_type="opportunity", entity_id=opportunity.id, actor=current_user, after_value=self._opportunity_snapshot(opportunity))
+        self._notify_opportunity_created(account, opportunity, current_user)
         self.repository.commit()
         return self._opportunity_read(opportunity)
 
@@ -247,6 +250,7 @@ class OpportunityService:
         if next_stage and next_stage != opportunity.stage:
             self._transition_stage(opportunity, next_stage, current_user, reason=None, outcome_reason=opportunity.outcome_reason)
         self.audit.log(module=OPPORTUNITY_MODULE, action="update", entity_type="opportunity", entity_id=opportunity.id, actor=current_user, before_value=before, after_value=self._opportunity_snapshot(opportunity))
+        self._notify_opportunity_update(opportunity, current_user, before, self._opportunity_snapshot(opportunity))
         self.repository.commit()
         return self._opportunity_read(opportunity)
 
@@ -456,6 +460,7 @@ class OpportunityService:
         )
         decision.timeline_entry_id = timeline_entry.id if timeline_entry else None
         self.audit.log(module=OPPORTUNITY_MODULE, action="decision", entity_type="opportunity_decision", entity_id=decision.id, actor=current_user, after_value={"decision_text": decision.decision_text})
+        self._notify_opportunity_decision(opportunity, decision, current_user)
         self.repository.commit()
         return self._decision_read(decision)
 
@@ -603,7 +608,110 @@ class OpportunityService:
             )
         )
         self.audit.log(module=OPPORTUNITY_MODULE, action="stage_change", entity_type="opportunity", entity_id=opportunity.id, actor=current_user, before_value=before, after_value=self._opportunity_snapshot(opportunity), reason=reason)
+        self._notify_opportunity_stage_changed(opportunity, current_user, before_stage, stage, stage_definition)
         return history
+
+    def _opportunity_recipients(self, opportunity: Opportunity) -> list[User]:
+        return [
+            *self.in_app_notifications.account_owners(opportunity.account),
+            self.in_app_notifications.active_user(opportunity.owner_id),
+        ]
+
+    def _notify_opportunity_created(self, account, opportunity: Opportunity, current_user: User) -> None:
+        self.in_app_notifications.queue_many(
+            self._opportunity_recipients(opportunity),
+            trigger="opportunity_created",
+            title=f"Opportunity created: {opportunity.name}",
+            body=f"{opportunity.name} was created for {account.name} in {opportunity.stage}.",
+            account=account,
+            source_record_type="opportunity",
+            source_record_id=opportunity.id,
+            source_record_route=f"/accounts/{account.id}?tab=opportunities",
+            priority="medium",
+            exclude_user_ids={current_user.id},
+        )
+        self.in_app_notifications.queue(
+            recipient=self.in_app_notifications.active_user(opportunity.owner_id),
+            trigger="opportunity_assigned",
+            title=f"Opportunity assigned: {opportunity.name}",
+            body=f"You own {opportunity.name} for {account.name}.",
+            account=account,
+            source_record_type="opportunity",
+            source_record_id=opportunity.id,
+            source_record_route=f"/accounts/{account.id}?tab=opportunities",
+            priority="medium",
+        )
+
+    def _notify_opportunity_update(self, opportunity: Opportunity, current_user: User, before: dict, after: dict) -> None:
+        if before.get("owner_id") != after.get("owner_id"):
+            self.in_app_notifications.queue_many(
+                [self.in_app_notifications.active_user(before.get("owner_id")), self.in_app_notifications.active_user(after.get("owner_id"))],
+                trigger="opportunity_assigned",
+                title=f"Opportunity owner changed: {opportunity.name}",
+                body=f"Ownership changed for {opportunity.name}.",
+                account=opportunity.account,
+                source_record_type="opportunity",
+                source_record_id=opportunity.id,
+                source_record_route=f"/accounts/{opportunity.account_id}?tab=opportunities",
+                priority="medium",
+                dedupe_scope=f"owner:{datetime.now(timezone.utc).isoformat()}",
+                exclude_user_ids={current_user.id},
+            )
+        if before.get("value") != after.get("value"):
+            self.in_app_notifications.queue_many(
+                self._opportunity_recipients(opportunity),
+                trigger="opportunity_value_changed",
+                title=f"Opportunity value changed: {opportunity.name}",
+                body=f"Value changed from {before.get('value')} to {after.get('value')} {opportunity.currency}.",
+                account=opportunity.account,
+                source_record_type="opportunity",
+                source_record_id=opportunity.id,
+                source_record_route=f"/accounts/{opportunity.account_id}?tab=opportunities",
+                priority="medium",
+                dedupe_scope=f"value:{after.get('value')}:{datetime.now(timezone.utc).isoformat()}",
+                exclude_user_ids={current_user.id},
+            )
+
+    def _notify_opportunity_stage_changed(self, opportunity: Opportunity, current_user: User, before_stage: str, stage: str, stage_definition: OpportunityStageDefinition) -> None:
+        trigger = "opportunity_stage_changed"
+        priority = "medium"
+        stage_key = stage.lower()
+        if "won" in stage_key:
+            trigger = "opportunity_won"
+        elif "lost" in stage_key:
+            trigger = "opportunity_lost"
+        elif "decision" in stage_key or "approval" in stage_key:
+            trigger = "opportunity_decision_required"
+            priority = "high"
+        elif stage_definition.is_terminal and opportunity.outcome_reason:
+            trigger = "opportunity_lost"
+        self.in_app_notifications.queue_many(
+            self._opportunity_recipients(opportunity),
+            trigger=trigger,
+            title=f"Opportunity moved: {before_stage} -> {stage}",
+            body=f"{opportunity.name} moved from {before_stage} to {stage}.",
+            account=opportunity.account,
+            source_record_type="opportunity",
+            source_record_id=opportunity.id,
+            source_record_route=f"/accounts/{opportunity.account_id}?tab=opportunities",
+            priority=priority,
+            dedupe_scope=f"stage:{stage}:{datetime.now(timezone.utc).isoformat()}",
+            exclude_user_ids={current_user.id},
+        )
+
+    def _notify_opportunity_decision(self, opportunity: Opportunity, decision: OpportunityDecision, current_user: User) -> None:
+        self.in_app_notifications.queue_many(
+            [self.in_app_notifications.active_user(decision.owner_id), *self._opportunity_recipients(opportunity)],
+            trigger="opportunity_decision_required",
+            title=f"Opportunity decision recorded: {opportunity.name}",
+            body=decision.decision_text,
+            account=opportunity.account,
+            source_record_type="opportunity_decision",
+            source_record_id=decision.id,
+            source_record_route=f"/accounts/{opportunity.account_id}?tab=opportunities",
+            priority="high",
+            exclude_user_ids={current_user.id},
+        )
 
     def _get_opportunity_or_404(self, opportunity_id: str) -> Opportunity:
         opportunity = self.repository.get_opportunity(opportunity_id)

@@ -2,7 +2,7 @@
 
 ## Scope
 
-Adds a KYC review surface that shows the generated Ollama/Qwen KYC output, current extracted KYC fields, citations, and compliant research-source status in a fixed-height CKEditor. A companion sidebar shows stored prompt, raw response, source, and processing logs for new KYC runs. Runtime prompt sections are persisted before the local Qwen/Ollama request starts, so the sidebar can show the prompt while the run is still running; raw responses appear after Ollama returns.
+Adds a super-admin-only KYC review surface that shows generated local Ollama/Qwen KYC output, current extracted KYC fields, citations, and compliant research-source status in a fixed-height review panel. A companion sidebar shows stored prompt, raw response, source, and processing logs for new KYC runs. Runtime prompt sections are persisted before the local Qwen/Ollama request starts, so the sidebar can show the prompt while the run is still running; raw responses appear after Ollama returns.
 
 ## Decisions
 
@@ -12,6 +12,7 @@ Adds a KYC review surface that shows the generated Ollama/Qwen KYC output, curre
 - ZoomInfo is not queried unless approved API credentials are configured.
 - Prompt and raw response logs are stored on KYC run retrieval metadata for reviewer/debug visibility.
 - Running KYC runs persist prepared prompt sections and runtime Qwen/Ollama events before provider execution so long local model calls can be inspected during processing.
+- The debug surface is hidden from non-`super_admin` users on the KYC screen.
 
 ## Data Model Notes
 

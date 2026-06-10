@@ -1,9 +1,8 @@
 import * as Dialog from '@radix-ui/react-dialog'
-import { Building2, FileSearch, FileText, Globe2, Linkedin, Loader2, Plus, Sparkles, Upload, UserRound, X } from 'lucide-react'
+import { Building2, FileText, Globe2, Linkedin, Loader2, Plus, Sparkles, Upload, UserRound, X } from 'lucide-react'
 import { FormEvent, forwardRef, useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { toast } from 'sonner'
-import { DocumentExtractionReviewPanel } from '@/components/account/DocumentExtractionReviewPanel'
 import { useAuth } from '@/contexts/AuthContext'
 import { useRole } from '@/hooks/useRole'
 import { ApiError } from '@/services/api'
@@ -11,11 +10,11 @@ import {
   AccountCustomFieldDefinition,
   createOnboardingDraft,
   createOnboardingDraftFromUpload,
+  extractOnboardingUploadFields,
   listAccountCustomFields,
   listOnboardingAccountManagers,
   OnboardingAccountManager,
-  OnboardingDraftView,
-  updateOnboardingDraft,
+  OnboardingUploadExtractionView,
 } from '@/services/accountWorkspace'
 import { cn } from '@/utils/cn'
 
@@ -40,9 +39,7 @@ export function CreateAccountDialog({ label = 'Create account' }: { label?: stri
   const [loadingManagers, setLoadingManagers] = useState(false)
   const [files, setFiles] = useState<File[]>([])
   const [selectedFileName, setSelectedFileName] = useState('')
-  const [filePreviewUrl, setFilePreviewUrl] = useState('')
-  const [uploadedDraft, setUploadedDraft] = useState<OnboardingDraftView | null>(null)
-  const [extractionReviewHtml, setExtractionReviewHtml] = useState('')
+  const [uploadedExtraction, setUploadedExtraction] = useState<OnboardingUploadExtractionView | null>(null)
   const [extracting, setExtracting] = useState(false)
   const [creating, setCreating] = useState(false)
   const assignableManagers = assignableAccountManagers(accountManagers, currentUser)
@@ -66,9 +63,7 @@ export function CreateAccountDialog({ label = 'Create account' }: { label?: stri
     setCustomErrors({})
     setFiles([])
     setSelectedFileName('')
-    setFilePreviewUrl('')
-    setUploadedDraft(null)
-    setExtractionReviewHtml('')
+    setUploadedExtraction(null)
     setExtracting(false)
     setCreating(false)
   }
@@ -117,47 +112,35 @@ export function CreateAccountDialog({ label = 'Create account' }: { label?: stri
     return Object.keys(nextErrors).length === 0 && Object.keys(nextCustomErrors).length === 0
   }
 
-  function applyExtractedDraftDetails(draft: OnboardingDraftView) {
-    setAccountName(draft.accountDraft.name)
-    setProjectName(draft.accountDraft.projectName ?? draft.engagementDrafts[0]?.name ?? '')
-    setCompanyUrl(draft.accountDraft.companyUrl ?? '')
-    setLinkedinUrl(draft.accountDraft.linkedinUrl ?? linkedinUrl)
-    const matchedManager = assignableManagers.find(manager => (
-      manager.id === draft.accountDraft.ownerId ||
-      (draft.accountDraft.ownerEmail && manager.email.toLowerCase() === draft.accountDraft.ownerEmail.toLowerCase())
-    ))
-    if (matchedManager) setManagerId(matchedManager.id)
+  function applyExtractedUploadDetails(extraction: OnboardingUploadExtractionView) {
+    setAccountName(extraction.accountName)
+    setProjectName(extraction.projectName)
+    setCompanyUrl(extraction.companyUrl)
+    setLinkedinUrl(extraction.linkedinUrl)
     setErrors({})
   }
 
-  async function extractFromDocuments(): Promise<OnboardingDraftView | null> {
+  async function extractFromDocuments(selectedFiles = files): Promise<OnboardingUploadExtractionView | null> {
     if (!token) {
       toast.error('Please log in again before extracting source documents')
       return null
     }
-    if (!files.length) {
+    if (!selectedFiles.length) {
       toast.error('Select at least one SOW, charter, or source document')
-      return null
-    }
-    if (!selectedManager) {
-      setErrors(current => ({ ...current, managerId: 'Select an account manager' }))
-      refs.managerId.current?.focus()
       return null
     }
     setExtracting(true)
     try {
-      const draft = await createOnboardingDraftFromUpload(token, {
-        files,
+      const extraction = await extractOnboardingUploadFields(token, {
+        files: selectedFiles,
         linkedinUrl: normalizeLinkedinUrl(linkedinUrl),
-        managerId: selectedManager.id,
-        managerEmail: selectedManager.email,
-        managerName: selectedManager.name,
+        managerEmail: selectedManager?.email,
+        managerName: selectedManager?.name,
       })
-      setUploadedDraft(draft)
-      applyExtractedDraftDetails(draft)
-      setExtractionReviewHtml(buildOnboardingExtractionReviewHtml(draft))
-      toast.success('SOW/charter extracted for review')
-      return draft
+      setUploadedExtraction(extraction)
+      applyExtractedUploadDetails(extraction)
+      toast.success('SOW/charter details filled from the uploaded document')
+      return extraction
     } catch (error) {
       toast.error(error instanceof Error ? error.message : 'SOW/charter extraction failed')
       return null
@@ -181,9 +164,8 @@ export function CreateAccountDialog({ label = 'Create account' }: { label?: stri
     setCreating(true)
     try {
       if (files.length) {
-        const draft = uploadedDraft ?? (await extractFromDocuments())
-        if (!draft) return
-        const reviewed = await updateOnboardingDraft(token, draft.id, {
+        const draft = await createOnboardingDraftFromUpload(token, {
+          files,
           accountName: accountName.trim(),
           projectName: projectName.trim(),
           companyUrl: normalizeCompanyUrl(companyUrl),
@@ -194,7 +176,7 @@ export function CreateAccountDialog({ label = 'Create account' }: { label?: stri
         })
         setOpen(false)
         toast.success('Extracted account draft saved for onboarding review.')
-        navigate(`/accounts/onboarding?draft=${reviewed.id}`)
+        navigate(`/accounts/onboarding?draft=${draft.id}`)
         return
       }
       const draft = await createOnboardingDraft(token, {
@@ -256,19 +238,6 @@ export function CreateAccountDialog({ label = 'Create account' }: { label?: stri
   }, [open, token])
 
   useEffect(() => {
-    if (!files.length) {
-      setFilePreviewUrl('')
-      return
-    }
-    const selected = files.find(file => file.name === selectedFileName) ?? files[0]
-    const url = URL.createObjectURL(selected)
-    setFilePreviewUrl(url)
-    return () => {
-      if (typeof URL.revokeObjectURL === 'function') URL.revokeObjectURL(url)
-    }
-  }, [files, selectedFileName])
-
-  useEffect(() => {
     if (!open || !token) return
     let active = true
     setLoadingManagers(true)
@@ -319,18 +288,23 @@ export function CreateAccountDialog({ label = 'Create account' }: { label?: stri
               <label className="flex min-h-[132px] cursor-pointer flex-col items-center justify-center rounded-lg border border-dashed border-brand-blue/40 bg-white p-4 text-center transition-colors hover:bg-blue-tint-20">
                 <Upload className="h-6 w-6 text-brand-blue" />
                 <span className="mt-2 text-sm font-semibold text-ink">Upload SOW or project charter</span>
-                <span className="mt-1 text-xs text-ink-secondary">PDF, DOCX, and DOC files are uploaded, stored, and extracted.</span>
+                <span className="mt-1 text-xs text-ink-secondary">PDF, DOCX, text, CSV, and Excel files are uploaded, stored, read, and used to fill the fields below.</span>
                 <input
                   type="file"
                   multiple
                   className="sr-only"
-                  accept=".pdf,.doc,.docx"
+                  accept=".pdf,.docx,.txt,.csv,.xlsx,.xlsm,.xls"
                   onChange={event => {
                     const selectedFiles = Array.from(event.target.files ?? [])
                     setFiles(selectedFiles)
                     setSelectedFileName(selectedFiles[0]?.name ?? '')
-                    setUploadedDraft(null)
-                    setExtractionReviewHtml(selectedFiles.length ? buildPendingExtractionReviewHtml(selectedFiles) : '')
+                    setUploadedExtraction(null)
+                    setAccountName('')
+                    setProjectName('')
+                    setCompanyUrl('')
+                    setLinkedinUrl('')
+                    if (selectedFiles.length) void extractFromDocuments(selectedFiles)
+                    event.currentTarget.value = ''
                   }}
                 />
               </label>
@@ -353,29 +327,22 @@ export function CreateAccountDialog({ label = 'Create account' }: { label?: stri
                     </button>
                   ))}
                 </div>
-                <button type="button" className="tk-button-secondary mt-3 w-full" onClick={() => void extractFromDocuments()} disabled={extracting || !files.length}>
-                  {extracting ? <Loader2 className="h-4 w-4 animate-spin" /> : <FileSearch className="h-4 w-4" />}
-                  Extract details
-                </button>
+                {extracting ? (
+                  <p className="mt-3 flex items-center gap-2 rounded-md bg-blue-tint-20 px-3 py-2 text-xs font-semibold text-brand-blue">
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                    Reading document and filling fields...
+                  </p>
+                ) : uploadedExtraction ? (
+                  <p className="mt-3 rounded-md bg-rag-green/10 px-3 py-2 text-xs font-semibold text-rag-green">
+                    Details filled from the uploaded source.
+                  </p>
+                ) : files.length ? (
+                  <p className="mt-3 rounded-md bg-surface-secondary px-3 py-2 text-xs font-medium text-ink-secondary">
+                    Upload is ready. Replace the file to run extraction again.
+                  </p>
+                ) : null}
               </div>
             </div>
-            {files.length ? (
-              <div className="mt-5">
-                <DocumentExtractionReviewPanel
-                  title="SOW extraction preview"
-                  eyebrow="Source review"
-                  documentName={selectedFileName || files[0]?.name}
-                  previewUrl={filePreviewUrl}
-                  mimeType={(files.find(file => file.name === selectedFileName) ?? files[0])?.type}
-                  extractedHtml={extractionReviewHtml}
-                  onExtractedHtmlChange={setExtractionReviewHtml}
-                  disabled={extracting}
-                  sources={files.map(file => ({ id: file.name, name: file.name, status: uploadedDraft ? 'extracted' : 'selected' }))}
-                  selectedSourceId={selectedFileName}
-                  onSelectSource={setSelectedFileName}
-                />
-              </div>
-            ) : null}
           </div>
 
           <form onSubmit={createAccount} className="p-5">
@@ -435,7 +402,7 @@ export function CreateAccountDialog({ label = 'Create account' }: { label?: stri
               <Dialog.Close type="button" className="tk-button-secondary">Cancel</Dialog.Close>
               <button type="submit" className="tk-button-primary" disabled={creating || extracting}>
                 {creating ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />}
-                {files.length ? (uploadedDraft ? 'Open onboarding review' : 'Create draft from upload') : 'Create draft'}
+                Create draft
               </button>
             </div>
           </form>
@@ -642,83 +609,10 @@ function isEmptyCustomValue(value: unknown) {
   return value === undefined || value === null || value === '' || (Array.isArray(value) && value.length === 0)
 }
 
-function buildPendingExtractionReviewHtml(files: File[]) {
-  const fileItems = files.map(file => `<li>${escapeHtml(file.name)} · ${formatBytes(file.size)}</li>`).join('')
-  return [
-    '<h4>Selected source documents</h4>',
-    `<ul>${fileItems}</ul>`,
-    '<p>Click <strong>Extract details</strong> to store these files and review source-backed account and engagement fields.</p>',
-  ].join('')
-}
-
-function buildOnboardingExtractionReviewHtml(draft: OnboardingDraftView) {
-  const extractedTextSections = draft.sourceDocuments
-    .filter(document => document.extractedText?.trim())
-    .map(document => [
-      `<h5>${escapeHtml(document.fileName || document.name)}</h5>`,
-      `<p>${textWithLineBreaks(document.extractedText || '')}</p>`,
-    ].join(''))
-    .join('')
-  const engagementItems = draft.engagementDrafts.map(engagement => (
-    `<li><strong>${escapeHtml(engagement.name)}</strong> · ${escapeHtml(engagement.serviceLines.join(', ') || 'No service lines')} · ${formatCurrency(engagement.value)}</li>`
-  )).join('')
-  const sourceItems = draft.sourceDocuments.map(document => (
-    `<li><strong>${escapeHtml(document.name)}</strong> · ${escapeHtml(document.extractionStatus || document.status)} · ${document.confidence}% confidence · ${document.pages} page${document.pages === 1 ? '' : 's'}</li>`
-  )).join('')
-  const citationItems = draft.sourceDocuments.flatMap(document => document.citations.map(citation => (
-    `<li><strong>${escapeHtml(citation.label)}</strong>${citation.page ? ` · page ${citation.page}` : ''}: ${escapeHtml(citation.excerpt)}</li>`
-  ))).slice(0, 12).join('')
-  const issues = [...draft.missingFields.map(item => `Missing: ${item}`), ...draft.conflicts.map(item => `Conflict: ${item}`)]
-
-  return [
-    '<h4>Full extracted PDF text</h4>',
-    extractedTextSections || '<p>No extracted document text was returned yet.</p>',
-    '<h4>Extracted account draft</h4>',
-    '<ul>',
-    `<li><strong>Account:</strong> ${escapeHtml(draft.accountDraft.name)}</li>`,
-    `<li><strong>Project:</strong> ${escapeHtml(draft.accountDraft.projectName || draft.engagementDrafts[0]?.name || 'Not detected')}</li>`,
-    `<li><strong>Company URL:</strong> ${escapeHtml(draft.accountDraft.companyUrl || 'Not detected')}</li>`,
-    `<li><strong>Owner:</strong> ${escapeHtml(draft.accountDraft.ownerName || 'Unassigned')}</li>`,
-    `<li><strong>Confidence:</strong> ${draft.confidence}%</li>`,
-    '</ul>',
-    '<h4>Engagement draft</h4>',
-    engagementItems ? `<ul>${engagementItems}</ul>` : '<p>No engagement draft was extracted.</p>',
-    '<h4>Source documents</h4>',
-    sourceItems ? `<ul>${sourceItems}</ul>` : '<p>No source documents are attached.</p>',
-    citationItems ? `<h4>Citations</h4><ul>${citationItems}</ul>` : '',
-    issues.length ? `<h4>Review issues</h4><ul>${issues.map(item => `<li>${escapeHtml(item)}</li>`).join('')}</ul>` : '<p>No extraction conflicts are currently flagged.</p>',
-  ].join('')
-}
-
 function normalizeCompanyUrl(value: string) {
   const trimmed = value.trim()
   if (!trimmed) return ''
   return /^https?:\/\//i.test(trimmed) ? trimmed : `https://${trimmed}`
-}
-
-function formatCurrency(value: number) {
-  if (!Number.isFinite(value) || value === 0) return 'Value not detected'
-  return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 }).format(value)
-}
-
-function formatBytes(value: number) {
-  if (!Number.isFinite(value) || value <= 0) return '0 B'
-  const units = ['B', 'KB', 'MB', 'GB']
-  let size = value
-  let unitIndex = 0
-  while (size >= 1024 && unitIndex < units.length - 1) {
-    size /= 1024
-    unitIndex += 1
-  }
-  return `${size.toFixed(size >= 10 || unitIndex === 0 ? 0 : 1)} ${units[unitIndex]}`
-}
-
-function escapeHtml(value: string) {
-  return value.replace(/[&<>"']/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[char] ?? char))
-}
-
-function textWithLineBreaks(value: string) {
-  return escapeHtml(value).replace(/\n/g, '<br/>')
 }
 
 function normalizeLinkedinUrl(value: string) {

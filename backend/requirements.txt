@@ -7,6 +7,7 @@ pdf2image
 pdfplumber
 PyMuPDF
 ocrmypdf
+openpyxl
 Pillow
 pypdf
 python-docx
@@ -19,3 +20,4 @@ python-dotenv
 pwdlib[argon2]
 sqlalchemy
 uvicorn[standard]
+xlrd

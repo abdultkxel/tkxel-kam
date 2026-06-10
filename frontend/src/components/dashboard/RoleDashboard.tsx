@@ -50,12 +50,16 @@ type DashboardProps = {
   token: string | null
   draftSearch: string
   risk: string
+  accountId: string
+  amId: string
   loading: boolean
   error: string
   refreshingSummary: boolean
   canRefreshSummary: boolean
   onDraftSearchChange: (value: string) => void
   onRiskChange: (value: string) => void
+  onAccountChange: (value: string) => void
+  onAmChange: (value: string) => void
   onSearchSubmit: (event: FormEvent) => void
   onPageChange: (page: number) => void
   onRefreshSummary: () => void
@@ -66,35 +70,34 @@ type AccountOption = {
   name: string
 }
 
+type OwnerOption = {
+  id: string
+  name: string
+}
+
 const knownWidgetKeys = new Set([
   'summary',
   'ai_task_summary',
   'forecast_chart',
-  'health_distribution',
-  'strategic_health',
   'opportunities',
   'growth',
   'account_portfolio',
   'accounts',
   'high_risk_accounts',
   'signals',
+  'critical_tasks',
   'tasks',
   'stale_kyc',
   'renewal_focus',
-  'escalations',
-  'major_escalations',
   'am_workload',
   'engagement_health',
-  'account_change_alerts',
   'retention',
   'revenue_risk',
   'executive_summaries',
-  'decision_queue',
   'governance',
   'governance_cadence',
   'governance_calendar',
   'overdue_actions',
-  'sla_compliance',
   'admin_system',
 ])
 
@@ -105,12 +108,16 @@ export function RoleDashboard({
   token,
   draftSearch,
   risk,
+  accountId,
+  amId,
   loading,
   error,
   refreshingSummary,
   canRefreshSummary,
   onDraftSearchChange,
   onRiskChange,
+  onAccountChange,
+  onAmChange,
   onSearchSubmit,
   onPageChange,
   onRefreshSummary,
@@ -121,12 +128,12 @@ export function RoleDashboard({
   const summary = widgetByKey.get('summary')
   const taskSummary = widgetByKey.get('ai_task_summary')
   const taskPanel = taskSummary ?? (isAccountManagerDashboard ? widgetByKey.get('tasks') : undefined)
-  const health = widgetByKey.get('health_distribution') ?? widgetByKey.get('strategic_health')
   const opportunities = widgetByKey.get('opportunities') ?? widgetByKey.get('growth')
   const portfolio = widgetByKey.get('account_portfolio') ?? widgetByKey.get('accounts')
   const forecast = widgetByKey.get('forecast_chart')
   const calendar = widgetByKey.get('governance_calendar')
   const accountOptions = useMemo(() => collectAccountOptions(widgets), [widgets])
+  const ownerOptions = useMemo(() => collectOwnerOptions(widgets), [widgets])
   const allowedFilters = dashboard?.allowed_filters ?? []
   const fallbackWidgets = widgets.filter(widget => !knownWidgetKeys.has(widget.key))
 
@@ -146,9 +153,15 @@ export function RoleDashboard({
       <DashboardControls
         draftSearch={draftSearch}
         risk={risk}
+        accountId={accountId}
+        amId={amId}
         allowedFilters={allowedFilters}
+        accountOptions={accountOptions}
+        ownerOptions={ownerOptions}
         onDraftSearchChange={onDraftSearchChange}
         onRiskChange={onRiskChange}
+        onAccountChange={onAccountChange}
+        onAmChange={onAmChange}
         onSearchSubmit={onSearchSubmit}
       />
 
@@ -169,15 +182,11 @@ export function RoleDashboard({
             />
           ) : null}
 
-          <section className="grid gap-4 xl:grid-cols-[minmax(0,0.95fr)_minmax(320px,0.65fr)]">
+          {(opportunities || forecast) ? (
+          <section className={cn('grid gap-4', opportunities && forecast ? 'xl:grid-cols-[minmax(0,0.95fr)_minmax(320px,0.65fr)]' : '')}>
             {opportunities ? <PipelinePanel widget={opportunities} /> : null}
-            {forecast ? <ForecastPanel widget={forecast} /> : health ? <HealthDistributionPanel widget={health} /> : null}
+            {forecast ? <ForecastPanel widget={forecast} accountOptions={accountOptions} accountId={accountId} onAccountChange={onAccountChange} /> : null}
           </section>
-
-          {forecast && health ? (
-            <section className="grid gap-4 xl:grid-cols-2">
-              <HealthDistributionPanel widget={health} />
-            </section>
           ) : null}
 
           {portfolio ? <PortfolioTable widget={portfolio} onPageChange={onPageChange} /> : null}
@@ -185,18 +194,14 @@ export function RoleDashboard({
           <section className="grid gap-4 xl:grid-cols-2">
             {[
               widgetByKey.get('high_risk_accounts'),
-              widgetByKey.get('signals'),
+              widgetByKey.get('critical_tasks') ?? widgetByKey.get('signals'),
               taskPanel?.key === 'tasks' ? undefined : widgetByKey.get('tasks'),
-              widgetByKey.get('escalations') ?? widgetByKey.get('major_escalations'),
               widgetByKey.get('am_workload'),
               widgetByKey.get('engagement_health'),
-              widgetByKey.get('account_change_alerts'),
               widgetByKey.get('retention'),
               widgetByKey.get('revenue_risk'),
               widgetByKey.get('executive_summaries'),
-              widgetByKey.get('decision_queue'),
               widgetByKey.get('overdue_actions'),
-              widgetByKey.get('sla_compliance'),
               widgetByKey.get('admin_system'),
               ...fallbackWidgets,
             ].filter(isWidget).map(widget => (
@@ -263,31 +268,61 @@ function DashboardHeader({
 function DashboardControls({
   draftSearch,
   risk,
+  accountId,
+  amId,
   allowedFilters,
+  accountOptions,
+  ownerOptions,
   onDraftSearchChange,
   onRiskChange,
+  onAccountChange,
+  onAmChange,
   onSearchSubmit,
 }: {
   draftSearch: string
   risk: string
+  accountId: string
+  amId: string
   allowedFilters: string[]
+  accountOptions: AccountOption[]
+  ownerOptions: OwnerOption[]
   onDraftSearchChange: (value: string) => void
   onRiskChange: (value: string) => void
+  onAccountChange: (value: string) => void
+  onAmChange: (value: string) => void
   onSearchSubmit: (event: FormEvent) => void
 }) {
+  const showAccountFilter = allowedFilters.includes('account_id') && accountOptions.length > 0
+  const showAmFilter = allowedFilters.includes('am_id') && ownerOptions.length > 0
+  const gridClass = showAccountFilter || showAmFilter
+    ? 'md:grid-cols-[1fr_180px_220px_auto] xl:grid-cols-[minmax(220px,1fr)_160px_220px_220px_auto]'
+    : 'md:grid-cols-[1fr_180px_auto]'
   return (
     <section className="tk-card p-3">
-      <form className="grid gap-3 md:grid-cols-[1fr_180px_auto]" onSubmit={onSearchSubmit}>
+      <form className={cn('grid gap-3', gridClass)} onSubmit={onSearchSubmit}>
         <label className="relative block">
           <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-ink-tertiary" />
           <input className="tk-input pl-9" value={draftSearch} onChange={event => onDraftSearchChange(event.target.value)} placeholder="Search accounts and decisions" />
         </label>
         <select className="tk-input" value={risk} onChange={event => onRiskChange(event.target.value)} disabled={!allowedFilters.includes('risk')}>
           <option value="">All risk</option>
+          <option value="at_risk">At risk</option>
           <option value="healthy">Healthy</option>
           <option value="warning">Warning</option>
           <option value="critical">Critical</option>
         </select>
+        {showAccountFilter ? (
+          <select className="tk-input" value={accountId} onChange={event => onAccountChange(event.target.value)}>
+            <option value="">All accounts</option>
+            {accountOptions.map(account => <option key={account.id} value={account.id}>{account.name}</option>)}
+          </select>
+        ) : null}
+        {showAmFilter ? (
+          <select className="tk-input" value={amId} onChange={event => onAmChange(event.target.value)}>
+            <option value="">All account managers</option>
+            {ownerOptions.map(owner => <option key={owner.id} value={owner.id}>{owner.name}</option>)}
+          </select>
+        ) : null}
         <button className="tk-button-primary" type="submit"><Search className="h-4 w-4" />Search</button>
       </form>
     </section>
@@ -562,62 +597,17 @@ function PipelinePanel({ widget }: { widget: DashboardWidget }) {
   )
 }
 
-function HealthDistributionPanel({ widget }: { widget: DashboardWidget }) {
-  const value = isRecord(widget.value) ? widget.value : {}
-  const healthy = Number(value.healthy) || 0
-  const warning = Number(value.warning) || 0
-  const critical = Number(value.critical) || 0
-  const total = healthy + warning + critical
-  const circumference = 2 * Math.PI * 42
-  let segmentOffset = 0
-  const segments = [
-    { key: 'healthy', value: healthy, className: 'text-rag-green', label: 'Healthy health segment' },
-    { key: 'warning', value: warning, className: 'text-brand-orange', label: 'Warning health segment' },
-    { key: 'critical', value: critical, className: 'text-rag-red', label: 'Critical health segment' },
-  ].map(segment => {
-    const dash = total ? (segment.value / total) * circumference : 0
-    const offset = segmentOffset
-    segmentOffset += dash
-    return { ...segment, dash, offset }
-  })
-
-  return (
-    <section className="tk-card p-5">
-      <div className="flex items-center gap-2">
-        <BarChart3 className="h-5 w-5 text-brand-orange" />
-        <h2 className="text-lg font-semibold text-ink">{widget.title}</h2>
-      </div>
-      <div className="mt-5 grid gap-5 sm:grid-cols-[180px_minmax(0,1fr)] sm:items-center xl:grid-cols-1">
-        <svg viewBox="0 0 120 120" className="mx-auto h-44 w-44 -rotate-90" role="img" aria-label="Health distribution">
-          <circle cx="60" cy="60" r="42" className="text-surface-tertiary" fill="none" stroke="currentColor" strokeWidth="18" />
-          {segments.map(segment => (
-            <circle
-              key={segment.key}
-              cx="60"
-              cy="60"
-              r="42"
-              className={segment.className}
-              data-testid={`health-segment-${segment.key}`}
-              fill="none"
-              stroke="currentColor"
-              strokeDasharray={`${segment.dash} ${circumference - segment.dash}`}
-              strokeDashoffset={-segment.offset}
-              strokeWidth="18"
-              aria-label={segment.label}
-            />
-          ))}
-        </svg>
-        <div className="space-y-4">
-          <LegendStat label="Healthy" value={healthy} tone="green" />
-          <LegendStat label="Warning" value={warning} tone="amber" />
-          <LegendStat label="Critical" value={critical} tone="red" />
-        </div>
-      </div>
-    </section>
-  )
-}
-
-function ForecastPanel({ widget }: { widget: DashboardWidget }) {
+function ForecastPanel({
+  widget,
+  accountOptions,
+  accountId,
+  onAccountChange,
+}: {
+  widget: DashboardWidget
+  accountOptions: AccountOption[]
+  accountId: string
+  onAccountChange: (value: string) => void
+}) {
   const value = isRecord(widget.value) ? widget.value : {}
   const points = Array.isArray(value.points) ? value.points.filter(isRecord) : []
   const totals = isRecord(value.totals) ? value.totals : {}
@@ -648,6 +638,9 @@ function ForecastPanel({ widget }: { widget: DashboardWidget }) {
         ['risk_adjustment', totals.risk_adjustment],
       ]
     : Object.entries(value).filter(([key]) => key !== 'series').slice(0, 4)
+  const accountCount = Number(widget.metadata.account_count) || 0
+  const selectedAccount = accountOptions.find(account => account.id === accountId)
+  const scopeLabel = selectedAccount ? `Single account: ${selectedAccount.name}` : accountCount ? `Portfolio forecast across ${accountCount} account${accountCount === 1 ? '' : 's'}` : 'Forecast scope'
 
   if (forecastUnavailable) {
     return (
@@ -658,8 +651,14 @@ function ForecastPanel({ widget }: { widget: DashboardWidget }) {
               <Activity className="h-4 w-4 text-brand-blue" />
               <h2 className="text-lg font-semibold text-ink">Forecast outlook</h2>
             </div>
-            <p className="mt-1 text-sm text-ink-secondary">Next 6 months</p>
+            <p className="mt-1 text-sm text-ink-secondary">Next 6 months | {scopeLabel}</p>
           </div>
+          {accountOptions.length ? (
+            <select className="tk-input w-full sm:w-[240px]" value={accountId} onChange={event => onAccountChange(event.target.value)}>
+              <option value="">All accounts</option>
+              {accountOptions.map(account => <option key={account.id} value={account.id}>{account.name}</option>)}
+            </select>
+          ) : null}
           <span className="w-fit rounded-full border border-brand-orange/20 bg-brand-orange/10 px-3 py-1.5 text-xs font-semibold text-brand-orange">
             Insufficient data
           </span>
@@ -680,11 +679,20 @@ function ForecastPanel({ widget }: { widget: DashboardWidget }) {
             <Activity className="h-4 w-4 text-brand-blue" />
             <h2 className="text-base font-semibold text-ink">{widget.title}</h2>
           </div>
+          <p className="mt-1 text-xs font-medium text-ink-secondary">{scopeLabel}</p>
           <div className="mt-3 grid gap-2 sm:grid-cols-2">
             {metrics.map(([key, item]) => <ForecastMetric key={String(key)} label={String(key)} value={formatValue(item, String(key))} />)}
           </div>
         </div>
-        {masked ? <span className="w-fit rounded-full border border-surface-border bg-white px-2.5 py-1.5 text-xs font-semibold text-ink-secondary">Masked</span> : null}
+        <div className="flex flex-col gap-2 sm:items-end">
+          {accountOptions.length ? (
+            <select className="tk-input w-full sm:w-[240px]" value={accountId} onChange={event => onAccountChange(event.target.value)} aria-label="Filter forecast by account">
+              <option value="">All accounts</option>
+              {accountOptions.map(account => <option key={account.id} value={account.id}>{account.name}</option>)}
+            </select>
+          ) : null}
+          {masked ? <span className="w-fit rounded-full border border-surface-border bg-white px-2.5 py-1.5 text-xs font-semibold text-ink-secondary">Masked</span> : null}
+        </div>
       </div>
 
       {sharedForecast ? (
@@ -856,6 +864,7 @@ function RowLink({ item, valueKey, dateKey }: { item: Record<string, unknown>; v
   const route = getString(item.route)
   const title = itemName(item)
   const account = getString(item.account_name ?? item.account)
+  const riskReason = getString(item.risk_reason)
   const status = getString(item.severity ?? item.priority ?? item.risk_status ?? item.status)
   const value = valueKey ? item[valueKey] : item.value ?? item.accounts ?? item.delivery_health ?? item.affected_metric
   const date = dateKey ? getString(item[dateKey]) : getString(item.due_at ?? item.sla_due_at ?? item.scheduled_at ?? item.target_date ?? item.renewal_date ?? item.created_at)
@@ -864,7 +873,7 @@ function RowLink({ item, valueKey, dateKey }: { item: Record<string, unknown>; v
     <>
       <span className="min-w-0">
         <span className="block truncate text-sm font-semibold text-ink">{title}</span>
-        <span className="mt-1 block truncate text-xs text-ink-secondary">{account || formatValue(item.owner)}</span>
+        <span className="mt-1 block truncate text-xs text-ink-secondary">{riskReason || account || formatValue(item.owner)}</span>
       </span>
       <span className="hidden text-sm font-semibold text-ink sm:block">{formatValue(value, valueKey)}</span>
       <span className="text-[11px] font-semibold uppercase tracking-wider text-brand-blue">{date ? shortDate(date) : status}</span>
@@ -1113,19 +1122,6 @@ function EmptyDashboard() {
   )
 }
 
-function LegendStat({ label, value, tone }: { label: string; value: number; tone: 'green' | 'amber' | 'red' }) {
-  const toneClass = tone === 'green' ? 'bg-rag-green' : tone === 'amber' ? 'bg-brand-orange' : 'bg-rag-red'
-  return (
-    <div className="grid grid-cols-[18px_minmax(0,1fr)] gap-3">
-      <span className={cn('mt-1 h-4 w-4 rounded-md', toneClass)} />
-      <div>
-        <p className="text-sm font-semibold text-ink">{label}</p>
-        <p className="mt-1 font-display text-3xl font-bold leading-none text-ink">{value}</p>
-      </div>
-    </div>
-  )
-}
-
 function StatusPill({ status }: { status: string }) {
   const normalized = status.toLowerCase()
   const tone = normalized === 'healthy' || normalized === 'green' ? 'green' : normalized === 'critical' || normalized === 'red' ? 'red' : 'amber'
@@ -1168,20 +1164,20 @@ function metricFormatter(key: string) {
 function dashboardMetricRoute(key: string) {
   const normalized = key.toLowerCase().replace(/\s+/g, '_')
   if (['my_accounts', 'accounts', 'authorized_accounts', 'account_portfolio'].includes(normalized)) return '/accounts'
-  if (normalized.includes('risk') || normalized.includes('critical_accounts')) return '/accounts?risk=critical'
-  if (normalized.includes('escalation')) return '/escalations'
+  if (normalized === 'at_risk' || normalized.includes('at_risk') || normalized.includes('critical_accounts')) return '/accounts?risk=at_risk'
   if (normalized.includes('governance')) return '/governance'
+  if (normalized.includes('critical_task')) return '/tasks?priority=critical'
   if (normalized.includes('task')) return '/tasks'
   if (normalized.includes('signal')) return '/tasks'
   if (normalized.includes('opportunit') || normalized.includes('pipeline') || normalized.includes('forecast')) return '/opportunities?openOnly=true'
-  if (normalized.includes('revenue')) return '/accounts?risk=critical'
-  if (normalized.includes('sla')) return '/reports'
+  if (normalized.includes('revenue')) return '/accounts?risk=at_risk'
   return ''
 }
 
 function metricDetail(key: string, value: unknown) {
   if (key.includes('risk')) return 'Accounts that need active attention.'
-  if (key.includes('signal')) return 'Signals and source-backed blockers.'
+  if (key.includes('critical_tasks')) return 'Critical and blocked tasks only.'
+  if (key.includes('signal')) return 'Source-backed attention items.'
   if (key.includes('governance')) return 'Scheduled governance coverage.'
   if (key.includes('task')) return 'Open operational work in scope.'
   return `${formatValue(value)} in this dashboard scope.`
@@ -1190,6 +1186,13 @@ function metricDetail(key: string, value: unknown) {
 function collectAccountOptions(widgets: DashboardWidget[]): AccountOption[] {
   const accounts = new Map<string, string>()
   widgets.forEach(widget => {
+    if (Array.isArray(widget.metadata.account_options)) {
+      widget.metadata.account_options.filter(isRecord).forEach(item => {
+        const id = getString(item.id)
+        const name = getString(item.name)
+        if (id && name) accounts.set(id, name)
+      })
+    }
     widget.items.forEach(item => {
       const id = getString(item.account_id)
       const name = getString(item.account_name ?? item.account ?? item.name)
@@ -1197,6 +1200,18 @@ function collectAccountOptions(widgets: DashboardWidget[]): AccountOption[] {
     })
   })
   return [...accounts.entries()].map(([id, name]) => ({ id, name })).sort((a, b) => a.name.localeCompare(b.name))
+}
+
+function collectOwnerOptions(widgets: DashboardWidget[]): OwnerOption[] {
+  const owners = new Map<string, string>()
+  widgets.forEach(widget => {
+    widget.items.forEach(item => {
+      const id = getString(item.owner_id)
+      const name = getString(item.owner)
+      if (id && name) owners.set(id, name)
+    })
+  })
+  return [...owners.entries()].map(([id, name]) => ({ id, name })).sort((a, b) => a.name.localeCompare(b.name))
 }
 
 function calendarDotClass(item: GovernanceCalendarItemRecord) {

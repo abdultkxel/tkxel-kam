@@ -54,24 +54,15 @@ export function Topbar() {
           </div>
         </div>
         <div className="hidden min-w-0 md:block">
-          <div className="grid gap-2 lg:grid-cols-[minmax(260px,1fr)_auto] lg:items-center">
+          <div className="grid gap-2 lg:grid-cols-[minmax(260px,1fr)] lg:items-center">
             <AISearchBar compact />
-            <button
-              type="button"
-              className="inline-flex min-h-[44px] items-center justify-center gap-2 rounded-full bg-brand-blue px-4 text-sm font-semibold text-white transition-colors hover:bg-brand-blue-dark"
-              onClick={() => openAI('Summarise my assigned projects')}
-              title="Ask KAM AI across assigned projects"
-            >
-              <Sparkles className="h-4 w-4" />
-              KAM AI
-            </button>
           </div>
         </div>
         <div className="flex shrink-0 items-center justify-end gap-1 sm:gap-2">
           <button
             type="button"
             className="tk-icon-button bg-brand-blue text-white hover:bg-brand-blue-dark md:hidden"
-            onClick={() => openAI('Summarise my assigned projects')}
+            onClick={() => openAI()}
             aria-label="Open KAM AI"
             title="Ask KAM AI across assigned projects"
           >

@@ -234,9 +234,14 @@ def test_dashboard_digest_and_report_workflows(client: TestClient, db_session: S
     assert current_dashboard.json()["dashboard"] == "kam_head_portfolio"
     assert current_dashboard.json()["role_group"] == "admin"
     admin_keys = [item["key"] for item in current_dashboard.json()["widgets"]]
-    assert admin_keys[:7] == ["summary", "forecast_chart", "account_portfolio", "high_risk_accounts", "signals", "escalations", "governance_calendar"]
+    assert admin_keys[:6] == ["summary", "forecast_chart", "account_portfolio", "high_risk_accounts", "critical_tasks", "governance_calendar"]
     assert "governance" not in admin_keys
     assert "governance_cadence" not in admin_keys
+    assert "health_distribution" not in admin_keys
+    assert "escalations" not in admin_keys
+    assert "account_change_alerts" not in admin_keys
+    assert "decision_queue" not in admin_keys
+    assert "sla_compliance" not in admin_keys
     assert "admin_system" in admin_keys
     admin_widget = next(item for item in current_dashboard.json()["widgets"] if item["key"] == "admin_system")
     assert admin_widget["value"]["failed_notifications"] == 1
@@ -343,7 +348,19 @@ def test_role_based_dashboard_profiles_and_reduced_direct_endpoints(client: Test
         assignment.ownership_role = "supporting_am"
         assignment.is_primary = False
     db_session.commit()
-    removed_dashboard_widgets = {"stale_kyc", "renewal_focus", "governance", "governance_cadence"}
+    removed_dashboard_widgets = {
+        "stale_kyc",
+        "renewal_focus",
+        "governance",
+        "governance_cadence",
+        "health_distribution",
+        "strategic_health",
+        "escalations",
+        "major_escalations",
+        "account_change_alerts",
+        "decision_queue",
+        "sla_compliance",
+    }
 
     admin_dashboard = client.get("/api/dashboards/me", headers=admin_headers)
     assert admin_dashboard.status_code == 200
@@ -357,19 +374,20 @@ def test_role_based_dashboard_profiles_and_reduced_direct_endpoints(client: Test
     assert am_dashboard.json()["role_group"] == "account_manager"
     assert "leadership" not in {item["key"] for item in am_dashboard.json()["widgets"]}
     am_keys = [item["key"] for item in am_dashboard.json()["widgets"]]
-    assert am_keys == ["summary", "account_portfolio", "signals", "tasks", "opportunities", "forecast_chart", "governance_calendar"]
+    assert am_keys == ["summary", "account_portfolio", "critical_tasks", "tasks", "opportunities", "forecast_chart", "governance_calendar"]
     assert "ai_task_summary" not in am_keys
     assert removed_dashboard_widgets.isdisjoint(am_keys)
     assert "forecast_chart" in am_keys
     assert "governance_calendar" in am_keys
     summary = next(item for item in am_dashboard.json()["widgets"] if item["key"] == "summary")
-    assert [tile["label"] for tile in summary["metadata"]["tiles"]] == ["My Accounts", "At risk", "Signals / Critical tasks", "Open tasks"]
+    assert [tile["label"] for tile in summary["metadata"]["tiles"]] == ["My Accounts", "At risk", "Critical tasks", "Open tasks"]
+    assert summary["metadata"]["tiles"][1]["route"] == "/accounts?risk=at_risk"
     assert summary["metadata"]["tiles"][0]["route"] == "/accounts"
-    signals = next(item for item in am_dashboard.json()["widgets"] if item["key"] == "signals")
-    signal_titles = {item["title"] for item in signals["items"]}
-    assert {"Critical relationship signal", "Overdue blocker"}.issubset(signal_titles)
-    assert signals["metadata"]["source_counts"]["critical_tasks"] >= 1
-    assert signals["metadata"]["source_counts"]["signals"] >= 1
+    critical_tasks = next(item for item in am_dashboard.json()["widgets"] if item["key"] == "critical_tasks")
+    critical_task_titles = {item["title"] for item in critical_tasks["items"]}
+    assert "Overdue blocker" in critical_task_titles
+    assert "Critical relationship signal" not in critical_task_titles
+    assert critical_tasks["metadata"]["source_counts"]["critical_tasks"] >= 1
     tasks = next(item for item in am_dashboard.json()["widgets"] if item["key"] == "tasks")
     assert tasks["value"]["open"] == 1
     assert tasks["value"]["in_progress"] == 1
@@ -406,9 +424,12 @@ def test_role_based_dashboard_profiles_and_reduced_direct_endpoints(client: Test
     workload_widget = next(item for item in kam_dashboard.json()["widgets"] if item["key"] == "am_workload")
     owner_workload = next(item for item in workload_widget["items"] if item["owner_id"] == owner["id"])
     assert owner_workload["accounts"] >= 2
-    alert_widget = next(item for item in kam_dashboard.json()["widgets"] if item["key"] == "account_change_alerts")
-    assert alert_widget["items"][0]["id"] == alert.id
-    assert alert_widget["items"][0]["account_name"] == account.name
+    assert owner_workload["route"] == f"/accounts?primary_am={owner['id']}"
+    high_risk = next(item for item in kam_dashboard.json()["widgets"] if item["key"] == "high_risk_accounts")
+    high_risk_account = next(item for item in high_risk["items"] if item["account_id"] == account.id)
+    assert high_risk_account["route"] == f"/accounts/{account.id}?tab=health"
+    assert "Critical risk status" in high_risk_account["risk_reason"]
+    assert "below the critical threshold of 60" in high_risk_account["risk_reason"]
 
     reduced = client.get("/api/dashboards/leadership", headers=kam_headers)
     assert reduced.status_code == 200
@@ -498,7 +519,9 @@ def test_delivery_lead_dashboard_and_system_role_protection(client: TestClient, 
     assert body["dashboard"] == "delivery"
     assert body["role_group"] == "delivery_lead"
     widget_keys = {item["key"] for item in body["widgets"]}
-    assert {"tasks", "signals", "escalations", "governance_calendar", "engagement_health"}.issubset(widget_keys)
+    assert {"tasks", "signals", "governance_calendar", "engagement_health"}.issubset(widget_keys)
+    assert "escalations" not in widget_keys
+    assert "decision_queue" not in widget_keys
     assert "governance" not in widget_keys
     engagement_health = next(item for item in body["widgets"] if item["key"] == "engagement_health")
     assert engagement_health["items"][0]["delivery_health"] == 48

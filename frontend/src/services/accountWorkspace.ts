@@ -34,6 +34,7 @@ interface ApiAccountOwner {
 
 interface ApiAccount {
   id: string
+  account_number?: number | null
   name: string
   project_name?: string | null
   company_url?: string | null
@@ -211,6 +212,19 @@ interface ApiOnboardingDraft {
   engagement_drafts: ApiDraftEngagement[]
 }
 
+interface ApiOnboardingUploadExtraction {
+  account_name: string
+  project_name?: string | null
+  company_url?: string | null
+  linkedin_url?: string | null
+  confidence: number
+  missing_fields: string[]
+  conflicts: string[]
+  source_citation?: string | null
+  source_file_names: string[]
+  extraction_status: string
+}
+
 interface ApiUser {
   id: string
   email: string
@@ -243,6 +257,19 @@ export interface OnboardingDraftView {
   approvedAccountId?: string | null
 }
 
+export interface OnboardingUploadExtractionView {
+  accountName: string
+  projectName: string
+  companyUrl: string
+  linkedinUrl: string
+  confidence: number
+  missingFields: string[]
+  conflicts: string[]
+  sourceCitation?: string | null
+  sourceFileNames: string[]
+  extractionStatus: string
+}
+
 export interface CreateDraftPayload {
   accountName: string
   projectName: string
@@ -257,6 +284,9 @@ export interface CreateDraftPayload {
 
 export interface CreateDraftFromUploadPayload {
   files: File[]
+  accountName?: string
+  projectName?: string
+  companyUrl?: string
   linkedinUrl?: string
   managerId?: string
   managerEmail?: string
@@ -508,12 +538,30 @@ export async function createOnboardingDraft(token: string, payload: CreateDraftP
 export async function createOnboardingDraftFromUpload(token: string, payload: CreateDraftFromUploadPayload) {
   const body = new FormData()
   payload.files.forEach(file => body.append('files', file))
+  if (payload.accountName?.trim()) body.append('account_name', payload.accountName.trim())
+  if (payload.projectName?.trim()) body.append('project_name', payload.projectName.trim())
+  if (payload.companyUrl?.trim()) body.append('company_url', normalizeUrl(payload.companyUrl.trim()))
   if (payload.linkedinUrl?.trim()) body.append('linkedin_url', normalizeUrl(payload.linkedinUrl.trim()))
   if (payload.managerId?.trim()) body.append('manager_id', payload.managerId.trim())
   if (payload.managerName?.trim()) body.append('manager_name', payload.managerName.trim())
   if (payload.managerEmail?.trim()) body.append('manager_email', payload.managerEmail.trim())
   return mapDraft(
     await apiRequest<ApiOnboardingDraft>('/api/onboarding/drafts/upload', {
+      method: 'POST',
+      token,
+      body,
+    }),
+  )
+}
+
+export async function extractOnboardingUploadFields(token: string, payload: CreateDraftFromUploadPayload) {
+  const body = new FormData()
+  payload.files.forEach(file => body.append('files', file))
+  if (payload.linkedinUrl?.trim()) body.append('linkedin_url', normalizeUrl(payload.linkedinUrl.trim()))
+  if (payload.managerName?.trim()) body.append('manager_name', payload.managerName.trim())
+  if (payload.managerEmail?.trim()) body.append('manager_email', payload.managerEmail.trim())
+  return mapUploadExtraction(
+    await apiRequest<ApiOnboardingUploadExtraction>('/api/onboarding/uploads/extract', {
       method: 'POST',
       token,
       body,
@@ -605,6 +653,19 @@ export async function createEngagement(token: string, accountId: string, payload
       method: 'POST',
       token,
       body: JSON.stringify(buildEngagementPayload(payload)),
+    }),
+    '',
+  )
+}
+
+export async function createEngagementFromCharter(token: string, accountId: string, file: File) {
+  const body = new FormData()
+  body.append('file', file)
+  return mapEngagement(
+    await apiRequest<ApiEngagement>(`/api/accounts/${accountId}/engagements/from-charter`, {
+      method: 'POST',
+      token,
+      body,
     }),
     '',
   )
@@ -846,11 +907,29 @@ function mapDraft(draft: ApiOnboardingDraft): OnboardingDraftView {
   }
 }
 
+function mapUploadExtraction(extraction: ApiOnboardingUploadExtraction): OnboardingUploadExtractionView {
+  return {
+    accountName: extraction.account_name ?? '',
+    projectName: extraction.project_name ?? '',
+    companyUrl: extraction.company_url ?? '',
+    linkedinUrl: extraction.linkedin_url ?? '',
+    confidence: extraction.confidence,
+    missingFields: extraction.missing_fields,
+    conflicts: extraction.conflicts,
+    sourceCitation: extraction.source_citation,
+    sourceFileNames: extraction.source_file_names,
+    extractionStatus: extraction.extraction_status,
+  }
+}
+
 function mapApiAccount(account: ApiAccount): Account {
   const owner = account.primary_owner ?? account.owners[0]
   const segment = toSegment(account.segment)
+  const accountNumber = account.account_number ?? null
   return {
     id: account.id,
+    accountNumber,
+    displayId: accountNumber ? `Account #${accountNumber}` : undefined,
     name: account.name,
     projectName: account.project_name ?? undefined,
     companyUrl: account.company_url ?? undefined,

@@ -56,7 +56,7 @@ describe('Notifications page', () => {
 
     await userEvent.selectOptions(screen.getByDisplayValue('All triggers'), 'task_created')
     await userEvent.selectOptions(screen.getByDisplayValue('All channels'), 'in_app')
-    await userEvent.type(screen.getByPlaceholderText('Account ID'), 'acct-1')
+    await userEvent.type(screen.getByPlaceholderText('Account filter'), 'acct-1')
     await userEvent.type(screen.getByPlaceholderText(/search title/i), 'renewal')
     await userEvent.click(screen.getByRole('button', { name: /search/i }))
 

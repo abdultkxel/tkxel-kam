@@ -4,7 +4,7 @@ SONAR_HOST_URL ?= http://127.0.0.1:9000
 SONAR_TOKEN ?=
 LAN_IP ?= $(shell hostname -I | awk '{print $$1}')
 
-.PHONY: help dev-run build run qa-run migrate seed test down logs clean sonar-up sonar-scan sonar-down sonar-logs
+.PHONY: help dev-run build run qa-run migrate seed seed-demo-projects reset-db test down logs clean sonar-up sonar-scan sonar-down sonar-logs
 
 help:
 	@echo "Available commands:"
@@ -14,6 +14,8 @@ help:
 	@echo "  make qa-run   - Run all services for office LAN sharing using this machine's LAN IP"
 	@echo "  make migrate  - Create/update database schema"
 	@echo "  make seed     - Seed base roles, users, and login domain data"
+	@echo "  make seed-demo-projects - Seed four demo accounts with KYC, engagement, and support data"
+	@echo "  make reset-db - Drop/recreate database schema and seed basic data"
 	@echo "  make test     - Run backend and frontend tests in Docker"
 	@echo "  make down     - Stop Docker services"
 	@echo "  make logs     - Follow Docker logs"
@@ -44,6 +46,16 @@ migrate:
 seed:
 	$(COMPOSE) up -d db
 	$(COMPOSE) run --rm backend python -m app.cli seed
+
+seed-demo-projects:
+	$(COMPOSE) up -d db
+	$(COMPOSE) run --rm backend python -m app.cli seed-demo-projects
+
+reset-db:
+	$(COMPOSE) stop backend frontend
+	$(COMPOSE) up -d db
+	$(COMPOSE) run --rm backend python -m app.cli reset-db
+	$(COMPOSE) up -d backend frontend
 
 test:
 	$(COMPOSE) run --rm --no-deps backend pytest

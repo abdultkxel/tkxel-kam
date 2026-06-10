@@ -32,22 +32,10 @@ export interface ScoreSnapshot {
   triggerEntryId: string
 }
 
-export interface SavedAccountFilter {
-  id: string
-  name: string
-  query: string
-  stage: string
-  risk: string
-  segments: string[]
-  sort?: string
-  direction?: 'asc' | 'desc'
-  layout?: 'cards' | 'table'
-  creatorId: string
-  shared: boolean
-}
-
 export interface Account {
   id: string
+  accountNumber?: number | null
+  displayId?: string
   name: string
   recordType?: 'account' | 'onboarding_draft'
   draftStatus?: 'ready_for_review' | 'approved' | 'rejected' | 'linked'

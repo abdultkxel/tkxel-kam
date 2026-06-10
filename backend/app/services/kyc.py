@@ -39,6 +39,7 @@ from app.schemas import (
 )
 from app.services.account_access import AccountAccessService, GLOBAL_EDIT_ROLES
 from app.services.audit import AuditService
+from app.services.in_app_notifications import InAppNotificationService
 from app.services.kyc_debug_logging import log_kyc_verbose
 from app.services.kyc_gateway import DeterministicKycGatewayAdapter, KycGatewayAdapter, KycGatewayRequest, KycGatewayResponse, KycGatewayWorkstreamResult
 from app.services.kyc_retrieval import KycRetrievalService
@@ -102,6 +103,7 @@ class KycService:
         self.access = AccountAccessService(self.accounts, RbacRepository(db))
         self.audit = AuditService(AuditRepository(db))
         self.timeline = TimelineService(TimelineRepository(db))
+        self.in_app_notifications = InAppNotificationService(db)
         self.gateway = gateway or DeterministicKycGatewayAdapter()
         from app.config import get_settings
 
@@ -201,6 +203,7 @@ class KycService:
                 source_record_route=f"/accounts/{account.id}?tab=kyc",
                 metadata={"agent_run_id": agent_run.id, "research_sources": research_sources},
             )
+            self._notify_kyc_draft_created(account, draft, current_user, queued=True)
             self.kyc.commit()
             return self.get_draft(account.id, draft.id, current_user)
 
@@ -252,6 +255,8 @@ class KycService:
             source_record_route=f"/accounts/{account.id}?tab=kyc",
             metadata={"agent_run_id": agent_run.id, "research_sources": research_sources},
         )
+        self._notify_kyc_draft_created(account, draft, current_user, queued=False)
+        self._notify_kyc_review_required(account, draft, current_user)
         self.kyc.commit()
         return self.get_draft(account.id, draft.id, current_user)
 
@@ -400,6 +405,7 @@ class KycService:
             after_value={"snapshot_id": snapshot.id, "version": version},
             metadata={"draft_id": draft.id, "agent_run_id": draft.agent_run_id},
         )
+        self._notify_kyc_approved(account, draft, snapshot, current_user)
         self.kyc.commit()
         return self.get_draft(account.id, draft.id, current_user)
 
@@ -433,6 +439,7 @@ class KycService:
             source_record_type="kyc_draft",
             source_record_route=f"/accounts/{account.id}?tab=kyc",
         )
+        self._notify_kyc_rejected(account, draft, current_user)
         self.kyc.commit()
         return self.get_draft(account.id, draft.id, current_user)
 
@@ -952,6 +959,7 @@ class KycService:
         if self._is_research_only_run(run):
             self._execute_research_run(account, run, current_user)
             self._log_agent_run(account, run, current_user, "kyc_web_research_complete" if run.status in {"complete", "partial"} else "kyc_web_research_failed")
+            self._notify_agent_run_finished(account, run, current_user)
             self.kyc.commit()
             return run
         source_documents = self._authorized_source_documents(account, list(run.source_document_ids), current_user)
@@ -968,6 +976,7 @@ class KycService:
         )
         self._update_linked_drafts_from_run(account, run, current_user)
         self._log_agent_run(account, run, current_user, "kyc_agent_run_complete" if run.status in {"complete", "partial"} else "kyc_agent_run_failed")
+        self._notify_agent_run_finished(account, run, current_user)
         self.kyc.commit()
         log_kyc_verbose(
             logger,
@@ -995,6 +1004,85 @@ class KycService:
             },
         )
         return run
+
+    def _kyc_approvers(self) -> list[User]:
+        return self.in_app_notifications.users_by_roles(["kam_head", "admin", "super_admin"])
+
+    def _notify_kyc_draft_created(self, account: Account, draft: KycDraft, current_user: User, *, queued: bool) -> None:
+        status_text = "queued for AI processing" if queued else "ready for review"
+        self.in_app_notifications.queue_many(
+            [*self.in_app_notifications.account_owners(account), *self._kyc_approvers()],
+            trigger="kyc_draft_created",
+            title=f"KYC draft {status_text}: {account.name}",
+            body=f"A KYC draft for {account.name} was {status_text}.",
+            account=account,
+            source_record_type="kyc_draft",
+            source_record_id=draft.id,
+            source_record_route=f"/accounts/{account.id}?tab=kyc",
+            priority="medium",
+            exclude_user_ids={current_user.id},
+        )
+
+    def _notify_kyc_review_required(self, account: Account, draft: KycDraft, current_user: User) -> None:
+        self.in_app_notifications.queue_many(
+            self._kyc_approvers(),
+            trigger="kyc_review_required",
+            title=f"KYC review required: {account.name}",
+            body=f"A KYC draft for {account.name} is ready for KAM Head review.",
+            account=account,
+            source_record_type="kyc_draft",
+            source_record_id=draft.id,
+            source_record_route=f"/accounts/{account.id}?tab=kyc",
+            priority="high",
+            exclude_user_ids={current_user.id},
+        )
+
+    def _notify_kyc_approved(self, account: Account, draft: KycDraft, snapshot: KycSnapshot, current_user: User) -> None:
+        self.in_app_notifications.queue_many(
+            [self.in_app_notifications.active_user(draft.created_by_id), *self.in_app_notifications.account_owners(account)],
+            trigger="kyc_approved",
+            title=f"KYC approved: {account.name}",
+            body=f"KYC snapshot v{snapshot.version} is now the approved account intelligence for {account.name}.",
+            account=account,
+            source_record_type="kyc_snapshot",
+            source_record_id=snapshot.id,
+            source_record_route=f"/accounts/{account.id}?tab=kyc",
+            priority="medium",
+            exclude_user_ids={current_user.id},
+        )
+
+    def _notify_kyc_rejected(self, account: Account, draft: KycDraft, current_user: User) -> None:
+        self.in_app_notifications.queue_many(
+            [self.in_app_notifications.active_user(draft.created_by_id), *self.in_app_notifications.account_owners(account)],
+            trigger="kyc_rejected",
+            title=f"KYC rejected: {account.name}",
+            body=draft.rejection_reason or "A KYC draft was rejected and needs revision.",
+            account=account,
+            source_record_type="kyc_draft",
+            source_record_id=draft.id,
+            source_record_route=f"/accounts/{account.id}?tab=kyc",
+            priority="high",
+            exclude_user_ids={current_user.id},
+        )
+
+    def _notify_agent_run_finished(self, account: Account, run: KycAgentRun, current_user: User) -> None:
+        if run.status == "failed":
+            self.in_app_notifications.queue_many(
+                [self.in_app_notifications.active_user(run.triggered_by_id), *self.in_app_notifications.account_owners(account)],
+                trigger="kyc_workstream_failed",
+                title=f"KYC AI run failed: {account.name}",
+                body=run.error_message or "A KYC AI run failed. Review the run logs and retry.",
+                account=account,
+                source_record_type="kyc_agent_run",
+                source_record_id=run.id,
+                source_record_route=f"/accounts/{account.id}?tab=kyc",
+                priority="medium",
+                dedupe_scope=f"failed:{run.retry_count}:{run.completed_at.isoformat() if run.completed_at else run.updated_at.isoformat()}",
+            )
+            return
+        if run.status in {"complete", "partial"}:
+            for draft in [item for item in run.drafts if item.status in {"ready_for_review", "draft"}]:
+                self._notify_kyc_review_required(account, draft, current_user)
 
     def _require_account_view(self, account_id: str, current_user: User) -> Account:
         account = self._account_or_404(account_id)

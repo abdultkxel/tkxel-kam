@@ -14,6 +14,8 @@ Implements the account-creation and KYC review workflow where uploaded SOW/chart
 - Account approval from onboarding seeds a default stakeholder and a default source-prefilled KYC draft when those records do not already exist.
 - KYC prompt generation uses account fields, approved SOW/charter source documents, structured SOW metadata, extracted document text excerpts, and previous approved KYC snapshot context.
 - The visible KYC prompt is a compact textarea, not a rich text editor, and provider routing/fallback wording is not included in the user-facing prompt.
+- The KYC prompt, provider response/debug panels, and runtime source extraction review are now visible only to `super_admin`; standard KYC reviewers use the mapped KYC fields, draft queue, issues, and snapshot history.
+- The legacy KYC `Research question`, bottom `Detailed AI description`, and right-sidebar `Review gates` panels are removed from the normal KYC review surface.
 - Direct Google scraping, unofficial LinkedIn scraping, and uncredentialed ZoomInfo access remain blocked. Web enrichment must come through approved provider context such as Tavily or future approved APIs.
 
 ## API Contract
@@ -55,6 +57,8 @@ Implements the account-creation and KYC review workflow where uploaded SOW/chart
 
 - KYC tab editable prompt window:
   - `frontend/src/components/account/KYCAssistedReview.tsx`
+- Shared click-to-edit rich text behavior:
+  - `frontend/src/components/ui/RichTextEditor.tsx`
 - KYC API service/types:
   - `frontend/src/services/kyc.ts`
   - `frontend/src/types/kyc.ts`

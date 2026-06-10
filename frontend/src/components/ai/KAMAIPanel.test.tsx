@@ -3,13 +3,16 @@ import userEvent from '@testing-library/user-event'
 import { MemoryRouter } from 'react-router-dom'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { KAMAIPanel } from '@/components/ai/KAMAIPanel'
-import { useAccountStore } from '@/stores/accountStore'
-import { useAIStore } from '@/stores/aiStore'
-import { useOpportunityStore } from '@/stores/opportunityStore'
-import { useTimelineStore } from '@/stores/timelineStore'
+import { AISearchBar } from '@/components/ai/AISearchBar'
 import { useUIStore } from '@/stores/uiStore'
 
-const forecastMock = vi.hoisted(() => vi.fn())
+const chatMocks = vi.hoisted(() => ({
+  listKamAiChatSessions: vi.fn(),
+  createKamAiChatSession: vi.fn(),
+  getKamAiChatSession: vi.fn(),
+  sendKamAiChatMessage: vi.fn(),
+  updateKamAiChatSession: vi.fn(),
+}))
 
 vi.mock('@/contexts/AuthContext', () => ({
   useAuth: () => ({
@@ -24,132 +27,153 @@ vi.mock('@/contexts/AuthContext', () => ({
   }),
 }))
 
-vi.mock('@/services/aiAssistance', async () => {
-  const actual = await vi.importActual<typeof import('@/services/aiAssistance')>('@/services/aiAssistance')
-  return {
-    ...actual,
-    runKamAiForecast: forecastMock,
-    runKamAiSearch: vi.fn(),
-  }
-})
+vi.mock('@/services/kamAiChat', () => chatMocks)
 
-describe('KAMAIPanel forecast prompt', () => {
-  beforeEach(() => {
-    forecastMock.mockReset()
-    forecastMock.mockResolvedValue({
-      title: '6-Month Revenue Forecast',
-      summary: 'Shared forecast summary',
-      points: [
+const emptySession = {
+  id: 'session-1',
+  user_id: 'usr-am',
+  title: 'New KAM AI chat',
+  account_id: null,
+  account_name: null,
+  scope_json: ['timeline', 'kyc', 'documents'],
+  status: 'active',
+  message_count: 0,
+  last_message_preview: null,
+  last_message_at: null,
+  created_at: '2026-06-10T10:00:00.000Z',
+  updated_at: '2026-06-10T10:00:00.000Z',
+  archived_at: null,
+  messages: [],
+}
+
+const answeredSession = {
+  ...emptySession,
+  title: 'Cafe Zupas risks',
+  message_count: 2,
+  last_message_preview: 'Cafe Zupas has one **source-backed delivery risk**.',
+  last_message_at: '2026-06-10T10:01:00.000Z',
+  messages: [
+    {
+      id: 'msg-user-1',
+      session_id: 'session-1',
+      role: 'user',
+      content: 'Cafe Zupas risks',
+      status: 'complete',
+      token_usage_json: {},
+      metadata_json: {},
+      sources: [],
+      created_at: '2026-06-10T10:01:00.000Z',
+      completed_at: '2026-06-10T10:01:00.000Z',
+    },
+    {
+      id: 'msg-assistant-1',
+      session_id: 'session-1',
+      role: 'assistant',
+      content: 'Cafe Zupas has one **source-backed delivery risk**.',
+      status: 'complete',
+      intent: 'risk',
+      confidence: 'medium',
+      model_provider: 'deterministic_fallback',
+      model_name: 'source-ranked',
+      token_usage_json: {},
+      metadata_json: {
+        recommended_actions: ['Review delivery rollout plan.'],
+        missing_evidence: [],
+      },
+      error_message: null,
+      ai_gateway_run_id: 'run-1',
+      sources: [
         {
-          month: 'Jul 2026',
-          baselineRevenue: 10000,
-          weightedOpportunity: 2500,
-          growthAdjustment: 500,
-          riskAdjustment: 750,
-          forecastRevenue: 12250,
-          health: 72,
-          openOpportunities: 1,
-        },
-        {
-          month: 'Aug 2026',
-          baselineRevenue: 10500,
-          weightedOpportunity: 3000,
-          growthAdjustment: 650,
-          riskAdjustment: 700,
-          forecastRevenue: 13450,
-          health: 73,
-          openOpportunities: 1,
-        },
-        {
-          month: 'Sep 2026',
-          baselineRevenue: 11000,
-          weightedOpportunity: 3500,
-          growthAdjustment: 800,
-          riskAdjustment: 650,
-          forecastRevenue: 14650,
-          health: 74,
-          openOpportunities: 1,
-        },
-        {
-          month: 'Oct 2026',
-          baselineRevenue: 11500,
-          weightedOpportunity: 4000,
-          growthAdjustment: 950,
-          riskAdjustment: 600,
-          forecastRevenue: 15850,
-          health: 74,
-          openOpportunities: 1,
-        },
-        {
-          month: 'Nov 2026',
-          baselineRevenue: 12000,
-          weightedOpportunity: 4500,
-          growthAdjustment: 1100,
-          riskAdjustment: 550,
-          forecastRevenue: 17050,
-          health: 75,
-          openOpportunities: 1,
-        },
-        {
-          month: 'Dec 2026',
-          baselineRevenue: 12500,
-          weightedOpportunity: 5000,
-          growthAdjustment: 1250,
-          riskAdjustment: 500,
-          forecastRevenue: 18250,
-          health: 76,
-          openOpportunities: 1,
+          id: 'source-1',
+          account_id: 'demo-project-cafe-zupas',
+          account_name: 'Cafe Zupas',
+          source_type: 'kyc',
+          source_record_id: 'kyc-1',
+          title: 'KYC snapshot v1',
+          excerpt: 'Cafe Zupas demo account risk context.',
+          source_route: '/accounts/demo-project-cafe-zupas?tab=kyc',
+          relevance_score: 94,
+          citation_index: 1,
+          metadata_json: {},
         },
       ],
-      months: 6,
-      scope: 'portfolio',
-      confidence: 'medium',
-      trendLabel: 'positive',
-      totals: {
-        accountCount: 1,
-        activeSowCount: 1,
-        openOpportunities: 1,
-        atRiskAccounts: 0,
-        contractedBaseline: 60000,
-        baselineRevenue: 60000,
-        pipelineValue: 100000,
-        weightedOpportunity: 35000,
-        growthAdjustment: 17500,
-        riskAdjustment: 4500,
-        forecastRevenue: 108000,
-      },
-      waterfall: [],
-      basis: [],
-      assumptions: [],
-      missingData: [],
-      recommendedActions: [],
-      highlights: ['Baseline exists.'],
-      citations: [{ type: 'account', id: 'acc-1', label: 'Acme' }],
-      disclaimer: 'Advisory only.',
-      runId: 'run-1',
+      created_at: '2026-06-10T10:01:00.000Z',
+      completed_at: '2026-06-10T10:01:02.000Z',
+    },
+  ],
+}
+
+describe('KAM AI shared input', () => {
+  beforeEach(() => {
+    chatMocks.listKamAiChatSessions.mockReset()
+    chatMocks.createKamAiChatSession.mockReset()
+    chatMocks.getKamAiChatSession.mockReset()
+    chatMocks.sendKamAiChatMessage.mockReset()
+    chatMocks.updateKamAiChatSession.mockReset()
+    chatMocks.listKamAiChatSessions.mockResolvedValue({ items: [], total: 0, page: 1, page_size: 50, pages: 0 })
+    chatMocks.createKamAiChatSession.mockResolvedValue(emptySession)
+    chatMocks.sendKamAiChatMessage.mockResolvedValue(answeredSession)
+    useUIStore.setState({
+      aiOpen: false,
+      aiPrefill: '',
+      activeAccountId: 'amd-001',
+      mobileNavOpen: false,
+      sidebarCollapsed: false,
+      shortcutModalOpen: false,
+      globalNoteOpen: false,
     })
-    useUIStore.setState({ aiOpen: true, aiPrefill: '' })
-    useAccountStore.setState({ accounts: [], accountsLoaded: true })
-    useOpportunityStore.setState({ opportunities: [] })
-    useTimelineStore.setState({ entries: [] })
-    useAIStore.setState({ history: {}, queryRuns: {} })
   })
 
-  it('calls backend forecast even when no accounts are loaded locally', async () => {
+  it('opens KAM AI from the top search bar and keeps the composer in sync', async () => {
+    const user = userEvent.setup()
+    render(
+      <MemoryRouter>
+        <AISearchBar compact />
+        <KAMAIPanel />
+      </MemoryRouter>,
+    )
+
+    const topbarInput = screen.getByPlaceholderText(/Ask KAM AI across accounts/i)
+    await user.type(topbarInput, 'Cafe Zupas risks')
+    await user.click(screen.getByRole('button', { name: /KAM AI/i }))
+
+    expect(useUIStore.getState().aiOpen).toBe(true)
+    const composer = await screen.findByPlaceholderText(/Ask about risks/i)
+    expect(composer).toHaveValue('Cafe Zupas risks')
+
+    await user.clear(composer)
+    await user.type(composer, 'Renewal risks')
+
+    expect(topbarInput).toHaveValue('Renewal risks')
+    expect(useUIStore.getState().aiPrefill).toBe('Renewal risks')
+  })
+
+  it('sends the shared KAM AI draft through the chat API and renders the answer with sources', async () => {
+    const user = userEvent.setup()
+    useUIStore.setState({ aiOpen: true, aiPrefill: 'Cafe Zupas risks' })
+
     render(
       <MemoryRouter>
         <KAMAIPanel />
       </MemoryRouter>,
     )
 
-    expect(screen.getByText('0 accounts | 0 open and active opportunities | 0 timeline records')).toBeInTheDocument()
-    await userEvent.click(screen.getByRole('button', { name: 'Forecast next 6 months' }))
+    const composer = await screen.findByPlaceholderText(/Ask about risks/i)
+    await user.click(screen.getByRole('button', { name: /Send KAM AI message/i }))
 
-    await waitFor(() => expect(forecastMock).toHaveBeenCalledWith('token-1', { accountId: undefined, months: 6 }))
-    expect((await screen.findAllByText('Shared forecast summary')).length).toBeGreaterThan(0)
-    expect(screen.getByText('6-Month Revenue Forecast')).toBeInTheDocument()
-    expect(screen.getByRole('img', { name: 'Six-month revenue forecast chart' })).toBeInTheDocument()
-    expect(screen.getByText('Jul')).toBeInTheDocument()
-    expect(screen.getByText('Dec')).toBeInTheDocument()
+    await waitFor(() => {
+      expect(chatMocks.sendKamAiChatMessage).toHaveBeenCalledWith(
+        'token-1',
+        'session-1',
+        expect.objectContaining({
+          content: 'Cafe Zupas risks',
+          document_search: true,
+        }),
+      )
+    })
+    expect(composer).toHaveValue('')
+    const boldText = await screen.findByText('source-backed delivery risk')
+    expect(boldText.tagName.toLowerCase()).toBe('strong')
+    expect(screen.getByText(/Sources \(1\)/i)).toBeInTheDocument()
   })
 })

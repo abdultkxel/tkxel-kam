@@ -1,9 +1,11 @@
+import hashlib
+import re
 from datetime import date, datetime, timedelta, timezone
 
-from fastapi import HTTPException, status
+from fastapi import HTTPException, UploadFile, status
 from sqlalchemy.orm import Session
 
-from app.models import Account, Engagement, EngagementHealthSnapshot, User
+from app.models import Account, Engagement, EngagementHealthSnapshot, SourceDocument, Stakeholder, User
 from app.repositories.accounts import AccountRepository
 from app.repositories.audit import AuditRepository
 from app.repositories.engagements import EngagementRepository
@@ -23,6 +25,11 @@ from app.services.account_access import AccountAccessService
 from app.services.accounts import AccountService
 from app.services.audit import AuditService
 from app.services.engagement_health_rollup import notify_account_health_impacted_by_engagement_change
+from app.services.in_app_notifications import InAppNotificationService
+from app.services.kyc_document_extraction import KycDocumentExtractionService
+from app.services.source_document_contract import infer_service_lines_from_text
+from app.services.sow_extraction import SowExtractionService
+from app.services.storage import ContentStorageService
 from app.services.timeline import TimelineService
 from app.services.user_management import page_count
 
@@ -55,6 +62,7 @@ class EngagementService:
         self.access = AccountAccessService(self.accounts, RbacRepository(db))
         self.audit = AuditService(AuditRepository(db))
         self.timeline = TimelineService(TimelineRepository(db))
+        self.in_app_notifications = InAppNotificationService(db)
 
     def list_for_account(
         self,
@@ -156,8 +164,80 @@ class EngagementService:
             description="Engagement/SOW record created.",
             new_value=self._engagement_audit_value(engagement),
         )
+        self._notify_engagement_created(account, engagement, current_user)
         self.engagements.commit()
         return EngagementRead.model_validate(engagement)
+
+    async def create_engagement_from_charter(self, account_id: str, upload: UploadFile, current_user: User) -> EngagementRead:
+        account = self._get_account_or_404(account_id)
+        self.access.require_account_update(current_user, account, module="engagement_sow_management")
+        if not upload.filename:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Upload a project charter file.")
+
+        storage = ContentStorageService()
+        stored = await storage.save_upload(upload)
+        try:
+            document = SourceDocument(
+                account_id=account.id,
+                title=self._document_title(stored.file_name),
+                source_type="project_charter",
+                file_name=stored.file_name,
+                file_url=stored.file_path,
+                storage_backend=stored.storage_backend,
+                storage_path=stored.file_path,
+                mime_type=stored.mime_type,
+                size_bytes=stored.size_bytes,
+                checksum_sha256=self._file_checksum(stored.file_path),
+                uploaded_by_id=current_user.id,
+                uploaded_by_name=current_user.full_name,
+                extraction_status="queued",
+                confidence=75,
+                pages=0,
+                is_sensitive=False,
+            )
+            self.accounts.add_attachment(document)
+            extraction_service = KycDocumentExtractionService(self.accounts.db)
+            extraction = extraction_service.extract_document(document, force=True)
+            if extraction.status == "completed":
+                extraction_service.chunk_document(document, extraction=extraction, force=True)
+                structured = SowExtractionService(self.accounts.db).extract_structured_fields(document, extraction, allow_ai=True)
+            else:
+                structured = SowExtractionService(self.accounts.db).extract_structured_fields_from_text("", source_name=stored.file_name, allow_ai=False)
+            text = extraction.raw_text or extraction.normalized_text or ""
+            engagement = self._engagement_from_structured_charter(account, document, structured.fields, text, current_user)
+            document.engagement_id = engagement.id
+            self._create_stakeholders_from_charter(account, engagement, structured.fields, current_user)
+            self._add_health_snapshot(engagement, current_user, is_dirty=False)
+            self._notify_account_health_impacted_by_engagement_change(account, engagement, current_user)
+            self.audit.log(
+                module="engagement_sow_management",
+                action="engagement_create_from_charter",
+                entity_type="engagement",
+                entity_id=engagement.id,
+                actor=current_user,
+                after_value={**self._engagement_audit_value(engagement), "source_document_id": document.id, "extraction_status": extraction.status},
+            )
+            self._add_engagement_timeline_event(
+                account,
+                engagement,
+                current_user,
+                event_type="engagement_created",
+                title=f"Engagement created from charter: {engagement.name}",
+                description=f"Engagement and stakeholder draft records were mapped from {stored.file_name}.",
+                new_value=self._engagement_audit_value(engagement),
+                metadata={"source_document_id": document.id, "extraction_status": extraction.status},
+            )
+            self._notify_engagement_created(account, engagement, current_user)
+            self.engagements.commit()
+            return EngagementRead.model_validate(engagement)
+        except HTTPException:
+            self.accounts.db.rollback()
+            storage.delete_stored_file(stored.file_path)
+            raise
+        except Exception as exc:
+            self.accounts.db.rollback()
+            storage.delete_stored_file(stored.file_path)
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Project charter import failed: {str(exc)[:300]}") from exc
 
     def get_engagement(self, engagement_id: str, current_user: User) -> EngagementRead:
         engagement = self._get_engagement_or_404(engagement_id)
@@ -219,6 +299,7 @@ class EngagementService:
             after_value=after,
         )
         self._add_update_timeline_events(account, engagement, current_user, before, after, changed_fields)
+        self._notify_engagement_update(account, engagement, current_user, before, after, changed_fields)
         self.engagements.commit()
         return EngagementRead.model_validate(engagement)
 
@@ -316,6 +397,7 @@ class EngagementService:
             source_record_type="engagement_health_snapshot",
             source_record_route=f"/accounts/{account.id}?tab=health",
         )
+        self._notify_engagement_health_drop(account, engagement, current_user, before, after)
         self.engagements.commit()
         return EngagementHealthRead.model_validate(snapshot)
 
@@ -357,6 +439,200 @@ class EngagementService:
         user = self._get_active_user(user_id)
         AccountService._ensure_owner_is_eligible(user, "ops_lead")
         return user
+
+    def _engagement_from_structured_charter(self, account: Account, document: SourceDocument, fields: dict, text: str, current_user: User) -> Engagement:
+        primary_owner = self.accounts.get_active_primary_owner(account.id)
+        owner_id = primary_owner.user_id if primary_owner and primary_owner.user_id else current_user.id
+        owner_name = primary_owner.user_name if primary_owner and primary_owner.user_name else current_user.full_name
+        service_lines = self._field_list(fields, "service_lines") or infer_service_lines_from_text(text) or ["Account onboarding"]
+        commercial_value, currency = self._field_money(fields)
+        start_date = self._field_date(fields, "start_date") or datetime.now(timezone.utc)
+        end_date = self._field_date(fields, "end_date")
+        renewal_terms = self._field_text(fields, "renewal_terms")
+        notice_period_days = self._notice_days(self._field_text(fields, "notice_period"))
+        risks = self._field_list(fields, "risks")
+        deliverables = self._field_list(fields, "deliverables")
+        name = self._extract_label(text, ["Project Name", "Engagement Name", "Program Name", "Charter Title", "Project Charter"]) or self._document_title(document.file_name or document.title)
+        if not name or name.lower() in {"project charter", "charter"}:
+            name = f"{account.name} Engagement"
+        engagement = Engagement(
+            account_id=account.id,
+            name=name[:180],
+            description="\n".join(deliverables[:12])[:4000] if deliverables else None,
+            status="active",
+            owner_id=owner_id,
+            owner_name=owner_name,
+            service_lines=service_lines,
+            source_links=[{"title": document.title, "url": f"/api/accounts/{account.id}/attachments/{document.id}/download"}],
+            value=commercial_value or 0,
+            currency=currency or account.currency or "USD",
+            delivery_status="active",
+            commercial_status="watch",
+            delivery_health=70,
+            health_status="unknown",
+            renewal_risk="unknown",
+            start_date=start_date,
+            end_date=end_date,
+            renewal_date=end_date,
+            notice_deadline=calculate_notice_deadline(end_date, end_date, notice_period_days),
+            notice_period_days=notice_period_days,
+            auto_renewal=bool(renewal_terms and re.search(r"\b(auto|automatic|renew)\b", renewal_terms, re.IGNORECASE)),
+            commercial_context=self._commercial_context(commercial_value, currency, renewal_terms, self._field_text(fields, "notice_period")),
+            resource_dependency=self._resource_dependency(risks),
+            risks=risks,
+            source_citation=f"{document.file_name or document.title}: engagement mapped from extracted project charter content.",
+            created_by_id=current_user.id,
+            updated_by_id=current_user.id,
+        )
+        self._validate_engagement_dates(engagement)
+        self.engagements.save(engagement)
+        return engagement
+
+    def _create_stakeholders_from_charter(self, account: Account, engagement: Engagement, fields: dict, current_user: User) -> None:
+        for raw in self._field_list(fields, "stakeholders")[:20]:
+            name, title, email = self._parse_stakeholder(raw)
+            if not name:
+                continue
+            duplicate = self.accounts.db.query(Stakeholder).filter(
+                Stakeholder.account_id == account.id,
+                Stakeholder.engagement_id == engagement.id,
+                Stakeholder.name.ilike(name),
+                Stakeholder.archived_at.is_(None),
+            ).first()
+            if duplicate:
+                continue
+            self.accounts.db.add(
+                Stakeholder(
+                    account_id=account.id,
+                    engagement_id=engagement.id,
+                    name=name[:180],
+                    title=title[:160] if title else None,
+                    company=account.name,
+                    email=email,
+                    role="client_sponsor" if title and re.search(r"sponsor|owner|vp|director|head", title, re.IGNORECASE) else "business_owner",
+                    influence="medium",
+                    relationship_strength="unknown",
+                    sentiment="neutral",
+                    political_risk="unknown",
+                    status="active",
+                    notes=f"Created from uploaded project charter for {engagement.name}.",
+                    created_by_id=current_user.id,
+                    updated_by_id=current_user.id,
+                )
+            )
+        self.accounts.db.flush()
+
+    @staticmethod
+    def _document_title(file_name: str | None) -> str:
+        raw = (file_name or "Project Charter").rsplit("/", 1)[-1]
+        return re.sub(r"\.[A-Za-z0-9]+$", "", raw).replace("_", " ").replace("-", " ").strip()[:220] or "Project Charter"
+
+    @staticmethod
+    def _file_checksum(path: str) -> str:
+        with open(path, "rb") as handle:
+            return hashlib.sha256(handle.read()).hexdigest()
+
+    @staticmethod
+    def _field_text(fields: dict, key: str) -> str | None:
+        item = fields.get(key)
+        if not isinstance(item, dict):
+            return None
+        value = item.get("value")
+        return str(value).strip() if value not in {None, ""} else None
+
+    @staticmethod
+    def _field_list(fields: dict, key: str) -> list[str]:
+        item = fields.get(key)
+        if not isinstance(item, dict):
+            return []
+        value = item.get("value")
+        if isinstance(value, list):
+            return [str(entry).strip() for entry in value if str(entry).strip()]
+        if isinstance(value, str):
+            return [entry.strip() for entry in re.split(r"[\n,;|•]+", value) if entry.strip()]
+        return []
+
+    @staticmethod
+    def _field_money(fields: dict) -> tuple[float | None, str | None]:
+        item = fields.get("commercial_value")
+        if not isinstance(item, dict):
+            return None, None
+        raw = item.get("value")
+        if raw in {None, ""}:
+            return None, None
+        try:
+            value = float(str(raw).replace("$", "").replace(",", "").strip())
+        except ValueError:
+            return None, None
+        currency = str(item.get("currency") or "USD").strip().upper()[:3]
+        return value, currency if re.fullmatch(r"[A-Z]{3}", currency) else "USD"
+
+    @staticmethod
+    def _field_date(fields: dict, key: str) -> datetime | None:
+        raw = EngagementService._field_text(fields, key)
+        if not raw:
+            return None
+        iso = re.search(r"\d{4}-\d{2}-\d{2}", raw)
+        if iso:
+            return datetime.fromisoformat(iso.group(0)).replace(tzinfo=timezone.utc)
+        us = re.search(r"\d{1,2}/\d{1,2}/\d{4}", raw)
+        if us:
+            month, day, year = [int(part) for part in us.group(0).split("/")]
+            return datetime(year, month, day, tzinfo=timezone.utc)
+        return None
+
+    @staticmethod
+    def _notice_days(raw: str | None) -> int | None:
+        if not raw:
+            return None
+        days = re.search(r"(\d+)\s*days?", raw, re.IGNORECASE)
+        if days:
+            return int(days.group(1))
+        weeks = re.search(r"(\d+)\s*weeks?", raw, re.IGNORECASE)
+        if weeks:
+            return int(weeks.group(1)) * 7
+        return None
+
+    @staticmethod
+    def _extract_label(text: str, labels: list[str]) -> str | None:
+        for label in labels:
+            match = re.search(rf"(?im)^\s*{re.escape(label)}\s*[:\-]\s*(.+?)\s*$", text)
+            if match:
+                return re.sub(r"\s+", " ", match.group(1)).strip()[:180]
+        return None
+
+    @staticmethod
+    def _commercial_context(value: float | None, currency: str | None, renewal_terms: str | None, notice_period: str | None) -> str:
+        parts = []
+        if value:
+            parts.append(f"Commercial value: {currency or 'USD'} {value:,.2f}")
+        if renewal_terms:
+            parts.append(f"Renewal terms: {renewal_terms}")
+        if notice_period:
+            parts.append(f"Notice period: {notice_period}")
+        return "\n".join(parts) or "Mapped from uploaded project charter."
+
+    @staticmethod
+    def _resource_dependency(risks: list[str]) -> str | None:
+        if not risks:
+            return None
+        return "\n".join(f"- {risk}" for risk in risks[:8])
+
+    @staticmethod
+    def _parse_stakeholder(raw: str) -> tuple[str, str | None, str | None]:
+        text = re.sub(r"\s+", " ", raw).strip(" -:;")
+        email_match = re.search(r"[\w.\-+]+@[\w.\-]+\.[A-Za-z]{2,}", text)
+        email = email_match.group(0) if email_match else None
+        if email:
+            text = text.replace(email, "").strip(" -:;")
+        if " - " in text:
+            name, title = [part.strip() for part in text.split(" - ", 1)]
+        elif "," in text:
+            name, title = [part.strip() for part in text.split(",", 1)]
+        else:
+            name, title = text, None
+        name = re.sub(r"^(Name|Stakeholder|Client has to|Customer shall identify)\s*[:\-]?\s*", "", name, flags=re.IGNORECASE).strip()
+        return name[:180], title[:160] if title else None, email
 
     def _apply_updates(self, engagement: Engagement, payload: EngagementUpdateRequest, current_user: User) -> None:
         updates = payload.model_dump(exclude_unset=True)
@@ -555,6 +831,81 @@ class EngagementService:
                 "metric_version": rollup.metric_version,
                 "contribution_count": len(rollup.contributions),
             },
+        )
+
+    def _engagement_recipients(self, account: Account, engagement: Engagement) -> list[User]:
+        return [
+            *self.in_app_notifications.account_owners(account),
+            self.in_app_notifications.active_user(engagement.owner_id),
+            self.in_app_notifications.active_user(engagement.ops_lead_id),
+        ]
+
+    def _notify_engagement_created(self, account: Account, engagement: Engagement, current_user: User) -> None:
+        self.in_app_notifications.queue_many(
+            self._engagement_recipients(account, engagement),
+            trigger="engagement_created",
+            title=f"Engagement created: {engagement.name}",
+            body=f"An engagement/SOW record was created for {account.name}.",
+            account=account,
+            source_record_type="engagement",
+            source_record_id=engagement.id,
+            source_record_route=f"/accounts/{account.id}?tab=engagements",
+            priority="medium",
+            exclude_user_ids={current_user.id},
+        )
+
+    def _notify_engagement_update(self, account: Account, engagement: Engagement, current_user: User, before: dict, after: dict, changed_fields: list[str]) -> None:
+        if "owner_id" in changed_fields:
+            self.in_app_notifications.queue_many(
+                [self.in_app_notifications.active_user(str(before.get("owner_id")) if before.get("owner_id") else None), self.in_app_notifications.active_user(engagement.owner_id)],
+                trigger="engagement_owner_assigned",
+                title=f"Engagement owner changed: {engagement.name}",
+                body=f"Ownership changed for {engagement.name} on {account.name}.",
+                account=account,
+                source_record_type="engagement",
+                source_record_id=engagement.id,
+                source_record_route=f"/accounts/{account.id}?tab=engagements",
+                priority="medium",
+                dedupe_scope=f"owner:{datetime.now(timezone.utc).isoformat()}",
+                exclude_user_ids={current_user.id},
+            )
+        if "status" in changed_fields:
+            self.in_app_notifications.queue_many(
+                self._engagement_recipients(account, engagement),
+                trigger="engagement_status_changed",
+                title=f"Engagement status changed: {engagement.name}",
+                body=f"Status changed from {before.get('status')} to {after.get('status')}.",
+                account=account,
+                source_record_type="engagement",
+                source_record_id=engagement.id,
+                source_record_route=f"/accounts/{account.id}?tab=engagements",
+                priority="medium",
+                dedupe_scope=f"status:{after.get('status')}:{datetime.now(timezone.utc).isoformat()}",
+                exclude_user_ids={current_user.id},
+            )
+        self._notify_engagement_health_drop(account, engagement, current_user, before, after)
+
+    def _notify_engagement_health_drop(self, account: Account, engagement: Engagement, current_user: User, before: dict, after: dict) -> None:
+        previous = before.get("delivery_health")
+        current = after.get("delivery_health")
+        try:
+            dropped = current is not None and previous is not None and int(current) < int(previous)
+        except (TypeError, ValueError):
+            dropped = False
+        if not dropped and after.get("health_status") not in {"red", "critical"} and after.get("renewal_risk") not in {"high", "critical"}:
+            return
+        self.in_app_notifications.queue_many(
+            self._engagement_recipients(account, engagement),
+            trigger="engagement_health_drop",
+            title=f"Engagement health needs attention: {engagement.name}",
+            body=f"Engagement health is {after.get('delivery_health')} with status {after.get('health_status')}.",
+            account=account,
+            source_record_type="engagement",
+            source_record_id=engagement.id,
+            source_record_route=f"/accounts/{account.id}?tab=health",
+            priority="high",
+            dedupe_scope=f"health:{after.get('delivery_health')}:{datetime.now(timezone.utc).strftime('%Y%m%d%H%M')}",
+            exclude_user_ids={current_user.id},
         )
 
     @staticmethod

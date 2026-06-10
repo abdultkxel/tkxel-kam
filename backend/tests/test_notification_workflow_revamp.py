@@ -8,8 +8,8 @@ from sqlalchemy.pool import StaticPool
 
 from app.database import Base, get_db
 from app.main import app
-from app.models import Account, AccountOwner
-from app.services.seed import seed_default_data
+from app.models import Account, AccountOwner, NotificationTriggerConfig
+from app.services.seed import seed_base_data, seed_default_data
 
 
 def auth_headers(client: TestClient, email: str = "admin@tkxel.com", password: str = "Admin@12345") -> dict[str, str]:
@@ -46,7 +46,23 @@ def draft_payload(account_name: str, owner_id: str) -> dict:
                 "citations": [{"label": "Project Charter p1", "page_number": 1, "excerpt": "Scope.", "field_key": "account_name"}],
             }
         ],
-        "engagement_drafts": [],
+        "engagement_drafts": [
+            {
+                "name": "Notification workflow engagement",
+                "owner_id": owner_id,
+                "service_lines": ["Engineering"],
+                "value": 125000,
+                "currency": "USD",
+                "delivery_status": "active",
+                "confidence": 88,
+                "start_date": "2026-06-01T00:00:00Z",
+                "end_date": "2026-12-01T00:00:00Z",
+                "renewal_date": "2026-12-01T00:00:00Z",
+                "notice_deadline": "2026-11-01T00:00:00Z",
+                "notice_period_days": 30,
+                "source_citation": "Project Charter p2: engagement scope and timeline.",
+            }
+        ],
     }
 
 
@@ -97,6 +113,23 @@ def _client_with_db() -> Generator[tuple[TestClient, Session], None, None]:
     Base.metadata.drop_all(bind=engine)
 
 
+def test_base_seed_includes_notification_triggers() -> None:
+    engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+    testing_session = sessionmaker(bind=engine, autoflush=False, autocommit=False)
+    Base.metadata.create_all(bind=engine)
+    try:
+        with testing_session() as session:
+            seed_base_data(session)
+            count = session.query(NotificationTriggerConfig).count()
+            account_attachment = session.query(NotificationTriggerConfig).filter_by(trigger="account_attachment_added").one()
+            governance_decision = session.query(NotificationTriggerConfig).filter_by(trigger="governance_decision_recorded").one()
+            assert count >= 130
+            assert account_attachment.is_active is True
+            assert governance_decision.is_active is True
+    finally:
+        Base.metadata.drop_all(bind=engine)
+
+
 def test_full_catalog_is_seeded_with_admin_timing_controls() -> None:
     for client, db_session in _client_with_db():
         headers = auth_headers(client)
@@ -107,7 +140,7 @@ def test_full_catalog_is_seeded_with_admin_timing_controls() -> None:
         assert triggers["account_draft_created"]["workflow"] == "account_onboarding"
         assert triggers["task_created"]["recipient_policy"] == "task_assignee"
         assert triggers["account_draft_pending_review"]["timing_unit"] == "business_days"
-        assert triggers["account_attachment_added"]["is_active"] is False
+        assert triggers["account_attachment_added"]["is_active"] is True
 
         update = client.patch(
             "/api/admin/notification-triggers/account_draft_pending_review",
@@ -224,3 +257,55 @@ def test_task_creation_notifies_assignee() -> None:
         item = notifications.json()["items"][0]
         assert item["source_record_id"] == created.json()["id"]
         assert item["workflow"] == "tasks"
+
+
+def test_account_owner_assignment_notifies_new_owner() -> None:
+    for client, db_session in _client_with_db():
+        admin_headers = auth_headers(client)
+        owner = seeded_user(client, admin_headers, "account_manager")
+        kam_head = seeded_user(client, admin_headers, "kam_head")
+        account = create_owned_account(db_session, owner, "notification-owner-account")
+
+        added = client.post(
+            f"/api/accounts/{account.id}/owners",
+            headers=admin_headers,
+            json={"user_id": kam_head["id"], "ownership_role": "supporting_am", "rationale": "Add KAM Head for notification coverage."},
+        )
+        assert added.status_code == 201
+
+        notifications = client.get("/api/notifications", headers=auth_headers(client, kam_head["email"], "User@12345"), params={"trigger": "account_owner_assigned"})
+        assert notifications.status_code == 200
+        assert notifications.json()["total"] >= 1
+        item = notifications.json()["items"][0]
+        assert item["source_record_id"] == added.json()["id"]
+        assert item["channel"] == "in_app"
+
+
+def test_escalation_opened_enters_main_notification_center() -> None:
+    for client, db_session in _client_with_db():
+        admin_headers = auth_headers(client)
+        owner = seeded_user(client, admin_headers, "account_manager")
+        account = create_owned_account(db_session, owner, "notification-escalation-account")
+
+        created = client.post(
+            "/api/escalations",
+            headers=admin_headers,
+            json={
+                "account_id": account.id,
+                "summary": "Delivery milestone is at risk",
+                "impact": "Client launch date may slip without immediate recovery action.",
+                "severity": "high",
+                "priority": "high",
+                "owner_id": owner["id"],
+                "watchlist": False,
+            },
+        )
+        assert created.status_code == 201
+
+        owner_headers = auth_headers(client, owner["email"], "User@12345")
+        notifications = client.get("/api/notifications", headers=owner_headers, params={"trigger": "escalation_opened"})
+        assert notifications.status_code == 200
+        assert notifications.json()["total"] >= 1
+        item = notifications.json()["items"][0]
+        assert item["source_record_id"] == created.json()["id"]
+        assert item["workflow"] == "escalations"
