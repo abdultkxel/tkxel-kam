@@ -11,7 +11,7 @@ from sqlalchemy.pool import StaticPool
 from app.database import Base, get_db
 from app.dependencies import get_kyc_service
 from app.main import app
-from app.models import AuditLog, KycAgentRun, KycSnapshot, KycWorkstreamOutput, SourceDocumentChunk, SourceDocumentExtraction, TimelineEntry
+from app.models import AuditLog, KycAgentRun, KycDraft, KycSnapshot, KycWorkstreamOutput, SourceDocumentChunk, SourceDocumentExtraction, Stakeholder, TimelineEntry
 from app.services.kyc import KycService
 from app.services.kyc_gateway import DeterministicKycGatewayAdapter
 from app.services.seed import seed_default_data
@@ -128,6 +128,30 @@ def create_account(client: TestClient, headers: dict[str, str], account_name: st
     return approve_response.json()["approved_account_id"], owner["id"]
 
 
+def test_onboarding_approval_seeds_stakeholder_default_kyc_and_prompt(client: TestClient, db_session: Session) -> None:
+    admin_headers = auth_headers(client)
+    account_id, _ = create_account(client, admin_headers, "KYC Prompt Seed Account")
+    kam_headers = auth_headers(client, "kam.head.user@tkxel.com", "User@12345")
+
+    stakeholder = db_session.scalar(select(Stakeholder).where(Stakeholder.account_id == account_id))
+    assert stakeholder is not None
+    assert stakeholder.role == "executive_sponsor"
+    assert stakeholder.name
+
+    default_draft = db_session.scalar(select(KycDraft).where(KycDraft.account_id == account_id, KycDraft.trigger_source == "onboarding_draft"))
+    assert default_draft is not None
+    assert default_draft.source_document_ids
+    assert default_draft.detailed_description
+    assert default_draft.status == "ready_for_review"
+
+    prompt_response = client.get(f"/api/accounts/{account_id}/kyc/default-prompt", headers=kam_headers)
+    assert prompt_response.status_code == 200
+    prompt = prompt_response.json()["prompt"]
+    assert "KYC Prompt Seed Account" in prompt
+    assert "Uploaded SOW/charter/document evidence" in prompt
+    assert prompt_response.json()["source_document_ids"]
+
+
 def test_kyc_draft_approval_creates_snapshot_freshness_logs_and_search(client: TestClient, db_session: Session) -> None:
     admin_headers = auth_headers(client)
     account_id, _ = create_account(client, admin_headers, "KYC Northwind")
@@ -155,7 +179,7 @@ def test_kyc_draft_approval_creates_snapshot_freshness_logs_and_search(client: T
         params={"search": "Competitor", "status": "ready_for_review", "sort": "confidence", "direction": "desc", "page": 1, "page_size": 1},
     )
     assert list_response.status_code == 200
-    assert list_response.json()["total"] == 1
+    assert list_response.json()["total"] >= 1
 
     approve_response = client.post(
         f"/api/accounts/{account_id}/kyc/drafts/{draft['id']}/approve",
@@ -528,7 +552,11 @@ def test_local_ai_kyc_queue_manual_worker_retry_cancel_and_draft_population(clie
 
     app.dependency_overrides[get_kyc_service] = override_kyc_service
     try:
-        draft_response = client.post(f"/api/accounts/{account_id}/kyc/drafts", headers=kam_headers, json={"trigger_source": "kyc_page"})
+        draft_response = client.post(
+            f"/api/accounts/{account_id}/kyc/drafts",
+            headers=kam_headers,
+            json={"trigger_source": "kyc_page", "prompt": "Use the uploaded SOW and stakeholder records to create a detailed KYC."},
+        )
         assert draft_response.status_code == 201
         queued_draft = draft_response.json()
         assert queued_draft["confidence"] > 0
@@ -541,6 +569,7 @@ def test_local_ai_kyc_queue_manual_worker_retry_cancel_and_draft_population(clie
         pending_run = client.get(f"/api/accounts/{account_id}/kyc/agent-runs/{queued_draft['agent_run_id']}", headers=kam_headers)
         assert pending_run.status_code == 200
         assert pending_run.json()["status"] == "pending"
+        assert pending_run.json()["retrieval_summary"]["reviewer_prompt"].startswith("Use the uploaded SOW")
         assert all(workstream["status"] == "pending" for workstream in pending_run.json()["workstreams"])
 
         processed = client.post("/api/admin/kyc/jobs/run-pending", headers=kam_headers, params={"limit": 1})

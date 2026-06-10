@@ -1,7 +1,10 @@
 COMPOSE ?= docker compose
+SONAR_COMPOSE ?= $(COMPOSE) -f docker-compose.sonar.yml
+SONAR_HOST_URL ?= http://127.0.0.1:9000
+SONAR_TOKEN ?=
 LAN_IP ?= $(shell hostname -I | awk '{print $$1}')
 
-.PHONY: help dev-run build run qa-run migrate seed test down logs clean
+.PHONY: help dev-run build run qa-run migrate seed test down logs clean sonar-up sonar-scan sonar-down sonar-logs
 
 help:
 	@echo "Available commands:"
@@ -15,6 +18,10 @@ help:
 	@echo "  make down     - Stop Docker services"
 	@echo "  make logs     - Follow Docker logs"
 	@echo "  make clean    - Stop services and remove project volumes"
+	@echo "  make sonar-up - Start local SonarQube on http://127.0.0.1:9000"
+	@echo "  make sonar-scan SONAR_TOKEN=... - Run SonarQube analysis"
+	@echo "  make sonar-down - Stop local SonarQube"
+	@echo "  make sonar-logs - Follow SonarQube logs"
 
 dev-run:
 	$(COMPOSE) up --build
@@ -50,3 +57,20 @@ logs:
 
 clean:
 	$(COMPOSE) down -v --remove-orphans
+
+sonar-up:
+	$(SONAR_COMPOSE) up -d
+
+sonar-scan:
+	@test -n "$(SONAR_TOKEN)" || (echo "SONAR_TOKEN is required. Start SonarQube, create a token, then run: make sonar-scan SONAR_TOKEN=your_token"; exit 1)
+	docker run --rm --network host \
+		-v "$(PWD):/usr/src" \
+		-e SONAR_HOST_URL="$(SONAR_HOST_URL)" \
+		-e SONAR_TOKEN="$(SONAR_TOKEN)" \
+		sonarsource/sonar-scanner-cli:latest
+
+sonar-down:
+	$(SONAR_COMPOSE) down
+
+sonar-logs:
+	$(SONAR_COMPOSE) logs -f

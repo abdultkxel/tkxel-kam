@@ -12,6 +12,7 @@ from app.schemas import (
     KycConfidenceLevel,
     KycConfigurationRead,
     KycConfigurationUpdateRequest,
+    KycDefaultPromptRead,
     KycDraftApproveRequest,
     KycDraftCreateRequest,
     KycDraftPageRead,
@@ -122,6 +123,20 @@ def create_draft(
     service: Annotated[KycService, Depends(get_kyc_service)],
 ) -> KycDraftRead:
     return service.create_draft(account_id, payload, current_user)
+
+
+@router.get(
+    "/default-prompt",
+    response_model=KycDefaultPromptRead,
+    summary="Build default KYC prompt",
+    description="Builds an editable source-backed prompt from account details, uploaded SOW/charter text, extracted structured fields, stakeholders, engagement records, and prior KYC snapshots.",
+)
+def read_default_prompt(
+    account_id: str,
+    current_user: Annotated[User, Depends(get_current_user)],
+    service: Annotated[KycService, Depends(get_kyc_service)],
+) -> KycDefaultPromptRead:
+    return service.default_prompt(account_id, current_user)
 
 
 @router.get(

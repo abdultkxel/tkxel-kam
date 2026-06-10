@@ -3,6 +3,7 @@ import {
   KycAgentRun,
   KycConfidenceLevel,
   KycConfiguration,
+  KycDefaultPrompt,
   KycDraft,
   KycDraftStatus,
   KycFreshness,
@@ -62,6 +63,7 @@ export interface KycDraftCreatePayload {
   source_document_ids?: string[]
   research_sources?: string[]
   notes?: string | null
+  prompt?: string | null
 }
 
 export interface KycDraftUpdatePayload {
@@ -97,6 +99,7 @@ export interface KycAgentRunCreatePayload {
   source_document_ids?: string[]
   research_sources?: string[]
   trigger_source?: KycTriggerSource
+  prompt?: string | null
 }
 
 export interface KycConfigurationUpdatePayload {
@@ -128,6 +131,10 @@ export function createKycDraft(token: string, accountId: string, payload: KycDra
     token,
     body: JSON.stringify(payload),
   })
+}
+
+export function getKycDefaultPrompt(token: string, accountId: string) {
+  return apiRequest<KycDefaultPrompt>(`/api/accounts/${accountId}/kyc/default-prompt`, { token })
 }
 
 export function getKycDraft(token: string, accountId: string, draftId: string) {

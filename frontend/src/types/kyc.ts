@@ -203,6 +203,13 @@ export interface KycConfiguration {
   updated_at: string
 }
 
+export interface KycDefaultPrompt {
+  account_id: string
+  prompt: string
+  source_document_ids: string[]
+  source_summary: Record<string, unknown>[]
+}
+
 export interface KycPage<T> {
   items: T[]
   total: number
