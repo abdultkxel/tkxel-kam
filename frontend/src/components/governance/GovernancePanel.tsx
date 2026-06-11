@@ -7,6 +7,7 @@ import { toast } from 'sonner'
 import { AddGovernanceEventDialog } from '@/components/governance/AddGovernanceEventDialog'
 import { CompleteGovernanceEventDialog } from '@/components/governance/CompleteGovernanceEventDialog'
 import { EditGovernanceEventDialog } from '@/components/governance/EditGovernanceEventDialog'
+import { DeleteGovernanceEventDialog } from '@/components/governance/GovernanceEventActions'
 import { useAuth } from '@/contexts/AuthContext'
 import { useRole } from '@/hooks/useRole'
 import { CalendarItem, listCalendarItems } from '@/services/playbooksTasks'
@@ -526,6 +527,14 @@ export function GovernancePanel() {
                           Open
                         </button>
                         <EditGovernanceEventDialog event={event} triggerClassName="tk-button-secondary min-h-[38px] px-3" onSaved={syncSelectedEvent} />
+                        <DeleteGovernanceEventDialog
+                          event={event}
+                          triggerClassName="tk-button-secondary min-h-[38px] px-3 text-rag-red"
+                          triggerLabel="Delete"
+                          onDeleted={() => {
+                            if (selected?.kind === 'governance' && selected.source.id === event.id) setSelected(null)
+                          }}
+                        />
                         {event.status !== 'completed' && event.status !== 'cancelled' ? (
                           <CompleteGovernanceEventDialog event={event} triggerClassName="tk-button-primary min-h-[38px] px-3" triggerLabel="Complete" onCompleted={syncSelectedEvent} />
                         ) : null}
@@ -603,6 +612,17 @@ export function GovernancePanel() {
                     <>
                       <div className="flex flex-wrap gap-2">
                         <EditGovernanceEventDialog event={selectedGovernanceEvent} triggerClassName="tk-button-secondary" onSaved={syncSelectedEvent} />
+                        <DeleteGovernanceEventDialog
+                          event={selectedGovernanceEvent}
+                          triggerClassName="tk-button-secondary text-rag-red"
+                          triggerLabel="Delete"
+                          onDeleted={() => {
+                            setSelected(null)
+                            setBrief(null)
+                            setAgendaDraft(null)
+                            setAgendaDraftText('')
+                          }}
+                        />
                         {selectedGovernanceEvent.status !== 'completed' && selectedGovernanceEvent.status !== 'cancelled' ? (
                           <CompleteGovernanceEventDialog event={selectedGovernanceEvent} triggerClassName="tk-button-primary" onCompleted={syncSelectedEvent} />
                         ) : null}

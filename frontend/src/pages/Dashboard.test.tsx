@@ -481,6 +481,37 @@ describe('Dashboard', () => {
     await waitFor(() => expect(fetchMock.mock.calls.some(call => String(call[0]).includes('/api/governance-events/calendar'))).toBe(true))
   })
 
+  it('scrolls to the governance calendar when the dashboard hash targets it', async () => {
+    const scrollIntoView = vi.fn()
+    const originalScrollIntoView = HTMLElement.prototype.scrollIntoView
+    const requestAnimationFrameSpy = vi.spyOn(window, 'requestAnimationFrame').mockImplementation(callback => window.setTimeout(() => callback(0), 0))
+    const cancelAnimationFrameSpy = vi.spyOn(window, 'cancelAnimationFrame').mockImplementation(id => window.clearTimeout(id))
+    Object.defineProperty(HTMLElement.prototype, 'scrollIntoView', { configurable: true, value: scrollIntoView })
+    try {
+      const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+        const url = String(input)
+        if (url.includes('/api/governance-events/calendar')) return jsonResponse(calendarPage())
+        if (url.includes('/api/dashboards/me')) return jsonResponse(dashboard())
+        return jsonResponse({})
+      })
+      vi.stubGlobal('fetch', fetchMock)
+
+      render(
+        <MemoryRouter initialEntries={['/dashboard#governance-calendar']}>
+          <Dashboard />
+        </MemoryRouter>,
+      )
+
+      expect(await screen.findByText('Global / Governance Calendar')).toBeInTheDocument()
+      expect(document.getElementById('governance-calendar')).toBeInTheDocument()
+      await waitFor(() => expect(scrollIntoView).toHaveBeenCalledWith({ behavior: 'smooth', block: 'start' }))
+    } finally {
+      requestAnimationFrameSpy.mockRestore()
+      cancelAnimationFrameSpy.mockRestore()
+      Object.defineProperty(HTMLElement.prototype, 'scrollIntoView', { configurable: true, value: originalScrollIntoView })
+    }
+  })
+
   it('renders the unmasked six-month forecast graph from backend points', async () => {
     const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input)

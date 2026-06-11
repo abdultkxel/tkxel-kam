@@ -218,6 +218,7 @@ class GovernanceService:
         updates = payload.model_dump(exclude_unset=True)
         custom_values = updates.pop("custom_field_values", None)
         attendee_emails = updates.pop("attendee_emails", None)
+        self._refresh_event_deduplication_key(event, updates)
         if "owner_id" in updates and updates["owner_id"]:
             owner = self._get_user_or_404(updates["owner_id"])
             event.owner_id = owner.id
@@ -240,6 +241,32 @@ class GovernanceService:
             self._notify_governance_event(event, "governance_rescheduled", "Governance rescheduled", current_user)
         self.repository.commit()
         return self._event_read(event)
+
+    def delete_event(self, event_id: str, current_user: User) -> MessageResponse:
+        event = self._get_event_or_404(event_id)
+        self._require_event_update(current_user, event)
+        before = self._event_snapshot(event)
+        account = event.account
+        event.status = "cancelled"
+        self._sync_governance_reminder_task(event, current_user, reason="Governance event was deleted.")
+        self._cancel_governance_action_tasks(event, current_user, "Governance event was deleted.")
+        if event.source == "manual":
+            self._mirror_calendar_event(event, current_user)
+        self._write_governance_timeline(event, current_user, "deleted", "Governance event deleted from the account workspace.")
+        self.custom_fields.replace_record_values("governance_reviews", event.id, {}, current_user, audit_module="governance_reviews")
+        self.audit.log(
+            module="governance_reviews",
+            action="delete",
+            entity_type="governance_event",
+            entity_id=event.id,
+            actor=current_user,
+            before_value=before,
+            after_value={"deleted": True},
+        )
+        self.repository.delete_event(event)
+        self._update_next_governance(account)
+        self.repository.commit()
+        return MessageResponse(message="Governance event deleted successfully")
 
     def complete_event(self, event_id: str, current_user: User, payload: GovernanceEventCompleteRequest | None = None) -> GovernanceEventRead:
         event = self._get_event_or_404(event_id)
@@ -592,14 +619,14 @@ class GovernanceService:
             dedupe_scope="assigned",
         )
 
-    def _sync_governance_reminder_task(self, event: GovernanceEvent, actor: User) -> None:
+    def _sync_governance_reminder_task(self, event: GovernanceEvent, actor: User, reason: str = "Governance event was cancelled.") -> None:
         if not event.account_id or event.review_required:
             return
         task = self.repository.get_task_by_source(GOVERNANCE_REMINDER_TASK_SOURCE, event.id)
         if event.status == "cancelled":
             if task:
                 task.status = "cancelled"
-                task.skipped_reason = task.skipped_reason or "Governance event was cancelled."
+                task.skipped_reason = task.skipped_reason or reason
                 task.updated_by_id = actor.id
             return
         if event.status == "completed":
@@ -679,6 +706,15 @@ class GovernanceService:
         existing.due_at = action_item.due_at
         existing.priority = action_item.priority
         existing.updated_by_id = actor.id
+
+    def _cancel_governance_action_tasks(self, event: GovernanceEvent, actor: User, reason: str) -> None:
+        for action_item in event.action_items:
+            task = self.repository.get_task_by_source(GOVERNANCE_ACTION_TASK_SOURCE, action_item.id)
+            if task is None:
+                continue
+            task.status = "cancelled"
+            task.skipped_reason = task.skipped_reason or reason
+            task.updated_by_id = actor.id
 
     def _meeting_artifact_for_completion(self, meeting_artifact_id: str | None, event: GovernanceEvent, current_user: User) -> MeetingArtifact | None:
         if not meeting_artifact_id:
@@ -1048,6 +1084,23 @@ class GovernanceService:
     @staticmethod
     def _event_deduplication_key(source: str, account_id: str, governance_type: str, scheduled_at: datetime) -> str:
         return f"{source}:{account_id}:{governance_type}:{scheduled_at.isoformat()}"
+
+    def _refresh_event_deduplication_key(self, event: GovernanceEvent, updates: dict) -> None:
+        if not {"account_id", "governance_type", "scheduled_at"}.intersection(updates):
+            return
+        account_id = updates.get("account_id", event.account_id)
+        governance_type = updates.get("governance_type", event.governance_type)
+        scheduled_at = updates.get("scheduled_at", event.scheduled_at)
+        if not account_id or not governance_type or not scheduled_at:
+            return
+        next_key = self._event_deduplication_key(event.source, account_id, governance_type, scheduled_at)
+        existing = self.repository.get_event_by_deduplication_key(next_key)
+        if existing is not None and existing.id != event.id:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="A governance event already exists for this account, governance type, and scheduled time.",
+            )
+        event.deduplication_key = next_key
 
     @staticmethod
     def _attendee_emails(attendees: list[str] | None) -> list[str]:

@@ -7,6 +7,7 @@ import { toast } from 'sonner'
 import { FieldError } from '@/components/form/FieldError'
 import { AddGovernanceEventDialog } from '@/components/governance/AddGovernanceEventDialog'
 import { CompleteGovernanceEventDialog } from '@/components/governance/CompleteGovernanceEventDialog'
+import { GovernanceEventActions } from '@/components/governance/GovernanceEventActions'
 import { Account } from '@/types/account'
 import { useGovernanceStore } from '@/stores/governanceStore'
 import { useTimelineStore } from '@/stores/timelineStore'
@@ -326,7 +327,7 @@ function GovernanceAccountPanel({ account, governance }: { account: Account; gov
             </p>
           </div>
           <div className="flex flex-wrap gap-2">
-            <Link className="tk-button-secondary shrink-0 bg-white" to="/dashboard">
+            <Link className="tk-button-secondary shrink-0 bg-white" to="/dashboard#governance-calendar">
               View calendar
               <ArrowRight className="h-4 w-4" />
             </Link>
@@ -343,7 +344,10 @@ function GovernanceAccountPanel({ account, governance }: { account: Account; gov
                   <h4 className="text-sm font-semibold text-ink">{event.type} on {formatDate(event.date)}</h4>
                   <p className="mt-1 max-w-3xl text-sm leading-6 text-ink-secondary">{event.agenda}</p>
                 </div>
-                <StatusBadge tone={event.status === 'overdue' ? 'red' : event.status === 'completed' ? 'green' : 'blue'} label={event.status} />
+                <div className="flex shrink-0 items-center gap-2">
+                  <StatusBadge tone={event.status === 'overdue' ? 'red' : event.status === 'completed' ? 'green' : 'blue'} label={event.status} />
+                  <GovernanceEventActions event={event} />
+                </div>
               </div>
               <div className="mt-3 flex flex-wrap gap-2">
                 <span className="rounded-full bg-surface-secondary px-2.5 py-1 text-[11px] font-semibold uppercase tracking-wider text-ink-secondary">{event.attendeeEmails.length} attendees</span>

@@ -950,7 +950,7 @@ function GovernanceCalendarPanel({
   const readOnly = dashboardReadOnly || Boolean(calendarWidget?.metadata.read_only)
 
   return (
-    <section className="tk-card overflow-hidden p-5">
+    <section id="governance-calendar" className="tk-card scroll-mt-24 overflow-hidden p-5">
       <div className="grid gap-5 2xl:grid-cols-[minmax(0,1fr)_430px]">
         <div className="min-w-0">
           <div className="mb-5 flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">

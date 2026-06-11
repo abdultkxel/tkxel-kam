@@ -3,6 +3,7 @@ import { governanceEvents } from '@/data/mock'
 import {
   completeGovernanceEvent,
   createGovernanceEvent,
+  deleteGovernanceEvent,
   generateGovernanceAgendaDraft,
   generateGovernanceBrief,
   listGovernanceEvents,
@@ -28,6 +29,7 @@ interface GovernanceStore {
   addEvent: (event: GovernanceEventRecord) => void
   createEvent: (token: string, payload: GovernanceEventCreateInput) => Promise<GovernanceEventRecord>
   updateEvent: (token: string, eventId: string, payload: GovernanceEventUpdateInput) => Promise<GovernanceEventRecord>
+  deleteEvent: (token: string, eventId: string) => Promise<void>
   completeEvent: (token: string, eventId: string, payload: GovernanceEventCompleteInput) => Promise<GovernanceEventRecord>
   generateAgendaDraft: (token: string, eventId: string, payload?: GovernanceGeneratedOutputInput) => Promise<GovernanceGeneratedOutputRecord>
   updateAgenda: (token: string, eventId: string, agenda: string, sourceOutputId?: string | null) => Promise<GovernanceEventRecord>
@@ -60,6 +62,10 @@ export const useGovernanceStore = create<GovernanceStore>(set => ({
     const event = await updateGovernanceEvent(token, eventId, payload)
     set(state => ({ events: upsertEvent(state.events, event) }))
     return event
+  },
+  deleteEvent: async (token, eventId) => {
+    await deleteGovernanceEvent(token, eventId)
+    set(state => ({ events: state.events.filter(event => event.id !== eventId) }))
   },
   completeEvent: async (token, eventId, payload) => {
     const event = await completeGovernanceEvent(token, eventId, payload)
