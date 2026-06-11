@@ -1,8 +1,8 @@
 import * as Dialog from '@radix-ui/react-dialog'
-import { AlertTriangle, ArrowRight, BookOpen, CalendarClock, CheckCircle2, Download, FileSearch, FileText, GraduationCap, Loader2, PenLine, Plus, RefreshCcw, Send, ShieldAlert, UploadCloud, X } from 'lucide-react'
+import { AlertTriangle, ArrowRight, BookOpen, CalendarClock, CheckCircle2, Download, FileSearch, FileText, GraduationCap, Loader2, PenLine, Pencil, Plus, RefreshCcw, Send, ShieldAlert, Trash2, UploadCloud, X } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import { FormEvent, useEffect, useMemo, useState } from 'react'
-import { Link } from 'react-router-dom'
+import { Link, useSearchParams } from 'react-router-dom'
 import { toast } from 'sonner'
 import { FieldError } from '@/components/form/FieldError'
 import { AddGovernanceEventDialog } from '@/components/governance/AddGovernanceEventDialog'
@@ -20,7 +20,7 @@ import { useRole } from '@/hooks/useRole'
 import { ContentRecommendation, createSentContent, Escalation, listContentRecommendations, listEscalations, listSentContent, SentContent } from '@/services/contentGovernance'
 import { downloadAccountAttachment, extractAccountAttachment, listAccountAttachments, uploadAccountAttachment } from '@/services/accountWorkspace'
 import { ApiError } from '@/services/api'
-import { createTimelineNote, getAccountTimeline } from '@/services/timeline'
+import { createTimelineNote, deleteTimelineEvent, getAccountTimeline, updateTimelineEvent } from '@/services/timeline'
 import { TimelineEntry } from '@/types/timeline'
 import { cn } from '@/utils/cn'
 import { apiFieldErrors, clearFieldError, FieldErrors, hasFieldErrors } from '@/utils/formErrors'
@@ -682,6 +682,7 @@ type AccountNote = {
 }
 
 function NotesPanel({ account, plans }: { account: Account; plans: RetentionPlan[] }) {
+  const [searchParams, setSearchParams] = useSearchParams()
   const { token } = useAuth()
   const user = useRole()
   const addTimelineEntry = useTimelineStore(state => state.addEntry)
@@ -698,6 +699,7 @@ function NotesPanel({ account, plans }: { account: Account; plans: RetentionPlan
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
   const [open, setOpen] = useState(false)
+  const [editingId, setEditingId] = useState('')
   const [title, setTitle] = useState('')
   const [body, setBody] = useState('')
   const [formError, setFormError] = useState('')
@@ -729,6 +731,19 @@ function NotesPanel({ account, plans }: { account: Account; plans: RetentionPlan
       cancelled = true
     }
   }, [account.id, planNotes, token])
+
+  useEffect(() => {
+    if (searchParams.get('addNote') !== '1') return
+    setEditingId('')
+    setTitle('')
+    setBody('')
+    setFormError('')
+    setFieldErrors({})
+    setOpen(true)
+    const next = new URLSearchParams(searchParams)
+    next.delete('addNote')
+    setSearchParams(next, { replace: true })
+  }, [searchParams, setSearchParams])
 
   async function refreshNotes() {
     if (!token) return
@@ -765,23 +780,33 @@ function NotesPanel({ account, plans }: { account: Account; plans: RetentionPlan
     setFormError('')
     setFieldErrors({})
     try {
-      const entry = await createTimelineNote(token, account.id, {
-        event_type: 'manual_note',
-        title: cleanTitle || 'Account note',
-        description: cleanBody,
-        event_at: new Date().toISOString(),
-        owner_id: user.id,
-        mentions: [],
-        attachments: [],
-        is_sensitive: false,
-        tags: ['manual', 'notes'],
-      })
-      addTimelineEntry(entry)
-      setNotes(current => [timelineEntryToNote(entry), ...current.filter(note => note.id !== entry.id)])
+      if (editingId && !editingId.startsWith('plan-')) {
+        const entry = await updateTimelineEvent(token, editingId, {
+          title: cleanTitle || 'Account note',
+          description: cleanBody,
+        })
+        setNotes(current => current.map(note => (note.id === editingId ? timelineEntryToNote(entry) : note)))
+        toast.success('Note updated')
+      } else {
+        const entry = await createTimelineNote(token, account.id, {
+          event_type: 'manual_note',
+          title: cleanTitle || 'Account note',
+          description: cleanBody,
+          event_at: new Date().toISOString(),
+          owner_id: user.id,
+          mentions: [],
+          attachments: [],
+          is_sensitive: false,
+          tags: ['manual', 'notes'],
+        })
+        addTimelineEntry(entry)
+        setNotes(current => [timelineEntryToNote(entry), ...current.filter(note => note.id !== entry.id)])
+        toast.success('Note saved')
+      }
       setTitle('')
       setBody('')
+      setEditingId('')
       setOpen(false)
-      toast.success('Note saved')
     } catch (err) {
       const nextErrors = apiFieldErrors(err, noteFieldAliases)
       const hiddenFieldMessage = firstHiddenNoteFieldMessage(nextErrors)
@@ -808,10 +833,43 @@ function NotesPanel({ account, plans }: { account: Account; plans: RetentionPlan
     setFormError('')
   }
 
+  function startEdit(note: AccountNote) {
+    if (note.id.startsWith('plan-')) return
+    setEditingId(note.id)
+    setTitle(note.title)
+    setBody(note.body)
+    setFormError('')
+    setFieldErrors({})
+    setOpen(true)
+  }
+
+  async function removeNote(note: AccountNote) {
+    if (note.id.startsWith('plan-')) return
+    if (!window.confirm(`Delete "${note.title}"?`)) return
+    if (!token) {
+      toast.error('You must be signed in to delete notes')
+      return
+    }
+    setSaving(true)
+    try {
+      await deleteTimelineEvent(token, note.id)
+      setNotes(current => current.filter(item => item.id !== note.id))
+      toast.success('Note deleted')
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Note could not be deleted')
+    } finally {
+      setSaving(false)
+    }
+  }
+
   function handleDialogOpenChange(nextOpen: boolean) {
     setOpen(nextOpen)
     setFormError('')
     setFieldErrors({})
+    if (nextOpen) return
+    setEditingId('')
+    setTitle('')
+    setBody('')
   }
 
   return (
@@ -840,6 +898,7 @@ function NotesPanel({ account, plans }: { account: Account; plans: RetentionPlan
             <AddAccountNoteDialog
               open={open}
               onOpenChange={handleDialogOpenChange}
+              editing={Boolean(editingId)}
               title={title}
               body={body}
               saving={saving}
@@ -853,7 +912,7 @@ function NotesPanel({ account, plans }: { account: Account; plans: RetentionPlan
         </div>
       </header>
       <div className="grid gap-5 p-5 xl:grid-cols-[minmax(0,1fr)_280px]">
-        <div className="grid gap-3">
+        <div className="grid gap-2">
           {error ? (
             <div className="flex items-start gap-2 rounded-lg border border-rag-red/20 bg-rag-red/10 p-3 text-sm text-rag-red">
               <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
@@ -869,15 +928,27 @@ function NotesPanel({ account, plans }: { account: Account; plans: RetentionPlan
             </div>
           ) : null}
           {!loading && notes.length ? notes.map(note => (
-            <article key={note.id} className="rounded-lg border border-surface-border bg-white p-4 transition-colors hover:border-brand-blue/40">
-              <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
-                <div className="min-w-0">
+            <article key={note.id} className="rounded-md border border-surface-border bg-white px-4 py-3 transition-colors hover:border-brand-blue/40">
+              <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+                <div className="min-w-0 flex-1">
                   <h4 className="text-sm font-semibold text-ink">{note.title}</h4>
-                  <p className="mt-1 max-w-3xl text-sm leading-6 text-ink-secondary">{note.body}</p>
+                  <p className="mt-1 max-w-3xl text-sm leading-5 text-ink-secondary">{note.body}</p>
+                  <p className="mt-2 text-xs font-medium text-ink-tertiary">Added {formatDate(note.createdAt)}</p>
                 </div>
-                <StatusBadge tone="blue" label="Note" />
+                <div className="flex shrink-0 items-center gap-2">
+                  <StatusBadge tone="blue" label="Note" />
+                  {!note.id.startsWith('plan-') ? (
+                    <>
+                      <button type="button" className="tk-icon-button h-9 w-9 bg-white" aria-label={`Edit ${note.title}`} onClick={() => startEdit(note)} disabled={saving}>
+                        <Pencil className="h-4 w-4" />
+                      </button>
+                      <button type="button" className="tk-icon-button h-9 w-9 bg-white text-rag-red hover:border-rag-red/40 hover:bg-rag-red/10" aria-label={`Delete ${note.title}`} onClick={() => void removeNote(note)} disabled={saving}>
+                        <Trash2 className="h-4 w-4" />
+                      </button>
+                    </>
+                  ) : null}
+                </div>
               </div>
-              <p className="mt-3 text-xs font-medium text-ink-tertiary">Added {formatDate(note.createdAt)}</p>
             </article>
           )) : null}
           {!loading && !notes.length ? (
@@ -922,6 +993,7 @@ function timelineEntryToNote(entry: TimelineEntry): AccountNote {
 function AddAccountNoteDialog({
   open,
   onOpenChange,
+  editing,
   title,
   body,
   saving,
@@ -933,6 +1005,7 @@ function AddAccountNoteDialog({
 }: {
   open: boolean
   onOpenChange: (open: boolean) => void
+  editing: boolean
   title: string
   body: string
   saving: boolean
@@ -956,7 +1029,7 @@ function AddAccountNoteDialog({
           <div className="flex items-start justify-between gap-4 border-b border-surface-border pb-4">
             <div>
               <p className="text-[10px] font-extrabold uppercase tracking-widest text-brand-blue">Account notes</p>
-              <Dialog.Title className="font-display text-2xl font-bold text-ink">Add note</Dialog.Title>
+              <Dialog.Title className="font-display text-2xl font-bold text-ink">{editing ? 'Edit note' : 'Add note'}</Dialog.Title>
               <Dialog.Description className="mt-1 text-sm text-ink-secondary">Capture a planning note, decision, or client context update.</Dialog.Description>
             </div>
             <Dialog.Close className="tk-icon-button" aria-label="Close note dialog">
@@ -1000,8 +1073,8 @@ function AddAccountNoteDialog({
             <div className="flex justify-end gap-2 border-t border-surface-border pt-4">
               <Dialog.Close type="button" className="tk-button-secondary">Cancel</Dialog.Close>
               <button type="submit" className="tk-button-primary" disabled={saving}>
-                {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />}
-                {saving ? 'Saving...' : 'Save note'}
+                {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : editing ? <Pencil className="h-4 w-4" /> : <Plus className="h-4 w-4" />}
+                {saving ? 'Saving...' : editing ? 'Save changes' : 'Save note'}
               </button>
             </div>
           </form>
