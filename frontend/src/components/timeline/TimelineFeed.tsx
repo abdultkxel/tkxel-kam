@@ -6,7 +6,6 @@ import { Skeleton } from '@/components/ui/Skeleton'
 import { AddNoteModal } from '@/components/timeline/AddNoteModal'
 import { TimelineCard } from '@/components/timeline/TimelineCard'
 import { TimelineFilters } from '@/components/timeline/TimelineFilters'
-import { TimelineAISearch } from '@/components/ai/TimelineAISearch'
 import { useAuth } from '@/contexts/AuthContext'
 import { useTimelineFilters } from '@/hooks/useTimelineFilters'
 import { getAccountTimeline } from '@/services/timeline'
@@ -147,8 +146,6 @@ export function TimelineFeed({ accountId }: { accountId: string }) {
           </button>
         </div>
       </div>
-
-      <TimelineAISearch accountId={accountId} />
 
       <TimelineFilters filters={filters} setFilter={setFilter} clearAll={clearAll} />
 

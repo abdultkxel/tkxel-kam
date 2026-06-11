@@ -31,6 +31,68 @@ from app.services.user_management import page_count
 
 
 class MeetingCaptureService:
+    ACTION_ITEM_VERBS = (
+        "align",
+        "assign",
+        "circulate",
+        "collect",
+        "complete",
+        "confirm",
+        "coordinate",
+        "create",
+        "define",
+        "deliver",
+        "develop",
+        "document",
+        "draft",
+        "email",
+        "finalize",
+        "follow up",
+        "follow-up",
+        "gather",
+        "identify",
+        "implement",
+        "investigate",
+        "monitor",
+        "prepare",
+        "present",
+        "provide",
+        "reach out",
+        "resolve",
+        "review",
+        "schedule",
+        "send",
+        "set up",
+        "setup",
+        "share",
+        "submit",
+        "sync",
+        "track",
+        "update",
+        "validate",
+    )
+    NON_ACTION_HEADINGS = {
+        "action",
+        "actions",
+        "action item",
+        "action items",
+        "agenda",
+        "discussion",
+        "discussion notes",
+        "follow ups",
+        "follow-ups",
+        "key takeaways",
+        "meeting notes",
+        "next steps",
+        "notes",
+        "overview",
+        "q&a",
+        "questions",
+        "summary",
+        "takeaways",
+        "transcript",
+    }
+
     def __init__(self, db: Session) -> None:
         self.db = db
         self.repository = MeetingCaptureRepository(db)
@@ -440,6 +502,10 @@ class MeetingCaptureService:
         metadata = sanitize_payload(record)
         if not isinstance(metadata, dict):
             metadata = {"payload": metadata}
+        if isinstance(metadata.get("summary"), dict):
+            if summary:
+                metadata["summary"]["notes"] = summary
+            metadata["summary"]["action_items"] = action_items
 
         if existing:
             existing.external_id = external_id
@@ -687,7 +753,8 @@ class MeetingCaptureService:
         for key in ("notes", "overview", "short_summary"):
             value = summary.get(key)
             if isinstance(value, str) and value.strip():
-                return value.strip()[:8000]
+                cleaned = MeetingCaptureService._clean_meeting_text(value, max_length=8000)
+                return cleaned or None
         return None
 
     @staticmethod
@@ -709,8 +776,8 @@ class MeetingCaptureService:
                 title = str(action.get("title") or action.get("description") or action.get("text") or "").strip()
             else:
                 title = str(action).strip()
-            title = re.sub(r"^\s*(?:[-*•]|\d+[.)])\s*", "", title).strip()
-            if not title:
+            title = MeetingCaptureService._clean_action_item_text(title)
+            if not title or not MeetingCaptureService._looks_like_action_item(title):
                 continue
             title = title[:220]
             key = title.lower()
@@ -719,6 +786,91 @@ class MeetingCaptureService:
             seen.add(key)
             items.append(title)
         return items[:50]
+
+    @classmethod
+    def _clean_meeting_text(cls, value: Any, *, max_length: int) -> str:
+        text = str(value or "")
+        text = re.sub(r"<br\s*/?>", "\n", text, flags=re.IGNORECASE)
+        text = re.sub(r"</(?:p|div|li|h[1-6])\s*>", "\n", text, flags=re.IGNORECASE)
+        text = re.sub(r"<[^>]+>", "", text)
+        text = text.replace("\r\n", "\n").replace("\r", "\n")
+        lines: list[str] = []
+        previous_blank = False
+        for line in text.splitlines():
+            cleaned = cls._clean_meeting_line(line)
+            if not cleaned:
+                if lines and not previous_blank:
+                    lines.append("")
+                    previous_blank = True
+                continue
+            if cleaned.lower().rstrip(":") in cls.NON_ACTION_HEADINGS:
+                continue
+            lines.append(cleaned)
+            previous_blank = False
+        cleaned_text = "\n".join(lines).strip()
+        cleaned_text = re.sub(r"\n{3,}", "\n\n", cleaned_text)
+        return cleaned_text[:max_length].rstrip()
+
+    @classmethod
+    def _clean_action_item_text(cls, value: str) -> str:
+        title = cls._clean_meeting_line(value)
+        if not title:
+            return ""
+        title = re.sub(r"^(?:action items?|actions?|follow[- ]?ups?|next steps?)\s*:\s*", "", title, flags=re.IGNORECASE).strip()
+        owner_prefix = re.match(r"^([A-Z][A-Za-z.'_-]+(?:\s+[A-Z][A-Za-z.'_-]+){0,3})\s*[:\-–—]\s+(.+)$", title)
+        if owner_prefix and cls._contains_action_signal(owner_prefix.group(2)):
+            title = owner_prefix.group(2).strip()
+        return title
+
+    @classmethod
+    def _clean_meeting_line(cls, value: str) -> str:
+        line = value.strip()
+        if not line:
+            return ""
+        line = re.sub(r"^\s*#{1,6}\s*", "", line)
+        line = cls._strip_markdown(line)
+        line = re.sub(r"^\s*(?:[-•]|\d+[.)])\s*", "", line).strip()
+        line = cls._strip_timecodes(line)
+        line = re.sub(r"\s+", " ", line)
+        return line.strip(" \t-–—:")
+
+    @staticmethod
+    def _strip_markdown(value: str) -> str:
+        text = value
+        text = re.sub(r"\[([^\]]+)\]\([^)]+\)", r"\1", text)
+        text = re.sub(r"`([^`]+)`", r"\1", text)
+        text = re.sub(r"\*\*([^*]+)\*\*", r"\1", text)
+        text = re.sub(r"__([^_]+)__", r"\1", text)
+        text = re.sub(r"(?<!\*)\*([^*\n]+)\*(?!\*)", r"\1", text)
+        text = re.sub(r"(?<!_)_([^_\n]+)_(?!_)", r"\1", text)
+        return text
+
+    @staticmethod
+    def _strip_timecodes(value: str) -> str:
+        timecode = r"(?:\d{1,2}:)?\d{1,2}:\d{2}(?:\.\d+)?"
+        return re.sub(rf"\s*[\[(]?\s*{timecode}(?:\s*[-–—]\s*{timecode})?\s*[\])]?", " ", value)
+
+    @classmethod
+    def _looks_like_action_item(cls, value: str) -> bool:
+        title = value.strip()
+        if not title:
+            return False
+        normalized = title.lower().strip(" .:")
+        if normalized in cls.NON_ACTION_HEADINGS:
+            return False
+        words = re.findall(r"[A-Za-z0-9]+", title)
+        if len(words) < 2 and not cls._contains_action_signal(title):
+            return False
+        if re.fullmatch(r"[A-Z][A-Za-z.'_-]+(?:\s+[A-Z][A-Za-z.'_-]+){0,3}", title) and not cls._contains_action_signal(title):
+            return False
+        return cls._contains_action_signal(title)
+
+    @classmethod
+    def _contains_action_signal(cls, value: str) -> bool:
+        normalized = value.lower()
+        if any(re.search(rf"\b{re.escape(verb)}\b", normalized) for verb in cls.ACTION_ITEM_VERBS):
+            return True
+        return bool(re.search(r"\b(?:before|due|deadline|owner|needs?|should|must|will)\b", normalized))
 
     @staticmethod
     def _fireflies_record_datetime(record: dict[str, Any]) -> datetime | None:

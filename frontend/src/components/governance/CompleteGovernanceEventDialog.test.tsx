@@ -14,6 +14,12 @@ vi.mock('@/stores/governanceStore', () => ({
   useGovernanceStore: (selector: (state: { completeEvent: typeof completeEventMock }) => unknown) => selector({ completeEvent: completeEventMock }),
 }))
 
+vi.mock('@/components/ui/RichTextEditor', () => ({
+  RichTextEditor: ({ value, onChange, ariaLabel, placeholder }: { value: string; onChange: (value: string) => void; ariaLabel?: string; placeholder?: string }) => (
+    <textarea aria-label={ariaLabel} placeholder={placeholder} value={value} onChange={event => onChange(event.target.value)} />
+  ),
+}))
+
 const eventRecord: GovernanceEventRecord = {
   id: 'gov-1',
   accountId: 'acc-1',
@@ -150,8 +156,8 @@ describe('CompleteGovernanceEventDialog', () => {
           provider: 'fireflies',
           external_id: 'transcript-123',
           title: 'Fireflies QBR transcript',
-          summary: 'Reviewed rollout risks and Fireflies follow-ups.',
-          action_items: ['Send Fireflies recap', 'Confirm delivery owner'],
+          summary: '## **Summary**\n[00:00 - 00:12] **Hassan** reviewed rollout risks and Fireflies follow-ups.',
+          action_items: ['**Hassan**', '[00:20] Develop and share best practices/framework for managing AI as an intern', 'Discussion notes', '00:45'],
           meeting_url: 'https://meet.example.com/qbr',
           source_link: 'https://app.fireflies.ai/view/transcript-123',
           occurred_at: null,
@@ -180,9 +186,14 @@ describe('CompleteGovernanceEventDialog', () => {
     await userEvent.click(screen.getByRole('button', { name: /fetch meeting/i }))
 
     expect(await screen.findByText('Fireflies QBR transcript')).toBeInTheDocument()
-    expect(screen.getByDisplayValue(/Reviewed rollout risks and Fireflies follow-ups/i)).toBeInTheDocument()
-    expect(screen.getByDisplayValue('Send Fireflies recap')).toBeInTheDocument()
-    expect(screen.getByDisplayValue('Confirm delivery owner')).toBeInTheDocument()
+    expect(screen.getByDisplayValue(/Hassan reviewed rollout risks and Fireflies follow-ups/i)).toBeInTheDocument()
+    expect(screen.queryByDisplayValue(/\*\*/)).not.toBeInTheDocument()
+    expect(screen.queryByDisplayValue(/00:00/)).not.toBeInTheDocument()
+    expect(screen.queryByDisplayValue('Hassan')).not.toBeInTheDocument()
+    expect(screen.getByDisplayValue('Develop and share best practices/framework for managing AI as an intern')).toBeInTheDocument()
+    expect(screen.queryByDisplayValue('Discussion notes')).not.toBeInTheDocument()
+    expect(screen.queryByLabelText(/include action item 1/i)).not.toBeInTheDocument()
+    expect(screen.getByLabelText(/create task for action item 1/i)).toBeChecked()
 
     await userEvent.click(screen.getByRole('button', { name: /save completion/i }))
 
