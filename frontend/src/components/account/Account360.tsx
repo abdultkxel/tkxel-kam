@@ -35,7 +35,7 @@ import { emit } from '@/utils/emitTimelineEvent'
 import { emitTimelineEvent } from '@/utils/emitTimelineEvent'
 import { formatCompactCurrency, formatCurrency, formatDate } from '@/utils/formatters'
 
-export const accountDetailTabs = ['Overview', 'Engagement', 'Stakeholders', 'KYC', 'Health', 'Stage', 'Opportunities', 'Governance', 'Education', 'Timeline', 'Notes', 'Documents'] as const
+export const accountDetailTabs = ['Overview', 'Engagement', 'Stakeholders', 'KYC', 'Health', 'Stage', 'Opportunities', 'Governance', 'Education', 'Timeline', 'Notes'] as const
 
 type AccountDetailTab = typeof accountDetailTabs[number]
 type StageWorkspaceTab = 'Growth' | 'Retention'
@@ -500,7 +500,7 @@ export function Account360({ account }: { account: Account }) {
             onArchived={() => setSelectedOpportunityId('')}
           />
         </Tabs.Content>
-        {['Education', 'Governance', 'Notes', 'Documents'].map(tab => (
+        {['Education', 'Governance', 'Notes'].map(tab => (
           <Tabs.Content key={tab} value={tab}>
             <AccountWorkspacePanel account={account} tab={tab} />
           </Tabs.Content>
