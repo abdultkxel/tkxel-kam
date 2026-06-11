@@ -61,6 +61,8 @@ class NotificationRepository:
         search: str | None = None,
         read_state: str | None = None,
         trigger: str | None = None,
+        workflow: str | None = None,
+        priority: str | None = None,
         account_id: str | None = None,
         channel: str | None = None,
         date_from: datetime | None = None,
@@ -75,20 +77,25 @@ class NotificationRepository:
             search=search,
             read_state=read_state,
             trigger=trigger,
+            workflow=workflow,
+            priority=priority,
             account_id=account_id,
             channel=channel,
             date_from=date_from,
             date_to=date_to,
         )
-        unread_conditions = [NotificationRecord.recipient_user_id == recipient_user_id, NotificationRecord.read_at.is_(None)]
+        unread_conditions = [NotificationRecord.recipient_user_id == recipient_user_id, NotificationRecord.read_at.is_(None), NotificationRecord.archived_at.is_(None)]
         total = self.db.scalar(select(func.count(NotificationRecord.id)).where(*conditions)) or 0
         unread_count = self.db.scalar(select(func.count(NotificationRecord.id)).where(*unread_conditions)) or 0
         order_column = {
             "created_at": NotificationRecord.created_at,
             "priority": NotificationRecord.priority,
             "trigger": NotificationRecord.trigger,
+            "unread_first": NotificationRecord.read_at,
         }.get(sort, NotificationRecord.created_at)
-        if direction == "desc":
+        if sort == "unread_first":
+            order_column = order_column.asc()
+        elif direction == "desc":
             order_column = order_column.desc()
         items = list(
             self.db.scalars(
@@ -103,11 +110,16 @@ class NotificationRepository:
 
     def mark_all_notifications_read(self, user_id: str) -> int:
         now = datetime.now(timezone.utc)
-        items = list(self.db.scalars(select(NotificationRecord).where(NotificationRecord.recipient_user_id == user_id, NotificationRecord.read_at.is_(None))))
+        items = list(self.db.scalars(select(NotificationRecord).where(NotificationRecord.recipient_user_id == user_id, NotificationRecord.read_at.is_(None), NotificationRecord.archived_at.is_(None))))
         for item in items:
             item.read_at = now
         self.db.flush()
         return len(items)
+
+    def archive_notification(self, notification: NotificationRecord) -> NotificationRecord:
+        notification.archived_at = notification.archived_at or datetime.now(timezone.utc)
+        self.db.flush()
+        return notification
 
     def list_sla_rules(self, *, search: str | None = None, item_type: str | None = None, active_state: str = "all", page: int = 1, page_size: int = 25) -> tuple[list[SlaRule], int]:
         conditions = []
@@ -302,6 +314,11 @@ class NotificationRepository:
             return []
         return list(self.db.scalars(select(User).where(User.id.in_(user_ids), User.is_active.is_(True)).order_by(User.full_name)))
 
+    def list_active_users_by_roles(self, roles: list[str]) -> list[User]:
+        if not roles:
+            return []
+        return list(self.db.scalars(select(User).where(User.role.in_(roles), User.is_active.is_(True)).order_by(User.full_name, User.email)))
+
     def first_active_user_by_role(self, roles: list[str]) -> User | None:
         return self.db.scalar(select(User).where(User.role.in_(roles), User.is_active.is_(True)).order_by(User.role, User.email).limit(1))
 
@@ -309,6 +326,22 @@ class NotificationRepository:
         self.db.add(run)
         self.db.flush()
         return run
+
+    def list_worker_runs(self, *, job_type: str | None = None, page: int = 1, page_size: int = 25) -> tuple[list[ScheduledWorkerRun], int]:
+        conditions = []
+        if job_type:
+            conditions.append(ScheduledWorkerRun.job_type == job_type)
+        total = self.db.scalar(select(func.count(ScheduledWorkerRun.id)).where(*conditions)) or 0
+        items = list(
+            self.db.scalars(
+                select(ScheduledWorkerRun)
+                .where(*conditions)
+                .order_by(ScheduledWorkerRun.created_at.desc())
+                .offset((page - 1) * page_size)
+                .limit(page_size)
+            )
+        )
+        return items, total
 
     def commit(self) -> None:
         self.db.commit()
@@ -320,6 +353,8 @@ class NotificationRepository:
         search: str | None,
         read_state: str | None,
         trigger: str | None,
+        workflow: str | None,
+        priority: str | None,
         account_id: str | None,
         channel: str | None,
         date_from: datetime | None,
@@ -331,10 +366,20 @@ class NotificationRepository:
             conditions.append(or_(NotificationRecord.title.ilike(term), NotificationRecord.body.ilike(term), NotificationRecord.account_name_snapshot.ilike(term)))
         if read_state == "read":
             conditions.append(NotificationRecord.read_at.is_not(None))
+            conditions.append(NotificationRecord.archived_at.is_(None))
         elif read_state == "unread":
             conditions.append(NotificationRecord.read_at.is_(None))
+            conditions.append(NotificationRecord.archived_at.is_(None))
+        elif read_state == "archived":
+            conditions.append(NotificationRecord.archived_at.is_not(None))
+        else:
+            conditions.append(NotificationRecord.archived_at.is_(None))
         if trigger:
             conditions.append(NotificationRecord.trigger == trigger)
+        if workflow:
+            conditions.append(NotificationRecord.workflow == workflow)
+        if priority:
+            conditions.append(NotificationRecord.priority == priority)
         if account_id:
             conditions.append(NotificationRecord.account_id == account_id)
         if channel:

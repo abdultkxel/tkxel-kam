@@ -1,4 +1,5 @@
 from collections.abc import Generator
+from datetime import datetime, timedelta, timezone
 
 import pytest
 from fastapi.testclient import TestClient
@@ -8,7 +9,7 @@ from sqlalchemy.pool import StaticPool
 
 from app.database import Base, get_db
 from app.main import app
-from app.models import Account, AccountOwner, Opportunity, TimelineEntry
+from app.models import Account, AccountOwner, Opportunity, OpportunityActionItem, Task, TimelineEntry
 from app.services.seed import seed_default_data
 
 
@@ -145,6 +146,11 @@ def test_opportunity_create_list_stage_decision_action_archive_flow(client: Test
     assert opportunity["type_id"] == opportunity_type["id"]
     assert opportunity["estimated_value"] == 175000
     assert opportunity["action_items"][0]["title"] == "Send discovery summary"
+    assert opportunity["action_items"][0]["future_task_id"]
+    initial_task = db_session.get(Task, opportunity["action_items"][0]["future_task_id"])
+    assert initial_task is not None
+    assert initial_task.source_type == "opportunity_action_item"
+    assert initial_task.source_record_id == opportunity["action_items"][0]["id"]
 
     summary_response = client.get(f"/api/accounts/{account_id}/summary-cards", headers=headers)
     assert summary_response.status_code == 200
@@ -161,6 +167,18 @@ def test_opportunity_create_list_stage_decision_action_archive_flow(client: Test
     assert page["totals"]["open_count"] == 1
     assert page["totals"]["stage_counts"]["Identified"] == 1
 
+    stalled_record = db_session.get(Opportunity, opportunity["id"])
+    assert stalled_record is not None
+    stalled_record.updated_at = datetime.now(timezone.utc) - timedelta(days=100)
+    db_session.commit()
+    stalled_list = client.get(
+        "/api/opportunities",
+        headers=headers,
+        params={"account_id": account_id, "stalled": True, "stalled_after_days": 90},
+    )
+    assert stalled_list.status_code == 200
+    assert stalled_list.json()["total"] == 1
+
     stage_response = client.post(
         f"/api/opportunities/{opportunity['id']}/stage",
         headers=headers,
@@ -171,6 +189,10 @@ def test_opportunity_create_list_stage_decision_action_archive_flow(client: Test
     assert stage_payload["opportunity"]["stage"] == "Won"
     assert stage_payload["history"]["before_stage"] == "Identified"
     assert stage_payload["history"]["after_stage"] == "Won"
+
+    open_only_list = client.get("/api/opportunities", headers=headers, params={"account_id": account_id, "open_only": True})
+    assert open_only_list.status_code == 200
+    assert open_only_list.json()["total"] == 0
 
     same_stage_response = client.post(
         f"/api/opportunities/{opportunity['id']}/stage",
@@ -195,15 +217,46 @@ def test_opportunity_create_list_stage_decision_action_archive_flow(client: Test
         json={"title": "Prepare kickoff brief", "owner_email": "owner@example.com", "due_date": "2026-06-10T12:00:00Z"},
     )
     assert action_response.status_code == 201
-    action_item_id = action_response.json()["id"]
+    action_body = action_response.json()
+    action_item_id = action_body["id"]
+    assert action_body["future_task_id"]
+    action_task = db_session.get(Task, action_body["future_task_id"])
+    assert action_task is not None
+    assert action_task.source_type == "opportunity_action_item"
+    assert action_task.source_record_id == action_item_id
 
-    complete_action = client.patch(
+    complete_task = client.patch(
+        f"/api/tasks/{action_task.id}",
+        headers=headers,
+        json={"status": "done", "outcome": "Kickoff brief sent to sponsor."},
+    )
+    assert complete_task.status_code == 200
+    db_session.expire_all()
+    synced_action = db_session.get(OpportunityActionItem, action_item_id)
+    assert synced_action is not None
+    assert synced_action.status == "completed"
+    assert synced_action.completed_at is not None
+
+    reopen_action = client.patch(
         f"/api/opportunity-action-items/{action_item_id}",
         headers=headers,
-        json={"status": "completed"},
+        json={"status": "open"},
     )
-    assert complete_action.status_code == 200
-    assert complete_action.json()["completed_at"]
+    assert reopen_action.status_code == 200
+    assert reopen_action.json()["completed_at"] is None
+    db_session.expire_all()
+    reopened_task = db_session.get(Task, action_task.id)
+    assert reopened_task is not None
+    assert reopened_task.status == "open"
+    assert reopened_task.completed_at is None
+
+    no_task_response = client.post(
+        f"/api/opportunities/{opportunity['id']}/action-items",
+        headers=headers,
+        json={"title": "Document no-task action", "owner_email": "owner@example.com", "due_date": "2026-06-12T12:00:00Z", "create_task": False},
+    )
+    assert no_task_response.status_code == 201
+    assert no_task_response.json()["future_task_id"] is None
 
     archive_response = client.delete(f"/api/opportunities/{opportunity['id']}", headers=headers, params={"reason": "Historical test archive"})
     assert archive_response.status_code == 200

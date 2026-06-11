@@ -298,6 +298,7 @@ class AnalyticsService:
                         source_record_route=f"/analytics?alert={alert.id}",
                         priority="high" if severity in {"high", "critical"} else "medium",
                         deduplication_key=f"account-change-alert:{alert.id}:{recipient.id}",
+                        in_app_only=True,
                     )
                 except HTTPException:
                     pass

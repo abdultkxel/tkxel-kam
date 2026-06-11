@@ -28,6 +28,7 @@ from app.schemas import (
 )
 from app.services.account_access import AccountAccessService, GLOBAL_EDIT_ROLES, GLOBAL_VIEW_ROLES
 from app.services.audit import AuditService
+from app.services.notifications import NotificationsService
 from app.services.timeline import TimelineService
 from app.services.user_management import page_count
 
@@ -49,6 +50,7 @@ class TaskService:
         self.access = AccountAccessService(self.accounts, RbacRepository(db))
         self.audit = AuditService(AuditRepository(db))
         self.timeline = TimelineService(TimelineRepository(db))
+        self.notifications = NotificationsService(db)
 
     def list_templates(
         self,
@@ -235,6 +237,7 @@ class TaskService:
         self._add_task_history(task, "created", None, task.status, current_user)
         self.audit.log(module=TASKS_MODULE, action="create", entity_type="task", entity_id=task.id, actor=current_user, after_value=self._task_snapshot(task))
         self._add_task_timeline(task, account, current_user, event_type="task_created", title=f"Task created: {task.title}", description=task.description or task.notes or "Manual task created.")
+        self._notify_task_created(task, account, current_user)
         self.repository.commit()
         return TaskRead.model_validate(task)
 
@@ -263,6 +266,7 @@ class TaskService:
         self._add_task_history(task, "created", None, task.status, current_user, note="Converted from signal")
         self.audit.log(module=TASKS_MODULE, action="create_from_signal", entity_type="task", entity_id=task.id, actor=current_user, after_value=self._task_snapshot(task))
         self._add_task_timeline(task, account, current_user, event_type="task_created", title=f"Task created from signal: {task.title}", description=task.description or "Signal converted into a task.")
+        self._notify_task_created(task, account, current_user)
         return TaskRead.model_validate(task)
 
     def update_task(self, task_id: str, payload: TaskUpdateRequest, current_user: User) -> TaskRead:
@@ -286,6 +290,8 @@ class TaskService:
         if next_status:
             self._apply_task_status(task, next_status, current_user, note=updates.get("notes"))
         self.audit.log(module=TASKS_MODULE, action="update", entity_type="task", entity_id=task.id, actor=current_user, before_value=before, after_value=self._task_snapshot(task))
+        if "owner_id" in payload.model_fields_set and task.owner_id != before.get("owner_id"):
+            self._notify_task_assigned(task, account, current_user, previous_owner_id=before.get("owner_id"))
         if next_status in {"done", "cancelled"}:
             self._add_task_timeline(
                 task,
@@ -595,6 +601,65 @@ class TaskService:
             "source_type": task.source_type,
             "source_record_id": task.source_record_id,
         }
+
+    def _notify_task_created(self, task: Task, account: Account, current_user: User) -> None:
+        owner = self._notification_user(task.owner_id)
+        if owner is None or owner.id == current_user.id:
+            return
+        self.notifications.queue_notification(
+            recipient=owner,
+            trigger="task_created",
+            title=f"New task assigned: {task.title}",
+            body=f"{current_user.full_name} created a task for {account.name}.",
+            account=account,
+            source_record_type="task",
+            source_record_id=task.id,
+            source_record_route=f"/tasks?selected={task.id}",
+            priority=task.priority,
+            delivery_metadata={"task_id": task.id, "created_by_id": current_user.id},
+            deduplication_key=f"task_created:{task.id}:{owner.id}",
+            in_app_only=True,
+        )
+
+    def _notify_task_assigned(self, task: Task, account: Account, current_user: User, *, previous_owner_id: str | None) -> None:
+        owner = self._notification_user(task.owner_id)
+        previous_owner = self._notification_user(previous_owner_id)
+        if owner is not None and owner.id != current_user.id:
+            self.notifications.queue_notification(
+                recipient=owner,
+                trigger="task_reassigned" if previous_owner_id else "task_assigned",
+                title=f"Task assigned: {task.title}",
+                body=f"{current_user.full_name} assigned you a task for {account.name}.",
+                account=account,
+                source_record_type="task",
+                source_record_id=task.id,
+                source_record_route=f"/tasks?selected={task.id}",
+                priority=task.priority,
+                delivery_metadata={"task_id": task.id, "previous_owner_id": previous_owner_id},
+                deduplication_key=f"task_assigned:{task.id}:{owner.id}:{task.updated_at.isoformat()}",
+                in_app_only=True,
+            )
+        if previous_owner is not None and previous_owner.id not in {current_user.id, owner.id if owner else None}:
+            self.notifications.queue_notification(
+                recipient=previous_owner,
+                trigger="task_reassigned",
+                title=f"Task reassigned: {task.title}",
+                body=f"{current_user.full_name} reassigned your task for {account.name}.",
+                account=account,
+                source_record_type="task",
+                source_record_id=task.id,
+                source_record_route=f"/tasks?selected={task.id}",
+                priority=task.priority,
+                delivery_metadata={"task_id": task.id, "new_owner_id": task.owner_id},
+                deduplication_key=f"task_reassigned:{task.id}:{previous_owner.id}:{task.updated_at.isoformat()}",
+                in_app_only=True,
+            )
+
+    def _notification_user(self, user_id: str | None) -> User | None:
+        if not user_id:
+            return None
+        user = self.accounts.get_user(user_id)
+        return user if user and user.is_active else None
 
     def _require_task_update(self, current_user: User, account: Account, task: Task) -> None:
         self.access.require_module_permission(current_user, TASKS_MODULE, "update")

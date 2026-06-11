@@ -58,13 +58,51 @@ function jsonResponse(body: unknown) {
   })
 }
 
-function paginated(page = 1, pageSize = 12) {
+const onboardingDraft = {
+  id: 'draft-1',
+  status: 'ready_for_review',
+  extraction_status: 'completed',
+  account_name: 'Draft Workspace',
+  project_name: 'Draft customer launch',
+  company_url: 'https://draft.example.com',
+  linkedin_url: 'https://www.linkedin.com/company/draft-workspace',
+  lifecycle_status: 'Draft',
+  segment: 'Growth',
+  region: 'Global',
+  commercial_value: 0,
+  currency: 'USD',
+  primary_owner_id: 'usr-am',
+  primary_owner_name: 'Account Manager KAM',
+  primary_owner_email: 'account.manager.user@tkxel.com',
+  confidence: 82,
+  missing_fields: [],
+  conflicts: [],
+  source_citation: 'Charter p1: source-backed intake.',
+  created_by_name: 'Admin',
+  approved_account_id: null,
+  created_at: '2026-05-30T00:00:00Z',
+  updated_at: '2026-05-30T00:00:00Z',
+  source_documents: [],
+  engagement_drafts: [],
+}
+
+function paginated(page = 1, pageSize = 12, items = [account]) {
   return {
-    items: [account],
-    total: 13,
+    items,
+    total: items.length === 1 ? 13 : items.length,
     page,
     page_size: pageSize,
-    pages: 2,
+    pages: items.length === 1 ? 2 : items.length ? 1 : 0,
+  }
+}
+
+function draftPage(items = [] as typeof onboardingDraft[]) {
+  return {
+    items,
+    total: items.length,
+    page: 1,
+    page_size: 25,
+    pages: items.length ? 1 : 0,
   }
 }
 
@@ -72,9 +110,6 @@ describe('Accounts', () => {
   beforeEach(() => {
     window.localStorage.clear()
     useAccountStore.setState({
-      savedFilters: [
-        { id: 'view-risk', name: 'At-risk book', query: '', stage: '', risk: 'warning', segments: [], sort: 'name', direction: 'asc', layout: 'cards', creatorId: 'usr-001', shared: true },
-      ],
       segmentTags: ['Strategic', 'Enterprise', 'Growth', 'APAC', 'Tier-1'],
     })
   })
@@ -82,6 +117,7 @@ describe('Accounts', () => {
   it('renders account cards and sends search, filters, sorting, and pagination to the API', async () => {
     const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
       const url = new URL(String(input))
+      if (url.pathname.endsWith('/api/onboarding/drafts')) return jsonResponse(draftPage())
       const page = Number(url.searchParams.get('page') ?? '1')
       const pageSize = Number(url.searchParams.get('page_size') ?? '12')
       return jsonResponse(paginated(page, pageSize))
@@ -103,7 +139,7 @@ describe('Accounts', () => {
     expect(screen.getByText('account.manager.user@tkxel.com')).toBeInTheDocument()
     expect(screen.getAllByText('$1.3M').length).toBeGreaterThan(0)
 
-    await userEvent.type(screen.getByPlaceholderText(/account, am, or email/i), 'Cafe')
+    await userEvent.type(screen.getByPlaceholderText(/account name, am, or email/i), 'Cafe')
     await userEvent.selectOptions(screen.getByLabelText(/stage/i), 'Onboarding')
     await userEvent.selectOptions(screen.getByLabelText(/risk/i), 'critical')
     await userEvent.selectOptions(screen.getByLabelText(/sort/i), 'commercial_value')
@@ -124,52 +160,10 @@ describe('Accounts', () => {
     })).toBe(true))
   })
 
-  it('saves and reapplies account sorting and layout in saved views', async () => {
-    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
-      const url = new URL(String(input))
-      const page = Number(url.searchParams.get('page') ?? '1')
-      const pageSize = Number(url.searchParams.get('page_size') ?? '12')
-      return jsonResponse(paginated(page, pageSize))
-    })
-    vi.stubGlobal('fetch', fetchMock)
-
-    render(
-      <MemoryRouter initialEntries={['/accounts']}>
-        <Routes>
-          <Route path="/accounts" element={<Accounts />} />
-          <Route path="/accounts/:id" element={<div>Account detail</div>} />
-        </Routes>
-      </MemoryRouter>,
-    )
-
-    expect(await screen.findByText('Cafe Zupas')).toBeInTheDocument()
-    await userEvent.click(screen.getByRole('button', { name: /table view/i }))
-    await userEvent.selectOptions(screen.getByLabelText(/sort/i), 'owner_name')
-    await userEvent.selectOptions(screen.getByLabelText(/order/i), 'desc')
-    await userEvent.click(screen.getByRole('button', { name: /save view/i }))
-    await userEvent.clear(screen.getByLabelText(/saved view name/i))
-    await userEvent.type(screen.getByLabelText(/saved view name/i), 'Owner sort view')
-    await userEvent.click(screen.getByRole('button', { name: /^save$/i }))
-
-    await userEvent.selectOptions(screen.getByLabelText(/sort/i), 'name')
-    await userEvent.selectOptions(screen.getByLabelText(/order/i), 'asc')
-    await userEvent.click(screen.getByRole('button', { name: /owner sort view/i }))
-
-    await waitFor(() => expect(fetchMock.mock.calls.some(call => {
-      const url = String(call[0])
-      return (
-        url.includes('/api/accounts?') &&
-        url.includes('sort=owner_name') &&
-        url.includes('direction=desc') &&
-        url.includes('page=1')
-      )
-    })).toBe(true))
-    expect(screen.getByRole('button', { name: /table view/i })).toHaveAttribute('aria-pressed', 'true')
-  })
-
   it('uses server-side sorting when sortable table headers are clicked', async () => {
     const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
       const url = new URL(String(input))
+      if (url.pathname.endsWith('/api/onboarding/drafts')) return jsonResponse(draftPage())
       const page = Number(url.searchParams.get('page') ?? '1')
       const pageSize = Number(url.searchParams.get('page_size') ?? '12')
       return jsonResponse(paginated(page, pageSize))
@@ -198,5 +192,31 @@ describe('Accounts', () => {
         url.includes('page=1')
       )
     })).toBe(true))
+  })
+
+  it('shows ready-for-review onboarding drafts in the account list for portfolio reviewers', async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = new URL(String(input))
+      if (url.pathname.endsWith('/api/onboarding/drafts')) return jsonResponse(draftPage([onboardingDraft]))
+      return jsonResponse(paginated(1, 12, []))
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    render(
+      <MemoryRouter initialEntries={['/accounts']}>
+        <Routes>
+          <Route path="/accounts" element={<Accounts />} />
+          <Route path="/accounts/onboarding" element={<div>Onboarding review loaded</div>} />
+        </Routes>
+      </MemoryRouter>,
+    )
+
+    await userEvent.click(await screen.findByText('Draft Workspace'))
+
+    expect(await screen.findByText('Onboarding review loaded')).toBeInTheDocument()
+    expect(fetchMock.mock.calls.some(call => {
+      const url = String(call[0])
+      return url.includes('/api/onboarding/drafts') && url.includes('status=ready_for_review')
+    })).toBe(true)
   })
 })

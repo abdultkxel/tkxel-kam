@@ -20,6 +20,8 @@ class OnboardingRepository:
         region: str | None = None,
         uploader: str | None = None,
         owner: str | None = None,
+        visible_to_user_id: str | None = None,
+        visible_to_user_email: str | None = None,
         created_from: datetime | None = None,
         created_to: datetime | None = None,
         sort: str = "newest",
@@ -48,6 +50,14 @@ class OnboardingRepository:
             conditions.append(OnboardingDraft.created_by_id == uploader)
         if owner:
             conditions.append(OnboardingDraft.primary_owner_id == owner)
+        if visible_to_user_id:
+            visibility_conditions = [
+                OnboardingDraft.created_by_id == visible_to_user_id,
+                OnboardingDraft.primary_owner_id == visible_to_user_id,
+            ]
+            if visible_to_user_email:
+                visibility_conditions.append(func.lower(OnboardingDraft.primary_owner_email) == visible_to_user_email.strip().lower())
+            conditions.append(or_(*visibility_conditions))
         if created_from:
             conditions.append(OnboardingDraft.created_at >= created_from)
         if created_to:
@@ -66,6 +76,7 @@ class OnboardingRepository:
                 .where(*conditions)
                 .options(
                     selectinload(OnboardingDraft.source_documents).selectinload(SourceDocument.citations),
+                    selectinload(OnboardingDraft.source_documents).selectinload(SourceDocument.extractions),
                     selectinload(OnboardingDraft.engagement_drafts),
                 )
                 .order_by(order_column, OnboardingDraft.account_name)
@@ -81,6 +92,7 @@ class OnboardingRepository:
             .where(OnboardingDraft.id == draft_id)
             .options(
                 selectinload(OnboardingDraft.source_documents).selectinload(SourceDocument.citations),
+                selectinload(OnboardingDraft.source_documents).selectinload(SourceDocument.extractions),
                 selectinload(OnboardingDraft.engagement_drafts),
             )
         )

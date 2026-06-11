@@ -25,6 +25,8 @@ import {
 
 type Tab = 'builder' | 'digests' | 'sla'
 
+const hiddenInternalReportFields = new Set(['id', 'account_id', 'task_id', 'signal_id', 'escalation_id', 'opportunity_id'])
+
 export function Reports() {
   const { token, user } = useAuth()
   const [tab, setTab] = useState<Tab>('builder')
@@ -51,7 +53,7 @@ export function Reports() {
       .then(result => {
         if (!active) return
         setFields(result.fields)
-        setSelectedFields(current => current.filter(field => result.fields.some(item => item.field === field)))
+        setSelectedFields(current => current.filter(field => !hiddenInternalReportFields.has(field) && result.fields.some(item => item.field === field)))
       })
       .catch(err => {
         if (active) setError(err instanceof Error ? err.message : 'Report fields could not be loaded')
@@ -76,7 +78,7 @@ export function Reports() {
     void loadEscalated()
   }, [tab, token])
 
-  const availableFields = useMemo(() => fields.filter(field => !field.sensitive), [fields])
+  const availableFields = useMemo(() => fields.filter(field => !field.sensitive && !hiddenInternalReportFields.has(field.field)), [fields])
 
   function toggleField(field: string) {
     setSelectedFields(current => current.includes(field) ? current.filter(item => item !== field) : [...current, field])

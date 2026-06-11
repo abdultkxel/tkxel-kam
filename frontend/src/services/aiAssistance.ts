@@ -32,6 +32,115 @@ interface KamAiSearchPayload {
   limit?: number
 }
 
+interface KamAiForecastPayload {
+  accountId?: string
+  months?: number
+}
+
+interface ApiForecastPoint {
+  month: string
+  baseline_revenue: number
+  weighted_opportunity: number
+  growth_adjustment: number
+  risk_adjustment: number
+  forecast_revenue: number
+  commercial_value: number
+  health: number
+  open_opportunities: number
+}
+
+interface ApiForecastTotals {
+  account_count: number
+  active_sow_count: number
+  open_opportunities: number
+  at_risk_accounts: number
+  contracted_baseline: number
+  baseline_revenue: number
+  pipeline_value: number
+  weighted_opportunity: number
+  growth_adjustment: number
+  risk_adjustment: number
+  forecast_revenue: number
+}
+
+interface ApiForecastWaterfallItem {
+  label: string
+  value: number
+  kind: 'baseline' | 'opportunity' | 'growth' | 'risk' | 'forecast'
+}
+
+interface ApiForecastResponse {
+  title: string
+  summary: string
+  points: ApiForecastPoint[]
+  months: number
+  scope: 'account' | 'portfolio' | 'empty'
+  forecast_type: 'monthly_revenue'
+  confidence: 'high' | 'medium' | 'low' | 'not_available'
+  trend_label: 'positive' | 'stable' | 'declining' | 'insufficient_data'
+  totals: ApiForecastTotals
+  waterfall: ApiForecastWaterfallItem[]
+  basis: string[]
+  assumptions: string[]
+  missing_data: string[]
+  recommended_actions: string[]
+  highlights: string[]
+  citations: Record<string, unknown>[]
+  disclaimer: string
+  run_id?: string | null
+}
+
+export interface KamAiForecastPoint {
+  month: string
+  baselineRevenue: number
+  weightedOpportunity: number
+  growthAdjustment: number
+  riskAdjustment: number
+  forecastRevenue: number
+  health: number
+  openOpportunities: number
+}
+
+export interface KamAiForecastTotals {
+  accountCount: number
+  activeSowCount: number
+  openOpportunities: number
+  atRiskAccounts: number
+  contractedBaseline: number
+  baselineRevenue: number
+  pipelineValue: number
+  weightedOpportunity: number
+  growthAdjustment: number
+  riskAdjustment: number
+  forecastRevenue: number
+}
+
+export interface KamAiForecastWaterfallItem {
+  label: string
+  value: number
+  kind: 'baseline' | 'opportunity' | 'growth' | 'risk' | 'forecast'
+}
+
+export interface KamAiForecastResult {
+  title: string
+  summary: string
+  points: KamAiForecastPoint[]
+  months: number
+  scope: 'account' | 'portfolio' | 'empty'
+  confidence: 'high' | 'medium' | 'low' | 'not_available'
+  trendLabel: 'positive' | 'stable' | 'declining' | 'insufficient_data'
+  totals: KamAiForecastTotals
+  waterfall: KamAiForecastWaterfallItem[]
+  basis: string[]
+  assumptions: string[]
+  missingData: string[]
+  recommendedActions: string[]
+  highlights: string[]
+  citations: Record<string, unknown>[]
+  disclaimer: string
+  runId?: string | null
+}
+
 export async function runKamAiSearch(token: string, payload: KamAiSearchPayload): Promise<AISearchResult> {
   const response = await apiRequest<ApiAiSearchResponse>('/api/ai/search', {
     method: 'POST',
@@ -51,6 +160,58 @@ export async function runKamAiSearch(token: string, payload: KamAiSearchPayload)
     queryIntent: response.query_intent,
     confidence: response.confidence,
     disclaimer: response.disclaimer,
+  }
+}
+
+export async function runKamAiForecast(token: string, payload: KamAiForecastPayload = {}): Promise<KamAiForecastResult> {
+  const response = await apiRequest<ApiForecastResponse>('/api/ai/forecast', {
+    method: 'POST',
+    token,
+    body: JSON.stringify({
+      account_id: payload.accountId,
+      months: payload.months ?? 6,
+    }),
+  })
+
+  return {
+    title: response.title,
+    summary: response.summary,
+    points: response.points.map(point => ({
+      month: point.month,
+      baselineRevenue: point.baseline_revenue,
+      weightedOpportunity: point.weighted_opportunity,
+      growthAdjustment: point.growth_adjustment,
+      riskAdjustment: point.risk_adjustment,
+      forecastRevenue: point.forecast_revenue,
+      health: point.health,
+      openOpportunities: point.open_opportunities,
+    })),
+    months: response.months,
+    scope: response.scope,
+    confidence: response.confidence,
+    trendLabel: response.trend_label,
+    totals: {
+      accountCount: response.totals.account_count,
+      activeSowCount: response.totals.active_sow_count,
+      openOpportunities: response.totals.open_opportunities,
+      atRiskAccounts: response.totals.at_risk_accounts,
+      contractedBaseline: response.totals.contracted_baseline,
+      baselineRevenue: response.totals.baseline_revenue,
+      pipelineValue: response.totals.pipeline_value,
+      weightedOpportunity: response.totals.weighted_opportunity,
+      growthAdjustment: response.totals.growth_adjustment,
+      riskAdjustment: response.totals.risk_adjustment,
+      forecastRevenue: response.totals.forecast_revenue,
+    },
+    waterfall: response.waterfall,
+    basis: response.basis,
+    assumptions: response.assumptions,
+    missingData: response.missing_data,
+    recommendedActions: response.recommended_actions,
+    highlights: response.highlights,
+    citations: response.citations,
+    disclaimer: response.disclaimer,
+    runId: response.run_id,
   }
 }
 

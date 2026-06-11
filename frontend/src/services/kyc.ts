@@ -3,6 +3,7 @@ import {
   KycAgentRun,
   KycConfidenceLevel,
   KycConfiguration,
+  KycDefaultPrompt,
   KycDraft,
   KycDraftStatus,
   KycFreshness,
@@ -62,6 +63,7 @@ export interface KycDraftCreatePayload {
   source_document_ids?: string[]
   research_sources?: string[]
   notes?: string | null
+  prompt?: string | null
 }
 
 export interface KycDraftUpdatePayload {
@@ -70,6 +72,7 @@ export interface KycDraftUpdatePayload {
   conflicts_acknowledged?: boolean | null
   override_reason?: string | null
   review_notes?: string | null
+  detailed_description?: string | null
 }
 
 export interface KycDraftApprovePayload {
@@ -87,10 +90,16 @@ export interface KycSnapshotRestorePayload {
   reason: string
 }
 
+export interface KycWebResearchPayload {
+  draft_id?: string | null
+  query?: string | null
+}
+
 export interface KycAgentRunCreatePayload {
   source_document_ids?: string[]
   research_sources?: string[]
   trigger_source?: KycTriggerSource
+  prompt?: string | null
 }
 
 export interface KycConfigurationUpdatePayload {
@@ -124,6 +133,10 @@ export function createKycDraft(token: string, accountId: string, payload: KycDra
   })
 }
 
+export function getKycDefaultPrompt(token: string, accountId: string) {
+  return apiRequest<KycDefaultPrompt>(`/api/accounts/${accountId}/kyc/default-prompt`, { token })
+}
+
 export function getKycDraft(token: string, accountId: string, draftId: string) {
   return apiRequest<KycDraft>(`/api/accounts/${accountId}/kyc/drafts/${draftId}`, { token })
 }
@@ -146,6 +159,14 @@ export function approveKycDraft(token: string, accountId: string, draftId: strin
 
 export function rejectKycDraft(token: string, accountId: string, draftId: string, payload: KycDraftRejectPayload) {
   return apiRequest<KycDraft>(`/api/accounts/${accountId}/kyc/drafts/${draftId}/reject`, {
+    method: 'POST',
+    token,
+    body: JSON.stringify(payload),
+  })
+}
+
+export function queueKycWebResearch(token: string, accountId: string, payload: KycWebResearchPayload = {}) {
+  return apiRequest<KycAgentRun>(`/api/accounts/${accountId}/kyc/web-research`, {
     method: 'POST',
     token,
     body: JSON.stringify(payload),

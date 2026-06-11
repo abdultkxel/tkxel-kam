@@ -1,4 +1,4 @@
-import { AlertTriangle, CheckCircle2, FileSearch, FileText, Loader2, UploadCloud, XCircle } from 'lucide-react'
+import { AlertTriangle, CheckCircle2, Download, FileSearch, FileText, Loader2, RefreshCw, UploadCloud, XCircle } from 'lucide-react'
 import type { ReactNode } from 'react'
 import { useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
@@ -8,7 +8,19 @@ import { PageHeader } from '@/components/ui/PageHeader'
 import { Skeleton } from '@/components/ui/Skeleton'
 import { useAuth } from '@/contexts/AuthContext'
 import { useRole } from '@/hooks/useRole'
-import { approveOnboardingDraft, createOnboardingDraft, listOnboardingDrafts, OnboardingDraftView, rejectOnboardingDraft } from '@/services/accountWorkspace'
+import {
+  approveOnboardingDraft,
+  createOnboardingDraftFromUpload,
+  downloadOnboardingDraftDocument,
+  getOnboardingDraft,
+  listOnboardingAccountManagers,
+  listOnboardingDrafts,
+  OnboardingAccountManager,
+  OnboardingDraftView,
+  rejectOnboardingDraft,
+  retryOnboardingDraftDocumentExtraction,
+  updateOnboardingDraft,
+} from '@/services/accountWorkspace'
 import { SourceDocument } from '@/types/v3'
 import { cn } from '@/utils/cn'
 import { formatCompactCurrency, formatDate, formatRelative } from '@/utils/formatters'
@@ -18,13 +30,22 @@ export function Onboarding() {
   const { token } = useAuth()
   const [drafts, setDrafts] = useState<OnboardingDraftView[]>([])
   const [selectedId, setSelectedId] = useState('')
-  const [fileNames, setFileNames] = useState<string[]>([])
+  const [files, setFiles] = useState<File[]>([])
+  const [accountManagers, setAccountManagers] = useState<OnboardingAccountManager[]>([])
+  const [selectedManagerId, setSelectedManagerId] = useState('')
+  const [loadingManagers, setLoadingManagers] = useState(false)
+  const [assignmentUpdating, setAssignmentUpdating] = useState(false)
   const [extracting, setExtracting] = useState(false)
+  const [retryingDocumentId, setRetryingDocumentId] = useState('')
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
 
   const selected = drafts.find(draft => draft.id === selectedId) ?? drafts[0]
   const selectedDocs = useMemo(() => selected?.sourceDocuments ?? [], [selected])
+  const assignableManagers = assignableAccountManagers(accountManagers, user)
+  const intakeManager = assignableManagers.find(manager => manager.id === selectedManagerId)
+  const selectedOwnerId = selected?.accountDraft.ownerId && selected.accountDraft.ownerId !== 'pending-owner' ? selected.accountDraft.ownerId : ''
+  const selectedOwnerMissing = selected?.status === 'ready_for_review' && !selectedOwnerId
 
   useEffect(() => {
     if (!token) return
@@ -49,25 +70,52 @@ export function Onboarding() {
     }
   }, [token])
 
-  async function runMockExtraction() {
-    const names = fileNames.length ? fileNames : ['New Client Project Charter.pdf', 'New Client SOW.pdf']
+  useEffect(() => {
+    if (!token) return
+    let active = true
+    setLoadingManagers(true)
+    listOnboardingAccountManagers(token)
+      .then(managers => {
+        if (!active) return
+        setAccountManagers(managers)
+        setSelectedManagerId(current => current || defaultAccountManagerId(assignableAccountManagers(managers, user), user))
+      })
+      .catch(() => {
+        if (active) setAccountManagers([])
+      })
+      .finally(() => {
+        if (active) setLoadingManagers(false)
+      })
+    return () => {
+      active = false
+    }
+  }, [token, user])
+
+  async function runDocumentExtraction() {
     if (!token) {
       toast.error('Please log in again before creating a draft')
       return
     }
+    if (!files.length) {
+      toast.error('Select at least one SOW, charter, or source document')
+      return
+    }
+    if (!intakeManager) {
+      toast.error('Select an account manager before creating a draft')
+      return
+    }
     setExtracting(true)
     try {
-      const draft = await createOnboardingDraft(token, {
-        accountName: cleanDocumentName(names[0]),
-        projectName: cleanProjectName(names.find(name => /sow|statement/i.test(name)) ?? names[0]),
-        companyUrl: `https://${slugify(cleanDocumentName(names[0]))}.com`,
-        managerEmail: user.email,
-        managerName: user.name,
-        fileNames: names,
+      const draft = await createOnboardingDraftFromUpload(token, {
+        files,
+        managerId: intakeManager.id,
+        managerEmail: intakeManager.email,
+        managerName: intakeManager.name,
       })
       setDrafts(current => [draft, ...current.filter(item => item.id !== draft.id)])
       setSelectedId(draft.id)
-      toast.success('AI extraction draft created')
+      setFiles([])
+      toast.success('Source-backed draft created from uploaded document text')
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Draft could not be created')
     } finally {
@@ -77,12 +125,36 @@ export function Onboarding() {
 
   async function approve(selectedDraft: OnboardingDraftView) {
     if (!token) return
+    if (!selectedDraft.accountDraft.ownerId || selectedDraft.accountDraft.ownerId === 'pending-owner') {
+      toast.error('Assign an account manager before approving this draft')
+      return
+    }
     try {
       const approved = await approveOnboardingDraft(token, selectedDraft.id)
       setDrafts(current => current.map(item => (item.id === approved.id ? approved : item)))
       toast.success('Draft approved and Account Overview created')
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Draft could not be approved')
+    }
+  }
+
+  async function assignDraftManager(draft: OnboardingDraftView, managerId: string) {
+    if (!token || !managerId) return
+    const manager = assignableManagers.find(item => item.id === managerId)
+    if (!manager) return
+    setAssignmentUpdating(true)
+    try {
+      const updated = await updateOnboardingDraft(token, draft.id, {
+        managerId: manager.id,
+        managerName: manager.name,
+        managerEmail: manager.email,
+      })
+      setDrafts(current => current.map(item => (item.id === updated.id ? updated : item)))
+      toast.success('Account manager assignment updated')
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Assignment could not be updated')
+    } finally {
+      setAssignmentUpdating(false)
     }
   }
 
@@ -94,6 +166,21 @@ export function Onboarding() {
       toast.success('Draft rejected and retained for audit')
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Draft could not be rejected')
+    }
+  }
+
+  async function retryDocumentExtraction(selectedDraft: OnboardingDraftView, document: SourceDocument) {
+    if (!token) return
+    setRetryingDocumentId(document.id)
+    try {
+      await retryOnboardingDraftDocumentExtraction(token, selectedDraft.id, document.id, true)
+      const refreshed = await getOnboardingDraft(token, selectedDraft.id)
+      setDrafts(current => current.map(item => (item.id === refreshed.id ? refreshed : item)))
+      toast.success('Source extraction retried')
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Source extraction could not be retried')
+    } finally {
+      setRetryingDocumentId('')
     }
   }
 
@@ -114,33 +201,48 @@ export function Onboarding() {
               </div>
               <div>
                 <h2 className="text-base font-semibold text-ink">Upload source documents</h2>
-                <p className="mt-1 text-sm text-ink-secondary">Mock intake accepts multiple charters and SOWs for one client.</p>
+                <p className="mt-1 text-sm text-ink-secondary">Upload one or more charters or SOWs. Draft fields are extracted from document text.</p>
               </div>
             </div>
             <label className="mt-4 flex min-h-[132px] cursor-pointer flex-col items-center justify-center rounded-lg border border-dashed border-brand-blue/40 bg-blue-tint-20 p-4 text-center">
               <FileSearch className="h-6 w-6 text-brand-blue" />
               <span className="mt-2 text-sm font-semibold text-ink">Select charter/SOW files</span>
-              <span className="mt-1 text-xs text-ink-secondary">PDF/DOCX names are used for prototype extraction.</span>
+              <span className="mt-1 text-xs text-ink-secondary">PDF, DOCX, TXT, and CSV files are stored and parsed for review.</span>
               <input
                 type="file"
                 multiple
+                accept=".pdf,.doc,.docx,.txt,.csv,application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document,text/plain,text/csv"
                 className="sr-only"
-                onChange={event => setFileNames(Array.from(event.target.files ?? []).map(file => file.name))}
+                onChange={event => setFiles(Array.from(event.target.files ?? []))}
               />
             </label>
-            {fileNames.length ? (
+            {files.length ? (
               <div className="mt-3 space-y-2">
-                {fileNames.map(name => (
-                  <div key={name} className="flex items-center gap-2 rounded-md bg-surface-secondary p-2 text-xs font-medium text-ink-secondary">
+                {files.map(file => (
+                  <div key={`${file.name}-${file.size}`} className="flex items-center gap-2 rounded-md bg-surface-secondary p-2 text-xs font-medium text-ink-secondary">
                     <FileText className="h-4 w-4 text-brand-blue" />
-                    {name}
+                    <span className="min-w-0 flex-1 truncate">{file.name}</span>
                   </div>
                 ))}
               </div>
             ) : null}
-            <button className="tk-button-primary mt-4 w-full" onClick={runMockExtraction} disabled={extracting}>
+            <label className="mt-4 block space-y-1">
+              <span className="tk-label text-xs">Account Manager <span className="text-brand-orange">*</span></span>
+              <select
+                className="tk-input"
+                value={selectedManagerId}
+                onChange={event => setSelectedManagerId(event.target.value)}
+                disabled={loadingManagers}
+              >
+                <option value="">{loadingManagers ? 'Loading account managers...' : 'Select account manager'}</option>
+                {assignableManagers.map(manager => (
+                  <option key={manager.id} value={manager.id}>{manager.name} - {manager.email}</option>
+                ))}
+              </select>
+            </label>
+            <button className="tk-button-primary mt-4 w-full" onClick={runDocumentExtraction} disabled={extracting || !files.length || !intakeManager}>
               {extracting ? <Loader2 className="h-4 w-4 animate-spin" /> : <FileSearch className="h-4 w-4" />}
-              Run AI extraction
+              Extract from uploaded SOW
             </button>
           </section>
 
@@ -196,7 +298,7 @@ export function Onboarding() {
                     <XCircle className="h-4 w-4" />
                     Reject
                   </button>
-                  <button className="tk-button-primary" onClick={() => approve(selected)} disabled={selected.status !== 'ready_for_review'}>
+                  <button className="tk-button-primary" onClick={() => approve(selected)} disabled={selected.status !== 'ready_for_review' || selectedOwnerMissing}>
                     <CheckCircle2 className="h-4 w-4" />
                     Approve draft
                   </button>
@@ -214,6 +316,21 @@ export function Onboarding() {
             <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_360px]">
               <section className="space-y-4">
                 <ReviewCard title="Draft account">
+                  <label className="mb-3 block space-y-1">
+                    <span className="tk-label text-xs">Assigned Account Manager <span className="text-brand-orange">*</span></span>
+                    <select
+                      className={cn('tk-input', selectedOwnerMissing ? 'border-brand-orange focus:border-brand-orange focus:ring-brand-orange/30' : '')}
+                      value={selectedOwnerId}
+                      onChange={event => assignDraftManager(selected, event.target.value)}
+                      disabled={selected.status !== 'ready_for_review' || loadingManagers || assignmentUpdating}
+                    >
+                      <option value="">{loadingManagers ? 'Loading account managers...' : 'Select account manager'}</option>
+                      {assignableManagers.map(manager => (
+                        <option key={manager.id} value={manager.id}>{manager.name} - {manager.email}</option>
+                      ))}
+                    </select>
+                    {selectedOwnerMissing ? <p className="text-xs text-brand-orange">Assign an account manager before approval.</p> : null}
+                  </label>
                   <div className="grid gap-3 md:grid-cols-2">
                     <Field label="Lifecycle" value={selected.accountDraft.stage} />
                     <Field label="Segment" value={selected.accountDraft.segment} />
@@ -242,6 +359,7 @@ export function Onboarding() {
                   <div className="grid gap-3 md:grid-cols-2">
                     <Field label="Project" value={selected.accountDraft.projectName ?? 'Not provided'} />
                     <Field label="Company URL" value={selected.accountDraft.companyUrl ?? 'Not provided'} />
+                    <Field label="LinkedIn URL" value={selected.accountDraft.linkedinUrl ?? 'Not provided'} />
                     <Field label="Evidence" value={selected.sourceDocuments[0]?.citations[0]?.excerpt ?? 'No citation excerpt recorded'} multiline />
                     <Field label="Created by" value={selected.createdByName} />
                   </div>
@@ -251,18 +369,36 @@ export function Onboarding() {
               <aside className="space-y-4">
                 <ReviewCard title="Source documents">
                   <div className="space-y-2">
-                    {selectedDocs.map(document => <DocumentRow key={document.id} document={document} />)}
+                    {selectedDocs.map(document => (
+                      <DocumentRow
+                        key={document.id}
+                        document={document}
+                        onDownload={token ? () => downloadOnboardingDraftDocument(token, selected.id, document).catch(err => toast.error(err instanceof Error ? err.message : 'Document could not be downloaded')) : undefined}
+                        onRetry={token && selected.status === 'ready_for_review' ? () => retryDocumentExtraction(selected, document) : undefined}
+                        retrying={retryingDocumentId === document.id}
+                      />
+                    ))}
                   </div>
                 </ReviewCard>
                 <ReviewCard title="Source citations">
-                  <div className="grid gap-2">
-                    {selected.sourceDocuments.flatMap(document => document.citations).map(citation => (
-                      <div key={citation.id} className="rounded-lg border border-blue-tint-20 bg-blue-tint-20 p-3">
-                        <p className="text-sm font-semibold text-brand-blue">{citation.label}</p>
-                        <p className="mt-1 text-xs text-ink-secondary">{citation.excerpt}</p>
-                      </div>
-                    ))}
-                  </div>
+                  {selected.sourceDocuments.some(document => document.citations.length) ? (
+                    <div className="grid gap-2">
+                      {selected.sourceDocuments.flatMap(document => document.citations.map(citation => ({ citation, document }))).map(({ citation, document }) => (
+                        <div key={citation.id} className="rounded-lg border border-blue-tint-20 bg-blue-tint-20 p-3">
+                          <div className="flex items-start justify-between gap-3">
+                            <div>
+                              <p className="text-sm font-semibold text-brand-blue">{citation.fieldKey ? formatFieldKey(citation.fieldKey) : citation.label}</p>
+                              <p className="mt-0.5 text-[11px] font-medium text-ink-secondary">{document.name} · page {citation.page}</p>
+                            </div>
+                            <span className="shrink-0 rounded-full border border-white/70 bg-white px-2 py-0.5 text-[11px] font-semibold text-brand-blue">{citation.confidence ?? document.confidence}%</span>
+                          </div>
+                          <p className="mt-2 text-xs leading-5 text-ink-secondary">{citation.excerpt}</p>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="rounded-lg border border-surface-border bg-surface-secondary p-3 text-sm text-ink-secondary">No source citations were extracted yet.</div>
+                  )}
                 </ReviewCard>
                 <ReviewCard title="Review blockers">
                   <div className="space-y-3">
@@ -324,7 +460,8 @@ function Field({ label, value, multiline = false }: { label: string; value: Reac
   )
 }
 
-function DocumentRow({ document }: { document: SourceDocument }) {
+function DocumentRow({ document, onDownload, onRetry, retrying = false }: { document: SourceDocument; onDownload?: () => void; onRetry?: () => void; retrying?: boolean }) {
+  const canRetry = Boolean(onRetry && ['failed', 'needs_review', 'ocr_required'].includes(document.extractionStatus ?? ''))
   return (
     <div className="rounded-lg border border-surface-border p-3">
       <div className="flex items-start justify-between gap-3">
@@ -332,38 +469,49 @@ function DocumentRow({ document }: { document: SourceDocument }) {
           <p className="text-sm font-semibold text-ink">{document.name}</p>
           <p className="mt-1 text-xs text-ink-secondary">{document.type.replace('_', ' ')} | {document.pages} pages | {formatRelative(document.uploadedAt)}</p>
         </div>
-        <span className="rounded-full border border-blue-tint-20 bg-blue-tint-20 px-2 py-0.5 text-[11px] font-semibold text-brand-blue">{document.confidence}%</span>
+        <div className="flex items-center gap-2">
+          {canRetry ? (
+            <button className="tk-icon-button" type="button" onClick={onRetry} disabled={retrying} title="Retry extraction" aria-label="Retry extraction">
+              {retrying ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
+            </button>
+          ) : null}
+          {onDownload ? (
+            <button className="tk-icon-button" type="button" onClick={onDownload} title="Download source document" aria-label="Download source document">
+              <Download className="h-4 w-4" />
+            </button>
+          ) : null}
+          <span className="rounded-full border border-blue-tint-20 bg-blue-tint-20 px-2 py-0.5 text-[11px] font-semibold text-brand-blue">{document.confidence}%</span>
+        </div>
       </div>
+      {document.extractionStatus && document.extractionStatus !== 'completed' ? (
+        <p className="mt-2 rounded-md bg-surface-secondary p-2 text-xs font-medium text-ink-secondary">
+          Extraction status: {document.extractionStatus.replace(/_/g, ' ')}
+          {document.extractionError ? ` · ${document.extractionError}` : ''}
+        </p>
+      ) : null}
       {document.citations.slice(0, 1).map(citation => (
-        <p key={citation.id} className="mt-3 rounded-md bg-surface-secondary p-2 text-xs leading-5 text-ink-secondary">{citation.label}, page {citation.page}: {citation.excerpt}</p>
+        <p key={citation.id} className="mt-3 rounded-md bg-surface-secondary p-2 text-xs leading-5 text-ink-secondary">
+          <span className="font-semibold text-ink">{citation.fieldKey ? formatFieldKey(citation.fieldKey) : citation.label}</span>
+          {' '}· page {citation.page} · {citation.confidence ?? document.confidence}% confidence: {citation.excerpt}
+        </p>
       ))}
     </div>
   )
 }
 
-function cleanDocumentName(name: string) {
-  const base = stripDocumentExtension(name)
-  const cleaned = base
-    .replace(/\b(project charter|charter|statement of work|sow|msa|contract|renewal|growth|services|service|q[1-4]|20\d{2})\b/gi, ' ')
-    .replace(/\s+/g, ' ')
-    .trim()
-  return toTitleCase(cleaned || base || 'New Client')
+function formatFieldKey(value: string) {
+  return value
+    .replace(/_/g, ' ')
+    .replace(/\b\w/g, letter => letter.toUpperCase())
 }
 
-function cleanProjectName(name: string) {
-  const base = stripDocumentExtension(name)
-  const cleaned = base.replace(/\b(project charter|charter|statement of work|sow)\b/gi, ' ').replace(/\s+/g, ' ').trim()
-  return toTitleCase(cleaned || 'New client engagement')
+function defaultAccountManagerId(managers: OnboardingAccountManager[], currentUser: { id: string; email: string; role: string }) {
+  if (!['account_manager', 'am'].includes(currentUser.role)) return ''
+  const self = managers.find(manager => manager.id === currentUser.id || manager.email.toLowerCase() === currentUser.email.toLowerCase())
+  return self?.id ?? ''
 }
 
-function stripDocumentExtension(name: string) {
-  return name.replace(/\.(pdf|docx?)$/i, '').replace(/[-_]/g, ' ').replace(/\s+/g, ' ').trim()
-}
-
-function toTitleCase(value: string) {
-  return value.toLowerCase().replace(/\b[a-z]/g, char => char.toUpperCase())
-}
-
-function slugify(value: string) {
-  return value.trim().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'new-client'
+function assignableAccountManagers(managers: OnboardingAccountManager[], currentUser: { id: string; email: string; role: string }) {
+  if (!['account_manager', 'am'].includes(currentUser.role)) return managers
+  return managers.filter(manager => manager.id === currentUser.id || manager.email.toLowerCase() === currentUser.email.toLowerCase())
 }

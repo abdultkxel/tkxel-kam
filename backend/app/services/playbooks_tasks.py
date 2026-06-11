@@ -10,6 +10,8 @@ from app.models import (
     Account,
     AccountOwner,
     Engagement,
+    GovernanceActionItem,
+    OpportunityActionItem,
     PlaybookExecution,
     PlaybookTemplate,
     PlaybookTemplateActivity,
@@ -45,6 +47,7 @@ from app.schemas import (
 from app.services.account_access import AccountAccessService, GLOBAL_EDIT_ROLES, GLOBAL_VIEW_ROLES
 from app.services.audit import AuditService
 from app.services.custom_fields import CustomFieldService
+from app.services.notifications import NotificationsService
 from app.services.storage import ContentStorageService
 from app.services.timeline import TimelineService
 from app.services.user_management import page_count
@@ -62,6 +65,7 @@ class PlaybooksTasksService:
         self.timeline = TimelineService(TimelineRepository(db))
         self.custom_fields = CustomFieldService(db, CustomFieldRepository(db))
         self.storage = ContentStorageService()
+        self.notifications = NotificationsService(db)
 
     def list_templates(
         self,
@@ -336,6 +340,7 @@ class PlaybooksTasksService:
         self.custom_fields.save_record_values(MODULE, task.id, payload.custom_field_values, current_user, audit_module=MODULE)
         self._write_timeline(account.id, task.engagement_id, current_user, "task_created", f"Task created: {task.title}", task.description or "Task created.", task.id, "task")
         self.audit.log(module=MODULE, action="create_task", entity_type="task", entity_id=task.id, actor=current_user, after_value=self._task_snapshot(task))
+        self._notify_task_created(task, account, current_user)
         self.repository.commit()
         return self._task_read(task)
 
@@ -359,14 +364,34 @@ class PlaybooksTasksService:
         for field, value in updates.items():
             setattr(task, field, value)
         task.updated_by_id = current_user.id
+        if updates.get("status") == "done":
+            self._sync_source_action_item_from_task(task, current_user)
         if custom_values is not None:
             self.custom_fields.replace_record_values(MODULE, task.id, custom_values, current_user, audit_module=MODULE)
         if task.status in {"done", "cancelled"}:
             action = "task_completed" if task.status == "done" else "task_cancelled"
             self._write_timeline(task.account_id, task.engagement_id, current_user, action, f"Task {task.status}: {task.title}", task.outcome or task.skipped_reason or task.notes or "Task status changed.", task.id, "task", before=before, after=self._task_snapshot(task))
+        if task.owner_id != before.get("owner_id"):
+            account = self._get_account_or_404(task.account_id)
+            self._notify_task_assigned(task, account, current_user, previous_owner_id=before.get("owner_id"))
         self.audit.log(module=MODULE, action="update_task", entity_type="task", entity_id=task.id, actor=current_user, before_value=before, after_value=self._task_snapshot(task))
         self.repository.commit()
         return self._task_read(task)
+
+    def _sync_source_action_item_from_task(self, task: Task, current_user: User) -> None:
+        if task.status != "done" or not task.source_record_id:
+            return
+        if task.source_type == "governance_action_item":
+            action_item = self.repository.db.get(GovernanceActionItem, task.source_record_id)
+        elif task.source_type == "opportunity_action_item":
+            action_item = self.repository.db.get(OpportunityActionItem, task.source_record_id)
+        else:
+            action_item = None
+        if action_item is None or action_item.status == "completed":
+            return
+        action_item.status = "completed"
+        action_item.completed_at = task.completed_at or datetime.now(timezone.utc)
+        action_item.completed_by_id = current_user.id
 
     async def add_task_evidence(
         self,
@@ -619,6 +644,65 @@ class PlaybooksTasksService:
             "priority": task.priority,
             "outcome": task.outcome,
         }
+
+    def _notify_task_created(self, task: Task, account: Account, current_user: User) -> None:
+        owner = self._notification_user(task.owner_id)
+        if owner is None or owner.id == current_user.id:
+            return
+        self.notifications.queue_notification(
+            recipient=owner,
+            trigger="task_created",
+            title=f"New task assigned: {task.title}",
+            body=f"{current_user.full_name} created a task for {account.name}.",
+            account=account,
+            source_record_type="task",
+            source_record_id=task.id,
+            source_record_route=f"/tasks?selected={task.id}",
+            priority=task.priority,
+            delivery_metadata={"task_id": task.id, "created_by_id": current_user.id},
+            deduplication_key=f"task_created:{task.id}:{owner.id}",
+            in_app_only=True,
+        )
+
+    def _notify_task_assigned(self, task: Task, account: Account, current_user: User, *, previous_owner_id: str | None) -> None:
+        owner = self._notification_user(task.owner_id)
+        previous_owner = self._notification_user(previous_owner_id)
+        if owner is not None and owner.id != current_user.id:
+            self.notifications.queue_notification(
+                recipient=owner,
+                trigger="task_reassigned" if previous_owner_id else "task_assigned",
+                title=f"Task assigned: {task.title}",
+                body=f"{current_user.full_name} assigned you a task for {account.name}.",
+                account=account,
+                source_record_type="task",
+                source_record_id=task.id,
+                source_record_route=f"/tasks?selected={task.id}",
+                priority=task.priority,
+                delivery_metadata={"task_id": task.id, "previous_owner_id": previous_owner_id},
+                deduplication_key=f"task_assigned:{task.id}:{owner.id}:{task.updated_at.isoformat()}",
+                in_app_only=True,
+            )
+        if previous_owner is not None and previous_owner.id not in {current_user.id, owner.id if owner else None}:
+            self.notifications.queue_notification(
+                recipient=previous_owner,
+                trigger="task_reassigned",
+                title=f"Task reassigned: {task.title}",
+                body=f"{current_user.full_name} reassigned your task for {account.name}.",
+                account=account,
+                source_record_type="task",
+                source_record_id=task.id,
+                source_record_route=f"/tasks?selected={task.id}",
+                priority=task.priority,
+                delivery_metadata={"task_id": task.id, "new_owner_id": task.owner_id},
+                deduplication_key=f"task_reassigned:{task.id}:{previous_owner.id}:{task.updated_at.isoformat()}",
+                in_app_only=True,
+            )
+
+    def _notification_user(self, user_id: str | None) -> User | None:
+        if not user_id:
+            return None
+        user = self.accounts.get_user(user_id)
+        return user if user and user.is_active else None
 
     def _write_timeline(
         self,

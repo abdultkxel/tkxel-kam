@@ -1014,6 +1014,7 @@ class IntegrationService:
                     priority="critical",
                     delivery_metadata={"provider": connection.provider, "failure_count": connection.failure_count},
                     deduplication_key=f"integration_failure:{connection.provider}:{connection.last_failure_key}:{recipient.id}",
+                    in_app_only=True,
                 )
         except Exception:
             logger.exception("Failed to queue integration failure notifications provider=%s", connection.provider)

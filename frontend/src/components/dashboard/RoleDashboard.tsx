@@ -22,7 +22,9 @@ import {
   Check,
   ExternalLink,
   Filter,
+  Info,
   LineChart,
+  ListChecks,
   Loader2,
   RefreshCw,
   Search,
@@ -48,13 +50,18 @@ type DashboardProps = {
   token: string | null
   draftSearch: string
   risk: string
+  accountId: string
+  amId: string
   loading: boolean
   error: string
   refreshingSummary: boolean
   canRefreshSummary: boolean
   onDraftSearchChange: (value: string) => void
   onRiskChange: (value: string) => void
+  onAccountChange: (value: string) => void
+  onAmChange: (value: string) => void
   onSearchSubmit: (event: FormEvent) => void
+  onPageChange: (page: number) => void
   onRefreshSummary: () => void
 }
 
@@ -63,35 +70,34 @@ type AccountOption = {
   name: string
 }
 
+type OwnerOption = {
+  id: string
+  name: string
+}
+
 const knownWidgetKeys = new Set([
   'summary',
   'ai_task_summary',
   'forecast_chart',
-  'health_distribution',
-  'strategic_health',
   'opportunities',
   'growth',
   'account_portfolio',
   'accounts',
   'high_risk_accounts',
   'signals',
+  'critical_tasks',
   'tasks',
   'stale_kyc',
   'renewal_focus',
-  'escalations',
-  'major_escalations',
   'am_workload',
   'engagement_health',
-  'account_change_alerts',
   'retention',
   'revenue_risk',
   'executive_summaries',
-  'decision_queue',
   'governance',
   'governance_cadence',
   'governance_calendar',
   'overdue_actions',
-  'sla_compliance',
   'admin_system',
 ])
 
@@ -102,27 +108,32 @@ export function RoleDashboard({
   token,
   draftSearch,
   risk,
+  accountId,
+  amId,
   loading,
   error,
   refreshingSummary,
   canRefreshSummary,
   onDraftSearchChange,
   onRiskChange,
+  onAccountChange,
+  onAmChange,
   onSearchSubmit,
+  onPageChange,
   onRefreshSummary,
 }: DashboardProps) {
   const widgets = dashboard?.widgets ?? []
   const widgetByKey = useMemo(() => new Map(widgets.map(widget => [widget.key, widget])), [widgets])
+  const isAccountManagerDashboard = dashboard?.dashboard === 'am_home' || dashboard?.role_group === 'account_manager'
   const summary = widgetByKey.get('summary')
   const taskSummary = widgetByKey.get('ai_task_summary')
-  const health = widgetByKey.get('health_distribution') ?? widgetByKey.get('strategic_health')
+  const taskPanel = taskSummary ?? (isAccountManagerDashboard ? widgetByKey.get('tasks') : undefined)
   const opportunities = widgetByKey.get('opportunities') ?? widgetByKey.get('growth')
   const portfolio = widgetByKey.get('account_portfolio') ?? widgetByKey.get('accounts')
   const forecast = widgetByKey.get('forecast_chart')
-  const governance = widgetByKey.get('governance') ?? widgetByKey.get('governance_cadence')
-  const governanceCadence = widgetByKey.get('governance_cadence')
   const calendar = widgetByKey.get('governance_calendar')
   const accountOptions = useMemo(() => collectAccountOptions(widgets), [widgets])
+  const ownerOptions = useMemo(() => collectOwnerOptions(widgets), [widgets])
   const allowedFilters = dashboard?.allowed_filters ?? []
   const fallbackWidgets = widgets.filter(widget => !knownWidgetKeys.has(widget.key))
 
@@ -142,9 +153,15 @@ export function RoleDashboard({
       <DashboardControls
         draftSearch={draftSearch}
         risk={risk}
+        accountId={accountId}
+        amId={amId}
         allowedFilters={allowedFilters}
+        accountOptions={accountOptions}
+        ownerOptions={ownerOptions}
         onDraftSearchChange={onDraftSearchChange}
         onRiskChange={onRiskChange}
+        onAccountChange={onAccountChange}
+        onAmChange={onAmChange}
         onSearchSubmit={onSearchSubmit}
       />
 
@@ -156,56 +173,48 @@ export function RoleDashboard({
         <>
           <MetricGrid summary={summary} />
 
-          {taskSummary ? (
+          {taskPanel ? (
             <TaskSummaryPanel
-              widget={taskSummary}
+              widget={taskPanel}
               refreshing={refreshingSummary}
-              canRefresh={canRefreshSummary}
+              canRefresh={taskPanel.key === 'ai_task_summary' && canRefreshSummary}
               onRefresh={onRefreshSummary}
             />
           ) : null}
 
-          <section className="grid gap-4 xl:grid-cols-[minmax(0,0.95fr)_minmax(360px,0.75fr)]">
+          {(opportunities || forecast) ? (
+          <section className={cn('grid gap-4', opportunities && forecast ? 'xl:grid-cols-[minmax(0,0.95fr)_minmax(320px,0.65fr)]' : '')}>
             {opportunities ? <PipelinePanel widget={opportunities} /> : null}
-            {health ? <HealthDistributionPanel widget={health} /> : null}
+            {forecast ? <ForecastPanel widget={forecast} accountOptions={accountOptions} accountId={accountId} onAccountChange={onAccountChange} /> : null}
           </section>
+          ) : null}
 
-          {forecast ? <ForecastPanel widget={forecast} /> : null}
-          {portfolio ? <PortfolioTable widget={portfolio} /> : null}
+          {portfolio ? <PortfolioTable widget={portfolio} onPageChange={onPageChange} /> : null}
 
           <section className="grid gap-4 xl:grid-cols-2">
             {[
               widgetByKey.get('high_risk_accounts'),
-              widgetByKey.get('signals'),
-              widgetByKey.get('tasks'),
-              widgetByKey.get('stale_kyc'),
-              widgetByKey.get('renewal_focus'),
-              widgetByKey.get('escalations') ?? widgetByKey.get('major_escalations'),
+              widgetByKey.get('critical_tasks') ?? widgetByKey.get('signals'),
+              taskPanel?.key === 'tasks' ? undefined : widgetByKey.get('tasks'),
               widgetByKey.get('am_workload'),
               widgetByKey.get('engagement_health'),
-              widgetByKey.get('account_change_alerts'),
               widgetByKey.get('retention'),
               widgetByKey.get('revenue_risk'),
               widgetByKey.get('executive_summaries'),
-              widgetByKey.get('decision_queue'),
               widgetByKey.get('overdue_actions'),
-              widgetByKey.get('sla_compliance'),
               widgetByKey.get('admin_system'),
-              governance,
-              governanceCadence && governanceCadence.key !== governance?.key ? governanceCadence : undefined,
               ...fallbackWidgets,
             ].filter(isWidget).map(widget => (
               <WidgetListPanel key={widget.key} widget={widget} />
             ))}
           </section>
 
-          {(calendar || governance) && token ? (
+          {calendar && token ? (
             <GovernanceCalendarPanel
               token={token}
               userId={userId}
               dashboardReadOnly={Boolean(dashboard?.read_only)}
               calendarWidget={calendar}
-              governanceWidget={governance}
               accountOptions={accountOptions}
             />
           ) : null}
@@ -259,31 +268,61 @@ function DashboardHeader({
 function DashboardControls({
   draftSearch,
   risk,
+  accountId,
+  amId,
   allowedFilters,
+  accountOptions,
+  ownerOptions,
   onDraftSearchChange,
   onRiskChange,
+  onAccountChange,
+  onAmChange,
   onSearchSubmit,
 }: {
   draftSearch: string
   risk: string
+  accountId: string
+  amId: string
   allowedFilters: string[]
+  accountOptions: AccountOption[]
+  ownerOptions: OwnerOption[]
   onDraftSearchChange: (value: string) => void
   onRiskChange: (value: string) => void
+  onAccountChange: (value: string) => void
+  onAmChange: (value: string) => void
   onSearchSubmit: (event: FormEvent) => void
 }) {
+  const showAccountFilter = allowedFilters.includes('account_id') && accountOptions.length > 0
+  const showAmFilter = allowedFilters.includes('am_id') && ownerOptions.length > 0
+  const gridClass = showAccountFilter || showAmFilter
+    ? 'md:grid-cols-[1fr_180px_220px_auto] xl:grid-cols-[minmax(220px,1fr)_160px_220px_220px_auto]'
+    : 'md:grid-cols-[1fr_180px_auto]'
   return (
     <section className="tk-card p-3">
-      <form className="grid gap-3 md:grid-cols-[1fr_180px_auto]" onSubmit={onSearchSubmit}>
+      <form className={cn('grid gap-3', gridClass)} onSubmit={onSearchSubmit}>
         <label className="relative block">
           <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-ink-tertiary" />
           <input className="tk-input pl-9" value={draftSearch} onChange={event => onDraftSearchChange(event.target.value)} placeholder="Search accounts and decisions" />
         </label>
         <select className="tk-input" value={risk} onChange={event => onRiskChange(event.target.value)} disabled={!allowedFilters.includes('risk')}>
           <option value="">All risk</option>
+          <option value="at_risk">At risk</option>
           <option value="healthy">Healthy</option>
           <option value="warning">Warning</option>
           <option value="critical">Critical</option>
         </select>
+        {showAccountFilter ? (
+          <select className="tk-input" value={accountId} onChange={event => onAccountChange(event.target.value)}>
+            <option value="">All accounts</option>
+            {accountOptions.map(account => <option key={account.id} value={account.id}>{account.name}</option>)}
+          </select>
+        ) : null}
+        {showAmFilter ? (
+          <select className="tk-input" value={amId} onChange={event => onAmChange(event.target.value)}>
+            <option value="">All account managers</option>
+            {ownerOptions.map(owner => <option key={owner.id} value={owner.id}>{owner.name}</option>)}
+          </select>
+        ) : null}
         <button className="tk-button-primary" type="submit"><Search className="h-4 w-4" />Search</button>
       </form>
     </section>
@@ -292,24 +331,40 @@ function DashboardControls({
 
 function MetricGrid({ summary }: { summary?: DashboardWidget }) {
   const value = isRecord(summary?.value) ? summary.value : {}
-  const metrics = Object.entries(value).slice(0, 4)
+  const metadataTiles = Array.isArray(summary?.metadata.tiles) ? summary.metadata.tiles.filter(isRecord) : []
+  const metrics = metadataTiles.length
+    ? metadataTiles.slice(0, 4).map(tile => ({
+      key: getString(tile.key) || getString(tile.label),
+      label: getString(tile.label) || labelize(getString(tile.key)),
+      value: tile.value,
+      route: getString(tile.route) || dashboardMetricRoute(getString(tile.key) || getString(tile.label)),
+      detail: getString(tile.detail),
+    }))
+    : Object.entries(value).slice(0, 4).map(([key, item]) => ({
+      key,
+      label: labelize(key),
+      value: item,
+      route: dashboardMetricRoute(key),
+      detail: metricDetail(key, item),
+    }))
   if (!metrics.length) return null
 
   return (
     <section className="grid auto-rows-fr gap-4 md:grid-cols-2 xl:grid-cols-4">
-      {metrics.map(([key, item], index) => {
+      {metrics.map((metric, index) => {
+        const key = metric.key || metric.label
         const tone = metricTone(key, index)
         const Icon = metricIcon(key)
-        return (
-          <article key={key} className={cn('tk-card flex min-h-[152px] flex-col justify-between p-5 animate-fade-in', staggerClass(index))}>
+        const content = (
+          <>
             <div className="flex items-start justify-between gap-4">
               <div className="min-w-0">
-                <p className="text-xs font-semibold uppercase tracking-wider text-ink-secondary">{labelize(key)}</p>
+                <p className="text-xs font-semibold uppercase tracking-wider text-ink-secondary">{metric.label}</p>
                 <div className="mt-3 flex min-h-[44px] items-baseline gap-1 text-ink">
-                  {typeof item === 'number' ? (
-                    <AnimatedNumber value={item} format={metricFormatter(key)} className="block font-display text-4xl font-bold leading-none text-current" />
+                  {typeof metric.value === 'number' ? (
+                    <AnimatedNumber value={metric.value} format={metricFormatter(key)} className="block font-display text-4xl font-bold leading-none text-current" />
                   ) : (
-                    <span className="block font-display text-4xl font-bold leading-none text-current">{formatValue(item, key)}</span>
+                    <span className="block font-display text-4xl font-bold leading-none text-current">{formatValue(metric.value, key)}</span>
                   )}
                 </div>
               </div>
@@ -317,7 +372,16 @@ function MetricGrid({ summary }: { summary?: DashboardWidget }) {
                 <Icon className="h-6 w-6" />
               </span>
             </div>
-            <p className="mt-4 line-clamp-2 text-sm leading-5 text-ink-secondary">{metricDetail(key, item)}</p>
+            <p className="mt-4 line-clamp-2 text-sm leading-5 text-ink-secondary">{metric.detail || metricDetail(key, metric.value)}</p>
+          </>
+        )
+        return metric.route ? (
+          <Link key={key} to={metric.route} className={cn('tk-card flex min-h-[152px] flex-col justify-between p-5 animate-fade-in transition hover:-translate-y-0.5 hover:border-brand-blue/40 hover:shadow-md', staggerClass(index))}>
+            {content}
+          </Link>
+        ) : (
+          <article key={key} className={cn('tk-card flex min-h-[152px] flex-col justify-between p-5 animate-fade-in', staggerClass(index))}>
+            {content}
           </article>
         )
       })}
@@ -326,6 +390,8 @@ function MetricGrid({ summary }: { summary?: DashboardWidget }) {
 }
 
 function TaskSummaryPanel({ widget, refreshing, canRefresh, onRefresh }: { widget: DashboardWidget; refreshing: boolean; canRefresh: boolean; onRefresh: () => void }) {
+  if (widget.key === 'tasks') return <TaskBreakdownPanel widget={widget} />
+
   const value = isRecord(widget.value) ? widget.value : {}
   const blockers = Array.isArray(value.top_blockers) ? value.top_blockers.map(String) : []
   const sourceCounts = isRecord(value.source_counts) ? value.source_counts : {}
@@ -346,7 +412,7 @@ function TaskSummaryPanel({ widget, refreshing, canRefresh, onRefresh }: { widge
           <p className="mt-2 max-w-3xl text-sm leading-6 text-ink-secondary">{String(value.narrative ?? '')}</p>
         </div>
         <div className="grid min-w-0 grid-cols-2 gap-2 rounded-lg border border-surface-border bg-surface-secondary p-2 sm:grid-cols-4 2xl:grid-cols-2">
-          {Object.entries(sourceCounts).map(([key, count]) => <MiniMetric key={key} label={key} value={count} />)}
+          {Object.entries(sourceCounts).map(([key, count]) => <MiniMetric key={key} label={key} value={count} route={dashboardMetricRoute(key)} />)}
           {canRefresh ? (
             <button className="tk-button-secondary col-span-2 min-h-[44px] sm:col-span-4 2xl:col-span-2" type="button" onClick={onRefresh} disabled={refreshing}>
               <RefreshCw className={refreshing ? 'h-4 w-4 animate-spin' : 'h-4 w-4'} />
@@ -375,11 +441,74 @@ function TaskSummaryPanel({ widget, refreshing, canRefresh, onRefresh }: { widge
   )
 }
 
-function MiniMetric({ label, value }: { label: string; value: unknown }) {
+function TaskBreakdownPanel({ widget }: { widget: DashboardWidget }) {
+  const value = isRecord(widget.value) ? widget.value : {}
+  const cards = [
+    { key: 'open', label: 'Open', value: value.open, detail: `across ${formatValue(value.accounts_with_open_tasks)} accounts`, tone: 'text-ink', route: '/tasks?status=open' },
+    { key: 'in_progress', label: 'In progress', value: value.in_progress, detail: 'assigned to me', tone: 'text-brand-blue', route: '/tasks?status=in_progress&my_items=true' },
+    { key: 'overdue', label: 'Overdue', value: value.overdue, detail: 'needs action today', tone: 'text-rag-red', route: '/tasks?due=overdue' },
+    { key: 'due_this_week', label: 'Due this week', value: value.due_this_week, detail: 'across all accounts', tone: 'text-brand-orange', route: '/tasks?due=next7' },
+  ]
+
   return (
-    <div className="min-w-0 rounded-md bg-white p-3">
+    <section className="tk-card overflow-hidden p-5">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+        <div className="flex min-w-0 items-start gap-3">
+          <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-brand-orange/10 text-brand-orange">
+            <ListChecks className="h-5 w-5" />
+          </span>
+          <div>
+            <h2 className="text-xl font-semibold text-ink">{widget.title}</h2>
+            <p className="mt-1 text-sm leading-6 text-ink-secondary">Full task status breakdown across assigned accounts</p>
+          </div>
+        </div>
+        {widget.primary_route ? <Link to={widget.primary_route} className="tk-button-secondary w-fit">Open tasks <ArrowRight className="h-4 w-4" /></Link> : null}
+      </div>
+
+      <div className="mt-5 grid gap-3 md:grid-cols-2">
+        {cards.map(card => (
+          <Link key={card.key} to={card.route} className="rounded-lg bg-surface-secondary p-5 transition hover:-translate-y-0.5 hover:bg-blue-tint-20/60 hover:shadow-sm">
+            <p className="text-xs font-semibold uppercase tracking-wider text-ink-secondary">{card.label}</p>
+            <p className={cn('mt-4 font-display text-4xl font-bold leading-none', card.tone)}>{formatValue(card.value)}</p>
+            <p className="mt-3 text-sm font-medium text-ink-secondary">{card.detail}</p>
+          </Link>
+        ))}
+      </div>
+
+      <div className="mt-5 divide-y divide-surface-border border-y border-surface-border">
+        <div className="grid gap-3 py-4 md:grid-cols-[220px_minmax(0,1fr)] md:items-center">
+          <p className="flex items-center gap-3 text-sm font-semibold text-ink-secondary"><span className="h-2.5 w-2.5 rounded-full bg-brand-blue" />Data source</p>
+          <p className="text-sm font-semibold text-ink">{getString(widget.metadata.data_source) || 'Task records filtered to assigned account scope'}</p>
+        </div>
+        {widget.items.length ? (
+          <div className="py-2">
+            {widget.items.slice(0, 5).map(item => <RowLink key={String(item.id ?? item.title)} item={item} dateKey="due_at" />)}
+          </div>
+        ) : null}
+      </div>
+
+      <div className="mt-4 flex items-start gap-2 rounded-lg border border-brand-blue/40 bg-blue-tint-20 px-4 py-3 text-sm font-medium text-brand-blue-dark">
+        <Info className="mt-0.5 h-4 w-4 shrink-0" />
+        <p>Task completion does NOT improve health scores; only underlying account data changes do.</p>
+      </div>
+    </section>
+  )
+}
+
+function MiniMetric({ label, value, route }: { label: string; value: unknown; route?: string }) {
+  const content = (
+    <>
       <p className="truncate text-[10px] font-semibold uppercase tracking-wider text-ink-secondary" title={label}>{labelize(label)}</p>
       <p className="mt-1 font-display text-2xl font-bold leading-none text-ink">{formatValue(value)}</p>
+    </>
+  )
+  return route ? (
+    <Link to={route} className="min-w-0 rounded-md bg-white p-3 transition hover:-translate-y-0.5 hover:bg-blue-tint-20/60 hover:shadow-sm">
+      {content}
+    </Link>
+  ) : (
+    <div className="min-w-0 rounded-md bg-white p-3">
+      {content}
     </div>
   )
 }
@@ -389,23 +518,54 @@ function PipelinePanel({ widget }: { widget: DashboardWidget }) {
   const series = Array.isArray(value.series) ? value.series.filter(isRecord) : []
   const max = Math.max(1, ...series.map(item => Number(item.value) || 0))
   const masked = Boolean(widget.metadata.masked)
+  const stalledDays = Number(widget.metadata.stalled_after_days) || 90
+  const referenceLayout = widget.data_scope === 'assigned_accounts'
+  const openRoute = '/opportunities?openOnly=true'
+  const stalledRoute = '/opportunities?stalled=true'
 
   return (
     <section className="tk-card overflow-hidden p-5">
-      <div className="flex flex-col gap-4 border-b border-surface-border pb-5 lg:flex-row lg:items-start lg:justify-between">
-        <div>
-          <div className="flex items-center gap-2">
-            <LineChart className="h-5 w-5 text-brand-blue" />
-            <h2 className="text-lg font-semibold text-ink">{widget.title}</h2>
-          </div>
-          <div className="mt-4 flex flex-wrap items-end gap-x-4 gap-y-2">
-            <p className="font-display text-5xl font-bold leading-none text-ink">{formatValue(value.pipeline_value, 'pipeline_value')}</p>
-            <p className="pb-1 text-sm text-ink-secondary">{formatValue(value.open_opportunities)} open opportunities</p>
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+        <div className="flex min-w-0 items-start gap-3">
+          <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-rag-green/10 text-rag-green">
+            <LineChart className="h-5 w-5" />
+          </span>
+          <div>
+            <h2 className="text-xl font-semibold text-ink">{widget.title}</h2>
+            <p className="mt-1 text-sm leading-6 text-ink-secondary">Active opportunities across assigned accounts</p>
           </div>
         </div>
         {widget.primary_route ? <Link to={widget.primary_route} className="tk-button-secondary w-fit">View all <ArrowRight className="h-4 w-4" /></Link> : null}
       </div>
 
+      <div className="mt-5 grid gap-3 lg:grid-cols-3">
+        <Link to={openRoute} className="rounded-lg bg-surface-secondary p-5 transition hover:-translate-y-0.5 hover:bg-rag-green/10 hover:shadow-sm">
+          <p className="text-xs font-semibold uppercase tracking-wider text-ink-secondary">Open opps</p>
+          <p className="mt-4 font-display text-4xl font-bold leading-none text-rag-green">{formatValue(value.open_opportunities)}</p>
+        </Link>
+        <Link to={openRoute} className="rounded-lg bg-surface-secondary p-5 transition hover:-translate-y-0.5 hover:bg-blue-tint-20/60 hover:shadow-sm">
+          <p className="text-xs font-semibold uppercase tracking-wider text-ink-secondary">Total value</p>
+          <p className="mt-4 font-display text-4xl font-bold leading-none text-ink">{formatValue(value.pipeline_value, 'pipeline_value')}</p>
+        </Link>
+        <Link to={stalledRoute} className="rounded-lg bg-surface-secondary p-5 transition hover:-translate-y-0.5 hover:bg-brand-orange/10 hover:shadow-sm">
+          <p className="text-xs font-semibold uppercase tracking-wider text-ink-secondary">Stalled</p>
+          <p className="mt-4 font-display text-4xl font-bold leading-none text-brand-orange">{formatValue(value.stalled)}</p>
+          <p className="mt-3 text-sm font-medium text-ink-secondary">&gt;{stalledDays} days no move</p>
+        </Link>
+      </div>
+
+      <div className="mt-5 divide-y divide-surface-border border-y border-surface-border">
+        <div className="grid gap-3 py-4 md:grid-cols-[320px_minmax(0,1fr)] md:items-center">
+          <p className="flex items-center gap-3 text-sm font-semibold text-ink-secondary"><span className="h-2.5 w-2.5 rounded-full bg-rag-green" />Data source</p>
+          <p className="text-sm font-semibold text-ink">Opportunity records filtered to assigned accounts; stage not Won/Lost</p>
+        </div>
+        <div className="grid gap-3 py-4 md:grid-cols-[320px_minmax(0,1fr)] md:items-center">
+          <p className="flex items-center gap-3 text-sm font-semibold text-ink-secondary"><span className="h-2.5 w-2.5 rounded-full bg-brand-orange" />Stalled signal</p>
+          <p className="text-sm font-semibold text-ink">Opportunity with no recorded update &gt; {stalledDays} days surfaces as a signal</p>
+        </div>
+      </div>
+
+      {referenceLayout ? null : (
       <div className="mt-5 grid gap-5 xl:grid-cols-[minmax(0,0.95fr)_minmax(0,1.05fr)]">
         <div>
           <p className="text-xs font-semibold uppercase tracking-wider text-ink-secondary">Pipeline by stage</p>
@@ -432,79 +592,211 @@ function PipelinePanel({ widget }: { widget: DashboardWidget }) {
           </div>
         </div>
       </div>
+      )}
     </section>
   )
 }
 
-function HealthDistributionPanel({ widget }: { widget: DashboardWidget }) {
+function ForecastPanel({
+  widget,
+  accountOptions,
+  accountId,
+  onAccountChange,
+}: {
+  widget: DashboardWidget
+  accountOptions: AccountOption[]
+  accountId: string
+  onAccountChange: (value: string) => void
+}) {
   const value = isRecord(widget.value) ? widget.value : {}
-  const healthy = Number(value.healthy) || 0
-  const warning = Number(value.warning) || 0
-  const critical = Number(value.critical) || 0
-  const total = healthy + warning + critical
-  const healthPct = total ? Math.round((healthy / total) * 100) : 0
-  const circumference = 2 * Math.PI * 42
-  const healthyDash = (healthPct / 100) * circumference
-
-  return (
-    <section className="tk-card p-5">
-      <div className="flex items-center gap-2">
-        <BarChart3 className="h-5 w-5 text-brand-orange" />
-        <h2 className="text-lg font-semibold text-ink">{widget.title}</h2>
-      </div>
-      <div className="mt-5 grid gap-5 sm:grid-cols-[180px_minmax(0,1fr)] sm:items-center xl:grid-cols-1">
-        <svg viewBox="0 0 120 120" className="mx-auto h-44 w-44 -rotate-90" role="img" aria-label="Health distribution">
-          <circle cx="60" cy="60" r="42" className="text-surface-tertiary" fill="none" stroke="currentColor" strokeWidth="18" />
-          <circle cx="60" cy="60" r="42" className="text-rag-green" fill="none" stroke="currentColor" strokeWidth="18" strokeDasharray={`${healthyDash} ${circumference - healthyDash}`} />
-        </svg>
-        <div className="space-y-4">
-          <LegendStat label="Healthy" value={healthy} tone="green" />
-          <LegendStat label="Warning" value={warning} tone="amber" />
-          <LegendStat label="Critical" value={critical} tone="red" />
-        </div>
-      </div>
-    </section>
-  )
-}
-
-function ForecastPanel({ widget }: { widget: DashboardWidget }) {
-  const value = isRecord(widget.value) ? widget.value : {}
+  const points = Array.isArray(value.points) ? value.points.filter(isRecord) : []
+  const totals = isRecord(value.totals) ? value.totals : {}
   const series = Array.isArray(value.series) ? value.series.filter(isRecord) : []
-  const max = Math.max(1, ...series.map(item => Number(item.value) || 0))
+  const missingData = Array.isArray(value.missing_data) ? value.missing_data.map(String) : []
+  const masked = Boolean(widget.metadata.masked)
+  const sharedForecast = points.length > 0
+  const noAuthorizedScope = missingData.some(note => note.toLowerCase().includes('no authorized accounts'))
+  const forecastUnavailable = (String(value.confidence) === 'not_available' || noAuthorizedScope) && numericValue(totals.forecast_revenue) <= 0
+  const maxPoint = Math.max(1, ...points.map(point => numericValue(point.forecast_revenue)))
+  const maxSeries = Math.max(1, ...series.map(item => Number(item.value) || 0))
+  const chartWidth = 500
+  const chartHeight = 162
+  const left = 34
+  const right = 16
+  const top = 18
+  const bottom = 32
+  const plotWidth = chartWidth - left - right
+  const plotHeight = chartHeight - top - bottom
+  const xFor = (index: number) => left + (plotWidth / Math.max(1, points.length - 1)) * index
+  const yFor = (amount: number) => top + plotHeight - (amount / maxPoint) * plotHeight
+  const forecastLine = points.map((point, index) => `${xFor(index)},${yFor(numericValue(point.forecast_revenue))}`).join(' ')
+  const metrics = sharedForecast
+    ? [
+        ['forecast_revenue', totals.forecast_revenue],
+        ['baseline_revenue', totals.baseline_revenue],
+        ['weighted_opportunity', totals.weighted_opportunity],
+        ['risk_adjustment', totals.risk_adjustment],
+      ]
+    : Object.entries(value).filter(([key]) => key !== 'series').slice(0, 4)
+  const accountCount = Number(widget.metadata.account_count) || 0
+  const selectedAccount = accountOptions.find(account => account.id === accountId)
+  const scopeLabel = selectedAccount ? `Single account: ${selectedAccount.name}` : accountCount ? `Portfolio forecast across ${accountCount} account${accountCount === 1 ? '' : 's'}` : 'Forecast scope'
+
+  if (forecastUnavailable) {
+    return (
+      <section className="tk-card p-5">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+          <div className="min-w-0">
+            <div className="flex items-center gap-2">
+              <Activity className="h-4 w-4 text-brand-blue" />
+              <h2 className="text-lg font-semibold text-ink">Forecast outlook</h2>
+            </div>
+            <p className="mt-1 text-sm text-ink-secondary">Next 6 months | {scopeLabel}</p>
+          </div>
+          {accountOptions.length ? (
+            <select className="tk-input w-full sm:w-[240px]" value={accountId} onChange={event => onAccountChange(event.target.value)}>
+              <option value="">All accounts</option>
+              {accountOptions.map(account => <option key={account.id} value={account.id}>{account.name}</option>)}
+            </select>
+          ) : null}
+          <span className="w-fit rounded-full border border-brand-orange/20 bg-brand-orange/10 px-3 py-1.5 text-xs font-semibold text-brand-orange">
+            Insufficient data
+          </span>
+        </div>
+        <div className="mt-5 rounded-md border border-brand-orange/20 bg-brand-orange/10 p-3">
+          <p className="text-xs font-semibold uppercase text-brand-orange">Forecast notes</p>
+          <p className="mt-2 text-sm leading-5 text-ink-secondary">{missingData[0] ?? 'No authorized accounts are available in the forecast scope.'}</p>
+        </div>
+      </section>
+    )
+  }
+
   return (
-    <section className="tk-card overflow-hidden p-5">
-      <div className="flex flex-col gap-4 border-b border-surface-border pb-5 lg:flex-row lg:items-start lg:justify-between">
+    <section className="tk-card overflow-hidden p-4">
+      <div className="flex flex-col gap-3 border-b border-surface-border pb-3 lg:flex-row lg:items-start lg:justify-between">
         <div>
           <div className="flex items-center gap-2">
-            <Activity className="h-5 w-5 text-brand-blue" />
-            <h2 className="text-lg font-semibold text-ink">{widget.title}</h2>
+            <Activity className="h-4 w-4 text-brand-blue" />
+            <h2 className="text-base font-semibold text-ink">{widget.title}</h2>
           </div>
-          <div className="mt-4 grid gap-2 sm:grid-cols-3">
-            {Object.entries(value).filter(([key]) => key !== 'series').map(([key, item]) => <MiniMetric key={key} label={key} value={formatValue(item, key)} />)}
+          <p className="mt-1 text-xs font-medium text-ink-secondary">{scopeLabel}</p>
+          <div className="mt-3 grid gap-2 sm:grid-cols-2">
+            {metrics.map(([key, item]) => <ForecastMetric key={String(key)} label={String(key)} value={formatValue(item, String(key))} />)}
           </div>
         </div>
-        {widget.metadata.masked ? <span className="rounded-full border border-surface-border bg-white px-3 py-2 text-xs font-semibold text-ink-secondary">Commercial values masked</span> : null}
+        <div className="flex flex-col gap-2 sm:items-end">
+          {accountOptions.length ? (
+            <select className="tk-input w-full sm:w-[240px]" value={accountId} onChange={event => onAccountChange(event.target.value)} aria-label="Filter forecast by account">
+              <option value="">All accounts</option>
+              {accountOptions.map(account => <option key={account.id} value={account.id}>{account.name}</option>)}
+            </select>
+          ) : null}
+          {masked ? <span className="w-fit rounded-full border border-surface-border bg-white px-2.5 py-1.5 text-xs font-semibold text-ink-secondary">Masked</span> : null}
+        </div>
       </div>
-      <div className="mt-5 space-y-3">
-        {series.map(item => (
-          <div key={String(item.label)} className="grid gap-2 sm:grid-cols-[150px_1fr_120px] sm:items-center">
-            <span className="text-sm font-medium text-ink">{String(item.label)}</span>
-            <div className="h-3 overflow-hidden rounded-full bg-surface-tertiary">
-              <div className="h-full rounded-full bg-brand-blue" style={{ width: `${Math.max(6, ((Number(item.value) || 0) / max) * 100)}%` }} />
+
+      {sharedForecast ? (
+        <div className="mt-4">
+          {masked ? (
+            <div className="grid gap-2 sm:grid-cols-3">
+              {points.map(point => (
+                <div key={String(point.month)} className="rounded-md border border-surface-border bg-surface-secondary p-3">
+                  <p className="text-xs font-semibold text-ink">{String(point.month)}</p>
+                  <p className="mt-1 text-xs text-ink-secondary">Restricted</p>
+                </div>
+              ))}
             </div>
-            <span className="text-sm font-semibold text-ink-secondary">{formatValue(item.display_value ?? item.value, 'pipeline_value')}</span>
+          ) : (
+            <div className="overflow-hidden">
+              <svg viewBox={`0 0 ${chartWidth} ${chartHeight}`} className="h-[170px] w-full min-w-0" role="img" aria-label="Dashboard six-month forecast chart">
+                {[0, 1, 2].map(index => {
+                  const y = top + (plotHeight / 2) * index
+                  return <line key={index} x1={left} x2={chartWidth - right} y1={y} y2={y} className="stroke-surface-border" />
+                })}
+                {points.map((point, index) => {
+                  const x = xFor(index)
+                  const y = yFor(numericValue(point.forecast_revenue))
+                  return (
+                    <g key={String(point.month)}>
+                      <rect x={x - 10} y={y} width="20" height={top + plotHeight - y} rx="4" className="fill-blue-tint-40" />
+                      <text x={x} y={chartHeight - 10} textAnchor="middle" className="fill-ink-secondary text-[10px] font-semibold">{String(point.month).split(' ')[0]}</text>
+                    </g>
+                  )
+                })}
+                <polyline points={forecastLine} fill="none" className="stroke-brand-blue" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" />
+              </svg>
+            </div>
+          )}
+          {typeof value.summary === 'string' ? <p className="mt-2 line-clamp-2 text-xs leading-5 text-ink-secondary">{value.summary}</p> : null}
+        </div>
+      ) : (
+        <div className="mt-5 space-y-3">
+          {series.map(item => (
+            <div key={String(item.label)} className="grid gap-2 sm:grid-cols-[150px_1fr_120px] sm:items-center">
+              <span className="text-sm font-medium text-ink">{String(item.label)}</span>
+              <div className="h-3 overflow-hidden rounded-full bg-surface-tertiary">
+                <div className="h-full rounded-full bg-brand-blue" style={{ width: `${Math.max(6, ((Number(item.value) || 0) / maxSeries) * 100)}%` }} />
+              </div>
+              <span className="text-sm font-semibold text-ink-secondary">{formatValue(item.display_value ?? item.value, 'pipeline_value')}</span>
+            </div>
+          ))}
+          {!series.length ? (
+            <p className="rounded-md bg-surface-secondary p-4 text-sm text-ink-secondary">No forecast data is available for this scope.</p>
+          ) : null}
+        </div>
+      )}
+
+      {sharedForecast && missingData.length ? (
+        <div className="mt-3 rounded-md border border-brand-orange/20 bg-brand-orange/10 p-3">
+          <p className="text-xs font-semibold uppercase text-brand-orange">Forecast notes</p>
+          <div className="mt-2 grid gap-1 text-xs leading-5 text-ink-secondary">
+            {missingData.slice(0, 2).map(item => (
+              <p key={item}>{item}</p>
+            ))}
           </div>
-        ))}
-      </div>
+        </div>
+      ) : null}
     </section>
   )
 }
 
-function PortfolioTable({ widget }: { widget: DashboardWidget }) {
+function ForecastMetric({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="min-w-0 rounded-md bg-surface-secondary px-3 py-2">
+      <p className="truncate text-[10px] font-semibold uppercase text-ink-secondary" title={label}>{labelize(label)}</p>
+      <p className="mt-1 truncate text-base font-bold leading-none text-ink" title={value}>{value}</p>
+    </div>
+  )
+}
+
+function PortfolioTable({ widget, onPageChange }: { widget: DashboardWidget; onPageChange: (page: number) => void }) {
+  const page = Math.max(1, Number(widget.metadata.page) || 1)
+  const pageSize = Math.max(1, Number(widget.metadata.page_size) || widget.items.length || 1)
+  const total = Math.max(widget.items.length, Number(widget.metadata.total) || widget.items.length)
+  const pages = Math.max(1, Math.ceil(total / pageSize))
+  const firstItem = total ? (page - 1) * pageSize + 1 : 0
+  const lastItem = Math.min(total, firstItem + widget.items.length - 1)
+
   return (
     <section className="tk-card overflow-hidden">
-      <div className="border-b border-surface-border p-5">
-        <h2 className="text-lg font-semibold text-ink">{widget.title}</h2>
+      <div className="flex flex-col gap-3 border-b border-surface-border p-5 md:flex-row md:items-center md:justify-between">
+        <div>
+          <h2 className="text-lg font-semibold text-ink">{widget.title}</h2>
+          <p className="mt-1 text-xs font-medium text-ink-secondary">
+            {total ? `Showing ${firstItem}-${lastItem} of ${total}` : 'No accounts in this view'}
+          </p>
+        </div>
+        {pages > 1 ? (
+          <div className="flex items-center gap-2">
+            <button className="tk-icon-button" type="button" onClick={() => onPageChange(page - 1)} disabled={page <= 1} aria-label="Previous portfolio page">
+              <ArrowLeft className="h-4 w-4" />
+            </button>
+            <span className="min-w-[96px] text-center text-sm font-semibold text-ink-secondary">Page {page} of {pages}</span>
+            <button className="tk-icon-button" type="button" onClick={() => onPageChange(page + 1)} disabled={page >= pages} aria-label="Next portfolio page">
+              <ArrowRight className="h-4 w-4" />
+            </button>
+          </div>
+        ) : null}
       </div>
       <div className="overflow-x-auto">
         <table className="w-full min-w-[860px] text-left text-sm">
@@ -561,7 +853,7 @@ function WidgetListPanel({ widget }: { widget: DashboardWidget }) {
         </div>
       ) : null}
       <div className="divide-y divide-surface-border">
-        {widget.items.slice(0, 6).map(item => <RowLink key={String(item.id ?? item.title ?? item.name)} item={item} />)}
+        {widget.items.slice(0, 6).map(item => <RowLink key={`${String(item.source_type ?? 'item')}-${String(item.id ?? item.title ?? item.name)}`} item={item} />)}
         {!widget.items.length ? <p className="p-5 text-sm text-ink-secondary">No items in this view.</p> : null}
       </div>
     </section>
@@ -572,15 +864,16 @@ function RowLink({ item, valueKey, dateKey }: { item: Record<string, unknown>; v
   const route = getString(item.route)
   const title = itemName(item)
   const account = getString(item.account_name ?? item.account)
+  const riskReason = getString(item.risk_reason)
   const status = getString(item.severity ?? item.priority ?? item.risk_status ?? item.status)
-  const value = valueKey ? item[valueKey] : item.value ?? item.delivery_health ?? item.affected_metric
+  const value = valueKey ? item[valueKey] : item.value ?? item.accounts ?? item.delivery_health ?? item.affected_metric
   const date = dateKey ? getString(item[dateKey]) : getString(item.due_at ?? item.sla_due_at ?? item.scheduled_at ?? item.target_date ?? item.renewal_date ?? item.created_at)
 
   const content = (
     <>
       <span className="min-w-0">
         <span className="block truncate text-sm font-semibold text-ink">{title}</span>
-        <span className="mt-1 block truncate text-xs text-ink-secondary">{account || formatValue(item.owner)}</span>
+        <span className="mt-1 block truncate text-xs text-ink-secondary">{riskReason || account || formatValue(item.owner)}</span>
       </span>
       <span className="hidden text-sm font-semibold text-ink sm:block">{formatValue(value, valueKey)}</span>
       <span className="text-[11px] font-semibold uppercase tracking-wider text-brand-blue">{date ? shortDate(date) : status}</span>
@@ -603,14 +896,12 @@ function GovernanceCalendarPanel({
   userId,
   dashboardReadOnly,
   calendarWidget,
-  governanceWidget,
   accountOptions,
 }: {
   token: string
   userId?: string
   dashboardReadOnly: boolean
   calendarWidget?: DashboardWidget
-  governanceWidget?: DashboardWidget
   accountOptions: AccountOption[]
 }) {
   const [monthAnchor, setMonthAnchor] = useState(startOfMonth(new Date()))
@@ -801,8 +1092,8 @@ function GovernanceCalendarPanel({
                 <span className="rounded-full border border-surface-border bg-white px-2 py-1 text-[11px] font-semibold text-brand-blue-dark">{shortDate(item.date)}</span>
               </button>
             ))}
-            {!upcoming.length && governanceWidget?.items.length ? governanceWidget.items.slice(0, 4).map(item => <RowLink key={String(item.id)} item={item} />) : null}
-            {!upcoming.length && !governanceWidget?.items.length ? <p className="rounded-md bg-surface-tertiary p-3 text-sm text-ink-secondary">No upcoming calendar items in the next 30 days.</p> : null}
+            {!upcoming.length && calendarWidget?.items.length ? calendarWidget.items.slice(0, 4).map(item => <RowLink key={String(item.id)} item={item} />) : null}
+            {!upcoming.length && !calendarWidget?.items.length ? <p className="rounded-md bg-surface-tertiary p-3 text-sm text-ink-secondary">No upcoming calendar items in the next 30 days.</p> : null}
           </div>
         </aside>
       </div>
@@ -828,19 +1119,6 @@ function EmptyDashboard() {
       <ShieldAlert className="h-9 w-9 text-brand-blue" />
       <p className="text-sm font-medium text-ink-secondary">No dashboard widgets are available for your role or account scope.</p>
     </section>
-  )
-}
-
-function LegendStat({ label, value, tone }: { label: string; value: number; tone: 'green' | 'amber' | 'red' }) {
-  const toneClass = tone === 'green' ? 'bg-rag-green' : tone === 'amber' ? 'bg-brand-orange' : 'bg-rag-red'
-  return (
-    <div className="grid grid-cols-[18px_minmax(0,1fr)] gap-3">
-      <span className={cn('mt-1 h-4 w-4 rounded-md', toneClass)} />
-      <div>
-        <p className="text-sm font-semibold text-ink">{label}</p>
-        <p className="mt-1 font-display text-3xl font-bold leading-none text-ink">{value}</p>
-      </div>
-    </div>
   )
 }
 
@@ -883,9 +1161,23 @@ function metricFormatter(key: string) {
   return key.includes('value') || key.includes('revenue') || key.includes('pipeline') ? formatCompactCurrency : undefined
 }
 
+function dashboardMetricRoute(key: string) {
+  const normalized = key.toLowerCase().replace(/\s+/g, '_')
+  if (['my_accounts', 'accounts', 'authorized_accounts', 'account_portfolio'].includes(normalized)) return '/accounts'
+  if (normalized === 'at_risk' || normalized.includes('at_risk') || normalized.includes('critical_accounts')) return '/accounts?risk=at_risk'
+  if (normalized.includes('governance')) return '/governance'
+  if (normalized.includes('critical_task')) return '/tasks?priority=critical'
+  if (normalized.includes('task')) return '/tasks'
+  if (normalized.includes('signal')) return '/tasks'
+  if (normalized.includes('opportunit') || normalized.includes('pipeline') || normalized.includes('forecast')) return '/opportunities?openOnly=true'
+  if (normalized.includes('revenue')) return '/accounts?risk=at_risk'
+  return ''
+}
+
 function metricDetail(key: string, value: unknown) {
   if (key.includes('risk')) return 'Accounts that need active attention.'
-  if (key.includes('signal')) return 'Signals and source-backed blockers.'
+  if (key.includes('critical_tasks')) return 'Critical and blocked tasks only.'
+  if (key.includes('signal')) return 'Source-backed attention items.'
   if (key.includes('governance')) return 'Scheduled governance coverage.'
   if (key.includes('task')) return 'Open operational work in scope.'
   return `${formatValue(value)} in this dashboard scope.`
@@ -894,6 +1186,13 @@ function metricDetail(key: string, value: unknown) {
 function collectAccountOptions(widgets: DashboardWidget[]): AccountOption[] {
   const accounts = new Map<string, string>()
   widgets.forEach(widget => {
+    if (Array.isArray(widget.metadata.account_options)) {
+      widget.metadata.account_options.filter(isRecord).forEach(item => {
+        const id = getString(item.id)
+        const name = getString(item.name)
+        if (id && name) accounts.set(id, name)
+      })
+    }
     widget.items.forEach(item => {
       const id = getString(item.account_id)
       const name = getString(item.account_name ?? item.account ?? item.name)
@@ -903,6 +1202,18 @@ function collectAccountOptions(widgets: DashboardWidget[]): AccountOption[] {
   return [...accounts.entries()].map(([id, name]) => ({ id, name })).sort((a, b) => a.name.localeCompare(b.name))
 }
 
+function collectOwnerOptions(widgets: DashboardWidget[]): OwnerOption[] {
+  const owners = new Map<string, string>()
+  widgets.forEach(widget => {
+    widget.items.forEach(item => {
+      const id = getString(item.owner_id)
+      const name = getString(item.owner)
+      if (id && name) owners.set(id, name)
+    })
+  })
+  return [...owners.entries()].map(([id, name]) => ({ id, name })).sort((a, b) => a.name.localeCompare(b.name))
+}
+
 function calendarDotClass(item: GovernanceCalendarItemRecord) {
   if (new Date(item.date) < new Date() && item.status !== 'completed') return 'bg-rag-red'
   if (item.status === 'review_required' || item.status === 'draft') return 'bg-brand-orange'
@@ -910,7 +1221,7 @@ function calendarDotClass(item: GovernanceCalendarItemRecord) {
 }
 
 function itemName(item: Record<string, unknown>) {
-  return getString(item.title ?? item.name ?? item.account_name ?? item.account ?? item.summary) || '-'
+  return getString(item.title ?? item.name ?? item.account_name ?? item.account ?? item.owner ?? item.summary) || '-'
 }
 
 function isWidget(value: DashboardWidget | undefined): value is DashboardWidget {
@@ -951,4 +1262,8 @@ function formatValue(value: unknown, key = ''): string {
   if (Array.isArray(value)) return `${value.length} items`
   if (isRecord(value)) return JSON.stringify(value)
   return String(value)
+}
+
+function numericValue(value: unknown): number {
+  return typeof value === 'number' && Number.isFinite(value) ? value : 0
 }

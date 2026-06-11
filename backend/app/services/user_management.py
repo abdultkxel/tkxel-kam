@@ -10,6 +10,8 @@ from app.services.email_domains import EmailDomainPolicyService
 from app.services.email_delivery import EmailDeliveryService
 from app.services.users import initials_for_name, normalize_email
 
+PROTECTED_SUPER_ADMIN_ROLE = "super_admin"
+
 
 class UserManagementService:
     def __init__(
@@ -23,6 +25,9 @@ class UserManagementService:
         self.rbac = rbac_repository or RbacRepository(db)
         self.domain_policy = EmailDomainPolicyService(db)
         self.email_delivery = email_delivery or EmailDeliveryService()
+        from app.services.in_app_notifications import InAppNotificationService
+
+        self.in_app_notifications = InAppNotificationService(db)
 
     def list_users(
         self,
@@ -37,11 +42,12 @@ class UserManagementService:
 
     def get_user(self, user_id: str) -> User:
         user = self.users.get_by_id(user_id)
-        if user is None:
+        if user is None or user.role == PROTECTED_SUPER_ADMIN_ROLE:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User was not found")
         return user
 
     def create_user(self, payload: UserCreateRequest, actor: User | None = None) -> User:
+        self._ensure_manageable_role(payload.role)
         self._ensure_role_exists(payload.role)
         email = normalize_email(payload.email)
         self.domain_policy.require_allowed_email_for_user_form(email)
@@ -76,11 +82,19 @@ class UserManagementService:
     def update_user(self, user_id: str, payload: UserUpdateRequest, actor: User | None = None) -> User:
         user = self.get_user(user_id)
         updates = payload.model_dump(exclude_unset=True)
+        before_role = user.role
+        before_active = user.is_active
         if "role" in updates and updates["role"] is not None:
+            self._ensure_manageable_role(updates["role"])
             self._ensure_role_exists(updates["role"])
         self._validate_email_update(user, updates)
 
         self._apply_updates(user, updates)
+        if actor and before_role != user.role:
+            self._notify_admin_access_change(user, actor, "admin_role_changed", f"Role changed for {user.full_name}", f"Role changed from {before_role} to {user.role}.")
+        if actor and before_active != user.is_active:
+            state = "activated" if user.is_active else "deactivated"
+            self._notify_admin_access_change(user, actor, "admin_access_changed", f"User {state}: {user.full_name}", f"{user.full_name} was {state}.")
         return self.users.save_user(user, refresh=True)
 
     def delete_user(self, user_id: str, current_user: User) -> MessageResponse:
@@ -88,12 +102,32 @@ class UserManagementService:
         if user.id == current_user.id:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="You cannot delete your own account")
 
+        self._notify_admin_access_change(user, current_user, "admin_access_changed", f"User deactivated: {user.full_name}", f"{user.full_name} was deactivated from Admin user management.")
         self.users.delete_user(user)
         return MessageResponse(message="User deleted successfully")
+
+    def _notify_admin_access_change(self, affected_user: User, actor: User, trigger: str, title: str, body: str) -> None:
+        self.in_app_notifications.queue_many(
+            [affected_user, *self.in_app_notifications.admins()],
+            trigger=trigger,
+            title=title,
+            body=body,
+            source_record_type="user",
+            source_record_id=affected_user.id,
+            source_record_route="/admin?tab=users",
+            priority="critical",
+            dedupe_scope=f"{trigger}:{affected_user.id}:{affected_user.updated_at.isoformat() if affected_user.updated_at else affected_user.id}",
+            exclude_user_ids={actor.id},
+        )
 
     def _ensure_role_exists(self, slug: str) -> None:
         if self.rbac.get_role_by_slug(slug) is None:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Role '{slug}' does not exist")
+
+    @staticmethod
+    def _ensure_manageable_role(slug: str) -> None:
+        if slug == PROTECTED_SUPER_ADMIN_ROLE:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Super Admin is a protected setup role and cannot be managed from Admin user management")
 
     def _validate_email_update(self, user: User, updates: dict) -> None:
         target_email = user.email

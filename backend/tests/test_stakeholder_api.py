@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 import pytest
 from fastapi import HTTPException
 from fastapi.routing import APIRoute
+from pydantic import ValidationError
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
@@ -83,6 +84,7 @@ def stakeholder_payload(**overrides) -> StakeholderCreateRequest:
         "company": "Atlas Health",
         "email": "mina.sponsor@example.com",
         "phone": "+1 555 0199",
+        "linkedin_url": "https://www.linkedin.com/in/mina-sponsor",
         "role": "executive_sponsor",
         "influence": "critical",
         "relationship_strength": "strong",
@@ -140,15 +142,22 @@ def test_create_update_and_archive_stakeholder_emit_timeline_events(db_session: 
     created = service.create(account.id, stakeholder_payload(), kam)
     assert created.name == "Mina Sponsor"
     assert created.role == "executive_sponsor"
+    assert created.linkedin_url == "https://www.linkedin.com/in/mina-sponsor"
     assert created.sensitive_fields_redacted is False
 
     updated = service.update(
         created.id,
-        StakeholderUpdateRequest(sentiment="neutral", relationship_strength="developing", notes="Sponsor wants clearer delivery proof."),
+        StakeholderUpdateRequest(
+            sentiment="neutral",
+            relationship_strength="developing",
+            linkedin_url="https://www.linkedin.com/in/mina-renamed",
+            notes="Sponsor wants clearer delivery proof.",
+        ),
         kam,
     )
     assert updated.sentiment == "neutral"
     assert updated.relationship_strength == "developing"
+    assert updated.linkedin_url == "https://www.linkedin.com/in/mina-renamed"
 
     archived = service.delete(created.id, kam)
     assert archived.message == "Stakeholder archived successfully"
@@ -180,6 +189,14 @@ def test_list_stakeholders_supports_filters_and_search(db_session: Session) -> N
     assert [item.name for item in by_risk.items] == ["Priya Finance"]
     assert [item.name for item in by_engagement.items] == ["Priya Finance"]
     assert [item.name for item in by_search.items] == ["Priya Finance"]
+
+
+def test_stakeholder_linkedin_url_must_be_linkedin_url() -> None:
+    with pytest.raises(ValidationError):
+        stakeholder_payload(linkedin_url="https://customer.example.com/mina-sponsor")
+
+    valid = stakeholder_payload(linkedin_url="https://linkedin.com/in/mina-sponsor")
+    assert valid.linkedin_url == "https://linkedin.com/in/mina-sponsor"
 
 
 def test_create_and_list_stakeholder_interactions_updates_relationship_history(db_session: Session) -> None:
@@ -383,6 +400,7 @@ def test_org_chart_returns_hierarchy_edges_and_unmapped_stakeholders(db_session:
             role="economic_buyer",
             influence="high",
             email="priya.buyer@example.com",
+            linkedin_url="https://www.linkedin.com/in/priya-buyer",
             reports_to_stakeholder_id=sponsor.id,
         ),
         kam,
@@ -407,6 +425,7 @@ def test_org_chart_returns_hierarchy_edges_and_unmapped_stakeholders(db_session:
     assert nodes[buyer.id].parent_id == sponsor.id
     assert nodes[buyer.id].role == "economic_buyer"
     assert nodes[buyer.id].influence_level == "high"
+    assert nodes[buyer.id].linkedin_url == "https://www.linkedin.com/in/priya-buyer"
     assert nodes[orphan.id].parent_id == "unmapped_stakeholders"
     assert (sponsor.id, buyer.id, "reports_to") in edges
     assert ("unmapped_stakeholders", sponsor.id, "unmapped") in edges
@@ -433,6 +452,7 @@ def test_org_chart_redacts_sensitive_identity_fields_for_unauthorized_viewer(db_
 
     assert node.name == "Sensitive Stakeholder"
     assert node.title is None
+    assert node.linkedin_url is None
     assert node.role == "executive_sponsor"
     assert node.sensitive_fields_redacted is True
 
@@ -449,6 +469,7 @@ def test_leadership_viewer_is_read_only_and_sensitive_fields_are_redacted(db_ses
     assert viewed.name == "Mina Sponsor"
     assert viewed.email is None
     assert viewed.phone is None
+    assert viewed.linkedin_url is None
     assert viewed.notes is None
     assert viewed.sensitive_fields_redacted is True
 

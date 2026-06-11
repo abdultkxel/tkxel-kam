@@ -213,6 +213,9 @@ _TABLE_BACKFILL_DEFAULTS: dict[str, dict[str, Any]] = {
         "metadata_json": {},
         "created_at": lambda: datetime.now(timezone.utc),
     },
+    "source_citations": {
+        "confidence": 75,
+    },
     "playbook_templates": {
         "objective": "",
         "description": "",
@@ -442,6 +445,16 @@ _TABLE_BACKFILL_DEFAULTS: dict[str, dict[str, Any]] = {
         "metadata_json": {},
         "created_at": lambda: datetime.now(timezone.utc),
     },
+    "document_extractions": {
+        "raw_text": "",
+        "page_number": 1,
+        "source_file": "unknown",
+        "checksum": "missing",
+        "extractor_name": "local-document-extractor",
+        "extractor_version": "v1",
+        "metadata_json": {},
+        "created_at": lambda: datetime.now(timezone.utc),
+    },
     "source_document_chunks": {
         "chunk_index": 0,
         "chunk_text": "",
@@ -461,6 +474,13 @@ _TABLE_BACKFILL_DEFAULTS: dict[str, dict[str, Any]] = {
         "provider_json": {},
         "usage_json": {},
         "cost_json": {},
+        "detailed_description": "",
+    },
+    "kyc_drafts": {
+        "detailed_description": "",
+    },
+    "kyc_snapshots": {
+        "detailed_description": "",
     },
     "kyc_workstream_outputs": {
         "reviewer_notes_json": [],
@@ -469,10 +489,18 @@ _TABLE_BACKFILL_DEFAULTS: dict[str, dict[str, Any]] = {
     },
     "notification_trigger_configs": {
         "label": "Notification trigger",
+        "workflow": "general",
+        "priority": "medium",
+        "recipient_policy": "explicit",
         "default_mode": "in_app",
         "default_digest_cadence": "daily",
         "supported_channels": ["in_app"],
         "mandatory": False,
+        "timing_mode": "immediate",
+        "timing_unit": "business_days",
+        "repeat_enabled": False,
+        "escalation_enabled": False,
+        "template_json": {},
         "is_active": True,
         "created_at": lambda: datetime.now(timezone.utc),
         "updated_at": lambda: datetime.now(timezone.utc),
@@ -713,6 +741,7 @@ _JSON_BACKFILL_COLUMNS = {
     "success_criteria",
     "supported_channels",
     "delivery_metadata_json",
+    "template_json",
     "qualifying_activities",
     "recipients_json",
     "sections_json",
@@ -934,6 +963,7 @@ def apply_additive_migrations() -> None:
     from app.models import (
         AccessLog,
         AiGatewayRun,
+        Account,
         AccountHealthRollup,
         AccountChangeAlert,
         CsatScore,
@@ -992,6 +1022,7 @@ def apply_additive_migrations() -> None:
         NotificationTriggerConfig,
         NotificationPreference,
         NotificationRecord,
+        OnboardingDraft,
         SlaRule,
         SlaEscalatedItem,
         DigestSchedule,
@@ -1003,18 +1034,26 @@ def apply_additive_migrations() -> None:
         User,
         SourceDocument,
         SourceDocumentExtraction,
+        DocumentExtraction,
         SourceDocumentChunk,
         KycAgentRun,
+        KycDraft,
+        KycSnapshot,
         KycWorkstreamOutput,
     )
 
     migrate_missing_columns(
         [
             User.__table__,
+            Account.__table__,
+            OnboardingDraft.__table__,
             SourceDocument.__table__,
             SourceDocumentExtraction.__table__,
+            DocumentExtraction.__table__,
             SourceDocumentChunk.__table__,
             KycAgentRun.__table__,
+            KycDraft.__table__,
+            KycSnapshot.__table__,
             KycWorkstreamOutput.__table__,
             FieldPermission.__table__,
             ConfigurationChange.__table__,
@@ -1087,6 +1126,7 @@ def apply_additive_migrations() -> None:
         ]
     )
     backfill_user_primary_calendar_ids()
+    backfill_account_numbers()
     normalize_task_statuses()
     encrypt_existing_integration_credentials()
 
@@ -1103,6 +1143,31 @@ def backfill_user_primary_calendar_ids() -> None:
             connection.execute(text("UPDATE users SET primary_google_calendar_id = email WHERE primary_google_calendar_id IS NULL OR primary_google_calendar_id = ''"))
         else:
             connection.execute(text("UPDATE users SET primary_google_calendar_id = email WHERE primary_google_calendar_id IS NULL OR primary_google_calendar_id = ''"))
+
+
+def backfill_account_numbers() -> None:
+    with engine.begin() as connection:
+        inspector = inspect(connection)
+        if not inspector.has_table("accounts"):
+            return
+        columns = {column["name"] for column in inspector.get_columns("accounts")}
+        if "account_number" not in columns:
+            return
+
+        next_number = connection.execute(text("SELECT COALESCE(MAX(account_number), 100000) FROM accounts")).scalar_one()
+        rows = connection.execute(
+            text(
+                "SELECT id FROM accounts "
+                "WHERE account_number IS NULL "
+                "ORDER BY CASE WHEN created_at IS NULL THEN 1 ELSE 0 END, created_at, name, id"
+            )
+        ).all()
+        for row in rows:
+            next_number += 1
+            connection.execute(
+                text("UPDATE accounts SET account_number = :account_number WHERE id = :account_id"),
+                {"account_number": next_number, "account_id": row._mapping["id"]},
+            )
 
 
 def normalize_task_statuses() -> None:

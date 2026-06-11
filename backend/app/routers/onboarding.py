@@ -1,7 +1,8 @@
 from datetime import datetime
 from typing import Annotated, Literal
 
-from fastapi import APIRouter, Depends, Query, status
+from fastapi import APIRouter, Depends, File, Form, Query, UploadFile, status
+from fastapi.responses import FileResponse
 
 from app.dependencies import get_current_user, get_onboarding_service
 from app.models import User
@@ -12,6 +13,9 @@ from app.schemas import (
     OnboardingDraftRead,
     OnboardingDraftRejectRequest,
     OnboardingDraftUpdateRequest,
+    OnboardingUploadExtractionRead,
+    SourceDocumentExtractionRead,
+    UserRead,
 )
 from app.services.onboarding import OnboardingService
 
@@ -19,6 +23,27 @@ DraftStatusFilter = Literal["ready_for_review", "approved", "rejected", "linked"
 DraftSort = Literal["newest", "oldest", "account_name", "extraction_status"]
 
 router = APIRouter(prefix="/api/onboarding", tags=["Account Onboarding"])
+
+
+@router.get(
+    "/account-managers",
+    response_model=list[UserRead],
+    summary="List account manager assignment candidates",
+    description=(
+        "Returns active Account Manager/KAM users that can be assigned as the primary owner of an onboarding draft. "
+        "Used by manual and upload-based intake before draft approval."
+    ),
+    response_description="Active account managers available for onboarding draft assignment.",
+    responses={
+        401: {"description": "Missing, invalid, or expired bearer token."},
+        403: {"description": "Authenticated user cannot create onboarding drafts."},
+    },
+)
+def list_account_managers(
+    current_user: Annotated[User, Depends(get_current_user)],
+    service: Annotated[OnboardingService, Depends(get_onboarding_service)],
+) -> list[UserRead]:
+    return service.list_account_manager_candidates(current_user)
 
 
 @router.get(
@@ -91,6 +116,79 @@ def create_draft(
     return service.create_draft(payload, current_user)
 
 
+@router.post(
+    "/uploads/extract",
+    response_model=OnboardingUploadExtractionRead,
+    summary="Extract account intake fields from uploaded source files",
+    description=(
+        "Temporarily reads uploaded PDF/DOCX/TXT/CSV/XLSX/XLS source documents and returns inferred account intake "
+        "fields for form auto-fill. This endpoint does not create an onboarding draft or persist source documents."
+    ),
+    responses={
+        400: {"description": "No file was supplied, file type is unsupported, or extraction cannot read the upload."},
+        401: {"description": "Missing, invalid, or expired bearer token."},
+        403: {"description": "Authenticated user cannot create onboarding drafts."},
+        422: {"description": "Field-level validation errors, including invalid LinkedIn URL."},
+    },
+)
+async def extract_upload_fields(
+    current_user: Annotated[User, Depends(get_current_user)],
+    service: Annotated[OnboardingService, Depends(get_onboarding_service)],
+    files: Annotated[list[UploadFile], File(description="One or more PDF, DOCX, TXT, CSV, XLSX, or XLS source documents to inspect.")],
+    manager_name: Annotated[str | None, Form(description="Optional primary account manager display name for owner context.")] = None,
+    manager_email: Annotated[str | None, Form(description="Optional primary account manager email for owner context.")] = None,
+    linkedin_url: Annotated[str | None, Form(description="Optional company LinkedIn profile URL.")] = None,
+) -> OnboardingUploadExtractionRead:
+    return await service.extract_fields_from_uploads(
+        files,
+        current_user,
+        manager_name=manager_name,
+        manager_email=manager_email,
+        linkedin_url=linkedin_url,
+    )
+
+
+@router.post(
+    "/drafts/upload",
+    response_model=OnboardingDraftRead,
+    status_code=status.HTTP_201_CREATED,
+    summary="Create onboarding draft from uploaded SOW or charter files",
+    description=(
+        "Stores uploaded source documents, extracts readable PDF/DOCX/TXT/CSV/XLSX/XLS text, and creates an onboarding draft from "
+        "document content instead of file names. Stored sources remain downloadable during review and after approval."
+    ),
+    responses={
+        400: {"description": "No file was supplied, file type is unsupported, or extraction cannot read the upload."},
+        401: {"description": "Missing, invalid, or expired bearer token."},
+        403: {"description": "Authenticated user cannot create onboarding drafts."},
+        409: {"description": "Uploaded source file checksum already exists or was repeated in this request."},
+    },
+)
+async def create_draft_from_upload(
+    current_user: Annotated[User, Depends(get_current_user)],
+    service: Annotated[OnboardingService, Depends(get_onboarding_service)],
+    files: Annotated[list[UploadFile], File(description="One or more PDF, DOCX, TXT, CSV, XLSX, or XLS source documents.")],
+    account_name: Annotated[str | None, Form(description="Reviewed account name submitted from the account creation form.")] = None,
+    project_name: Annotated[str | None, Form(description="Reviewed project name submitted from the account creation form.")] = None,
+    company_url: Annotated[str | None, Form(description="Reviewed company website URL submitted from the account creation form.")] = None,
+    manager_id: Annotated[str | None, Form(description="Optional primary account manager user ID.")] = None,
+    manager_name: Annotated[str | None, Form(description="Optional primary account manager display name.")] = None,
+    manager_email: Annotated[str | None, Form(description="Optional primary account manager email.")] = None,
+    linkedin_url: Annotated[str | None, Form(description="Optional company LinkedIn profile URL.")] = None,
+) -> OnboardingDraftRead:
+    return await service.create_draft_from_uploads(
+        files,
+        current_user,
+        account_name=account_name,
+        project_name=project_name,
+        company_url=company_url,
+        manager_id=manager_id,
+        manager_name=manager_name,
+        manager_email=manager_email,
+        linkedin_url=linkedin_url,
+    )
+
+
 @router.get(
     "/drafts/{draft_id}",
     response_model=OnboardingDraftRead,
@@ -108,6 +206,55 @@ def read_draft(
     service: Annotated[OnboardingService, Depends(get_onboarding_service)],
 ) -> OnboardingDraftRead:
     return service.get_draft(draft_id, current_user)
+
+
+@router.get(
+    "/drafts/{draft_id}/documents/{document_id}/download",
+    summary="Download onboarding source document",
+    description="Downloads the locally stored SOW, charter, or source attachment while the onboarding draft is still under review.",
+    responses={
+        401: {"description": "Missing, invalid, or expired bearer token."},
+        403: {"description": "Authenticated user cannot download this source document."},
+        404: {"description": "Draft, source document, or stored file was not found."},
+    },
+)
+def download_draft_document(
+    draft_id: str,
+    document_id: str,
+    current_user: Annotated[User, Depends(get_current_user)],
+    service: Annotated[OnboardingService, Depends(get_onboarding_service)],
+) -> FileResponse:
+    document, path = service.draft_document_download_path(draft_id, document_id, current_user)
+    return FileResponse(
+        path,
+        media_type=document.mime_type or "application/octet-stream",
+        filename=document.file_name or f"{document.title}.bin",
+    )
+
+
+@router.post(
+    "/drafts/{draft_id}/documents/{document_id}/extract",
+    response_model=SourceDocumentExtractionRead,
+    summary="Retry onboarding source extraction",
+    description=(
+        "Re-runs text extraction, OCR fallback, page-row persistence, chunking, and structured SOW/charter extraction "
+        "for a stored onboarding source document."
+    ),
+    responses={
+        400: {"description": "Draft cannot be re-extracted in its current status."},
+        401: {"description": "Missing, invalid, or expired bearer token."},
+        403: {"description": "Authenticated user cannot update this onboarding draft or sensitive source."},
+        404: {"description": "Draft or source document was not found."},
+    },
+)
+def retry_draft_document_extraction(
+    draft_id: str,
+    document_id: str,
+    current_user: Annotated[User, Depends(get_current_user)],
+    service: Annotated[OnboardingService, Depends(get_onboarding_service)],
+    force: Annotated[bool, Query(description="Re-extract even when a completed extraction already exists.")] = True,
+) -> SourceDocumentExtractionRead:
+    return service.extract_draft_document(draft_id, document_id, current_user, force=force)
 
 
 @router.patch(

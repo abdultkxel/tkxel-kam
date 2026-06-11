@@ -15,32 +15,39 @@ import {
 } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { toast } from 'sonner'
+import { DocumentExtractionReviewPanel, DocumentReviewSource } from '@/components/account/DocumentExtractionReviewPanel'
 import { useAuth } from '@/contexts/AuthContext'
 import { ApiError } from '@/services/api'
+import { createAccountAttachmentPreviewUrl, listAccountAttachments } from '@/services/accountWorkspace'
 import {
   approveKycDraft,
   createKycDraft,
+  getKycDefaultPrompt,
   getKycFreshness,
   listKycAgentRuns,
   listKycDrafts,
   listKycSnapshots,
   rejectKycDraft,
+  refreshKycAgentRun,
+  retryKycAgentRun,
   runPendingKycJobs,
   restoreKycSnapshot,
   updateKycDraft,
 } from '@/services/kyc'
 import { Account } from '@/types/account'
 import { KycAgentRun, KycDraft, KycDraftStatus, KycFreshness, KycPage, KycSnapshot } from '@/types/kyc'
+import { SourceDocument } from '@/types/v3'
 import { EmptyState } from '@/components/ui/EmptyState'
+import { RichTextEditor } from '@/components/ui/RichTextEditor'
 import { cn } from '@/utils/cn'
 
 const DRAFT_PAGE_SIZE = 5
 const SNAPSHOT_PAGE_SIZE = 3
 
-type ActionState = 'initial' | 'refresh' | 'create' | 'save' | 'approve' | 'reject' | 'restore' | 'runPending' | ''
+type ActionState = 'initial' | 'refresh' | 'create' | 'save' | 'approve' | 'reject' | 'restore' | 'retryRun' | 'rerunRun' | 'runPending' | ''
 
 export function KYCAssistedReview({ account }: { account: Account }) {
-  const { token } = useAuth()
+  const { token, user } = useAuth()
   const [drafts, setDrafts] = useState<KycPage<KycDraft> | null>(null)
   const [snapshots, setSnapshots] = useState<KycPage<KycSnapshot> | null>(null)
   const [freshness, setFreshness] = useState<KycFreshness | null>(null)
@@ -51,6 +58,16 @@ export function KYCAssistedReview({ account }: { account: Account }) {
   const [ackConflicts, setAckConflicts] = useState(false)
   const [overrideReason, setOverrideReason] = useState('')
   const [reviewNotes, setReviewNotes] = useState('')
+  const [detailedDescription, setDetailedDescription] = useState('')
+  const [kycPrompt, setKycPrompt] = useState('')
+  const [promptSourceDocumentIds, setPromptSourceDocumentIds] = useState<string[]>([])
+  const [promptLoading, setPromptLoading] = useState(false)
+  const [promptError, setPromptError] = useState('')
+  const [sourceDocuments, setSourceDocuments] = useState<SourceDocument[]>([])
+  const [selectedSourceDocumentId, setSelectedSourceDocumentId] = useState('')
+  const [sourcePreviewUrl, setSourcePreviewUrl] = useState('')
+  const [sourcePreviewError, setSourcePreviewError] = useState('')
+  const [sourceReviewHtml, setSourceReviewHtml] = useState('')
   const [rejectionReason, setRejectionReason] = useState('')
   const [rejectModalOpen, setRejectModalOpen] = useState(false)
   const [restoreSnapshot, setRestoreSnapshot] = useState<KycSnapshot | null>(null)
@@ -71,11 +88,25 @@ export function KYCAssistedReview({ account }: { account: Account }) {
   const groupedFields = useMemo(() => groupFields(activeDraft), [activeDraft])
   const lowConfidenceFields = useMemo(() => activeDraft?.fields.filter(field => !field.missing && field.confidence < 70) ?? [], [activeDraft])
   const canEditDraft = activeDraft?.status === 'ready_for_review'
+  const isSuperAdmin = user?.role === 'super_admin'
   const completion = activeDraft?.completeness ?? freshness?.completeness ?? 0
   const confidence = activeDraft?.confidence ?? freshness?.confidence ?? 0
   const sourceCoverage = activeDraft?.source_coverage ?? freshness?.source_coverage ?? 0
   const hasInitialLoading = loading === 'initial' && !drafts
   const { sort, direction } = parseSort(sortOption)
+  const sourceDocumentKey = activeDraft?.source_document_ids.join('|') ?? ''
+  const selectedSourceDocument = useMemo(
+    () => sourceDocuments.find(document => document.id === selectedSourceDocumentId) ?? sourceDocuments[0] ?? null,
+    [selectedSourceDocumentId, sourceDocuments],
+  )
+  const aiGeneratedKycHtml = useMemo(
+    () => buildAiGeneratedKycHtml(activeDraft, latestRun),
+    [activeDraft, latestRun],
+  )
+  const aiDebugLogsHtml = useMemo(
+    () => buildAiDebugLogsHtml(activeDraft, latestRun),
+    [activeDraft, latestRun],
+  )
 
   const loadKyc = useCallback(
     async (mode: ActionState = 'refresh') => {
@@ -132,12 +163,49 @@ export function KYCAssistedReview({ account }: { account: Account }) {
   }, [loadKyc])
 
   useEffect(() => {
+    if (!token) return
+    let active = true
+    setPromptLoading(true)
+    setPromptError('')
+    getKycDefaultPrompt(token, account.id)
+      .then(response => {
+        if (!active) return
+        setKycPrompt(response.prompt)
+        setPromptSourceDocumentIds(response.source_document_ids)
+      })
+      .catch(error => {
+        if (!active) return
+        setPromptError(errorMessage(error))
+      })
+      .finally(() => {
+        if (active) setPromptLoading(false)
+      })
+    return () => {
+      active = false
+    }
+  }, [account.id, token])
+
+  useEffect(() => {
+    if (!latestRun || !['pending', 'running'].includes(latestRun.status)) return
+    const timer = window.setInterval(() => {
+      void loadKyc('')
+    }, 5000)
+    return () => window.clearInterval(timer)
+  }, [latestRun?.id, latestRun?.status, loadKyc])
+
+  useEffect(() => {
     if (!activeDraft) {
       setFieldValues({})
       setAckLowConfidence(false)
       setAckConflicts(false)
       setOverrideReason('')
       setReviewNotes('')
+      setDetailedDescription('')
+      setSourceDocuments([])
+      setSelectedSourceDocumentId('')
+      setSourcePreviewUrl('')
+      setSourcePreviewError('')
+      setSourceReviewHtml('')
       setRejectionReason('')
       return
     }
@@ -146,9 +214,73 @@ export function KYCAssistedReview({ account }: { account: Account }) {
     setAckConflicts(activeDraft.conflicts_acknowledged)
     setOverrideReason(activeDraft.override_reason ?? '')
     setReviewNotes(activeDraft.review_notes ?? '')
+    setDetailedDescription(activeDraft.detailed_description ?? '')
     setRejectionReason(activeDraft.rejection_reason ?? '')
     setFieldErrors([])
   }, [activeDraft])
+
+  useEffect(() => {
+    if (!token || !activeDraft || !activeDraft.source_document_ids.length) {
+      setSourceDocuments([])
+      setSelectedSourceDocumentId('')
+      return
+    }
+    let active = true
+    const allowedIds = new Set(activeDraft.source_document_ids)
+    listAccountAttachments(token, account.id, new URLSearchParams({ page: '1', page_size: '100', sort: 'uploaded_date', direction: 'desc' }))
+      .then(page => {
+        if (!active) return
+        const matched = page.items.filter(document => allowedIds.has(document.id))
+        setSourceDocuments(matched)
+        setSelectedSourceDocumentId(current => (current && matched.some(document => document.id === current) ? current : matched[0]?.id ?? ''))
+      })
+      .catch(() => {
+        if (!active) return
+        setSourceDocuments([])
+        setSelectedSourceDocumentId('')
+      })
+    return () => {
+      active = false
+    }
+  }, [account.id, activeDraft, sourceDocumentKey, token])
+
+  useEffect(() => {
+    if (!activeDraft) {
+      setSourceReviewHtml('')
+      return
+    }
+    setSourceReviewHtml(buildKycRuntimeReviewHtml(activeDraft, selectedSourceDocument))
+  }, [activeDraft, selectedSourceDocument])
+
+  useEffect(() => {
+    if (!token || !selectedSourceDocument) {
+      setSourcePreviewUrl('')
+      setSourcePreviewError('')
+      return
+    }
+    let active = true
+    let objectUrl = ''
+    setSourcePreviewError('')
+    createAccountAttachmentPreviewUrl(token, account.id, selectedSourceDocument)
+      .then(url => {
+        if (!active) {
+          if (typeof URL.revokeObjectURL === 'function') URL.revokeObjectURL(url)
+          return
+        }
+        objectUrl = url
+        setSourcePreviewUrl(url)
+      })
+      .catch(error => {
+        if (active) {
+          setSourcePreviewUrl('')
+          setSourcePreviewError(error instanceof Error ? error.message : 'Source document preview failed')
+        }
+      })
+    return () => {
+      active = false
+      if (objectUrl && typeof URL.revokeObjectURL === 'function') URL.revokeObjectURL(objectUrl)
+    }
+  }, [account.id, selectedSourceDocument, token])
 
   function updateField(fieldKey: string, value: string) {
     setFieldValues(values => ({ ...values, [fieldKey]: value }))
@@ -160,8 +292,13 @@ export function KYCAssistedReview({ account }: { account: Account }) {
     setFieldErrors([])
     setError(null)
     try {
-      const draft = await createKycDraft(token, account.id, { trigger_source: 'kyc_page', notes: reviewNotes || undefined })
-      toast.success('KYC draft created')
+      const draft = await createKycDraft(token, account.id, {
+        trigger_source: 'kyc_page',
+        source_document_ids: promptSourceDocumentIds,
+        notes: reviewNotes || undefined,
+        prompt: kycPrompt || undefined,
+      })
+      toast.success('KYC draft queued from editable prompt')
       setDraftPage(1)
       setActiveDraftId(draft.id)
       await loadKyc('refresh')
@@ -184,6 +321,7 @@ export function KYCAssistedReview({ account }: { account: Account }) {
         conflicts_acknowledged: ackConflicts,
         override_reason: overrideReason || null,
         review_notes: reviewNotes || null,
+        detailed_description: detailedDescription || '',
       })
       toast.success('KYC review edits saved')
       setActiveDraftId(updated.id)
@@ -197,14 +335,15 @@ export function KYCAssistedReview({ account }: { account: Account }) {
 
   async function approveDraft() {
     if (!token || !activeDraft) return
+    const approvalOverrideReason = overrideReason || (activeDraft.missing_fields.length ? 'Approved from simplified KYC review after field-level verification.' : null)
     setLoading('approve')
     setFieldErrors([])
     setError(null)
     try {
       await approveKycDraft(token, account.id, activeDraft.id, {
-        low_confidence_acknowledged: ackLowConfidence,
-        conflicts_acknowledged: ackConflicts,
-        override_reason: overrideReason || null,
+        low_confidence_acknowledged: ackLowConfidence || lowConfidenceFields.length > 0,
+        conflicts_acknowledged: ackConflicts || activeDraft.conflicts.length > 0,
+        override_reason: approvalOverrideReason,
         change_summary: activeDraft.difference_summary,
       })
       toast.success('KYC approved')
@@ -244,6 +383,36 @@ export function KYCAssistedReview({ account }: { account: Account }) {
     try {
       const result = await runPendingKycJobs(token, 1)
       toast.success(result.processed_count ? 'Pending KYC job processed' : 'No pending KYC jobs found')
+      await loadKyc('refresh')
+    } catch (requestError) {
+      setError(errorMessage(requestError))
+    } finally {
+      setLoading('')
+    }
+  }
+
+  async function retryLatestRun() {
+    if (!token || !latestRun) return
+    setLoading('retryRun')
+    setError(null)
+    try {
+      await retryKycAgentRun(token, account.id, latestRun.id)
+      toast.success('KYC retry queued.')
+      await loadKyc('refresh')
+    } catch (requestError) {
+      setError(errorMessage(requestError))
+    } finally {
+      setLoading('')
+    }
+  }
+
+  async function rerunLatestRun() {
+    if (!token || !latestRun) return
+    setLoading('rerunRun')
+    setError(null)
+    try {
+      await refreshKycAgentRun(token, account.id, latestRun.id)
+      toast.success('KYC re-run queued.')
       await loadKyc('refresh')
     } catch (requestError) {
       setError(errorMessage(requestError))
@@ -298,6 +467,10 @@ export function KYCAssistedReview({ account }: { account: Account }) {
                 {loading === 'refresh' ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCcw className="h-4 w-4" />}
                 Refresh
               </button>
+              <button type="button" className="tk-button-secondary bg-white" onClick={createDraft} disabled={Boolean(loading)}>
+                {loading === 'create' ? <Loader2 className="h-4 w-4 animate-spin" /> : <PlusCircle className="h-4 w-4" />}
+                New draft
+              </button>
               <button type="button" className="tk-button-secondary bg-white" onClick={saveEdits} disabled={!canEditDraft || Boolean(loading)}>
                 {loading === 'save' ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
                 Save edits
@@ -322,11 +495,78 @@ export function KYCAssistedReview({ account }: { account: Account }) {
         </div>
       </section>
 
-      {latestRun ? (
-        <section className="tk-card p-4">
-          <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+      {isSuperAdmin ? (
+      <section className="tk-card p-5">
+        <div>
+          <p className="text-[10px] font-extrabold uppercase tracking-widest text-brand-blue">Editable KYC prompt</p>
+          <h3 className="mt-1 text-base font-semibold text-ink">Run KYC for this account</h3>
+          <p className="mt-1 max-w-3xl text-sm leading-6 text-ink-secondary">
+            The prompt is prepared from account details, SOW/charter extraction, stakeholders, engagement records, and prior KYC context. Edit it before running OpenAI.
+          </p>
+        </div>
+        {promptError ? (
+          <div className="mt-3 flex items-start gap-2 rounded-lg border border-brand-orange/20 bg-brand-orange/10 p-3 text-sm text-brand-orange">
+            <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+            {promptError}
+          </div>
+        ) : null}
+        <div className="mt-4 grid gap-4 xl:grid-cols-[minmax(0,0.95fr)_minmax(0,1.05fr)]">
+          <div className="flex min-h-0 flex-col">
+            <label className="block">
+              <span className="text-xs font-semibold uppercase tracking-wider text-ink-secondary">Prompt</span>
+              <textarea
+                className="mt-2 h-[260px] w-full resize-none rounded-lg border border-surface-border bg-white px-3 py-2 text-sm leading-6 text-ink outline-none transition-colors placeholder:text-ink-muted focus:border-brand-blue focus:ring-2 focus:ring-brand-blue/20"
+                value={promptLoading ? 'Preparing source-backed KYC prompt...' : kycPrompt}
+                onChange={event => setKycPrompt(event.target.value)}
+                disabled={promptLoading || Boolean(loading)}
+                placeholder="Prompt will be prepared from account details and uploaded SOW/charter evidence."
+                aria-label="Editable KYC prompt"
+              />
+            </label>
+            <div className="mt-3 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+              <p className="text-xs text-ink-secondary">
+                Source documents selected: {promptSourceDocumentIds.length || 'all available account sources'}
+              </p>
+              <button type="button" className="tk-button-primary shrink-0" onClick={createDraft} disabled={Boolean(loading) || promptLoading || !kycPrompt.trim()}>
+                {loading === 'create' ? <Loader2 className="h-4 w-4 animate-spin" /> : <FileSearch className="h-4 w-4" />}
+                Run KYC
+              </button>
+            </div>
+          </div>
+          <div className="min-h-0">
+            <div className="mb-2 flex items-center justify-between gap-2">
+              <span className="text-xs font-semibold uppercase tracking-wider text-ink-secondary">OpenAI response</span>
+              <span className="rounded-md bg-surface-secondary px-2 py-1 text-[11px] font-semibold text-ink-secondary">
+                {openAiResponseLabel(latestRun)}
+              </span>
+            </div>
+            <RichTextEditor
+              value={aiGeneratedKycHtml}
+              onChange={() => undefined}
+              disabled
+              placeholder="Run KYC to show the OpenAI response and mapped KYC output here."
+              ariaLabel="OpenAI KYC response"
+              editorHeight="260px"
+            />
+          </div>
+        </div>
+      </section>
+      ) : null}
+
+      {isSuperAdmin && (latestRun || activeDraft) ? (
+        <details className="tk-card overflow-hidden">
+          <summary className="flex cursor-pointer list-none items-center justify-between gap-3 border-b border-surface-border bg-surface-secondary p-4">
             <div>
-              <p className="text-[10px] font-semibold uppercase tracking-wider text-ink-secondary">Local AI run status</p>
+              <p className="text-[10px] font-semibold uppercase tracking-wider text-ink-secondary">Provider details</p>
+              <h3 className="mt-1 text-sm font-semibold text-ink">Advanced run status, generated body, and logs</h3>
+            </div>
+            <span className="rounded-md bg-white px-2 py-1 text-xs font-semibold text-ink-secondary">Open / close</span>
+          </summary>
+          {latestRun ? (
+            <div className="border-b border-surface-border p-4">
+              <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+            <div>
+              <p className="text-[10px] font-semibold uppercase tracking-wider text-ink-secondary">AI run status</p>
               <p className="mt-1 text-sm font-semibold text-ink">
                 {latestRun.status.replace(/_/g, ' ')}
                 {latestRun.model_name ? ` · ${latestRun.model_name}` : ''}
@@ -341,8 +581,78 @@ export function KYCAssistedReview({ account }: { account: Account }) {
                 Run pending job
               </button>
             ) : null}
-          </div>
-        </section>
+            {['failed', 'partial', 'cancelled'].includes(latestRun.status) ? (
+              <button type="button" className="tk-button-secondary bg-white" onClick={retryLatestRun} disabled={Boolean(loading)}>
+                {loading === 'retryRun' ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCcw className="h-4 w-4" />}
+                Retry KYC run
+              </button>
+            ) : null}
+            {['complete', 'running'].includes(latestRun.status) ? (
+              <button type="button" className="tk-button-secondary bg-white" onClick={rerunLatestRun} disabled={Boolean(loading)}>
+                {loading === 'rerunRun' ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCcw className="h-4 w-4" />}
+                Re-run KYC
+              </button>
+            ) : null}
+              </div>
+            </div>
+          ) : null}
+          {activeDraft ? (
+            <div className="p-5">
+              <div className="flex flex-col gap-2 lg:flex-row lg:items-start lg:justify-between">
+                <div>
+                  <p className="text-[10px] font-extrabold uppercase tracking-widest text-brand-blue">AI output</p>
+                  <h3 className="mt-1 text-base font-semibold text-ink">Generated KYC body and logs</h3>
+                  <p className="mt-1 text-sm leading-6 text-ink-secondary">
+                    Full generated KYC response from the selected draft/run, plus current extracted fields, citations, and provider logs.
+                  </p>
+                </div>
+                <span className="rounded-md bg-surface-secondary px-2 py-1 text-xs font-semibold text-ink-secondary">
+                  {runMatchesDraft(latestRun, activeDraft) && latestRun?.model_name ? latestRun.model_name : 'Stored draft response'}
+                </span>
+              </div>
+              <div className="mt-3 grid gap-4 xl:grid-cols-[minmax(0,1fr)_420px]">
+                <div>
+                  <p className="mb-2 text-xs font-semibold uppercase tracking-wider text-ink-secondary">Generated KYC body</p>
+                  <RichTextEditor
+                    value={aiGeneratedKycHtml}
+                    onChange={() => undefined}
+                    disabled
+                    placeholder="Create or retry a KYC draft, then refresh after the AI run completes."
+                    ariaLabel="Generated KYC body"
+                    editorHeight="520px"
+                  />
+                </div>
+                <aside>
+                  <p className="mb-2 text-xs font-semibold uppercase tracking-wider text-ink-secondary">Prompt, response, and processing logs</p>
+                  <RichTextEditor
+                    value={aiDebugLogsHtml}
+                    onChange={() => undefined}
+                    disabled
+                    placeholder="Prompt and raw response logs will appear after a new KYC or web research run completes."
+                    ariaLabel="AI KYC logs"
+                    editorHeight="520px"
+                  />
+                </aside>
+              </div>
+            </div>
+          ) : null}
+        </details>
+      ) : null}
+
+      {isSuperAdmin && activeDraft ? (
+        <DocumentExtractionReviewPanel
+          title="Runtime source and KYC extraction review"
+          eyebrow="KYC source review"
+          documentName={selectedSourceDocument?.fileName || selectedSourceDocument?.name || sourceContextSources(activeDraft)[0]?.name}
+          previewUrl={sourcePreviewUrl}
+          mimeType={selectedSourceDocument?.mimeType}
+          extractedHtml={sourceReviewHtml}
+          onExtractedHtmlChange={setSourceReviewHtml}
+          sources={sourceDocuments.length ? sourceDocuments.map(sourceDocumentToReviewSource) : sourceContextSources(activeDraft)}
+          selectedSourceId={selectedSourceDocumentId}
+          onSelectSource={setSelectedSourceDocumentId}
+          previewError={sourcePreviewError}
+        />
       ) : null}
 
       {error ? (
@@ -390,10 +700,6 @@ export function KYCAssistedReview({ account }: { account: Account }) {
                     </div>
                     <p className="mt-3 text-sm leading-6 text-ink-secondary">{activeDraft.ai_disclaimer}</p>
                   </div>
-                  <button type="button" className="tk-button-secondary bg-white" onClick={createDraft} disabled={Boolean(loading)}>
-                    {loading === 'create' ? <Loader2 className="h-4 w-4 animate-spin" /> : <PlusCircle className="h-4 w-4" />}
-                    New draft
-                  </button>
                 </div>
               </section>
 
@@ -420,12 +726,15 @@ export function KYCAssistedReview({ account }: { account: Account }) {
                           {field.confidence < 70 ? <Badge tone="orange">{`${field.confidence}%`}</Badge> : <Badge tone="green">{`${field.confidence}%`}</Badge>}
                           {field.is_sensitive ? <Badge tone="blue">Restricted</Badge> : null}
                         </span>
-                        <textarea
-                          className="mt-2 min-h-[104px] w-full resize-y rounded-md border border-surface-border bg-surface-secondary px-3 py-2 text-sm leading-6 text-ink outline-none transition-colors focus:border-brand-blue focus:bg-white focus:ring-2 focus:ring-brand-blue/20 disabled:cursor-not-allowed disabled:opacity-70"
-                          value={fieldValues[field.key] ?? ''}
-                          onChange={event => updateField(field.key, event.target.value)}
-                          disabled={!canEditDraft}
-                        />
+                        <div className="mt-2">
+                          <RichTextEditor
+                            value={fieldValues[field.key] ?? ''}
+                            onChange={value => updateField(field.key, value)}
+                            disabled={!canEditDraft}
+                            ariaLabel={field.label}
+                            clickToEdit
+                          />
+                        </div>
                         <span className="mt-2 flex items-start gap-2 text-xs leading-5 text-ink-secondary">
                           <FileSearch className="mt-0.5 h-3.5 w-3.5 shrink-0 text-brand-blue" />
                           {citationText(field)}
@@ -442,6 +751,7 @@ export function KYCAssistedReview({ account }: { account: Account }) {
               ))}
             </>
           ) : null}
+
         </section>
 
         <aside className="space-y-4">
@@ -504,30 +814,6 @@ export function KYCAssistedReview({ account }: { account: Account }) {
             </div>
             <PaginationControls page={drafts?.page ?? draftPage} pages={drafts?.pages ?? 1} onPrevious={() => setDraftPage(page => Math.max(1, page - 1))} onNext={() => setDraftPage(page => Math.min(drafts?.pages ?? page + 1, page + 1))} />
           </section>
-
-          {activeDraft ? (
-            <section className="tk-card p-5">
-              <h3 className="text-base font-semibold text-ink">Review gates</h3>
-              <div className="mt-3 space-y-3">
-                <label className="flex items-start gap-2 rounded-lg border border-surface-border p-3 text-sm text-ink-secondary">
-                  <input type="checkbox" className="mt-1" checked={ackLowConfidence} onChange={event => setAckLowConfidence(event.target.checked)} disabled={!canEditDraft} />
-                  <span>Low-confidence fields acknowledged ({lowConfidenceFields.length})</span>
-                </label>
-                <label className="flex items-start gap-2 rounded-lg border border-surface-border p-3 text-sm text-ink-secondary">
-                  <input type="checkbox" className="mt-1" checked={ackConflicts} onChange={event => setAckConflicts(event.target.checked)} disabled={!canEditDraft} />
-                  <span>Conflicts acknowledged ({activeDraft.conflicts.length})</span>
-                </label>
-                <label className="block">
-                  <span className="text-xs font-semibold uppercase tracking-wider text-ink-secondary">Override reason</span>
-                  <textarea className="tk-input mt-2 min-h-[86px]" value={overrideReason} onChange={event => setOverrideReason(event.target.value)} disabled={!canEditDraft} />
-                </label>
-                <label className="block">
-                  <span className="text-xs font-semibold uppercase tracking-wider text-ink-secondary">Review notes</span>
-                  <textarea className="tk-input mt-2 min-h-[86px]" value={reviewNotes} onChange={event => setReviewNotes(event.target.value)} disabled={!canEditDraft} />
-                </label>
-              </div>
-            </section>
-          ) : null}
 
           {activeDraft?.difference_summary.length ? (
             <section className="tk-card p-5">
@@ -613,7 +899,9 @@ export function KYCAssistedReview({ account }: { account: Account }) {
             <div className="p-5">
               <label className="block">
                 <span className="text-xs font-semibold uppercase tracking-wider text-ink-secondary">Rejection reason</span>
-                <textarea className="tk-input mt-2 min-h-[120px]" value={rejectionReason} onChange={event => setRejectionReason(event.target.value)} />
+                <div className="mt-2">
+                  <RichTextEditor value={rejectionReason} onChange={setRejectionReason} ariaLabel="Rejection reason" />
+                </div>
               </label>
             </div>
             <div className="flex flex-col-reverse gap-2 border-t border-surface-border p-5 sm:flex-row sm:justify-end">
@@ -641,7 +929,9 @@ export function KYCAssistedReview({ account }: { account: Account }) {
             <div className="p-5">
               <label className="block">
                 <span className="text-xs font-semibold uppercase tracking-wider text-ink-secondary">Restore reason</span>
-                <textarea className="tk-input mt-2 min-h-[120px]" value={restoreReason} onChange={event => setRestoreReason(event.target.value)} />
+                <div className="mt-2">
+                  <RichTextEditor value={restoreReason} onChange={setRestoreReason} ariaLabel="Restore reason" />
+                </div>
               </label>
             </div>
             <div className="flex flex-col-reverse gap-2 border-t border-surface-border p-5 sm:flex-row sm:justify-end">
@@ -658,6 +948,259 @@ export function KYCAssistedReview({ account }: { account: Account }) {
       ) : null}
     </div>
   )
+}
+
+function sourceDocumentToReviewSource(document: SourceDocument): DocumentReviewSource {
+  return {
+    id: document.id,
+    name: document.fileName || document.name,
+    status: document.extractionStatus || document.status,
+    confidence: document.confidence,
+    pages: document.pages,
+  }
+}
+
+function sourceContextSources(draft: KycDraft): DocumentReviewSource[] {
+  const documents = Array.isArray(draft.source_context.source_documents) ? draft.source_context.source_documents : []
+  return documents.flatMap(item => {
+    if (!isRecord(item)) return []
+    return [{
+      id: typeof item.id === 'string' ? item.id : undefined,
+      name: typeof item.title === 'string' ? item.title : 'Source document',
+      status: typeof item.source_type === 'string' ? item.source_type : 'source',
+      confidence: typeof item.confidence === 'number' ? item.confidence : undefined,
+    }]
+  })
+}
+
+function buildKycRuntimeReviewHtml(draft: KycDraft, document: SourceDocument | null) {
+  const documentId = document?.id
+  const relatedFields = documentId
+    ? draft.fields.filter(field => field.citations.some(citation => citation.source_document_id === documentId))
+    : draft.fields
+  const fields = (relatedFields.length ? relatedFields : draft.fields).slice(0, 20)
+  const fieldItems = fields.map(field => (
+    `<li><strong>${escapeHtml(field.label)}</strong> · ${field.confidence}% confidence<br/>${escapeHtml(toPlainText(field.value || 'No value extracted yet.'))}</li>`
+  )).join('')
+  const citations = draft.citations
+    .filter(citation => !documentId || citation.source_document_id === documentId)
+    .slice(0, 16)
+  const citationItems = citations.map(citation => (
+    `<li><strong>${escapeHtml(citation.label)}</strong>${citation.page_number ? ` · page ${citation.page_number}` : ''}: ${escapeHtml(citation.excerpt)}</li>`
+  )).join('')
+  const issues = [...draft.missing_fields.map(item => `Missing: ${item}`), ...draft.conflicts.map(item => `Conflict: ${item}`)]
+
+  return [
+    document?.extractedText?.trim()
+      ? `<h4>Full extracted PDF text</h4><h5>${escapeHtml(document.fileName || document.name)}</h5><p>${textWithLineBreaks(document.extractedText)}</p>`
+      : '<h4>Full extracted PDF text</h4><p>No extracted document text is available for the selected source yet.</p>',
+    '<h4>KYC runtime extraction review</h4>',
+    '<ul>',
+    `<li><strong>Status:</strong> ${escapeHtml(draft.status.replace(/_/g, ' '))}</li>`,
+    `<li><strong>Completeness:</strong> ${draft.completeness}%</li>`,
+    `<li><strong>Confidence:</strong> ${draft.confidence}%</li>`,
+    `<li><strong>Source coverage:</strong> ${draft.source_coverage}%</li>`,
+    document ? `<li><strong>Selected source:</strong> ${escapeHtml(document.fileName || document.name)}</li>` : '',
+    '</ul>',
+    '<h4>Extracted KYC fields</h4>',
+    fieldItems ? `<ul>${fieldItems}</ul>` : '<p>No KYC fields are available for this source yet.</p>',
+    citationItems ? `<h4>Citations</h4><ul>${citationItems}</ul>` : '<h4>Citations</h4><p>No citations are attached to the selected source yet.</p>',
+    issues.length ? `<h4>Review issues</h4><ul>${issues.map(item => `<li>${escapeHtml(item)}</li>`).join('')}</ul>` : '<p>No open KYC review issues are currently flagged.</p>',
+    draft.detailed_description ? `<h4>Detailed AI description</h4>${draft.detailed_description}` : '',
+  ].filter(Boolean).join('')
+}
+
+function buildAiGeneratedKycHtml(draft: KycDraft | null, latestRun: KycAgentRun | null) {
+  if (!draft) return ''
+  const linkedRun = runMatchesDraft(latestRun, draft) ? latestRun : null
+  const linkedRunResponse = linkedRun?.detailed_description ?? ''
+  const storedResponse = linkedRunResponse?.trim() || draft.detailed_description?.trim()
+  const generatedAt = linkedRun ? linkedRun.completed_at || linkedRun.updated_at || linkedRun.created_at : draft.updated_at
+  const sourceLabel = linkedRunResponse?.trim() ? 'Linked KYC run response' : 'Stored draft detailed response'
+  const provider = linkedRun ? providerText(linkedRun) : 'Stored KYC draft'
+  const populatedFields = draft.fields.filter(field => toPlainText(field.value || '').trim())
+  const emptyFields = draft.fields.filter(field => !toPlainText(field.value || '').trim())
+  const fieldSections = draft.fields.map(field => (
+    [
+      `<h5>${escapeHtml(field.workstream_title)} - ${escapeHtml(field.label)}</h5>`,
+      toPlainText(field.value || '').trim() ? richTextFromStoredKycText(field.value || '') : '<p><em>No value returned yet.</em></p>',
+      `<p><strong>Confidence:</strong> ${field.confidence}% · <strong>Status:</strong> ${field.missing ? 'Missing' : 'Populated'}${field.is_sensitive ? ' · Sensitive' : ''}</p>`,
+      field.missing_evidence_note ? `<p><strong>Missing evidence:</strong> ${escapeHtml(field.missing_evidence_note)}</p>` : '',
+      field.suggested_follow_up_questions?.length ? `<p><strong>Follow-up questions:</strong></p><ul>${field.suggested_follow_up_questions.map(question => `<li>${escapeHtml(question)}</li>`).join('')}</ul>` : '',
+    ].filter(Boolean).join('')
+  )).join('')
+  const citationItems = draft.citations.slice(0, 40).map(citation => (
+    `<li><strong>${escapeHtml(citation.label)}</strong>${citation.source_route ? ` · ${escapeHtml(citation.source_route)}` : ''}${citation.page_number ? ` · page ${citation.page_number}` : ''}<br/>${escapeHtml(citation.excerpt)}</li>`
+  )).join('')
+  return [
+    '<h4>Generated KYC response</h4>',
+    '<ul>',
+    `<li><strong>Source:</strong> ${escapeHtml(sourceLabel)}</li>`,
+    `<li><strong>Model:</strong> ${escapeHtml(linkedRun?.model_name || 'Stored draft response')}</li>`,
+    `<li><strong>Provider:</strong> ${escapeHtml(provider)}</li>`,
+    `<li><strong>Generated/stored at:</strong> ${escapeHtml(formatDateTime(generatedAt))}</li>`,
+    `<li><strong>Populated fields:</strong> ${populatedFields.length}/${draft.fields.length}</li>`,
+    `<li><strong>Empty fields:</strong> ${emptyFields.map(field => escapeHtml(field.label)).join(', ') || 'None'}</li>`,
+    '</ul>',
+    '<h4>Full response</h4>',
+    storedResponse
+      ? richTextFromStoredKycText(storedResponse)
+      : '<p>No generated KYC response has been stored yet. Create or retry the KYC draft, run the pending job if needed, then refresh this page.</p>',
+    '<h4>Current extracted KYC fields</h4>',
+    fieldSections || '<p>No KYC fields are available yet.</p>',
+    '<h4>Citations and web sources</h4>',
+    citationItems ? `<ul>${citationItems}</ul>` : '<p>No citations or web research sources are attached yet.</p>',
+    '<h4>Research source status</h4>',
+    '<ul>',
+    `<li><strong>Configured research labels:</strong> ${draft.research_sources.map(source => escapeHtml(source)).join(', ') || 'None'}</li>`,
+    '<li><strong>Compliant web search:</strong> Tavily API can return official websites, news, blogs, business pages, and public Reddit results when available.</li>',
+    '<li><strong>Google:</strong> direct Google scraping is not used; web search is routed through Tavily/API-backed search.</li>',
+    '<li><strong>LinkedIn:</strong> not scraped or cited without approved official API/data-provider access.</li>',
+    '<li><strong>ZoomInfo:</strong> not queried unless approved API credentials are configured.</li>',
+    '</ul>',
+  ].join('')
+}
+
+function buildAiDebugLogsHtml(draft: KycDraft | null, latestRun: KycAgentRun | null) {
+  if (!draft) return ''
+  const linkedRun = runMatchesDraft(latestRun, draft) ? latestRun : null
+  if (!linkedRun) {
+    return [
+      '<h4>No linked run logs available</h4>',
+      '<p>This draft does not currently have the latest KYC run loaded. Refresh the page or run/retry KYC to capture prompt and response logs for the next run.</p>',
+      '<h4>Processing notes</h4>',
+      '<ul>',
+      '<li>Existing drafts created before log persistence may only show stored detailed response text.</li>',
+    '<li>New AI KYC runs persist prompt sections, raw response sections, workstream call metadata, and processing notes.</li>',
+      '</ul>',
+    ].join('')
+  }
+
+  const retrieval = recordValue(linkedRun.retrieval_summary)
+  const ollamaDebug = recordValue(retrieval.ollama_debug)
+  const researchDebug = recordValue(retrieval.research_debug)
+  const promptSections = arrayValue(ollamaDebug.prompt_sections)
+  const rawSections = arrayValue(ollamaDebug.raw_response_sections)
+  const workstreamCalls = arrayValue(ollamaDebug.workstream_calls)
+  const runtimeEvents = arrayValue(ollamaDebug.runtime_events)
+  const researchSources = arrayValue(researchDebug.tavily_sources)
+  const researchQueries = arrayValue(researchDebug.tavily_queries)
+  const processingNotes = [
+    ...arrayValue(ollamaDebug.processing_notes).map(String),
+    ...arrayValue(researchDebug.processing_notes).map(String),
+  ]
+
+  return [
+    '<h4>Run summary</h4>',
+    '<ul>',
+    `<li><strong>Status:</strong> ${escapeHtml(linkedRun.status)}</li>`,
+    `<li><strong>Model:</strong> ${escapeHtml(linkedRun.model_name || 'unknown')}</li>`,
+    `<li><strong>Provider:</strong> ${escapeHtml(providerText(linkedRun))}</li>`,
+    `<li><strong>Started:</strong> ${linkedRun.started_at ? escapeHtml(formatDateTime(linkedRun.started_at)) : 'Not recorded'}</li>`,
+    `<li><strong>Completed:</strong> ${linkedRun.completed_at ? escapeHtml(formatDateTime(linkedRun.completed_at)) : 'Not recorded'}</li>`,
+    `<li><strong>Retrieved context:</strong> ${escapeHtml(String(retrieval.retrieved_context_count ?? 'not recorded'))}</li>`,
+    `<li><strong>Schema fallbacks:</strong> ${escapeHtml(String(ollamaDebug.schema_fallback_count ?? 0))}</li>`,
+    '</ul>',
+    processingNotes.length ? `<h4>Processing notes</h4><ul>${processingNotes.map(note => `<li>${escapeHtml(note)}</li>`).join('')}</ul>` : '',
+    runtimeEvents.length ? `<h4>Runtime AI events</h4>${runtimeEvents.map(event => runtimeEventBlock(event)).join('')}` : '',
+    researchQueries.length ? `<h4>Tavily/web research queries</h4><ul>${researchQueries.map(query => `<li>${escapeHtml(String(query))}</li>`).join('')}</ul>` : '',
+    researchSources.length ? `<h4>Tavily/web research sources</h4><ul>${researchSources.map(source => sourceListItem(source)).join('')}</ul>` : '',
+    workstreamCalls.length ? `<h4>Workstream call metadata</h4>${workstreamCalls.map(call => debugBlock(callTitle(call), jsonText(call))).join('')}` : '',
+    promptSections.length ? `<h4>AI prompts</h4>${promptSections.map(section => promptBlock(section)).join('')}` : '',
+    rawSections.length ? `<h4>AI raw workstream responses</h4>${rawSections.map(section => rawResponseBlock(section)).join('')}` : '',
+    typeof researchDebug.ollama_prompt === 'string' && researchDebug.ollama_prompt.trim() ? `<h4>Web-research summarizer prompt</h4>${debugBlock('Research summarizer prompt', researchDebug.ollama_prompt)}` : '',
+    typeof researchDebug.ollama_raw_response === 'string' && researchDebug.ollama_raw_response.trim() ? `<h4>Web-research summarizer raw response</h4>${debugBlock('Research summarizer response', researchDebug.ollama_raw_response)}` : '',
+    !promptSections.length && !rawSections.length && !researchDebug.ollama_prompt
+      ? '<p>No prompt/raw response logs are stored for this run yet. Run a new KYC or web-research job after this update to populate the sidebar.</p>'
+      : '',
+  ].filter(Boolean).join('')
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null
+}
+
+function toPlainText(value: string) {
+  return value.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim()
+}
+
+function escapeHtml(value: string) {
+  return value.replace(/[&<>"']/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[char] ?? char))
+}
+
+function textWithLineBreaks(value: string) {
+  return escapeHtml(value).replace(/\n/g, '<br/>')
+}
+
+function richTextFromStoredKycText(value: string) {
+  if (/<\/?[a-z][\s\S]*>/i.test(value)) return value
+  return `<p>${textWithLineBreaks(value)}</p>`
+}
+
+function runMatchesDraft(run: KycAgentRun | null, draft: KycDraft | null) {
+  if (!run || !draft) return false
+  if (run.id === draft.agent_run_id) return true
+  const provider = recordValue(run.provider)
+  const retrieval = recordValue(run.retrieval_summary)
+  return provider.draft_id === draft.id || retrieval.draft_id === draft.id
+}
+
+function recordValue(value: unknown): Record<string, unknown> {
+  return isRecord(value) ? value : {}
+}
+
+function arrayValue(value: unknown): unknown[] {
+  return Array.isArray(value) ? value : []
+}
+
+function promptBlock(value: unknown) {
+  const record = recordValue(value)
+  const title = [record.title, record.workstream_key].filter(item => typeof item === 'string' && item).join(' - ') || 'AI prompt'
+  const tokens = typeof record.input_tokens_estimate === 'number' ? ` · ${record.input_tokens_estimate} estimated tokens` : ''
+  const context = typeof record.retrieved_context_count === 'number' ? ` · ${record.retrieved_context_count} context item(s)` : ''
+  return debugBlock(`${title}${tokens}${context}`, String(record.prompt || 'Prompt not stored.'))
+}
+
+function rawResponseBlock(value: unknown) {
+  const record = recordValue(value)
+  const title = [record.title, record.workstream_key].filter(item => typeof item === 'string' && item).join(' - ') || 'AI raw response'
+  return debugBlock(title, String(record.raw_response || 'Raw response not stored.'))
+}
+
+function runtimeEventBlock(value: unknown) {
+  const record = recordValue(value)
+  const event = typeof record.event === 'string' && record.event ? record.event : 'runtime_event'
+  const at = typeof record.at === 'string' && record.at ? ` · ${formatDateTime(record.at)}` : ''
+  return debugBlock(`${event.replace(/_/g, ' ')}${at}`, jsonText(recordValue(record.details)))
+}
+
+function callTitle(value: unknown) {
+  const record = recordValue(value)
+  return String(record.workstream_key || 'Workstream call')
+}
+
+function sourceListItem(value: unknown) {
+  const record = recordValue(value)
+  const label = escapeHtml(String(record.label || record.title || 'Web source'))
+  const url = typeof record.url === 'string' && record.url ? ` · ${escapeHtml(record.url)}` : ''
+  const confidence = typeof record.confidence === 'number' ? ` · ${record.confidence}%` : ''
+  const excerpt = typeof record.excerpt === 'string' && record.excerpt ? `<br/>${escapeHtml(record.excerpt)}` : ''
+  return `<li><strong>${label}</strong>${url}${confidence}${excerpt}</li>`
+}
+
+function debugBlock(title: string, value: string) {
+  return [
+    `<h5>${escapeHtml(title)}</h5>`,
+    `<pre style="white-space: pre-wrap; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', monospace; font-size: 12px; line-height: 1.5;">${escapeHtml(value)}</pre>`,
+  ].join('')
+}
+
+function jsonText(value: unknown) {
+  try {
+    return JSON.stringify(value, null, 2)
+  } catch {
+    return String(value)
+  }
 }
 
 function groupFields(draft: KycDraft | null) {
@@ -757,7 +1300,23 @@ function providerText(run: KycAgentRun) {
   return `${adapter}${baseUrl}`
 }
 
+function openAiResponseLabel(run: KycAgentRun | null) {
+  if (!run) return 'Waiting for OpenAI run'
+  const model = String(run.model_name || '').trim()
+  const provider = providerText(run).toLowerCase()
+  const modelLower = model.toLowerCase()
+  const isOpenAi = provider.includes('openai') || modelLower.startsWith('gpt-')
+  if (isOpenAi) return model || 'OpenAI run'
+  if (['pending', 'running'].includes(run.status)) return 'KYC run in progress'
+  return 'Previous run stored'
+}
+
 function sourceCoverageSummary(run: KycAgentRun) {
+  if (run.provider?.research_only) {
+    const sourceCount = typeof run.retrieval_summary?.source_count === 'number' ? run.retrieval_summary.source_count : 0
+    const queryCount = typeof run.retrieval_summary?.query_count === 'number' ? run.retrieval_summary.query_count : 0
+    return `${sourceCount} Tavily source${sourceCount === 1 ? '' : 's'}, ${queryCount} quer${queryCount === 1 ? 'y' : 'ies'}`
+  }
   const summary = run.retrieval_summary?.source_coverage
   if (!summary || typeof summary !== 'object') return 'not calculated yet'
   const record = summary as { documents_available?: number; documents_cited?: number; chunks_cited?: number }

@@ -25,6 +25,7 @@ from app.services.governance import GovernanceService
 from app.services.integrations import IntegrationService
 from app.services.kyc import KycService
 from app.services.kyc_gateway import build_kyc_gateway_adapter
+from app.services.kam_ai_chat import KamAiChatService
 from app.services.meeting_capture import MeetingCaptureService
 from app.services.dashboards import DashboardsService
 from app.services.notifications import NotificationsService
@@ -158,6 +159,10 @@ def get_account_planning_service(db: Annotated[Session, Depends(get_db)]) -> Acc
 
 def get_ai_assistance_service(db: Annotated[Session, Depends(get_db)]) -> AiAssistanceService:
     return AiAssistanceService(db)
+
+
+def get_kam_ai_chat_service(db: Annotated[Session, Depends(get_db)]) -> KamAiChatService:
+    return KamAiChatService(db)
 
 
 def get_service_catalog_service(db: Annotated[Session, Depends(get_db)]) -> ServiceCatalogService:

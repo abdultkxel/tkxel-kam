@@ -19,6 +19,12 @@ from app.schemas import (
     NotificationPreferenceRead,
     NotificationPreferenceUpdateRequest,
     NotificationRecordRead,
+    NotificationSchedulerDryRunRead,
+    NotificationSummaryRead,
+    NotificationTriggerConfigRead,
+    NotificationTriggerTestRequest,
+    NotificationTriggerUpdateRequest,
+    ScheduledWorkerRunPageRead,
     SlaEscalatedItemPageRead,
     SlaEvaluationRead,
     SlaRuleCreateRequest,
@@ -38,18 +44,25 @@ def list_notifications(
     current_user: Annotated[User, Depends(get_current_user)],
     service: Annotated[NotificationsService, Depends(get_notifications_service)],
     search: str | None = None,
-    read_state: Annotated[str | None, Query(pattern="^(read|unread)$")] = None,
+    read_state: Annotated[str | None, Query(pattern="^(read|unread|archived)$")] = None,
     trigger: str | None = None,
+    workflow: str | None = None,
+    priority: Literal["low", "medium", "high", "critical"] | None = None,
     account_id: str | None = None,
     channel: str | None = None,
     date_from: datetime | None = None,
     date_to: datetime | None = None,
-    sort: Literal["created_at", "priority", "trigger"] = "created_at",
+    sort: Literal["created_at", "priority", "trigger", "unread_first"] = "created_at",
     direction: Direction = "desc",
     page: int = Query(1, ge=1),
     page_size: int = Query(25, ge=1, le=100),
 ) -> NotificationPageRead:
-    return service.list_notifications(current_user, search=search, read_state=read_state, trigger=trigger, account_id=account_id, channel=channel, date_from=date_from, date_to=date_to, sort=sort, direction=direction, page=page, page_size=page_size)
+    return service.list_notifications(current_user, search=search, read_state=read_state, trigger=trigger, workflow=workflow, priority=priority, account_id=account_id, channel=channel, date_from=date_from, date_to=date_to, sort=sort, direction=direction, page=page, page_size=page_size)
+
+
+@router.get("/notifications/summary", response_model=NotificationSummaryRead, summary="Notification bell summary", description="Returns unread count and latest persisted notifications for the navbar bell.")
+def notification_summary(current_user: Annotated[User, Depends(get_current_user)], service: Annotated[NotificationsService, Depends(get_notifications_service)]) -> NotificationSummaryRead:
+    return service.notification_summary(current_user)
 
 
 @router.patch("/notifications/read-all", response_model=dict[str, int], summary="Mark all notifications read", description="Marks every unread notification for the current user as read.")
@@ -60,6 +73,11 @@ def mark_all_notifications_read(current_user: Annotated[User, Depends(get_curren
 @router.patch("/notifications/{notification_id}/read", response_model=NotificationRecordRead, summary="Mark notification read", description="Marks a single notification read if it belongs to the current user.")
 def mark_notification_read(notification_id: str, current_user: Annotated[User, Depends(get_current_user)], service: Annotated[NotificationsService, Depends(get_notifications_service)]) -> NotificationRecordRead:
     return service.mark_notification_read(notification_id, current_user)
+
+
+@router.patch("/notifications/{notification_id}/archive", response_model=NotificationRecordRead, summary="Archive notification", description="Archives a single notification so it is hidden from the navbar bell and default notification center view.")
+def archive_notification(notification_id: str, current_user: Annotated[User, Depends(get_current_user)], service: Annotated[NotificationsService, Depends(get_notifications_service)]) -> NotificationRecordRead:
+    return service.archive_notification(notification_id, current_user)
 
 
 @router.get("/notifications/triggers", response_model=NotificationDefaultsRead, summary="List notification triggers", description="Returns active and inactive notification trigger metadata used by admin defaults and preference screens.")
@@ -85,6 +103,31 @@ def get_notification_defaults(current_user: Annotated[User, Depends(get_current_
 @router.put("/admin/notification-defaults", response_model=NotificationDefaultsRead, summary="Update notification defaults", description="Updates notification trigger defaults and mandatory policies for future delivery.")
 def update_notification_defaults(payload: NotificationDefaultsUpdateRequest, current_user: Annotated[User, Depends(get_current_user)], service: Annotated[NotificationsService, Depends(get_notifications_service)]) -> NotificationDefaultsRead:
     return service.update_defaults(payload, current_user)
+
+
+@router.patch("/admin/notification-triggers/{trigger}", response_model=NotificationTriggerConfigRead, summary="Update one notification trigger", description="Updates admin workflow, channel, timing, reminder, and escalation settings for one notification trigger.")
+def update_notification_trigger(trigger: str, payload: NotificationTriggerUpdateRequest, current_user: Annotated[User, Depends(get_current_user)], service: Annotated[NotificationsService, Depends(get_notifications_service)]) -> NotificationTriggerConfigRead:
+    return service.update_trigger_config(trigger, payload, current_user)
+
+
+@router.post("/admin/notification-triggers/{trigger}/reset-defaults", response_model=NotificationTriggerConfigRead, summary="Reset notification trigger", description="Restores one notification trigger to the workflow catalog defaults.")
+def reset_notification_trigger(trigger: str, current_user: Annotated[User, Depends(get_current_user)], service: Annotated[NotificationsService, Depends(get_notifications_service)]) -> NotificationTriggerConfigRead:
+    return service.reset_trigger_config(trigger, current_user)
+
+
+@router.post("/admin/notification-triggers/{trigger}/test", response_model=NotificationRecordRead, summary="Send test notification", description="Creates a persisted test notification for the selected trigger and recipient.")
+def test_notification_trigger(trigger: str, payload: NotificationTriggerTestRequest, current_user: Annotated[User, Depends(get_current_user)], service: Annotated[NotificationsService, Depends(get_notifications_service)]) -> NotificationRecordRead:
+    return service.test_trigger(trigger, payload, current_user)
+
+
+@router.post("/admin/notification-scheduler/dry-run", response_model=NotificationSchedulerDryRunRead, summary="Dry-run notification scheduler", description="Evaluates active timed triggers without creating recipient notifications.")
+def dry_run_notification_scheduler(current_user: Annotated[User, Depends(get_current_user)], service: Annotated[NotificationsService, Depends(get_notifications_service)]) -> NotificationSchedulerDryRunRead:
+    return service.dry_run_scheduler(current_user)
+
+
+@router.get("/admin/notification-scheduler/runs", response_model=ScheduledWorkerRunPageRead, summary="List notification scheduler runs", description="Paginated scheduler run history for notification dry runs and future scheduled notification workers.")
+def list_notification_scheduler_runs(current_user: Annotated[User, Depends(get_current_user)], service: Annotated[NotificationsService, Depends(get_notifications_service)], job_type: str | None = "notification_scheduler", page: int = Query(1, ge=1), page_size: int = Query(25, ge=1, le=100)) -> ScheduledWorkerRunPageRead:
+    return service.list_scheduler_runs(current_user, job_type=job_type, page=page, page_size=page_size)
 
 
 @router.get("/admin/sla-rules", response_model=SlaRulePageRead, summary="List SLA rules", description="Paginated SLA rule list with search, item type, active state, and RBAC.")

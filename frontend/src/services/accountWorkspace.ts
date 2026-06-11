@@ -12,6 +12,8 @@ import type {
   SourceDocument,
 } from '@/types/v3'
 
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? 'http://127.0.0.1:8001'
+
 export interface Page<T> {
   items: T[]
   total: number
@@ -32,9 +34,11 @@ interface ApiAccountOwner {
 
 interface ApiAccount {
   id: string
+  account_number?: number | null
   name: string
   project_name?: string | null
   company_url?: string | null
+  linkedin_url?: string | null
   segment: string
   region?: string | null
   lifecycle_status: string
@@ -61,6 +65,8 @@ interface ApiSourceCitation {
   label: string
   page_number?: number | null
   excerpt: string
+  field_key?: string | null
+  confidence?: number | null
 }
 
 interface ApiSourceDocument {
@@ -70,6 +76,20 @@ interface ApiSourceDocument {
   draft_id?: string | null
   title: string
   source_type: string
+  file_name?: string | null
+  file_url?: string | null
+  link_url?: string | null
+  storage_backend?: string | null
+  mime_type?: string | null
+  size_bytes?: number | null
+  checksum_sha256?: string | null
+  extracted_text_checksum?: string | null
+  extracted_text?: string | null
+  extraction_started_at?: string | null
+  extraction_completed_at?: string | null
+  extraction_error?: string | null
+  ocr_status?: string | null
+  ocr_engine?: string | null
   uploaded_by_name: string
   extraction_status: string
   confidence: number
@@ -172,6 +192,7 @@ interface ApiOnboardingDraft {
   account_name: string
   project_name?: string | null
   company_url?: string | null
+  linkedin_url?: string | null
   lifecycle_status: string
   segment: string
   region?: string | null
@@ -191,6 +212,36 @@ interface ApiOnboardingDraft {
   engagement_drafts: ApiDraftEngagement[]
 }
 
+interface ApiOnboardingUploadExtraction {
+  account_name: string
+  project_name?: string | null
+  company_url?: string | null
+  linkedin_url?: string | null
+  confidence: number
+  missing_fields: string[]
+  conflicts: string[]
+  source_citation?: string | null
+  source_file_names: string[]
+  extraction_status: string
+}
+
+interface ApiUser {
+  id: string
+  email: string
+  full_name: string
+  role: string
+  title?: string | null
+  is_active: boolean
+}
+
+export interface OnboardingAccountManager {
+  id: string
+  email: string
+  name: string
+  role: string
+  title?: string | null
+}
+
 export interface OnboardingDraftView {
   id: string
   status: ApiOnboardingDraft['status']
@@ -206,13 +257,50 @@ export interface OnboardingDraftView {
   approvedAccountId?: string | null
 }
 
+export interface OnboardingUploadExtractionView {
+  accountName: string
+  projectName: string
+  companyUrl: string
+  linkedinUrl: string
+  confidence: number
+  missingFields: string[]
+  conflicts: string[]
+  sourceCitation?: string | null
+  sourceFileNames: string[]
+  extractionStatus: string
+}
+
 export interface CreateDraftPayload {
   accountName: string
   projectName: string
   companyUrl: string
+  linkedinUrl: string
+  managerId: string
   managerEmail: string
   managerName: string
   fileNames: string[]
+  customFieldValues?: Record<string, unknown>
+}
+
+export interface CreateDraftFromUploadPayload {
+  files: File[]
+  accountName?: string
+  projectName?: string
+  companyUrl?: string
+  linkedinUrl?: string
+  managerId?: string
+  managerEmail?: string
+  managerName?: string
+}
+
+export interface UpdateOnboardingDraftPayload {
+  accountName?: string
+  projectName?: string
+  companyUrl?: string
+  linkedinUrl?: string
+  managerId?: string
+  managerEmail?: string
+  managerName?: string
   customFieldValues?: Record<string, unknown>
 }
 
@@ -220,6 +308,7 @@ export interface AccountCsvImportRow {
   account_name?: string
   project_name?: string
   company_url?: string
+  linkedin_url?: string
   industry?: string
   arr?: number
   commercial_value?: number
@@ -431,6 +520,11 @@ export async function listOnboardingDrafts(token: string, params: URLSearchParam
   return { ...page, items: page.items.map(mapDraft) }
 }
 
+export async function listOnboardingAccountManagers(token: string) {
+  const users = await apiRequest<ApiUser[]>('/api/onboarding/account-managers', { token })
+  return users.map(mapOnboardingAccountManager)
+}
+
 export async function createOnboardingDraft(token: string, payload: CreateDraftPayload) {
   return mapDraft(
     await apiRequest<ApiOnboardingDraft>('/api/onboarding/drafts', {
@@ -439,6 +533,61 @@ export async function createOnboardingDraft(token: string, payload: CreateDraftP
       body: JSON.stringify(buildDraftPayload(payload)),
     }),
   )
+}
+
+export async function createOnboardingDraftFromUpload(token: string, payload: CreateDraftFromUploadPayload) {
+  const body = new FormData()
+  payload.files.forEach(file => body.append('files', file))
+  if (payload.accountName?.trim()) body.append('account_name', payload.accountName.trim())
+  if (payload.projectName?.trim()) body.append('project_name', payload.projectName.trim())
+  if (payload.companyUrl?.trim()) body.append('company_url', normalizeUrl(payload.companyUrl.trim()))
+  if (payload.linkedinUrl?.trim()) body.append('linkedin_url', normalizeUrl(payload.linkedinUrl.trim()))
+  if (payload.managerId?.trim()) body.append('manager_id', payload.managerId.trim())
+  if (payload.managerName?.trim()) body.append('manager_name', payload.managerName.trim())
+  if (payload.managerEmail?.trim()) body.append('manager_email', payload.managerEmail.trim())
+  return mapDraft(
+    await apiRequest<ApiOnboardingDraft>('/api/onboarding/drafts/upload', {
+      method: 'POST',
+      token,
+      body,
+    }),
+  )
+}
+
+export async function extractOnboardingUploadFields(token: string, payload: CreateDraftFromUploadPayload) {
+  const body = new FormData()
+  payload.files.forEach(file => body.append('files', file))
+  if (payload.linkedinUrl?.trim()) body.append('linkedin_url', normalizeUrl(payload.linkedinUrl.trim()))
+  if (payload.managerName?.trim()) body.append('manager_name', payload.managerName.trim())
+  if (payload.managerEmail?.trim()) body.append('manager_email', payload.managerEmail.trim())
+  return mapUploadExtraction(
+    await apiRequest<ApiOnboardingUploadExtraction>('/api/onboarding/uploads/extract', {
+      method: 'POST',
+      token,
+      body,
+    }),
+  )
+}
+
+export async function updateOnboardingDraft(token: string, draftId: string, payload: UpdateOnboardingDraftPayload) {
+  return mapDraft(
+    await apiRequest<ApiOnboardingDraft>(`/api/onboarding/drafts/${draftId}`, {
+      method: 'PATCH',
+      token,
+      body: JSON.stringify(buildDraftUpdatePayload(payload)),
+    }),
+  )
+}
+
+export async function getOnboardingDraft(token: string, draftId: string) {
+  return mapDraft(await apiRequest<ApiOnboardingDraft>(`/api/onboarding/drafts/${draftId}`, { token }))
+}
+
+export async function retryOnboardingDraftDocumentExtraction(token: string, draftId: string, documentId: string, force = true) {
+  return apiRequest(`/api/onboarding/drafts/${draftId}/documents/${documentId}/extract?force=${force ? 'true' : 'false'}`, {
+    method: 'POST',
+    token,
+  })
 }
 
 export async function approveOnboardingDraft(token: string, draftId: string) {
@@ -460,6 +609,34 @@ export async function rejectOnboardingDraft(token: string, draftId: string, reas
   )
 }
 
+export async function downloadOnboardingDraftDocument(token: string, draftId: string, document: SourceDocument) {
+  const response = await fetch(`${API_BASE_URL}/api/onboarding/drafts/${draftId}/documents/${document.id}/download`, {
+    headers: { Authorization: `Bearer ${token}` },
+  })
+  if (!response.ok) {
+    throw new Error('Onboarding source document download failed')
+  }
+  const blob = await response.blob()
+  const url = URL.createObjectURL(blob)
+  const link = window.document.createElement('a')
+  link.href = url
+  link.download = document.fileName || document.name
+  window.document.body.appendChild(link)
+  link.click()
+  link.remove()
+  URL.revokeObjectURL(url)
+}
+
+export async function createAccountAttachmentPreviewUrl(token: string, accountId: string, document: SourceDocument) {
+  const response = await fetch(`${API_BASE_URL}/api/accounts/${accountId}/attachments/${document.id}/download`, {
+    headers: { Authorization: `Bearer ${token}` },
+  })
+  if (!response.ok) {
+    throw new Error('Source document preview failed')
+  }
+  return URL.createObjectURL(await response.blob())
+}
+
 export async function listEngagements(token: string, accountId: string, params: URLSearchParams | EngagementListParams = new URLSearchParams()) {
   const query = queryString(params)
   const page = await apiRequest<Page<ApiEngagement>>(`/api/accounts/${accountId}/engagements${query ? `?${query}` : ''}`, { token })
@@ -476,6 +653,19 @@ export async function createEngagement(token: string, accountId: string, payload
       method: 'POST',
       token,
       body: JSON.stringify(buildEngagementPayload(payload)),
+    }),
+    '',
+  )
+}
+
+export async function createEngagementFromCharter(token: string, accountId: string, file: File) {
+  const body = new FormData()
+  body.append('file', file)
+  return mapEngagement(
+    await apiRequest<ApiEngagement>(`/api/accounts/${accountId}/engagements/from-charter`, {
+      method: 'POST',
+      token,
+      body,
     }),
     '',
   )
@@ -505,6 +695,61 @@ export async function getEngagementTimeline(token: string, engagementId: string,
   return { ...page, items: page.items.map(mapTimelineEvent) }
 }
 
+export async function listAccountAttachments(token: string, accountId: string, params: URLSearchParams = new URLSearchParams()) {
+  const query = queryString(params)
+  const page = await apiRequest<Page<ApiSourceDocument>>(`/api/accounts/${accountId}/attachments${query ? `?${query}` : ''}`, { token })
+  return { ...page, items: page.items.map(mapSourceDocument) }
+}
+
+export interface UploadAccountAttachmentPayload {
+  file: File
+  title?: string
+  sourceType?: SourceDocument['type']
+  isSensitive?: boolean
+  extractNow?: boolean
+}
+
+export async function uploadAccountAttachment(token: string, accountId: string, payload: UploadAccountAttachmentPayload) {
+  const body = new FormData()
+  body.append('file', payload.file)
+  if (payload.title?.trim()) body.append('title', payload.title.trim())
+  body.append('source_type', payload.sourceType ?? inferSourceType(payload.file.name))
+  body.append('is_sensitive', String(Boolean(payload.isSensitive)))
+  body.append('extract_now', String(payload.extractNow ?? true))
+  return mapSourceDocument(
+    await apiRequest<ApiSourceDocument>(`/api/accounts/${accountId}/attachments/upload`, {
+      method: 'POST',
+      token,
+      body,
+    }),
+  )
+}
+
+export async function extractAccountAttachment(token: string, accountId: string, attachmentId: string, force = false) {
+  return apiRequest(`/api/accounts/${accountId}/attachments/${attachmentId}/extract?force=${force ? 'true' : 'false'}`, {
+    method: 'POST',
+    token,
+  })
+}
+
+export async function downloadAccountAttachment(token: string, accountId: string, document: SourceDocument) {
+  const response = await fetch(`${API_BASE_URL}/api/accounts/${accountId}/attachments/${document.id}/download`, {
+    headers: { Authorization: `Bearer ${token}` },
+  })
+  if (!response.ok) {
+    throw new Error('Source document download failed')
+  }
+  const blob = await response.blob()
+  const url = URL.createObjectURL(blob)
+  const link = window.document.createElement('a')
+  link.href = url
+  link.download = document.fileName || document.name
+  window.document.body.appendChild(link)
+  link.click()
+  link.remove()
+  URL.revokeObjectURL(url)
+}
+
 function buildDraftPayload(payload: CreateDraftPayload) {
   const sourceNames = payload.fileNames.length ? payload.fileNames : [`${payload.accountName} Project Charter.pdf`]
   const primarySource = sourceNames[0]
@@ -514,11 +759,13 @@ function buildDraftPayload(payload: CreateDraftPayload) {
     account_name: payload.accountName,
     project_name: payload.projectName,
     company_url: normalizeUrl(payload.companyUrl),
+    linkedin_url: normalizeUrl(payload.linkedinUrl),
     lifecycle_status: 'Draft',
     segment: 'Growth',
     region: 'Global',
     commercial_value: 0,
     currency: 'USD',
+    primary_owner_id: payload.managerId,
     primary_owner_name: payload.managerName,
     primary_owner_email: payload.managerEmail,
     confidence: 82,
@@ -557,6 +804,18 @@ function buildDraftPayload(payload: CreateDraftPayload) {
   }
 }
 
+function buildDraftUpdatePayload(payload: UpdateOnboardingDraftPayload) {
+  const body: Record<string, unknown> = {}
+  setIfDefined(body, 'account_name', payload.accountName)
+  setIfDefined(body, 'project_name', payload.projectName)
+  setIfDefined(body, 'company_url', payload.companyUrl ? normalizeUrl(payload.companyUrl) : payload.companyUrl)
+  setIfDefined(body, 'linkedin_url', payload.linkedinUrl ? normalizeUrl(payload.linkedinUrl) : payload.linkedinUrl)
+  setIfDefined(body, 'primary_owner_id', payload.managerId)
+  setIfDefined(body, 'primary_owner_name', payload.managerName)
+  setIfDefined(body, 'primary_owner_email', payload.managerEmail)
+  return body
+}
+
 function buildEngagementPayload(payload: EngagementCreatePayload | EngagementUpdatePayload) {
   const body: Record<string, unknown> = {}
   const resourceDependency = payload.resourceDependencyNotes !== undefined ? payload.resourceDependencyNotes : payload.resourceDependency
@@ -590,12 +849,23 @@ function setIfDefined(target: Record<string, unknown>, key: string, value: unkno
   if (value !== undefined) target[key] = value
 }
 
+function mapOnboardingAccountManager(user: ApiUser): OnboardingAccountManager {
+  return {
+    id: user.id,
+    email: user.email,
+    name: user.full_name,
+    role: user.role,
+    title: user.title ?? null,
+  }
+}
+
 function mapDraft(draft: ApiOnboardingDraft): OnboardingDraftView {
   const account = mapApiAccount({
     id: draft.approved_account_id ?? draft.id,
     name: draft.account_name,
     project_name: draft.project_name,
     company_url: draft.company_url,
+    linkedin_url: draft.linkedin_url,
     segment: draft.segment,
     region: draft.region,
     lifecycle_status: draft.lifecycle_status,
@@ -617,6 +887,9 @@ function mapDraft(draft: ApiOnboardingDraft): OnboardingDraftView {
     owners: [],
     governance_completeness: {},
   })
+  account.recordType = 'onboarding_draft'
+  account.draftStatus = draft.status
+  account.detailPath = `/accounts/onboarding?draft=${draft.id}`
   const documents = draft.source_documents.map(mapSourceDocument)
   return {
     id: draft.id,
@@ -634,14 +907,33 @@ function mapDraft(draft: ApiOnboardingDraft): OnboardingDraftView {
   }
 }
 
+function mapUploadExtraction(extraction: ApiOnboardingUploadExtraction): OnboardingUploadExtractionView {
+  return {
+    accountName: extraction.account_name ?? '',
+    projectName: extraction.project_name ?? '',
+    companyUrl: extraction.company_url ?? '',
+    linkedinUrl: extraction.linkedin_url ?? '',
+    confidence: extraction.confidence,
+    missingFields: extraction.missing_fields,
+    conflicts: extraction.conflicts,
+    sourceCitation: extraction.source_citation,
+    sourceFileNames: extraction.source_file_names,
+    extractionStatus: extraction.extraction_status,
+  }
+}
+
 function mapApiAccount(account: ApiAccount): Account {
   const owner = account.primary_owner ?? account.owners[0]
   const segment = toSegment(account.segment)
+  const accountNumber = account.account_number ?? null
   return {
     id: account.id,
+    accountNumber,
+    displayId: accountNumber ? `Account #${accountNumber}` : undefined,
     name: account.name,
     projectName: account.project_name ?? undefined,
     companyUrl: account.company_url ?? undefined,
+    linkedinUrl: account.linkedin_url ?? undefined,
     segment,
     tags: [account.segment, account.region].filter(Boolean) as string[],
     ownerId: owner?.user_id ?? owner?.id ?? '',
@@ -790,15 +1082,32 @@ function mapSourceDocument(document: ApiSourceDocument): SourceDocument {
     uploadedByName: document.uploaded_by_name,
     confidence: document.confidence,
     pages: document.pages,
-    status: document.extraction_status === 'needs_review' ? 'needs_review' : 'parsed',
+    status: document.extraction_status === 'completed' ? 'parsed' : 'needs_review',
+    fileName: document.file_name ?? undefined,
+    mimeType: document.mime_type ?? undefined,
+    sizeBytes: document.size_bytes ?? undefined,
+    extractionStatus: document.extraction_status,
+    extractionError: document.extraction_error ?? undefined,
+    ocrStatus: document.ocr_status ?? undefined,
+    extractedTextChecksum: document.extracted_text_checksum ?? undefined,
+    extractedText: document.extracted_text ?? undefined,
     citations: document.citations.map(citation => ({
       id: citation.id,
       documentId: citation.source_document_id,
       label: citation.label,
       page: citation.page_number ?? 1,
       excerpt: citation.excerpt,
+      fieldKey: citation.field_key ?? undefined,
+      confidence: citation.confidence ?? document.confidence,
     })),
   }
+}
+
+function inferSourceType(fileName: string): SourceDocument['type'] {
+  if (/sow|statement/i.test(fileName)) return 'sow'
+  if (/charter/i.test(fileName)) return 'project_charter'
+  if (/commercial|pricing|billing/i.test(fileName)) return 'commercial_note'
+  return 'attachment'
 }
 
 function mapTimelineEvent(event: ApiTimelineEvent): TimelineEntry {
@@ -838,7 +1147,7 @@ function toStage(value: string): AccountStage {
 }
 
 function toSourceType(value: string): SourceDocument['type'] {
-  if (value === 'sow' || value === 'commercial_note' || value === 'research') return value
+  if (value === 'sow' || value === 'project_charter' || value === 'attachment' || value === 'source_link' || value === 'commercial_note' || value === 'research' || value === 'manual_import') return value
   return 'project_charter'
 }
 

@@ -69,7 +69,7 @@ const baseConfig: IntegrationConfig[] = [
     lastSynced: new Date(Date.now() - 5 * 60 * 60 * 1000).toISOString(),
     autoCreate: true,
     deduplicationWindowMinutes: 60,
-    accountMappingRules: ['Account ID match', 'Engagement ID match', 'Manual review for unmatched survey'],
+    accountMappingRules: ['Account record match', 'Engagement record match', 'Manual review for unmatched survey'],
     eventTypeFilters: ['Score Received', 'Trend Change', 'Critical Comment'],
     syncDirections: { score: 'inbound', comment: 'inbound', trend: 'inbound' },
   },

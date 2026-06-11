@@ -142,7 +142,6 @@ export function StakeholderDetailPanel({ account, stakeholder, open, canManage, 
                       <ProfileField label="Influence" value={titleize(stakeholder.influence)} tone={influenceTone(stakeholder.influence)} />
                       <ProfileField label="Relationship" value={titleize(stakeholder.relationshipStrength)} tone={relationshipTone(stakeholder.relationshipStrength)} />
                       <ProfileField label="Sentiment" value={titleize(stakeholder.sentiment)} tone={sentimentTone(stakeholder.sentiment)} />
-                      <ProfileField label="Political risk" value={titleize(stakeholder.politicalRisk)} tone={politicalRiskTone(stakeholder.politicalRisk)} />
                       <ProfileField label="Last interaction" value={stakeholder.lastInteractionAt ? formatDateTime(stakeholder.lastInteractionAt) : 'No activity recorded'} />
                       <ProfileField label="Reports to" value={stakeholder.reportsToStakeholderId ? 'Mapped stakeholder' : 'Unmapped'} />
                     </div>
@@ -158,6 +157,7 @@ export function StakeholderDetailPanel({ account, stakeholder, open, canManage, 
                       <DetailLine label="Company" value={stakeholder.company} />
                       <DetailLine label="Email" value={stakeholder.email} />
                       <DetailLine label="Phone" value={stakeholder.phone} />
+                      <DetailLine label="LinkedIn" value={stakeholder.linkedinUrl} />
                       <DetailLine label="Engagement" value={stakeholder.engagementId ? 'Engagement-linked' : 'Account-level'} />
                       <DetailLine label="Created" value={formatDateTime(stakeholder.createdAt)} />
                     </dl>
@@ -421,13 +421,6 @@ function relationshipTone(relationship: string): BadgeTone {
 function sentimentTone(sentiment: string): BadgeTone {
   if (sentiment === 'champion' || sentiment === 'positive') return 'green'
   if (sentiment === 'negative') return 'red'
-  return 'gray'
-}
-
-function politicalRiskTone(risk: string): BadgeTone {
-  if (risk === 'high' || risk === 'critical') return 'red'
-  if (risk === 'medium') return 'amber'
-  if (risk === 'low') return 'green'
   return 'gray'
 }
 

@@ -144,6 +144,7 @@ describe('playbooks, tasks, and calendar UI', () => {
     await userEvent.type(screen.getByPlaceholderText(/Search title/i), 'renewal')
     await waitFor(() => expect(fetchMock.mock.calls.some(call => String(call[0]).includes('search=renewal'))).toBe(true))
 
+    await userEvent.click(screen.getByRole('button', { name: /list/i }))
     await userEvent.type(screen.getByPlaceholderText('Evidence note'), 'Evidence captured.')
     await userEvent.click(screen.getByRole('button', { name: /add note evidence/i }))
     await waitFor(() => expect(fetchMock.mock.calls.some(call => String(call[0]).includes('/api/tasks/task-1/evidence') && call[1]?.method === 'POST')).toBe(true))

@@ -22,6 +22,9 @@ class ContentStorageService:
         "application/vnd.openxmlformats-officedocument.presentationml.presentation",
         "application/msword",
         "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        "application/vnd.ms-excel",
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        "application/vnd.ms-excel.sheet.macroEnabled.12",
         "text/plain",
         "text/csv",
         "image/png",
@@ -40,8 +43,9 @@ class ContentStorageService:
         data = await upload.read()
         if not data:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Uploaded file cannot be empty")
-        if len(data) > 25 * 1024 * 1024:
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Uploaded file must be 25 MB or smaller")
+        max_bytes = self.settings.content_storage_max_file_mb * 1024 * 1024
+        if len(data) > max_bytes:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Uploaded file must be {self.settings.content_storage_max_file_mb} MB or smaller")
 
         storage_dir = Path(self.settings.local_content_storage_dir)
         try:
@@ -62,3 +66,16 @@ class ContentStorageService:
             mime_type=upload.content_type,
             size_bytes=len(data),
         )
+
+    def delete_stored_file(self, stored_file: StoredFile | str | None) -> None:
+        if not stored_file:
+            return
+        path = Path(stored_file.file_path if isinstance(stored_file, StoredFile) else stored_file)
+        if not path.is_absolute():
+            path = Path(self.settings.local_content_storage_dir) / path
+        try:
+            if path.exists() and path.is_file():
+                path.unlink()
+        except OSError:
+            # Duplicate/error cleanup should not hide the primary upload error.
+            return

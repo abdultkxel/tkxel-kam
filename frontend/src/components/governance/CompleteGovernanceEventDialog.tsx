@@ -4,7 +4,15 @@ import { FormEvent, useEffect, useState } from 'react'
 import { toast } from 'sonner'
 import { ApiError, ApiFieldError } from '@/services/api'
 import { useAuth } from '@/contexts/AuthContext'
-import { listMeetingArtifacts, MeetingArtifact } from '@/services/meetingCapture'
+import {
+  readPersonalFathomConnection,
+  readPersonalFirefliesConnection,
+  resolveFathomMeeting,
+  resolveFirefliesMeeting,
+  type MeetingArtifact,
+  type MeetingCaptureProvider,
+  type UserMeetingConnection,
+} from '@/services/meetingCapture'
 import { useGovernanceStore } from '@/stores/governanceStore'
 import { GovernanceEventRecord } from '@/types/governance'
 
@@ -23,6 +31,23 @@ interface ActionDraft {
   createTask: boolean
 }
 
+const meetingProviderCopy: Record<MeetingCaptureProvider, { label: string; shortLabel: string; placeholder: string; missingMessage: string; loadedMessage: string }> = {
+  fathom: {
+    label: 'Fathom meeting',
+    shortLabel: 'Fathom',
+    placeholder: 'Fathom recording ID or share URL',
+    missingMessage: 'Enter a Fathom recording ID or share URL.',
+    loadedMessage: 'Fathom meeting loaded',
+  },
+  fireflies: {
+    label: 'Fireflies transcript',
+    shortLabel: 'Fireflies',
+    placeholder: 'Fireflies transcript ID or transcript URL',
+    missingMessage: 'Enter a Fireflies transcript ID or transcript URL.',
+    loadedMessage: 'Fireflies meeting loaded',
+  },
+}
+
 export function CompleteGovernanceEventDialog({
   event,
   triggerClassName = 'tk-button-primary',
@@ -33,8 +58,11 @@ export function CompleteGovernanceEventDialog({
   const completeEvent = useGovernanceStore(state => state.completeEvent)
   const [open, setOpen] = useState(false)
   const [saving, setSaving] = useState(false)
-  const [loadingMeetings, setLoadingMeetings] = useState(false)
-  const [meetingOptions, setMeetingOptions] = useState<MeetingArtifact[]>([])
+  const [fetchingMeeting, setFetchingMeeting] = useState(false)
+  const [meetingProvider, setMeetingProvider] = useState<MeetingCaptureProvider>('fathom')
+  const [meetingConnections, setMeetingConnections] = useState<Partial<Record<MeetingCaptureProvider, UserMeetingConnection>>>({})
+  const [meetingIdentifier, setMeetingIdentifier] = useState('')
+  const [fetchedMeeting, setFetchedMeeting] = useState<MeetingArtifact | null>(null)
   const [meetingArtifactId, setMeetingArtifactId] = useState('')
   const [notes, setNotes] = useState('')
   const [decisionText, setDecisionText] = useState('')
@@ -43,11 +71,21 @@ export function CompleteGovernanceEventDialog({
 
   useEffect(() => {
     if (!open || !token) return
-    setLoadingMeetings(true)
-    listMeetingArtifacts(token, { provider: 'fathom', pageSize: 25 })
-      .then(result => setMeetingOptions(result.items))
-      .catch(err => toast.error(err instanceof Error ? err.message : 'Unable to load meeting notes'))
-      .finally(() => setLoadingMeetings(false))
+    let active = true
+    Promise.allSettled([readPersonalFathomConnection(token), readPersonalFirefliesConnection(token)]).then(results => {
+      if (!active) return
+      const nextConnections: Partial<Record<MeetingCaptureProvider, UserMeetingConnection>> = {}
+      const fathom = results[0].status === 'fulfilled' ? results[0].value : null
+      const fireflies = results[1].status === 'fulfilled' ? results[1].value : null
+      if (fathom) nextConnections.fathom = fathom
+      if (fireflies) nextConnections.fireflies = fireflies
+      setMeetingConnections(nextConnections)
+      if (isConnectionReady(fathom)) setMeetingProvider('fathom')
+      else if (isConnectionReady(fireflies)) setMeetingProvider('fireflies')
+    })
+    return () => {
+      active = false
+    }
   }, [open, token])
 
   async function submit(formEvent: FormEvent) {
@@ -101,6 +139,8 @@ export function CompleteGovernanceEventDialog({
   }
 
   function resetForm() {
+    setMeetingIdentifier('')
+    setFetchedMeeting(null)
     setMeetingArtifactId('')
     setNotes('')
     setDecisionText('')
@@ -108,11 +148,46 @@ export function CompleteGovernanceEventDialog({
     setFieldErrors({})
   }
 
-  function useSelectedMeeting() {
-    const meeting = meetingOptions.find(item => item.id === meetingArtifactId)
-    if (!meeting) return
-    if (meeting.summary) setNotes(meeting.summary.replace(/#/g, '').trim())
-    setActionDrafts(meeting.actionItems.map((item, index) => buildActionDraft(item, index)))
+  async function fetchMeetingArtifact() {
+    setFieldErrors(errors => {
+      const next = { ...errors }
+      delete next.identifier
+      delete next.meeting_artifact_id
+      return next
+    })
+    if (!token) {
+      toast.error(`Sign in again before fetching ${meetingProviderCopy[meetingProvider].shortLabel} notes.`)
+      return
+    }
+    if (!meetingIdentifier.trim()) {
+      setFieldErrors(errors => ({ ...errors, identifier: meetingProviderCopy[meetingProvider].missingMessage }))
+      return
+    }
+    setFetchingMeeting(true)
+    try {
+      const resolver = meetingProvider === 'fireflies' ? resolveFirefliesMeeting : resolveFathomMeeting
+      const meeting = await resolver(token, {
+        identifier: meetingIdentifier,
+        accountId: event.accountId,
+        engagementId: event.engagementId ?? null,
+        linkedObjectType: 'governance_event',
+        linkedObjectId: event.id,
+      })
+      setFetchedMeeting(meeting)
+      setMeetingArtifactId(meeting.id)
+      if (meeting.summary) setNotes(meeting.summary.replace(/#/g, '').trim())
+      setActionDrafts(meeting.actionItems.map((item, index) => buildActionDraft(item, index)))
+      toast.success(meetingProviderCopy[meetingProvider].loadedMessage)
+    } catch (err) {
+      if (err instanceof ApiError && err.fieldErrors.length) {
+        setFieldErrors(errors => ({ ...errors, ...normalizeFieldErrors(err.fieldErrors) }))
+        toast.error(err.message)
+      } else {
+        toast.error(err instanceof Error ? err.message : `Unable to fetch ${meetingProviderCopy[meetingProvider].shortLabel} meeting`)
+      }
+    } finally {
+      setFetchingMeeting(false)
+    }
   }
 
   function addActionDraft() {
@@ -152,21 +227,72 @@ export function CompleteGovernanceEventDialog({
             <div className="space-y-2 rounded-lg border border-surface-border bg-surface-tertiary p-3">
               <div className="flex items-center gap-2">
                 <FileText className="h-4 w-4 text-brand-blue" />
-                <p className="text-sm font-semibold text-ink">Fathom meeting</p>
-                {loadingMeetings ? <Loader2 className="h-4 w-4 animate-spin text-brand-blue" /> : null}
+                <p className="text-sm font-semibold text-ink">Meeting import</p>
+                {fetchingMeeting ? <Loader2 className="h-4 w-4 animate-spin text-brand-blue" /> : null}
+              </div>
+              <div className="flex flex-wrap gap-2">
+                {(['fathom', 'fireflies'] as MeetingCaptureProvider[]).map(provider => {
+                  const connection = meetingConnections[provider]
+                  const selected = meetingProvider === provider
+                  return (
+                    <button
+                      key={provider}
+                      type="button"
+                      className={`rounded-full border px-3 py-1.5 text-xs font-bold transition ${selected ? 'border-brand-blue bg-blue-50 text-brand-blue' : 'border-surface-border bg-white text-ink-secondary hover:border-brand-blue/50 hover:text-ink'}`}
+                      onClick={() => {
+                        setMeetingProvider(provider)
+                        setMeetingIdentifier('')
+                        setFetchedMeeting(null)
+                        setMeetingArtifactId('')
+                        setFieldErrors(errors => {
+                          const next = { ...errors }
+                          delete next.identifier
+                          delete next.meeting_artifact_id
+                          return next
+                        })
+                      }}
+                    >
+                      {meetingProviderCopy[provider].shortLabel}
+                      {isConnectionReady(connection) ? <span className="ml-2 text-[10px] uppercase text-rag-green">Connected</span> : null}
+                    </button>
+                  )
+                })}
               </div>
               <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_auto]">
-                <select className="tk-input" value={meetingArtifactId} onChange={item => setMeetingArtifactId(item.target.value)}>
-                  <option value="">No meeting selected</option>
-                  {meetingOptions.map(meeting => (
-                    <option key={meeting.id} value={meeting.id}>{meeting.title}</option>
-                  ))}
-                </select>
-                <button type="button" className="tk-button-secondary" onClick={useSelectedMeeting} disabled={!meetingArtifactId}>
-                  Use notes
+                <input
+                  className="tk-input"
+                  value={meetingIdentifier}
+                  onChange={event => {
+                    setMeetingIdentifier(event.target.value)
+                    setFetchedMeeting(null)
+                    setMeetingArtifactId('')
+                    setFieldErrors(errors => {
+                      if (!errors.identifier) return errors
+                      const next = { ...errors }
+                      delete next.identifier
+                      return next
+                    })
+                  }}
+                  placeholder={meetingProviderCopy[meetingProvider].placeholder}
+                  aria-invalid={Boolean(fieldErrors.identifier)}
+                  aria-describedby={fieldErrors.identifier ? 'governance-meeting-identifier-error' : undefined}
+                />
+                <button type="button" className="tk-button-secondary" onClick={fetchMeetingArtifact} disabled={fetchingMeeting}>
+                  {fetchingMeeting ? <Loader2 className="h-4 w-4 animate-spin" /> : <FileText className="h-4 w-4" />}
+                  Fetch meeting
                 </button>
               </div>
-              <InlineError message={fieldErrors.meeting_artifact_id} />
+              {fetchedMeeting ? (
+                <div className="rounded-md border border-surface-border bg-white px-3 py-2 text-sm text-ink-secondary">
+                  Loaded <span className="font-semibold text-ink">{fetchedMeeting.title}</span>
+                  {fetchedMeeting.sourceLink || fetchedMeeting.meetingUrl ? (
+                    <a className="ml-2 font-semibold text-brand-blue hover:underline" href={fetchedMeeting.sourceLink ?? fetchedMeeting.meetingUrl ?? undefined} target="_blank" rel="noreferrer">
+                      Open in {meetingProviderCopy[fetchedMeeting.provider].shortLabel}
+                    </a>
+                  ) : null}
+                </div>
+              ) : null}
+              <InlineError id="governance-meeting-identifier-error" message={fieldErrors.identifier || fieldErrors.meeting_artifact_id} />
             </div>
             <label className="space-y-1">
               <span className="tk-label text-xs">Completion notes</span>
@@ -235,8 +361,12 @@ function normalizeFieldErrors(errors: ApiFieldError[]) {
   }, {})
 }
 
-function InlineError({ message }: { message?: string }) {
-  return message ? <p className="text-xs font-semibold text-rag-red">{message}</p> : null
+function isConnectionReady(connection: UserMeetingConnection | null | undefined) {
+  return Boolean(connection?.enabled && connection.credentialStatus.configured)
+}
+
+function InlineError({ id, message }: { id?: string; message?: string }) {
+  return message ? <p id={id} className="text-xs font-semibold text-rag-red">{message}</p> : null
 }
 
 function buildActionDraft(title: string, index: number): ActionDraft {

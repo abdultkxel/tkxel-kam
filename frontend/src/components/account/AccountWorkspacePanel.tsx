@@ -1,5 +1,5 @@
 import * as Dialog from '@radix-ui/react-dialog'
-import { ArrowRight, BookOpen, CalendarClock, CheckCircle2, FileText, GraduationCap, Loader2, PenLine, Plus, Send, ShieldAlert, X } from 'lucide-react'
+import { AlertTriangle, ArrowRight, BookOpen, CalendarClock, CheckCircle2, Download, FileSearch, FileText, GraduationCap, Loader2, PenLine, Plus, RefreshCcw, Send, ShieldAlert, UploadCloud, X } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import { FormEvent, useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
@@ -9,11 +9,12 @@ import { CompleteGovernanceEventDialog } from '@/components/governance/CompleteG
 import { Account } from '@/types/account'
 import { useGovernanceStore } from '@/stores/governanceStore'
 import { useV3Store } from '@/stores/v3Store'
-import { RetentionPlan } from '@/types/v3'
+import { RetentionPlan, SourceDocument } from '@/types/v3'
 import { GovernanceEventRecord } from '@/types/governance'
 import { formatDate } from '@/utils/formatters'
 import { useAuth } from '@/contexts/AuthContext'
 import { ContentRecommendation, createSentContent, Escalation, listContentRecommendations, listEscalations, listSentContent, SentContent } from '@/services/contentGovernance'
+import { downloadAccountAttachment, extractAccountAttachment, listAccountAttachments, uploadAccountAttachment } from '@/services/accountWorkspace'
 
 export function AccountWorkspacePanel({ account, tab }: { account: Account; tab: string }) {
   const documents = useV3Store(state => state.sourceDocuments).filter(document => document.accountId === account.id)
@@ -32,22 +33,267 @@ export function AccountWorkspacePanel({ account, tab }: { account: Account; tab:
   if (tab === 'Notes') {
     return <NotesPanel account={account} plans={plans} />
   }
+  return <DocumentsPanel account={account} fallbackDocuments={documents} />
+}
+
+function DocumentsPanel({ account, fallbackDocuments }: { account: Account; fallbackDocuments: SourceDocument[] }) {
+  const { token } = useAuth()
+  const [documents, setDocuments] = useState<SourceDocument[]>([])
+  const [loading, setLoading] = useState(true)
+  const [uploading, setUploading] = useState(false)
+  const [extractingId, setExtractingId] = useState('')
+  const [downloadingId, setDownloadingId] = useState('')
+  const [error, setError] = useState('')
+  const [sourceType, setSourceType] = useState<SourceDocument['type']>('sow')
+  const [isSensitive, setIsSensitive] = useState(false)
+
+  useEffect(() => {
+    if (!token) {
+      setDocuments(fallbackDocuments)
+      setLoading(false)
+      return
+    }
+    let cancelled = false
+    setLoading(true)
+    setError('')
+    const params = new URLSearchParams({ page: '1', page_size: '50', sort: 'uploaded_date', direction: 'desc' })
+    listAccountAttachments(token, account.id, params)
+      .then(page => {
+        if (!cancelled) setDocuments(page.items)
+      })
+      .catch(err => {
+        if (!cancelled) {
+          setDocuments(fallbackDocuments)
+          setError(err instanceof Error ? err.message : 'Source documents could not load')
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [account.id, fallbackDocuments, token])
+
+  async function refreshDocuments() {
+    if (!token) return
+    setLoading(true)
+    setError('')
+    try {
+      const page = await listAccountAttachments(token, account.id, new URLSearchParams({ page: '1', page_size: '50', sort: 'uploaded_date', direction: 'desc' }))
+      setDocuments(page.items)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Source documents could not refresh')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  async function uploadFiles(files: FileList | null) {
+    if (!token || !files?.length) return
+    setUploading(true)
+    setError('')
+    try {
+      const uploaded: SourceDocument[] = []
+      for (const file of Array.from(files)) {
+        uploaded.push(await uploadAccountAttachment(token, account.id, { file, sourceType, isSensitive, extractNow: true }))
+      }
+      setDocuments(current => [...uploaded, ...current.filter(item => !uploaded.some(document => document.id === item.id))])
+      toast.success(uploaded.length === 1 ? 'Source document uploaded and extracted' : `${uploaded.length} source documents uploaded and extracted`)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Source document upload failed')
+    } finally {
+      setUploading(false)
+    }
+  }
+
+  async function extractDocument(document: SourceDocument) {
+    if (!token) return
+    setExtractingId(document.id)
+    setError('')
+    try {
+      await extractAccountAttachment(token, account.id, document.id, true)
+      await refreshDocuments()
+      toast.success('Source document extracted')
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Source document extraction failed')
+    } finally {
+      setExtractingId('')
+    }
+  }
+
+  async function downloadDocument(document: SourceDocument) {
+    if (!token) return
+    setDownloadingId(document.id)
+    setError('')
+    try {
+      await downloadAccountAttachment(token, account.id, document)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Source document download failed')
+    } finally {
+      setDownloadingId('')
+    }
+  }
+
   return (
-    <WorkspaceList
-      icon={FileText}
-      eyebrow="Source evidence"
-      title="Documents and citations"
-      description="Charters, SOWs, extraction citations, and confidence signals used by Account Overview."
-      action={{ label: 'Upload source', to: '/accounts/onboarding' }}
-      accountName={account.name}
-      items={documents.map(document => ({
-        title: document.name,
-        detail: document.citations[0]?.excerpt ?? 'No citation available yet.',
-        meta: [document.type.replace('_', ' '), `${document.confidence}% confidence`],
-        tone: document.confidence >= 80 ? 'green' : 'orange',
-      }))}
-    />
+    <section className="tk-card overflow-hidden">
+      <header className="border-b border-surface-border bg-surface-secondary p-5">
+        <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+          <div className="min-w-0">
+            <div className="flex items-center gap-2">
+              <span className="flex h-10 w-10 items-center justify-center rounded-lg bg-blue-tint-20 text-brand-blue">
+                <FileText className="h-5 w-5" />
+              </span>
+              <div>
+                <p className="text-[10px] font-extrabold uppercase tracking-widest text-brand-blue">Source evidence</p>
+                <h3 className="text-base font-semibold text-ink">Documents and citations</h3>
+              </div>
+            </div>
+            <p className="mt-3 max-w-3xl text-sm leading-6 text-ink-secondary">
+              Upload real SOW, charter, PDF, DOCX, or text files here. Extracted chunks are used by AI KYC retrieval for reference-depth KYC drafts.
+            </p>
+          </div>
+          <button type="button" className="tk-button-secondary shrink-0 bg-white" onClick={refreshDocuments} disabled={loading || uploading}>
+            {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCcw className="h-4 w-4" />}
+            Refresh
+          </button>
+        </div>
+      </header>
+
+      <div className="grid gap-5 p-5 xl:grid-cols-[minmax(0,1fr)_320px]">
+        <div className="grid gap-3">
+          {error ? (
+            <div className="flex items-start gap-2 rounded-lg border border-rag-red/20 bg-rag-red/10 p-3 text-sm text-rag-red">
+              <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+              <span>{error}</span>
+            </div>
+          ) : null}
+          {loading ? <DocumentsLoading /> : null}
+          {!loading && documents.length ? documents.map(document => (
+            <article key={document.id} className="rounded-lg border border-surface-border bg-white p-4 transition-colors hover:border-brand-blue/40">
+              <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+                <div className="min-w-0">
+                  <h4 className="text-sm font-semibold text-ink">{document.name}</h4>
+                  <p className="mt-1 max-w-3xl text-sm leading-6 text-ink-secondary">
+                    {document.citations[0]?.excerpt || document.extractionError || extractionDescription(document)}
+                  </p>
+                </div>
+                <StatusBadge tone={document.status === 'parsed' ? 'green' : document.extractionError ? 'red' : 'orange'} label={document.extractionStatus?.replace(/_/g, ' ') || document.status.replace(/_/g, ' ')} />
+              </div>
+              <div className="mt-3 flex flex-wrap gap-2">
+                <DocumentMeta value={document.type.replace(/_/g, ' ')} />
+                <DocumentMeta value={`${document.confidence}% confidence`} />
+                <DocumentMeta value={`${document.pages || 0} page${document.pages === 1 ? '' : 's'}`} />
+                {document.sizeBytes ? <DocumentMeta value={formatBytes(document.sizeBytes)} /> : null}
+                {document.ocrStatus ? <DocumentMeta value={`OCR ${document.ocrStatus.replace(/_/g, ' ')}`} /> : null}
+                {document.extractedTextChecksum ? <DocumentMeta value="Text extracted" /> : null}
+              </div>
+              {document.fileName || document.status !== 'parsed' || document.extractionError ? (
+                <div className="mt-4 flex flex-wrap justify-end gap-2">
+                  {document.fileName ? (
+                    <button type="button" className="tk-button-secondary bg-white" onClick={() => void downloadDocument(document)} disabled={Boolean(downloadingId)}>
+                      {downloadingId === document.id ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}
+                      Download
+                    </button>
+                  ) : null}
+                  {document.status !== 'parsed' || document.extractionError ? (
+                    <button type="button" className="tk-button-secondary bg-white" onClick={() => void extractDocument(document)} disabled={Boolean(extractingId)}>
+                      {extractingId === document.id ? <Loader2 className="h-4 w-4 animate-spin" /> : <FileSearch className="h-4 w-4" />}
+                      Extract text
+                    </button>
+                  ) : null}
+                </div>
+              ) : null}
+            </article>
+          )) : null}
+          {!loading && !documents.length ? (
+            <div className="rounded-lg border border-dashed border-surface-border bg-surface-secondary p-6">
+              <div className="flex items-start gap-3">
+                <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-white text-brand-blue">
+                  <FileText className="h-5 w-5" />
+                </span>
+                <div>
+                  <h4 className="text-sm font-semibold text-ink">No source documents yet</h4>
+                  <p className="mt-1 max-w-xl text-sm leading-6 text-ink-secondary">Upload the client SOW, project charter, or reference attachments before creating a full KYC draft.</p>
+                </div>
+              </div>
+            </div>
+          ) : null}
+        </div>
+
+        <aside className="rounded-lg border border-surface-border bg-white p-4">
+          <p className="text-[10px] font-extrabold uppercase tracking-widest text-brand-blue">Upload source</p>
+          <div className="mt-4 grid gap-3">
+            <label className="space-y-1">
+              <span className="text-xs font-semibold uppercase tracking-wider text-ink-secondary">Source type</span>
+              <select className="tk-input" value={sourceType} onChange={event => setSourceType(event.target.value as SourceDocument['type'])} disabled={uploading}>
+                <option value="sow">SOW</option>
+                <option value="project_charter">Project charter</option>
+                <option value="attachment">Attachment</option>
+                <option value="commercial_note">Commercial note</option>
+                <option value="research">Research</option>
+              </select>
+            </label>
+            <label className="flex min-h-[132px] cursor-pointer flex-col items-center justify-center rounded-lg border border-dashed border-brand-blue/40 bg-surface-secondary p-4 text-center transition-colors hover:bg-blue-tint-20">
+              {uploading ? <Loader2 className="h-6 w-6 animate-spin text-brand-blue" /> : <UploadCloud className="h-6 w-6 text-brand-blue" />}
+              <span className="mt-2 text-sm font-semibold text-ink">{uploading ? 'Uploading and extracting...' : 'Upload PDF, DOCX, TXT, or CSV'}</span>
+              <span className="mt-1 text-xs leading-5 text-ink-secondary">Files are stored locally, extracted, chunked, and used in the next AI KYC run.</span>
+              <input
+                type="file"
+                multiple
+                className="sr-only"
+                accept=".pdf,.docx,.txt,.csv"
+                disabled={uploading}
+                onChange={event => {
+                  void uploadFiles(event.target.files)
+                  event.target.value = ''
+                }}
+              />
+            </label>
+            <label className="flex items-start gap-2 rounded-lg border border-surface-border p-3 text-sm text-ink-secondary">
+              <input type="checkbox" className="mt-1" checked={isSensitive} onChange={event => setIsSensitive(event.target.checked)} disabled={uploading} />
+              <span>Restrict this source to roles allowed to view sensitive KYC context.</span>
+            </label>
+          </div>
+          <div className="mt-4 flex items-start gap-2 rounded-lg bg-blue-tint-20 p-3 text-sm leading-6 text-brand-blue">
+            <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0" />
+            <span>After upload, go to KYC and create a new draft so Qwen reads the extracted document chunks.</span>
+          </div>
+        </aside>
+      </div>
+    </section>
   )
+}
+
+function DocumentsLoading() {
+  return (
+    <div className="rounded-lg border border-surface-border bg-white p-4">
+      <div className="flex items-center gap-3 text-sm font-semibold text-ink-secondary">
+        <Loader2 className="h-4 w-4 animate-spin text-brand-blue" />
+        Loading source documents
+      </div>
+    </div>
+  )
+}
+
+function DocumentMeta({ value }: { value: string }) {
+  return (
+    <span className="rounded-full bg-surface-secondary px-2.5 py-1 text-[11px] font-semibold uppercase tracking-wider text-ink-secondary">
+      {value}
+    </span>
+  )
+}
+
+function extractionDescription(document: SourceDocument) {
+  if (document.status === 'parsed') return 'Extracted text is available for AI KYC retrieval.'
+  if (document.extractionStatus === 'queued' || document.extractionStatus === 'running') return 'Text extraction is in progress.'
+  return 'Text extraction is needed before this source can provide full KYC context.'
+}
+
+function formatBytes(value: number) {
+  if (value < 1024) return `${value} B`
+  if (value < 1024 * 1024) return `${(value / 1024).toFixed(1)} KB`
+  return `${(value / (1024 * 1024)).toFixed(1)} MB`
 }
 
 function GovernanceAccountPanel({ account, governance }: { account: Account; governance: GovernanceEventRecord[] }) {

@@ -9,7 +9,7 @@ from sqlalchemy.pool import StaticPool
 
 from app.database import Base, get_db
 from app.main import app
-from app.models import Account, AccountChangeAlert, AccountOwner, CustomFieldDefinition, Engagement, NotificationRecord, Signal, SlaEscalatedItem, Task
+from app.models import Account, AccountChangeAlert, AccountOwner, CustomFieldDefinition, Engagement, GovernanceEvent, NotificationRecord, Signal, SlaEscalatedItem, Task
 from app.services.seed import seed_default_data
 
 
@@ -234,7 +234,14 @@ def test_dashboard_digest_and_report_workflows(client: TestClient, db_session: S
     assert current_dashboard.json()["dashboard"] == "kam_head_portfolio"
     assert current_dashboard.json()["role_group"] == "admin"
     admin_keys = [item["key"] for item in current_dashboard.json()["widgets"]]
-    assert admin_keys[:8] == ["summary", "account_portfolio", "high_risk_accounts", "signals", "escalations", "governance", "governance_calendar", "health_distribution"]
+    assert admin_keys[:6] == ["summary", "forecast_chart", "account_portfolio", "high_risk_accounts", "critical_tasks", "governance_calendar"]
+    assert "governance" not in admin_keys
+    assert "governance_cadence" not in admin_keys
+    assert "health_distribution" not in admin_keys
+    assert "escalations" not in admin_keys
+    assert "account_change_alerts" not in admin_keys
+    assert "decision_queue" not in admin_keys
+    assert "sla_compliance" not in admin_keys
     assert "admin_system" in admin_keys
     admin_widget = next(item for item in current_dashboard.json()["widgets"] if item["key"] == "admin_system")
     assert admin_widget["value"]["failed_notifications"] == 1
@@ -246,7 +253,9 @@ def test_dashboard_digest_and_report_workflows(client: TestClient, db_session: S
     dashboard = client.get("/api/dashboards/am-home", headers=admin_headers)
     assert dashboard.status_code == 200
     widget_keys = {item["key"] for item in dashboard.json()["widgets"]}
-    assert "ai_task_summary" in widget_keys
+    assert "tasks" in widget_keys
+    assert "ai_task_summary" not in widget_keys
+    assert "forecast_chart" in widget_keys
 
     refresh = client.post("/api/dashboards/am-home/task-summary/refresh", headers=admin_headers)
     assert refresh.status_code == 200
@@ -285,17 +294,118 @@ def test_role_based_dashboard_profiles_and_reduced_direct_endpoints(client: Test
     owner = seeded_user(client, admin_headers, "account_manager")
     account = create_owned_account(db_session, owner, "role-dashboard-account")
     alert = create_account_change_alert(db_session, account, owner)
+    now = datetime.now(timezone.utc)
+    db_session.add_all(
+        [
+            Task(
+                account_id=account.id,
+                title="Open account follow-up",
+                owner_id=owner["id"],
+                owner_name=owner["full_name"],
+                due_at=now + timedelta(days=2),
+                status="open",
+                priority="medium",
+                created_by_id=owner["id"],
+            ),
+            Task(
+                account_id=account.id,
+                title="Overdue blocker",
+                owner_id=owner["id"],
+                owner_name=owner["full_name"],
+                due_at=now - timedelta(days=1),
+                status="in_progress",
+                priority="critical",
+                created_by_id=owner["id"],
+            ),
+            Signal(
+                account_id=account.id,
+                signal_type="weak_metric",
+                severity="critical",
+                status="new",
+                owner_id=owner["id"],
+                owner_name=owner["full_name"],
+                title="Critical relationship signal",
+                detail="Relationship health dropped below threshold.",
+                due_at=now + timedelta(days=1),
+                created_at=now,
+                updated_at=now,
+            ),
+            GovernanceEvent(
+                account_id=account.id,
+                owner_id=owner["id"],
+                owner_name=owner["full_name"],
+                governance_type="QBR",
+                deduplication_key="role-dashboard-qbr",
+                scheduled_at=now + timedelta(days=5),
+                status="scheduled",
+                created_by_id=owner["id"],
+                created_by_name=owner["full_name"],
+            ),
+        ]
+    )
+    supporting_account = create_owned_account(db_session, owner, "supporting-workload-account")
+    for assignment in supporting_account.owners:
+        assignment.ownership_role = "supporting_am"
+        assignment.is_primary = False
+    db_session.commit()
+    removed_dashboard_widgets = {
+        "stale_kyc",
+        "renewal_focus",
+        "governance",
+        "governance_cadence",
+        "health_distribution",
+        "strategic_health",
+        "escalations",
+        "major_escalations",
+        "account_change_alerts",
+        "decision_queue",
+        "sla_compliance",
+    }
+
+    admin_dashboard = client.get("/api/dashboards/me", headers=admin_headers)
+    assert admin_dashboard.status_code == 200
+    admin_keys = {item["key"] for item in admin_dashboard.json()["widgets"]}
+    assert removed_dashboard_widgets.isdisjoint(admin_keys)
 
     owner_headers = auth_headers(client, owner["email"], "User@12345")
-    am_dashboard = client.get("/api/dashboards/me", headers=owner_headers)
+    am_dashboard = client.get("/api/dashboards/me", headers=owner_headers, params={"page_size": 50})
     assert am_dashboard.status_code == 200
     assert am_dashboard.json()["dashboard"] == "am_home"
     assert am_dashboard.json()["role_group"] == "account_manager"
     assert "leadership" not in {item["key"] for item in am_dashboard.json()["widgets"]}
-    am_keys = {item["key"] for item in am_dashboard.json()["widgets"]}
-    assert "ai_task_summary" in am_keys
-    assert "forecast_chart" not in am_keys
+    am_keys = [item["key"] for item in am_dashboard.json()["widgets"]]
+    assert am_keys == ["summary", "account_portfolio", "critical_tasks", "tasks", "opportunities", "forecast_chart", "governance_calendar"]
+    assert "ai_task_summary" not in am_keys
+    assert removed_dashboard_widgets.isdisjoint(am_keys)
+    assert "forecast_chart" in am_keys
     assert "governance_calendar" in am_keys
+    summary = next(item for item in am_dashboard.json()["widgets"] if item["key"] == "summary")
+    assert [tile["label"] for tile in summary["metadata"]["tiles"]] == ["My Accounts", "At risk", "Critical tasks", "Open tasks"]
+    assert summary["metadata"]["tiles"][1]["route"] == "/accounts?risk=at_risk"
+    assert summary["metadata"]["tiles"][0]["route"] == "/accounts"
+    critical_tasks = next(item for item in am_dashboard.json()["widgets"] if item["key"] == "critical_tasks")
+    critical_task_titles = {item["title"] for item in critical_tasks["items"]}
+    assert "Overdue blocker" in critical_task_titles
+    assert "Critical relationship signal" not in critical_task_titles
+    assert critical_tasks["metadata"]["source_counts"]["critical_tasks"] >= 1
+    tasks = next(item for item in am_dashboard.json()["widgets"] if item["key"] == "tasks")
+    assert tasks["value"]["open"] == 1
+    assert tasks["value"]["in_progress"] == 1
+    assert tasks["value"]["overdue"] == 1
+    assert tasks["value"]["due_this_week"] == 1
+    opportunities = next(item for item in am_dashboard.json()["widgets"] if item["key"] == "opportunities")
+    assert opportunities["title"] == "Opportunities & pipeline"
+    assert opportunities["metadata"]["masked"] is False
+    assert opportunities["value"]["stalled"] == 0
+    governance_calendar = next(item for item in am_dashboard.json()["widgets"] if item["key"] == "governance_calendar")
+    assert governance_calendar["items"][0]["route"] == f"/accounts/{account.id}?tab=governance"
+    am_forecast = next(item for item in am_dashboard.json()["widgets"] if item["key"] == "forecast_chart")
+    assert am_forecast["title"] == "6-Month Revenue Forecast"
+    assert am_forecast["data_scope"] == "assigned_accounts"
+    assert am_forecast["metadata"]["chart_type"] == "line"
+    assert am_forecast["metadata"]["masked"] is False
+    assert len(am_forecast["value"]["points"]) == 6
+    assert isinstance(am_forecast["value"]["points"][0]["forecast_revenue"], (int, float))
 
     kam_head = seeded_user(client, admin_headers, "kam_head")
     kam_headers = auth_headers(client, kam_head["email"], "User@12345")
@@ -304,17 +414,30 @@ def test_role_based_dashboard_profiles_and_reduced_direct_endpoints(client: Test
     assert kam_dashboard.json()["dashboard"] == "kam_head_portfolio"
     assert kam_dashboard.json()["role_group"] == "kam_head"
     kam_keys = [item["key"] for item in kam_dashboard.json()["widgets"]]
-    assert "forecast_chart" not in kam_keys
+    assert removed_dashboard_widgets.isdisjoint(kam_keys)
+    assert "forecast_chart" in kam_keys
     assert "governance_calendar" in kam_keys
-    alert_widget = next(item for item in kam_dashboard.json()["widgets"] if item["key"] == "account_change_alerts")
-    assert alert_widget["items"][0]["id"] == alert.id
-    assert alert_widget["items"][0]["account_name"] == account.name
+    kam_forecast = next(item for item in kam_dashboard.json()["widgets"] if item["key"] == "forecast_chart")
+    assert kam_forecast["data_scope"] == "portfolio"
+    assert kam_forecast["metadata"]["masked"] is False
+    assert len(kam_forecast["value"]["points"]) == 6
+    workload_widget = next(item for item in kam_dashboard.json()["widgets"] if item["key"] == "am_workload")
+    owner_workload = next(item for item in workload_widget["items"] if item["owner_id"] == owner["id"])
+    assert owner_workload["accounts"] >= 2
+    assert owner_workload["route"] == f"/accounts?primary_am={owner['id']}"
+    high_risk = next(item for item in kam_dashboard.json()["widgets"] if item["key"] == "high_risk_accounts")
+    high_risk_account = next(item for item in high_risk["items"] if item["account_id"] == account.id)
+    assert high_risk_account["route"] == f"/accounts/{account.id}?tab=health"
+    assert "Critical risk status" in high_risk_account["risk_reason"]
+    assert "below the critical threshold of 60" in high_risk_account["risk_reason"]
 
     reduced = client.get("/api/dashboards/leadership", headers=kam_headers)
     assert reduced.status_code == 200
     assert reduced.json()["dashboard"] == "kam_head_portfolio"
     assert reduced.json()["metadata"]["requested_dashboard"] == "leadership"
     assert reduced.json()["metadata"]["reduced_scope"] is True
+    reduced_keys = {item["key"] for item in reduced.json()["widgets"]}
+    assert removed_dashboard_widgets.isdisjoint(reduced_keys)
 
     leader = seeded_user(client, admin_headers, "leadership_viewer")
     leader_headers = auth_headers(client, leader["email"], "User@12345")
@@ -324,16 +447,22 @@ def test_role_based_dashboard_profiles_and_reduced_direct_endpoints(client: Test
     assert leader_dashboard.json()["read_only"] is True
     leader_keys = {item["key"] for item in leader_dashboard.json()["widgets"]}
     assert "growth" not in leader_keys
+    assert removed_dashboard_widgets.isdisjoint(leader_keys)
     assert "opportunities" in leader_keys
     assert "governance_calendar" in leader_keys
     forecast = next(item for item in leader_dashboard.json()["widgets"] if item["key"] == "forecast_chart")
+    assert forecast["title"] == "6-Month Revenue Forecast"
+    assert forecast["metadata"]["chart_type"] == "line"
     assert forecast["value"]["pipeline_value"] == "Restricted"
+    assert forecast["value"]["weighted_forecast"] == "Restricted"
+    assert forecast["value"]["points"][0]["forecast_revenue"] == "Restricted"
+    assert forecast["value"]["summary"] == "Forecast calculated with the shared KAM AI logic. Commercial values are restricted for this role."
     opportunities = next(item for item in leader_dashboard.json()["widgets"] if item["key"] == "opportunities")
     assert opportunities["metadata"]["masked"] is True
     summaries = next(item for item in leader_dashboard.json()["widgets"] if item["key"] == "executive_summaries")
-    assert summaries["items"][0]["account_id"] == account.id
-    assert summaries["items"][0]["health_score"] == account.health_overall
-    assert "summary" not in summaries["items"][0]
+    account_summary = next(item for item in summaries["items"] if item["account_id"] == account.id)
+    assert account_summary["health_score"] == account.health_overall
+    assert "summary" not in account_summary
 
 
 def test_delivery_lead_dashboard_and_system_role_protection(client: TestClient, db_session: Session) -> None:
@@ -390,7 +519,10 @@ def test_delivery_lead_dashboard_and_system_role_protection(client: TestClient, 
     assert body["dashboard"] == "delivery"
     assert body["role_group"] == "delivery_lead"
     widget_keys = {item["key"] for item in body["widgets"]}
-    assert {"tasks", "signals", "escalations", "governance", "governance_calendar", "engagement_health"}.issubset(widget_keys)
+    assert {"tasks", "signals", "governance_calendar", "engagement_health"}.issubset(widget_keys)
+    assert "escalations" not in widget_keys
+    assert "decision_queue" not in widget_keys
+    assert "governance" not in widget_keys
     engagement_health = next(item for item in body["widgets"] if item["key"] == "engagement_health")
     assert engagement_health["items"][0]["delivery_health"] == 48
 

@@ -6,6 +6,7 @@ frontend/.env.local
 backend/.venv/
 backend/.env
 backend/storage/
+.scannerwork/
 __pycache__/
 backend/.pytest_cache/
 *.py[cod]

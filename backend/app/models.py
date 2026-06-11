@@ -213,9 +213,11 @@ class Account(Base):
     __tablename__ = "accounts"
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid4()))
+    account_number: Mapped[int | None] = mapped_column(Integer, unique=True, index=True, nullable=True)
     name: Mapped[str] = mapped_column(String(180), index=True, nullable=False)
     project_name: Mapped[str | None] = mapped_column(String(180), nullable=True)
     company_url: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    linkedin_url: Mapped[str | None] = mapped_column(String(500), nullable=True)
     segment: Mapped[str] = mapped_column(String(80), index=True, nullable=False, default="Growth")
     region: Mapped[str | None] = mapped_column(String(80), index=True, nullable=True)
     lifecycle_status: Mapped[str] = mapped_column(String(80), index=True, nullable=False, default="Draft")
@@ -340,6 +342,7 @@ class OnboardingDraft(Base):
     account_name: Mapped[str] = mapped_column(String(180), index=True, nullable=False)
     project_name: Mapped[str | None] = mapped_column(String(180), nullable=True)
     company_url: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    linkedin_url: Mapped[str | None] = mapped_column(String(500), nullable=True)
     lifecycle_status: Mapped[str] = mapped_column(String(80), index=True, nullable=False, default="Draft")
     segment: Mapped[str] = mapped_column(String(80), index=True, nullable=False, default="Growth")
     region: Mapped[str | None] = mapped_column(String(80), index=True, nullable=True)
@@ -438,6 +441,15 @@ class SourceDocument(Base):
     extractions: Mapped[list["SourceDocumentExtraction"]] = relationship(back_populates="source_document", cascade="all, delete-orphan")
     chunks: Mapped[list["SourceDocumentChunk"]] = relationship(back_populates="source_document", cascade="all, delete-orphan")
 
+    @property
+    def extracted_text(self) -> str | None:
+        completed = [item for item in self.extractions if item.status == "completed" and (item.raw_text or item.normalized_text)]
+        candidates = completed or [item for item in self.extractions if item.raw_text or item.normalized_text]
+        if not candidates:
+            return None
+        latest = sorted(candidates, key=lambda item: item.completed_at or item.created_at, reverse=True)[0]
+        return latest.raw_text or latest.normalized_text
+
 
 class SourceCitation(Base):
     __tablename__ = "source_citations"
@@ -448,6 +460,7 @@ class SourceCitation(Base):
     page_number: Mapped[int | None] = mapped_column(Integer, nullable=True)
     excerpt: Mapped[str] = mapped_column(Text, nullable=False)
     field_key: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    confidence: Mapped[int] = mapped_column(Integer, nullable=False, default=75)
 
     source_document: Mapped[SourceDocument] = relationship(back_populates="citations")
 
@@ -472,6 +485,26 @@ class SourceDocumentExtraction(Base):
 
     source_document: Mapped[SourceDocument] = relationship(back_populates="extractions")
     chunks: Mapped[list["SourceDocumentChunk"]] = relationship(back_populates="extraction", cascade="all, delete-orphan")
+
+
+class DocumentExtraction(Base):
+    __tablename__ = "document_extractions"
+    __table_args__ = (UniqueConstraint("document_id", "page_number", "checksum", name="uq_document_extractions_document_page_checksum"),)
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid4()))
+    document_id: Mapped[str] = mapped_column(ForeignKey("source_documents.id", ondelete="CASCADE"), index=True, nullable=False)
+    extraction_id: Mapped[str | None] = mapped_column(ForeignKey("source_document_extractions.id", ondelete="CASCADE"), index=True, nullable=True)
+    raw_text: Mapped[str] = mapped_column(Text, nullable=False)
+    page_number: Mapped[int] = mapped_column(Integer, index=True, nullable=False, default=1)
+    source_file: Mapped[str] = mapped_column(String(255), index=True, nullable=False)
+    checksum: Mapped[str] = mapped_column(String(64), index=True, nullable=False)
+    extractor_name: Mapped[str] = mapped_column(String(120), nullable=False, default="local-document-extractor")
+    extractor_version: Mapped[str] = mapped_column(String(40), nullable=False, default="v1")
+    metadata_json: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utc_now)
+
+    source_document: Mapped[SourceDocument] = relationship()
+    extraction: Mapped[SourceDocumentExtraction | None] = relationship()
 
 
 class SourceDocumentChunk(Base):
@@ -524,6 +557,7 @@ class KycDraft(Base):
     conflicts: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
     difference_summary: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
     source_context: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    detailed_description: Mapped[str] = mapped_column(Text, nullable=False, default="")
     confidence: Mapped[int] = mapped_column(Integer, nullable=False, default=75)
     completeness: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     source_coverage: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
@@ -570,6 +604,7 @@ class KycSnapshot(Base):
     fields_json: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
     citations_json: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
     source_context: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    detailed_description: Mapped[str] = mapped_column(Text, nullable=False, default="")
     source_document_ids: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
     research_sources: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
     confidence: Mapped[int] = mapped_column(Integer, nullable=False, default=75)
@@ -608,6 +643,7 @@ class KycAgentRun(Base):
     provider_json: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
     usage_json: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
     cost_json: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    detailed_description: Mapped[str] = mapped_column(Text, nullable=False, default="")
     provider_response_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
     model_name: Mapped[str | None] = mapped_column(String(160), nullable=True)
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
@@ -786,6 +822,7 @@ class Stakeholder(Base):
     company: Mapped[str | None] = mapped_column(String(180), nullable=True)
     email: Mapped[str | None] = mapped_column(String(255), nullable=True)
     phone: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    linkedin_url: Mapped[str | None] = mapped_column(String(500), nullable=True)
     role: Mapped[str] = mapped_column(String(80), index=True, nullable=False)
     influence: Mapped[str] = mapped_column(String(40), nullable=False, default="medium")
     relationship_strength: Mapped[str] = mapped_column(String(40), nullable=False, default="unknown")
@@ -1910,10 +1947,28 @@ class NotificationTriggerConfig(Base):
     trigger: Mapped[str] = mapped_column(String(120), index=True, nullable=False)
     label: Mapped[str] = mapped_column(String(160), nullable=False)
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    workflow: Mapped[str] = mapped_column(String(80), index=True, nullable=False, default="general")
+    priority: Mapped[str] = mapped_column(String(40), index=True, nullable=False, default="medium")
+    recipient_policy: Mapped[str] = mapped_column(String(120), nullable=False, default="explicit")
+    action_label: Mapped[str | None] = mapped_column(String(120), nullable=True)
     default_mode: Mapped[str] = mapped_column(String(40), nullable=False, default="in_app")
     default_digest_cadence: Mapped[str] = mapped_column(String(40), nullable=False, default="daily")
     supported_channels: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
     mandatory: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    timing_mode: Mapped[str] = mapped_column(String(40), nullable=False, default="immediate")
+    timing_unit: Mapped[str] = mapped_column(String(40), nullable=False, default="business_days")
+    lead_time_value: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    lead_time_direction: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    pending_threshold_value: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    repeat_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    repeat_every_value: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    repeat_limit: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    escalation_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    escalation_after_value: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    escalation_recipient_policy: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    quiet_hours_start: Mapped[str | None] = mapped_column(String(10), nullable=True)
+    quiet_hours_end: Mapped[str | None] = mapped_column(String(10), nullable=True)
+    template_json: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
     is_active: Mapped[bool] = mapped_column(Boolean, index=True, nullable=False, default=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utc_now)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utc_now, onupdate=utc_now)
@@ -1942,6 +1997,7 @@ class NotificationRecord(Base):
     recipient_name: Mapped[str] = mapped_column(String(160), nullable=False)
     recipient_email: Mapped[str | None] = mapped_column(String(255), nullable=True)
     trigger: Mapped[str] = mapped_column(String(120), index=True, nullable=False)
+    workflow: Mapped[str | None] = mapped_column(String(80), index=True, nullable=True)
     title: Mapped[str] = mapped_column(String(220), nullable=False)
     body: Mapped[str] = mapped_column(Text, nullable=False)
     account_id: Mapped[str | None] = mapped_column(ForeignKey("accounts.id", ondelete="SET NULL"), index=True, nullable=True)
@@ -1950,6 +2006,7 @@ class NotificationRecord(Base):
     source_record_id: Mapped[str | None] = mapped_column(String(36), index=True, nullable=True)
     source_record_route: Mapped[str | None] = mapped_column(String(500), nullable=True)
     priority: Mapped[str] = mapped_column(String(40), index=True, nullable=False, default="medium")
+    action_label: Mapped[str | None] = mapped_column(String(120), nullable=True)
     channel: Mapped[str] = mapped_column(String(40), index=True, nullable=False, default="in_app")
     delivery_status: Mapped[str] = mapped_column(String(40), index=True, nullable=False, default="queued")
     delivery_metadata_json: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
@@ -1958,6 +2015,7 @@ class NotificationRecord(Base):
     retry_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
     read_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), index=True, nullable=True)
+    archived_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), index=True, nullable=True)
     delivered_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True, nullable=False, default=utc_now)
 
@@ -2590,3 +2648,95 @@ class AiGatewayRun(Base):
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
     affected_records_json: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True, nullable=False, default=utc_now)
+
+
+class KamAiChatSession(Base):
+    __tablename__ = "kam_ai_chat_sessions"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid4()))
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True, nullable=False)
+    title: Mapped[str] = mapped_column(String(220), nullable=False, default="New KAM AI chat")
+    account_id: Mapped[str | None] = mapped_column(ForeignKey("accounts.id", ondelete="SET NULL"), index=True, nullable=True)
+    scope_json: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    status: Mapped[str] = mapped_column(String(40), index=True, nullable=False, default="active")
+    last_message_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), index=True, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utc_now, onupdate=utc_now)
+    archived_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    user: Mapped[User] = relationship()
+    account: Mapped[Account | None] = relationship()
+    messages: Mapped[list["KamAiChatMessage"]] = relationship(back_populates="session", cascade="all, delete-orphan")
+
+
+class KamAiChatMessage(Base):
+    __tablename__ = "kam_ai_chat_messages"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid4()))
+    session_id: Mapped[str] = mapped_column(ForeignKey("kam_ai_chat_sessions.id", ondelete="CASCADE"), index=True, nullable=False)
+    role: Mapped[str] = mapped_column(String(40), index=True, nullable=False)
+    content: Mapped[str] = mapped_column(Text, nullable=False)
+    status: Mapped[str] = mapped_column(String(40), index=True, nullable=False, default="complete")
+    intent: Mapped[str | None] = mapped_column(String(80), index=True, nullable=True)
+    confidence: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    model_provider: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    model_name: Mapped[str | None] = mapped_column(String(160), nullable=True)
+    token_usage_json: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    metadata_json: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    ai_gateway_run_id: Mapped[str | None] = mapped_column(ForeignKey("ai_gateway_runs.id", ondelete="SET NULL"), index=True, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True, nullable=False, default=utc_now)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    session: Mapped[KamAiChatSession] = relationship(back_populates="messages")
+    sources: Mapped[list["KamAiChatMessageSource"]] = relationship(back_populates="message", cascade="all, delete-orphan")
+    ai_gateway_run: Mapped[AiGatewayRun | None] = relationship()
+
+
+class KamAiChatMessageSource(Base):
+    __tablename__ = "kam_ai_chat_message_sources"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid4()))
+    message_id: Mapped[str] = mapped_column(ForeignKey("kam_ai_chat_messages.id", ondelete="CASCADE"), index=True, nullable=False)
+    account_id: Mapped[str | None] = mapped_column(ForeignKey("accounts.id", ondelete="SET NULL"), index=True, nullable=True)
+    account_name: Mapped[str | None] = mapped_column(String(180), nullable=True)
+    source_type: Mapped[str] = mapped_column(String(80), index=True, nullable=False)
+    source_record_id: Mapped[str] = mapped_column(String(80), index=True, nullable=False)
+    title: Mapped[str] = mapped_column(String(220), nullable=False)
+    excerpt: Mapped[str] = mapped_column(Text, nullable=False)
+    source_route: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    relevance_score: Mapped[float] = mapped_column(Float, nullable=False, default=0)
+    citation_index: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    metadata_json: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utc_now)
+
+    message: Mapped[KamAiChatMessage] = relationship(back_populates="sources")
+    account: Mapped[Account | None] = relationship()
+
+
+class KamAiSourceChunk(Base):
+    __tablename__ = "kam_ai_source_chunks"
+    __table_args__ = (UniqueConstraint("account_id", "source_type", "source_record_id", "chunk_hash", name="uq_kam_ai_source_chunks_identity"),)
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid4()))
+    account_id: Mapped[str] = mapped_column(ForeignKey("accounts.id", ondelete="CASCADE"), index=True, nullable=False)
+    source_type: Mapped[str] = mapped_column(String(80), index=True, nullable=False)
+    source_record_id: Mapped[str] = mapped_column(String(80), index=True, nullable=False)
+    source_route: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    title: Mapped[str] = mapped_column(String(220), nullable=False)
+    chunk_text: Mapped[str] = mapped_column(Text, nullable=False)
+    chunk_hash: Mapped[str] = mapped_column(String(64), index=True, nullable=False)
+    embedding_json: Mapped[list | None] = mapped_column(JSON, nullable=True)
+    embedding_provider: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    embedding_model: Mapped[str | None] = mapped_column(String(160), nullable=True)
+    embedding_dimensions: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    sensitivity_level: Mapped[str] = mapped_column(String(40), index=True, nullable=False, default="standard")
+    permission_module: Mapped[str | None] = mapped_column(String(120), index=True, nullable=True)
+    permission_action: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    source_trust_score: Mapped[int] = mapped_column(Integer, nullable=False, default=50)
+    metadata_json: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utc_now, onupdate=utc_now)
+    deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    account: Mapped[Account] = relationship()

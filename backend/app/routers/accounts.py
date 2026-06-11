@@ -2,6 +2,7 @@ from datetime import datetime
 from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends, File, Form, Query, UploadFile, status
+from fastapi.responses import FileResponse
 
 from app.dependencies import get_account_service, get_current_user, get_custom_field_service, get_engagement_service, get_onboarding_service, require_permission
 from app.models import User
@@ -36,12 +37,12 @@ from app.services.engagements import EngagementService
 from app.services.onboarding import OnboardingService
 
 Direction = Literal["asc", "desc"]
-AccountSort = Literal["name", "lifecycle_status", "risk_status", "owner_name", "segment", "commercial_value", "health", "next_governance_at", "updated_at"]
+AccountSort = Literal["account_number", "name", "lifecycle_status", "risk_status", "owner_name", "segment", "commercial_value", "health", "next_governance_at", "updated_at"]
 AttachmentSort = Literal["uploaded_date", "source_type", "name"]
 SensitivityFilter = Literal["sensitive", "standard"]
 EngagementSort = Literal["renewal_date", "end_date", "value", "delivery_status", "updated_date"]
 RenewalWindow = Literal["next_30", "next_60", "next_90", "expired", "notice_due", "missing"]
-RiskFilter = Literal["healthy", "warning", "critical"]
+RiskFilter = Literal["healthy", "warning", "critical", "at_risk"]
 
 router = APIRouter(prefix="/api/accounts", tags=["Account Workspace"])
 AccountCreateAccess = Annotated[User, Depends(require_permission("account_onboarding_workspace", "create"))]
@@ -52,7 +53,7 @@ AccountCreateAccess = Annotated[User, Depends(require_permission("account_onboar
     response_model=AccountPageRead,
     summary="List accounts",
     description=(
-        "Account selector and portfolio listing. Supports search by account, project, service, owner name, or owner email; lifecycle/segment/region filters; ownership "
+        "Account selector and portfolio listing. Supports search by numeric account number, account name, project, service, owner name, or owner email; lifecycle/segment/region filters; ownership "
         "filters, governance-completeness filters, sorting, and pagination."
     ),
     responses={
@@ -64,7 +65,7 @@ AccountCreateAccess = Annotated[User, Depends(require_permission("account_onboar
 def list_accounts(
     current_user: Annotated[User, Depends(get_current_user)],
     service: Annotated[AccountService, Depends(get_account_service)],
-    search: Annotated[str | None, Query(description="Search by account name, project name, service context, owner name, or owner email.")] = None,
+    search: Annotated[str | None, Query(description="Search by numeric account number, account name, project name, service context, owner name, or owner email.")] = None,
     lifecycle_status: Annotated[str | None, Query(description="Lifecycle status filter.")] = None,
     segment: Annotated[str | None, Query(description="Account segment filter.")] = None,
     region: Annotated[str | None, Query(description="Account region filter.")] = None,
@@ -407,6 +408,7 @@ def add_attachment(
         401: {"description": "Missing, invalid, or expired bearer token."},
         403: {"description": "Authenticated user cannot update this account."},
         404: {"description": "Account was not found."},
+        409: {"description": "Uploaded source file checksum already exists for this account."},
         422: {"description": "Upload form validation failed."},
     },
 )
@@ -461,6 +463,30 @@ def read_attachment_extraction(
     service: Annotated[AccountService, Depends(get_account_service)],
 ) -> SourceDocumentExtractionRead:
     return service.attachment_extraction(account_id, attachment_id, current_user)
+
+
+@router.get(
+    "/{account_id}/attachments/{attachment_id}/download",
+    summary="Download account source document",
+    description="Downloads the locally stored SOW, charter, or source attachment after account-level and sensitive-document RBAC checks.",
+    responses={
+        401: {"description": "Missing, invalid, or expired bearer token."},
+        403: {"description": "Authenticated user cannot download this source document."},
+        404: {"description": "Account, attachment, or stored file was not found."},
+    },
+)
+def download_attachment(
+    account_id: str,
+    attachment_id: str,
+    current_user: Annotated[User, Depends(get_current_user)],
+    service: Annotated[AccountService, Depends(get_account_service)],
+) -> FileResponse:
+    document, path = service.attachment_download_path(account_id, attachment_id, current_user)
+    return FileResponse(
+        path,
+        media_type=document.mime_type or "application/octet-stream",
+        filename=document.file_name or f"{document.title}.bin",
+    )
 
 
 @router.get(
@@ -535,6 +561,31 @@ def list_engagements(
         page=page,
         page_size=page_size,
     )
+
+
+@router.post(
+    "/{account_id}/engagements/from-charter",
+    response_model=EngagementRead,
+    status_code=status.HTTP_201_CREATED,
+    summary="Create account engagement from project charter",
+    description=(
+        "Uploads a project charter file, extracts structured SOW/charter fields, creates an engagement record, "
+        "stores the source document for KYC/RAG reuse, and creates stakeholder records from charter content."
+    ),
+    responses={
+        400: {"description": "File is missing, unsupported, or cannot be extracted."},
+        401: {"description": "Missing, invalid, or expired bearer token."},
+        403: {"description": "Authenticated user cannot update this account."},
+        404: {"description": "Account was not found."},
+    },
+)
+async def create_engagement_from_charter(
+    account_id: str,
+    file: Annotated[UploadFile, File(description="Project charter, SOW, PDF, DOCX, XLSX, or text file.")],
+    current_user: Annotated[User, Depends(get_current_user)],
+    service: Annotated[EngagementService, Depends(get_engagement_service)],
+) -> EngagementRead:
+    return await service.create_engagement_from_charter(account_id, file, current_user)
 
 
 @router.post(

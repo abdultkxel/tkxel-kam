@@ -1,5 +1,7 @@
 from collections.abc import Generator
 from datetime import datetime, timedelta, timezone
+import json
+import re
 
 import pytest
 from fastapi.testclient import TestClient
@@ -8,9 +10,12 @@ from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from app.database import Base, get_db
+from app.config import get_settings
 from app.main import app
-from app.models import CustomFieldValue, Engagement
-from app.models import Account, CustomFieldValue, Engagement, SourceDocument
+from app.models import Account, AccountOwner, CustomFieldValue, DocumentExtraction, Engagement, OnboardingDraft, SourceDocument, SourceDocumentExtraction, Stakeholder
+from app.services.kyc_document_extraction import KycDocumentExtractionService
+from app.services.source_document_contract import SERVICE_LINE_LABELS, infer_service_lines_from_text
+from app.services.sow_extraction import SowExtractionService
 from app.services.seed import seed_default_data
 
 
@@ -57,7 +62,26 @@ def seeded_user(client: TestClient, headers: dict[str, str], role: str) -> dict:
     return response.json()["items"][0]
 
 
+def create_account_manager_user(client: TestClient, headers: dict[str, str], email: str, full_name: str) -> dict:
+    response = client.post(
+        "/api/admin/users",
+        headers=headers,
+        json={
+            "email": email,
+            "password": "User@12345",
+            "full_name": full_name,
+            "role": "account_manager",
+            "title": "Account Manager",
+            "avatar_initials": "".join(part[0] for part in full_name.split()[:2]).upper(),
+            "is_active": True,
+        },
+    )
+    assert response.status_code == 201
+    return response.json()
+
+
 def draft_payload(account_name: str, owner_id: str, *, include_engagement: bool = True) -> dict:
+    account_slug = re.sub(r"[^a-z0-9]+", "-", account_name.lower()).strip("-") or "customer"
     engagement_drafts = []
     if include_engagement:
         engagement_drafts.append(
@@ -78,7 +102,8 @@ def draft_payload(account_name: str, owner_id: str, *, include_engagement: bool 
     return {
         "account_name": account_name,
         "project_name": "Customer intelligence modernization",
-        "company_url": "https://customer.example.com",
+        "company_url": f"https://{account_slug}.customer.example.com",
+        "linkedin_url": "https://www.linkedin.com/company/customer-example",
         "lifecycle_status": "Onboarding",
         "segment": "Growth",
         "region": "Global",
@@ -114,6 +139,12 @@ def iso_days_from_now(days: int) -> str:
 
 def date_days_from_now(days: int) -> str:
     return (datetime.now(timezone.utc).date() + timedelta(days=days)).isoformat()
+
+
+def test_source_document_service_line_contract_is_centralized() -> None:
+    assert "API integration" in SERVICE_LINE_LABELS
+    service_lines = infer_service_lines_from_text("The team will handle React, API integration, cloud, and QA automation.")
+    assert service_lines == ["React engineering", "QA automation", "Cloud integration", "API integration"]
 
 
 def engagement_payload(owner_id: str, **overrides) -> dict:
@@ -185,7 +216,7 @@ def create_engagement_for_account(client: TestClient, headers: dict[str, str], a
     return response.json()
 
 
-def create_approved_account(client: TestClient, headers: dict[str, str], account_name: str, *, include_engagement: bool = False) -> tuple[str, str, dict]:
+def create_approved_account(client: TestClient, headers: dict[str, str], account_name: str, *, include_engagement: bool = True) -> tuple[str, str, dict]:
     owner = seeded_user(client, headers, "account_manager")
     draft_response = client.post("/api/onboarding/drafts", headers=headers, json=draft_payload(account_name, owner["id"], include_engagement=include_engagement))
     assert draft_response.status_code == 201
@@ -196,6 +227,35 @@ def create_approved_account(client: TestClient, headers: dict[str, str], account
     return approved["approved_account_id"], owner["id"], approved
 
 
+def create_account_without_engagement(db_session: Session, owner: dict, account_name: str) -> str:
+    account = Account(
+        name=account_name,
+        project_name="Legacy account without engagement",
+        company_url="https://legacy.example.com",
+        linkedin_url="https://www.linkedin.com/company/legacy-account",
+        lifecycle_status="Onboarding",
+        segment="Growth",
+        region="Global",
+        risk_status="warning",
+        created_by_id=owner["id"],
+    )
+    db_session.add(account)
+    db_session.flush()
+    db_session.add(
+        AccountOwner(
+            account_id=account.id,
+            user_id=owner["id"],
+            user_name=owner["full_name"],
+            user_email=owner["email"],
+            ownership_role="primary_am",
+            is_primary=True,
+            created_by_id=owner["id"],
+        )
+    )
+    db_session.commit()
+    return account.id
+
+
 def test_onboarding_draft_approval_creates_account_sources_and_engagement(client: TestClient) -> None:
     headers = auth_headers(client)
     owner = seeded_user(client, headers, "account_manager")
@@ -204,6 +264,7 @@ def test_onboarding_draft_approval_creates_account_sources_and_engagement(client
     assert create_response.status_code == 201
     draft = create_response.json()
     assert draft["status"] == "ready_for_review"
+    assert draft["linkedin_url"] == "https://www.linkedin.com/company/customer-example"
     assert draft["source_documents"][0]["citations"][0]["field_key"] == "account_name"
     assert draft["engagement_drafts"][0]["name"] == "Customer intelligence modernization"
 
@@ -219,6 +280,7 @@ def test_onboarding_draft_approval_creates_account_sources_and_engagement(client
     assert overview_response.status_code == 200
     overview = overview_response.json()
     assert overview["account"]["name"] == "Northwind Workspace"
+    assert overview["account"]["linkedin_url"] == "https://www.linkedin.com/company/customer-example"
     assert overview["account"]["lifecycle_status"] == "Onboarding"
     assert overview["account"]["primary_owner"]["user_id"] == owner["id"]
     assert overview["engagements"]["total"] == 1
@@ -233,6 +295,851 @@ def test_onboarding_draft_approval_creates_account_sources_and_engagement(client
     assert rollup["contributions"] == []
 
 
+def test_onboarding_upload_extracts_draft_from_content_not_filename(client: TestClient) -> None:
+    settings = get_settings()
+    previous_ai_setting = settings.sow_ai_extraction_enabled
+    settings.sow_ai_extraction_enabled = False
+    headers = auth_headers(client)
+    owner = seeded_user(client, headers, "account_manager")
+    content = b"""
+Demo document only. Not a real signed commercial agreement.
+Account Name: McDonald's Corporation
+Company URL: https://www.mcdonalds.com
+LinkedIn URL: https://www.linkedin.com/company/mcdonalds-corporation
+Project Name: Digital Experience Modernization Program
+Segment: Enterprise
+Region: North America
+Service Lines: Product Engineering, Data Engineering, QA Automation, Cloud Integration
+Contract Value: USD 1250000
+Start Date: 2026-07-01
+End Date: 2027-06-30
+Renewal Date: 2027-06-30
+Notice Period: 60 days
+Scope of Work:
+Tkxel will support mobile ordering, loyalty personalization, restaurant operations dashboards, API integration, and release-quality automation.
+Commercial Summary:
+Fixed monthly delivery pod with milestone acceptance, monthly invoicing, and executive governance checkpoints.
+Renewal Terms:
+This SOW shall stand renewed automatically unless either Party gives 60 days written notice.
+Risks:
+Customer data access, franchise operating model complexity, and point-of-sale integration dependency.
+"""
+
+    try:
+        response = client.post(
+            "/api/onboarding/drafts/upload",
+            headers=headers,
+            data={"manager_id": owner["id"], "manager_name": owner["full_name"], "manager_email": owner["email"]},
+            files=[("files", ("wrong-client-name.txt", content, "text/plain"))],
+        )
+    finally:
+        settings.sow_ai_extraction_enabled = previous_ai_setting
+
+    assert response.status_code == 201
+    draft = response.json()
+    assert "McDonald's Corporation" in draft["source_documents"][0]["extracted_text"]
+    assert "This SOW shall stand renewed automatically" in draft["source_documents"][0]["extracted_text"]
+    assert draft["account_name"] == "McDonald's Corporation"
+    assert draft["account_name"] != "Wrong Client Name"
+    assert draft["project_name"] == "Digital Experience Modernization Program"
+    assert draft["company_url"] == "https://www.mcdonalds.com"
+    assert draft["linkedin_url"] == "https://www.linkedin.com/company/mcdonalds-corporation"
+    assert draft["source_documents"][0]["file_name"] == "wrong-client-name.txt"
+    assert draft["source_documents"][0]["extraction_status"] == "completed"
+    assert draft["source_citation"].startswith("wrong-client-name.txt p1: Account name inferred")
+    assert "McDonald's Corporation" in draft["source_citation"]
+    field_keys = {citation["field_key"]: citation for citation in draft["source_documents"][0]["citations"]}
+    assert field_keys["account_name"]["page_number"] == 1
+    assert "McDonald's Corporation" in field_keys["account_name"]["excerpt"]
+    assert field_keys["commercial_value"]["page_number"] == 1
+    assert field_keys["start_date"]["page_number"] == 1
+
+    download = client.get(
+        f"/api/onboarding/drafts/{draft['id']}/documents/{draft['source_documents'][0]['id']}/download",
+        headers=headers,
+    )
+    assert download.status_code == 200
+    assert b"McDonald's Corporation" in download.content
+
+    approve_response = client.post(f"/api/onboarding/drafts/{draft['id']}/approve", headers=headers)
+    assert approve_response.status_code == 200
+    account_id = approve_response.json()["approved_account_id"]
+    account_download = client.get(
+        f"/api/accounts/{account_id}/attachments/{draft['source_documents'][0]['id']}/download",
+        headers=headers,
+    )
+    assert account_download.status_code == 200
+    assert b"Digital Experience Modernization Program" in account_download.content
+
+
+def test_onboarding_upload_defaults_missing_engagement_start_date_for_one_click_approval(client: TestClient, db_session: Session) -> None:
+    settings = get_settings()
+    previous_ai_setting = settings.sow_ai_extraction_enabled
+    settings.sow_ai_extraction_enabled = False
+    headers = auth_headers(client)
+    owner = seeded_user(client, headers, "account_manager")
+    content = b"""
+Statement of Work
+Client Legal Name: Easy Approval Industries
+Company URL: https://easy-approval.example.com
+LinkedIn URL: https://www.linkedin.com/company/easy-approval-industries
+Program Name: Customer Portal Support
+Segment: Enterprise
+Region: North America
+Service Lines: Product Engineering, QA Automation
+Scope of Work:
+Tkxel will support the customer portal team with engineering delivery, QA automation, release planning, and operational governance.
+Commercial Summary:
+Monthly blended team model with account governance checkpoints.
+"""
+
+    try:
+        response = client.post(
+            "/api/onboarding/drafts/upload",
+            headers=headers,
+            data={"manager_id": owner["id"], "manager_name": owner["full_name"], "manager_email": owner["email"]},
+            files=[("files", ("easy-approval-sow.txt", content, "text/plain"))],
+        )
+    finally:
+        settings.sow_ai_extraction_enabled = previous_ai_setting
+
+    assert response.status_code == 201
+    draft = response.json()
+    assert draft["engagement_drafts"][0]["start_date"].startswith(datetime.now(timezone.utc).date().isoformat())
+
+    draft_model = db_session.query(OnboardingDraft).filter(OnboardingDraft.id == draft["id"]).one()
+    draft_model.engagement_drafts[0].start_date = None
+    db_session.commit()
+
+    approve_response = client.post(f"/api/onboarding/drafts/{draft['id']}/approve", headers=headers)
+    assert approve_response.status_code == 200
+    account_id = approve_response.json()["approved_account_id"]
+    created_engagement = db_session.query(Engagement).filter(Engagement.account_id == account_id).one()
+    assert created_engagement.start_date is not None
+    assert created_engagement.start_date.date().isoformat() == datetime.now(timezone.utc).date().isoformat()
+
+
+def test_onboarding_upload_uses_submitted_form_fields_as_account_source_of_truth(client: TestClient) -> None:
+    settings = get_settings()
+    previous_ai_setting = settings.sow_ai_extraction_enabled
+    settings.sow_ai_extraction_enabled = False
+    headers = auth_headers(client)
+    owner = seeded_user(client, headers, "account_manager")
+    content = b"""
+Account Name: Extracted Document Customer
+Company URL: https://wrong-document-customer.example.com
+LinkedIn URL: https://www.linkedin.com/company/wrong-document-customer
+Project Name: Extracted Document Project
+Service Lines: Product Engineering, Cloud Integration
+Contract Value: USD 250000
+Start Date: 2026-07-01
+End Date: 2027-06-30
+Scope of Work:
+The uploaded source should be preserved for KYC, but reviewed form fields should define account information.
+"""
+
+    try:
+        response = client.post(
+            "/api/onboarding/drafts/upload",
+            headers=headers,
+            data={
+                "account_name": "Submitted Cafe Zupas",
+                "project_name": "Submitted Guest Experience Program",
+                "company_url": "https://submitted-cafe-zupas.example.com",
+                "linkedin_url": "https://www.linkedin.com/company/submitted-cafe-zupas",
+                "manager_id": owner["id"],
+                "manager_name": owner["full_name"],
+                "manager_email": owner["email"],
+            },
+            files=[("files", ("wrong-client-name.txt", content, "text/plain"))],
+        )
+    finally:
+        settings.sow_ai_extraction_enabled = previous_ai_setting
+
+    assert response.status_code == 201
+    draft = response.json()
+    assert draft["account_name"] == "Submitted Cafe Zupas"
+    assert draft["project_name"] == "Submitted Guest Experience Program"
+    assert draft["company_url"] == "https://submitted-cafe-zupas.example.com"
+    assert draft["linkedin_url"] == "https://www.linkedin.com/company/submitted-cafe-zupas"
+    assert draft["source_citation"].endswith("account fields submitted in the creation form.")
+    assert draft["engagement_drafts"][0]["name"] == "Submitted Guest Experience Program"
+    assert "Extracted Document Customer" in draft["source_documents"][0]["extracted_text"]
+
+    approve_response = client.post(f"/api/onboarding/drafts/{draft['id']}/approve", headers=headers)
+    assert approve_response.status_code == 200
+    account_id = approve_response.json()["approved_account_id"]
+    overview_response = client.get(f"/api/accounts/{account_id}/overview", headers=headers)
+    assert overview_response.status_code == 200
+    assert overview_response.json()["account"]["name"] == "Submitted Cafe Zupas"
+    assert overview_response.json()["account"]["project_name"] == "Submitted Guest Experience Program"
+
+
+def test_onboarding_upload_extract_endpoint_prefills_without_creating_draft(client: TestClient, db_session: Session) -> None:
+    headers = auth_headers(client)
+    content = b"""
+Account Name: Cafe Zupas
+Project Name: Guest Experience Modernization
+Company URL: https://www.cafezupas.com
+LinkedIn URL: https://www.linkedin.com/company/cafe-zupas
+Service Lines: Product Engineering, Cloud Integration
+"""
+    before_drafts = db_session.query(OnboardingDraft).count()
+    before_documents = db_session.query(SourceDocument).count()
+
+    response = client.post(
+        "/api/onboarding/uploads/extract",
+        headers=headers,
+        files=[("files", ("misleading-document-name.txt", content, "text/plain"))],
+    )
+
+    assert response.status_code == 200
+    extraction = response.json()
+    assert extraction["account_name"] == "Cafe Zupas"
+    assert extraction["project_name"] == "Guest Experience Modernization"
+    assert extraction["company_url"] == "https://www.cafezupas.com"
+    assert extraction["linkedin_url"] == "https://www.linkedin.com/company/cafe-zupas"
+    assert extraction["source_file_names"] == ["misleading-document-name.txt"]
+    assert db_session.query(OnboardingDraft).count() == before_drafts
+    assert db_session.query(SourceDocument).count() == before_documents
+
+
+def test_onboarding_upload_leaves_unknown_fields_blank_instead_of_using_filename(client: TestClient) -> None:
+    settings = get_settings()
+    previous_ai_setting = settings.sow_ai_extraction_enabled
+    settings.sow_ai_extraction_enabled = False
+    headers = auth_headers(client)
+    content = b"""
+Meeting notes and operational context.
+The source document mentions kickoff logistics and discovery workshops but does not include a client legal name,
+project title, company website, or LinkedIn URL.
+"""
+
+    try:
+        response = client.post(
+            "/api/onboarding/drafts/upload",
+            headers=headers,
+            files=[("files", ("cafe-zupas-account-sow.txt", content, "text/plain"))],
+        )
+    finally:
+        settings.sow_ai_extraction_enabled = previous_ai_setting
+
+    assert response.status_code == 201
+    draft = response.json()
+    assert draft["account_name"] == ""
+    assert draft["project_name"] == ""
+    assert draft["company_url"] is None
+    assert draft["linkedin_url"] is None
+    assert any("Account name was not found" in field for field in draft["missing_fields"])
+
+
+def test_onboarding_draft_flags_duplicate_company_url_before_approval(client: TestClient) -> None:
+    headers = auth_headers(client)
+    account_id, owner_id, approved = create_approved_account(client, headers, "Duplicate Company URL Base")
+    duplicate_url = approved["company_url"]
+
+    draft_response = client.post(
+        "/api/onboarding/drafts",
+        headers=headers,
+        json={**draft_payload("Different Name Same Website", owner_id), "company_url": duplicate_url},
+    )
+
+    assert draft_response.status_code == 201
+    draft = draft_response.json()
+    assert draft["duplicate_account_id"] == account_id
+    assert any("Possible duplicate account" in conflict for conflict in draft["conflicts"])
+
+    approve_response = client.post(f"/api/onboarding/drafts/{draft['id']}/approve", headers=headers)
+    assert approve_response.status_code == 409
+
+
+def test_onboarding_upload_allows_reusing_same_source_file(client: TestClient, db_session: Session) -> None:
+    headers = auth_headers(client)
+    existing_drafts = db_session.query(OnboardingDraft).count()
+    existing_documents = db_session.query(SourceDocument).count()
+    content = b"""
+Account Name: Duplicate Source Customer
+Project Name: Duplicate SOW Test
+Service Lines: Product Engineering
+Contract Value: USD 10000
+Start Date: 2026-07-01
+End Date: 2026-12-31
+"""
+
+    first = client.post(
+        "/api/onboarding/drafts/upload",
+        headers=headers,
+        files=[("files", ("duplicate-sow.txt", content, "text/plain"))],
+    )
+    assert first.status_code == 201
+
+    second = client.post(
+        "/api/onboarding/drafts/upload",
+        headers=headers,
+        files=[("files", ("duplicate-sow-copy.txt", content, "text/plain"))],
+    )
+
+    assert second.status_code == 201
+    assert first.json()["source_documents"][0]["checksum_sha256"] == second.json()["source_documents"][0]["checksum_sha256"]
+    assert db_session.query(OnboardingDraft).count() == existing_drafts + 2
+    assert db_session.query(SourceDocument).count() == existing_documents + 2
+
+
+def test_onboarding_source_extraction_retry_endpoint_reextracts_document(client: TestClient) -> None:
+    headers = auth_headers(client)
+    content = b"""
+Account Name: Retry Source Customer
+Project Name: Retry SOW Test
+Service Lines: Product Engineering
+Contract Value: USD 12000
+Start Date: 2026-07-01
+End Date: 2026-12-31
+"""
+
+    draft_response = client.post(
+        "/api/onboarding/drafts/upload",
+        headers=headers,
+        files=[("files", ("retry-sow.txt", content, "text/plain"))],
+    )
+    assert draft_response.status_code == 201
+    draft = draft_response.json()
+    document_id = draft["source_documents"][0]["id"]
+
+    retry_response = client.post(
+        f"/api/onboarding/drafts/{draft['id']}/documents/{document_id}/extract",
+        headers=headers,
+        params={"force": "true"},
+    )
+
+    assert retry_response.status_code == 200
+    extraction = retry_response.json()
+    assert extraction["source_document_id"] == document_id
+    assert extraction["status"] == "completed"
+    assert extraction["page_count"] == 1
+
+
+def test_pdf_without_readable_text_is_marked_ocr_required(
+    db_session: Session,
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    pdf_path = tmp_path / "scanned-sow.pdf"
+    pdf_path.write_bytes(b"%PDF-1.4 scanned placeholder")
+    document = SourceDocument(
+        title="Scanned SOW",
+        source_type="sow",
+        file_name="scanned-sow.pdf",
+        storage_path=str(pdf_path),
+        mime_type="application/pdf",
+        uploaded_by_name="KAM Super Admin",
+        extraction_status="queued",
+        confidence=0,
+        pages=0,
+    )
+    db_session.add(document)
+    db_session.flush()
+    service = KycDocumentExtractionService(db_session)
+    monkeypatch.setattr(service, "_extract_pdf_pages", lambda path: ([""], "pymupdf"))
+    monkeypatch.setattr(service, "_ocr_pdf_pages", lambda path: None)
+
+    extraction = service.extract_document(document, force=True)
+
+    assert extraction.status == "ocr_required"
+    assert extraction.error_message == "OCR is required before readable text can be extracted from this source document."
+    assert document.extraction_status == "ocr_required"
+    assert document.ocr_status == "ocr_required"
+    assert document.extraction_error == extraction.error_message
+    assert extraction.metadata_json["ocr_required"] is True
+    assert db_session.query(DocumentExtraction).filter(DocumentExtraction.document_id == document.id).count() == 0
+
+
+def test_onboarding_upload_extracts_customer_from_contract_style_sow(client: TestClient, db_session: Session) -> None:
+    settings = get_settings()
+    previous_ai_setting = settings.sow_ai_extraction_enabled
+    settings.sow_ai_extraction_enabled = False
+    headers = auth_headers(client)
+    content = b"""
+STATEMENT OF WORK - 12
+DEDICATED DIGITAL EXPERIENCE TEAM
+This Statement of Work ("SOW_MCD_TKLLC_012") adopts and incorporates by reference the terms and
+conditions of the Master Services Agreement by and between McDonald's Corporation ("Customer", which term
+shall include successors and permitted assigns), with its principal place of business at Chicago, Illinois,
+United States, and TkXel LLC ("Consultant"), with its principal place of business at Reston, VA, USA.
+1. Scope of Work
+1.1 The Consultant shall provide software development services on a full-time dedicated team basis.
+Resources
+Sr Engineers (Python, React, Java)
+QA (functional)
+QA Automation
+Sr DevOps Engineer (timezone overlap)
+Solution Architect
+AI/ML SME
+UI/UX
+Total monthly fee: USD 185,000
+Applicable monthly fee: USD 170,000
+2. Timeframe and Payment Schedule
+2.1 The start date of engagement is 07/01/2026 till 06/30/2027.
+2.1.1 This SOW shall stand renewed automatically unless written notice of non-renewal is given by either Party
+at least eight (8) weeks prior to expiry of the Term.
+"""
+
+    try:
+        response = client.post(
+            "/api/onboarding/drafts/upload",
+            headers=headers,
+            files=[("files", ("generic-dedicated-team.txt", content, "text/plain"))],
+        )
+    finally:
+        settings.sow_ai_extraction_enabled = previous_ai_setting
+
+    assert response.status_code == 201
+    draft = response.json()
+    assert draft["account_name"] == "McDonald's Corporation"
+    assert draft["project_name"] == "STATEMENT OF WORK - 12 - DEDICATED DIGITAL EXPERIENCE TEAM"
+    assert draft["region"] == "United States"
+    assert draft["commercial_value"] == 185000
+    engagement = draft["engagement_drafts"][0]
+    assert "Python engineering" in engagement["service_lines"]
+    assert "QA automation" in engagement["service_lines"]
+    assert engagement["start_date"].startswith("2026-07-01")
+    assert engagement["end_date"].startswith("2027-06-30")
+    assert engagement["notice_period_days"] == 56
+    field_keys = {citation["field_key"]: citation for citation in draft["source_documents"][0]["citations"]}
+    assert "account_name" in field_keys
+    assert "commercial_value" in field_keys
+    assert "start_date" in field_keys
+    assert "end_date" in field_keys
+    assert "renewal_terms" in field_keys
+    assert "notice_period_days" in field_keys
+    assert "service_lines" in field_keys
+    extraction = (
+        db_session.query(SourceDocumentExtraction)
+        .filter(SourceDocumentExtraction.source_document_id == draft["source_documents"][0]["id"])
+        .one()
+    )
+    fields = extraction.metadata_json["sow_structured_extraction"]["fields"]
+    assert fields["client_name"]["value"] == "McDonald's Corporation"
+    assert fields["client_name"]["citation"]["document"] == "generic-dedicated-team.txt"
+    assert fields["client_name"]["citation"]["page"] == 1
+    assert fields["client_name"]["missing_evidence"] is None
+    page_rows = (
+        db_session.query(DocumentExtraction)
+        .filter(DocumentExtraction.document_id == draft["source_documents"][0]["id"])
+        .order_by(DocumentExtraction.page_number)
+        .all()
+    )
+    assert page_rows
+    assert page_rows[0].source_file == "generic-dedicated-team.txt"
+    assert page_rows[0].checksum
+    assert "McDonald's Corporation" in page_rows[0].raw_text
+
+
+def test_onboarding_upload_uses_qwen_structured_fields_to_prefill_account_and_engagement(
+    client: TestClient,
+    db_session: Session,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    settings = get_settings()
+    previous_ai_setting = settings.sow_ai_extraction_enabled
+    settings.sow_ai_extraction_enabled = True
+    headers = auth_headers(client)
+    owner = seeded_user(client, headers, "account_manager")
+    content = b"""
+Statement of Work for McDonald's Corporation
+Customer: McDonald's Corporation
+Program Name: Restaurant Intelligence Data Platform
+Company URL: https://www.mcdonalds.com
+Region: North America
+Service Lines: Data Engineering, Cloud Integration, QA Automation
+Contract Value: USD 425000
+Start Date: 2030-08-01
+End Date: 2031-07-31
+Renewal Terms: Automatically renews for one additional 12-month term unless either party gives notice.
+Notice Period: 90 days before expiry.
+Deliverables:
+Unified restaurant analytics, data pipelines, platform QA automation, and executive reporting.
+Risks:
+Point-of-sale data dependency and franchise rollout sequencing.
+"""
+
+    def fake_qwen_response(self: SowExtractionService, prompt: str) -> str:
+        assert "You are an SOW extraction engine. Return JSON only." in prompt
+        return json.dumps(
+            {
+                "client_name": {"value": "McDonald's Corporation", "confidence": 0.93},
+                "start_date": {"value": "2030-08-01", "confidence": 0.91},
+                "end_date": {"value": "2031-07-31", "confidence": 0.91},
+                "renewal_terms": {"value": "Automatically renews for one additional 12-month term unless either party gives notice.", "confidence": 0.88},
+                "notice_period": {"value": "90 days before expiry", "confidence": 0.89},
+                "commercial_value": {"value": 425000, "currency": "USD", "confidence": 0.9},
+                "service_lines": {"value": ["Data Engineering", "Cloud Integration", "QA Automation"], "confidence": 0.9},
+                "stakeholders": {"value": [], "confidence": 0},
+                "deliverables": {"value": ["Unified restaurant analytics", "data pipelines", "platform QA automation"], "confidence": 0.86},
+                "risks": {"value": ["Point-of-sale data dependency", "franchise rollout sequencing"], "confidence": 0.84},
+            }
+        )
+
+    monkeypatch.setattr(SowExtractionService, "_call_local_ai", fake_qwen_response)
+    try:
+        response = client.post(
+            "/api/onboarding/drafts/upload",
+            headers=headers,
+            data={"manager_id": owner["id"], "manager_name": owner["full_name"], "manager_email": owner["email"]},
+            files=[("files", ("not-the-client-name.txt", content, "text/plain"))],
+        )
+    finally:
+        settings.sow_ai_extraction_enabled = previous_ai_setting
+
+    assert response.status_code == 201
+    draft = response.json()
+    assert draft["account_name"] == "McDonald's Corporation"
+    assert draft["account_name"] != "Not The Client Name"
+    assert draft["project_name"] == "Restaurant Intelligence Data Platform"
+    assert draft["company_url"] == "https://www.mcdonalds.com"
+    assert draft["commercial_value"] == 425000
+    assert draft["currency"] == "USD"
+    assert draft["confidence"] >= 90
+    assert "Engagement start date was not found" not in " ".join(draft["missing_fields"])
+    engagement = draft["engagement_drafts"][0]
+    assert engagement["name"] == "Restaurant Intelligence Data Platform"
+    assert engagement["delivery_status"] == "planned"
+    assert engagement["start_date"].startswith("2030-08-01")
+    assert engagement["end_date"].startswith("2031-07-31")
+    assert engagement["renewal_date"].startswith("2031-07-31")
+    assert engagement["notice_deadline"].startswith("2031-05-02")
+    assert engagement["notice_period_days"] == 90
+    assert engagement["auto_renewal"] is True
+    assert engagement["value"] == 425000
+    assert "Data Engineering" in engagement["service_lines"]
+    assert "Unified restaurant analytics" in engagement["commercial_context"]
+    assert "Renewal terms: Automatically renews" in engagement["commercial_context"]
+    assert engagement["resource_dependency"] == "Point-of-sale data dependency"
+    assert "Point-of-sale data dependency" in engagement["risks"]
+    assert engagement["source_citation"].startswith("not-the-client-name.txt p1: Renewal terms inferred")
+    assert "Automatically renews" in engagement["source_citation"]
+    assert engagement["confidence"] >= 88
+    field_keys = {citation["field_key"]: citation for citation in draft["source_documents"][0]["citations"]}
+    assert field_keys["account_name"]["page_number"] == 1
+    assert field_keys["account_name"]["confidence"] == 93
+    assert field_keys["commercial_value"]["page_number"] == 1
+    assert field_keys["commercial_value"]["confidence"] == 90
+    assert field_keys["renewal_terms"]["page_number"] == 1
+    assert field_keys["renewal_terms"]["confidence"] == 88
+    assert "Automatically renews" in field_keys["renewal_terms"]["excerpt"]
+    extraction = (
+        db_session.query(SourceDocumentExtraction)
+        .filter(SourceDocumentExtraction.source_document_id == draft["source_documents"][0]["id"])
+        .one()
+    )
+    stored = extraction.metadata_json["sow_structured_extraction"]
+    assert stored["provider"] == "qwen"
+    assert stored["fields"]["client_name"]["confidence"] == 93
+    assert stored["fields"]["client_name"]["citation"]["document"] == "not-the-client-name.txt"
+
+    approve_response = client.post(f"/api/onboarding/drafts/{draft['id']}/approve", headers=headers)
+    assert approve_response.status_code == 200
+    account_id = approve_response.json()["approved_account_id"]
+    created_engagement = db_session.query(Engagement).filter(Engagement.account_id == account_id).one()
+    linked_document = db_session.query(SourceDocument).filter(SourceDocument.id == draft["source_documents"][0]["id"]).one()
+    assert linked_document.account_id == account_id
+    assert linked_document.engagement_id == created_engagement.id
+
+
+def test_account_attachment_upload_stores_page_rows_and_sow_structured_fields(client: TestClient, db_session: Session) -> None:
+    settings = get_settings()
+    previous_ai_setting = settings.sow_ai_extraction_enabled
+    settings.sow_ai_extraction_enabled = False
+    headers = auth_headers(client)
+    account_id, _, _ = create_approved_account(client, headers, "Attachment Target Workspace")
+    content = b"""
+STATEMENT OF WORK - 12
+DEDICATED DIGITAL EXPERIENCE TEAM
+This Statement of Work adopts and incorporates by reference the terms and conditions of the Master Services
+Agreement by and between McDonald's Corporation ("Customer") and TkXel LLC ("Consultant").
+1. Scope of Work
+The Consultant shall provide software development services on a full-time dedicated team basis.
+Resources
+Sr Engineers (Python, React, Java)
+QA Automation
+Sr DevOps Engineer
+Total monthly fee: USD 185,000
+2. Timeframe and Payment Schedule
+The start date of engagement is 07/01/2026 till 06/30/2027.
+This SOW shall stand renewed automatically unless written notice of non-renewal is given by either Party
+at least eight (8) weeks prior to expiry of the Term.
+"""
+
+    try:
+        response = client.post(
+            f"/api/accounts/{account_id}/attachments/upload",
+            headers=headers,
+            data={"title": "Uploaded SOW", "source_type": "sow", "extract_now": "true"},
+            files=[("file", ("wrong-name.txt", content, "text/plain"))],
+        )
+    finally:
+        settings.sow_ai_extraction_enabled = previous_ai_setting
+
+    assert response.status_code == 201
+    document = response.json()
+    assert document["title"] == "Uploaded SOW"
+    assert document["file_name"] == "wrong-name.txt"
+    assert document["extraction_status"] == "completed"
+
+    extraction = (
+        db_session.query(SourceDocumentExtraction)
+        .filter(SourceDocumentExtraction.source_document_id == document["id"])
+        .one()
+    )
+    fields = extraction.metadata_json["sow_structured_extraction"]["fields"]
+    assert fields["client_name"]["value"] == "McDonald's Corporation"
+    assert fields["client_name"]["citation"]["document"] == "wrong-name.txt"
+    assert fields["client_name"]["missing_evidence"] is None
+    assert fields["commercial_value"]["value"] == 185000
+    assert fields["commercial_value"]["citation"]["page"] == 1
+    page_rows = db_session.query(DocumentExtraction).filter(DocumentExtraction.document_id == document["id"]).all()
+    assert len(page_rows) == 1
+    assert page_rows[0].source_file == "wrong-name.txt"
+    assert page_rows[0].page_number == 1
+    assert "McDonald's Corporation" in page_rows[0].raw_text
+
+
+def test_account_attachment_upload_allows_reusing_same_source_file(client: TestClient, db_session: Session) -> None:
+    headers = auth_headers(client)
+    account_id, _, _ = create_approved_account(client, headers, "Duplicate Attachment Workspace")
+    existing_count = db_session.query(SourceDocument).filter(SourceDocument.account_id == account_id).count()
+    content = b"""
+Statement of Work
+Customer: Duplicate Attachment Workspace
+Scope of Work:
+Tkxel will provide product engineering and QA automation services.
+"""
+    first = client.post(
+        f"/api/accounts/{account_id}/attachments/upload",
+        headers=headers,
+        data={"title": "First SOW", "source_type": "sow", "extract_now": "false"},
+        files=[("file", ("duplicate-account-sow.txt", content, "text/plain"))],
+    )
+    assert first.status_code == 201
+
+    second = client.post(
+        f"/api/accounts/{account_id}/attachments/upload",
+        headers=headers,
+        data={"title": "Second SOW", "source_type": "sow", "extract_now": "false"},
+        files=[("file", ("duplicate-account-sow-copy.txt", content, "text/plain"))],
+    )
+
+    assert second.status_code == 201
+    assert first.json()["checksum_sha256"] == second.json()["checksum_sha256"]
+    assert db_session.query(SourceDocument).filter(SourceDocument.account_id == account_id).count() == existing_count + 2
+
+
+def test_sow_structured_qwen_result_is_cited_and_vendor_name_guarded(db_session: Session, monkeypatch: pytest.MonkeyPatch) -> None:
+    settings = get_settings()
+    previous_ai_setting = settings.sow_ai_extraction_enabled
+    settings.sow_ai_extraction_enabled = True
+    admin = db_session.query(Account).first()
+    created_by_id = admin.created_by_id if admin else None
+    document = SourceDocument(
+        title="Narrative SOW",
+        source_type="sow",
+        file_name="narrative-sow.pdf",
+        uploaded_by_name="KAM Super Admin",
+        uploaded_by_id=created_by_id,
+        extraction_status="completed",
+        confidence=90,
+        pages=2,
+    )
+    db_session.add(document)
+    db_session.flush()
+    extraction = SourceDocumentExtraction(
+        source_document_id=document.id,
+        status="completed",
+        extractor_name="local-document-extractor",
+        extractor_version="v1",
+        mime_type="application/pdf",
+        page_count=2,
+        raw_text="",
+        normalized_text="",
+        metadata_json={},
+    )
+    db_session.add(extraction)
+    db_session.flush()
+    page_one = DocumentExtraction(
+        document_id=document.id,
+        extraction_id=extraction.id,
+        raw_text=(
+            "This Statement of Work is by and between McDonald's Corporation (\"Customer\") and TkXel LLC (\"Consultant\"). "
+            "The Consultant shall provide software development services. Total monthly fee: USD 185,000."
+        ),
+        page_number=1,
+        source_file="narrative-sow.pdf",
+        checksum="page-one",
+    )
+    page_two = DocumentExtraction(
+        document_id=document.id,
+        extraction_id=extraction.id,
+        raw_text=(
+            "The start date of engagement is 07/01/2026 till 06/30/2027. "
+            "This SOW shall stand renewed automatically unless written notice of non-renewal is given by either Party "
+            "at least eight (8) weeks prior to expiry of the Term."
+        ),
+        page_number=2,
+        source_file="narrative-sow.pdf",
+        checksum="page-two",
+    )
+    db_session.add_all([page_one, page_two])
+    db_session.flush()
+
+    def fake_qwen_response(self: SowExtractionService, prompt: str) -> str:
+        assert "You are an SOW extraction engine. Return JSON only." in prompt
+        assert "It must not be Tkxel" in prompt
+        return json.dumps(
+            {
+                "client_name": {"value": "TKXEL LLC", "confidence": 99},
+                "start_date": {
+                    "value": "07/01/2026",
+                    "confidence": 94,
+                    "citation": {
+                        "page": 2,
+                        "excerpt": "The start date of engagement is 07/01/2026 till 06/30/2027.",
+                    },
+                },
+                "end_date": {"value": "06/30/2027", "confidence": 94},
+                "renewal_terms": {"value": "The SOW automatically renews unless either party gives notice.", "confidence": 91},
+                "notice_period": {"value": "eight (8) weeks prior to expiry", "confidence": 90},
+                "commercial_value": {"value": 185000, "currency": "USD", "confidence": 90},
+                "service_lines": {"value": ["Software development"], "confidence": 82},
+                "stakeholders": {"value": [], "confidence": 0},
+                "deliverables": {"value": ["software development services"], "confidence": 80},
+                "risks": {"value": [], "confidence": 0},
+            }
+        )
+
+    monkeypatch.setattr(SowExtractionService, "_call_local_ai", fake_qwen_response)
+    try:
+        result = SowExtractionService(db_session).extract_structured_fields(document, extraction)
+    finally:
+        settings.sow_ai_extraction_enabled = previous_ai_setting
+
+    stored = extraction.metadata_json["sow_structured_extraction"]
+    fields = stored["fields"]
+    assert result.provider == "qwen"
+    assert stored["provider"] == "qwen"
+    assert stored["status"] == "complete"
+    assert fields["client_name"]["value"] == "McDonald's Corporation"
+    assert fields["client_name"]["confidence"] == 86
+    assert fields["client_name"]["conflicts"] == ["AI returned Tkxel/vendor/provider as client name and the value was rejected."]
+    assert {"field_key": "client_name", "message": "AI returned Tkxel/vendor/provider as client name and the value was rejected."} in stored["conflicts"]
+    assert "stakeholders" in stored["missing_fields"]
+    assert fields["client_name"]["citation"]["document_id"] == document.id
+    assert fields["client_name"]["citation"]["page"] == 1
+    assert fields["client_name"]["citation"]["confidence"] == 86
+    assert fields["client_name"]["citation"]["field_key"] == "client_name"
+    assert fields["client_name"]["citation"]["validation_status"] == "derived_from_extracted_text"
+    assert "Customer" in fields["client_name"]["citation"]["excerpt"]
+    assert fields["commercial_value"]["value"] == 185000
+    assert fields["commercial_value"]["citation"]["page"] == 1
+    assert fields["commercial_value"]["citation"]["confidence"] == 90
+    assert fields["start_date"]["citation"]["page"] == 2
+    assert fields["start_date"]["citation"]["confidence"] == 94
+    assert fields["start_date"]["citation"]["validation_status"] == "validated_ai_citation"
+    assert fields["renewal_terms"]["citation"]["page"] == 2
+    assert fields["stakeholders"]["missing_evidence"] == "Stakeholders were not supported by extracted SOW text."
+def test_onboarding_account_manager_candidates_are_active_account_managers(client: TestClient) -> None:
+    admin_headers = auth_headers(client)
+    kam_headers = auth_headers(client, "kam.head.user@tkxel.com", "User@12345")
+    create_account_manager_user(client, admin_headers, "second.account.manager@tkxel.com", "Second Account Manager")
+
+    response = client.get("/api/onboarding/account-managers", headers=kam_headers)
+
+    assert response.status_code == 200
+    candidates = response.json()
+    emails = {candidate["email"] for candidate in candidates}
+    roles = {candidate["role"] for candidate in candidates}
+    assert "account.manager.user@tkxel.com" in emails
+    assert "second.account.manager@tkxel.com" in emails
+    assert roles == {"account_manager"}
+
+
+def test_onboarding_approval_requires_explicit_account_manager_assignment(client: TestClient) -> None:
+    headers = auth_headers(client)
+    owner = seeded_user(client, headers, "account_manager")
+    payload = draft_payload("Unassigned Owner Workspace", owner["id"])
+    payload.pop("primary_owner_id")
+
+    create_response = client.post("/api/onboarding/drafts", headers=headers, json=payload)
+    assert create_response.status_code == 201
+
+    approve_response = client.post(f"/api/onboarding/drafts/{create_response.json()['id']}/approve", headers=headers)
+    assert approve_response.status_code == 422
+    error = approve_response.json()["detail"]["errors"][0]
+    assert error["field"] == "primary_owner_id"
+    assert error["message"] == "Assign an account manager before approving this draft."
+
+
+def test_onboarding_approval_requires_at_least_one_engagement_draft(client: TestClient) -> None:
+    headers = auth_headers(client)
+    owner = seeded_user(client, headers, "account_manager")
+
+    create_response = client.post(
+        "/api/onboarding/drafts",
+        headers=headers,
+        json=draft_payload("No Engagement Draft Workspace", owner["id"], include_engagement=False),
+    )
+    assert create_response.status_code == 201
+
+    approve_response = client.post(f"/api/onboarding/drafts/{create_response.json()['id']}/approve", headers=headers)
+    assert approve_response.status_code == 422
+    error = approve_response.json()["detail"]["errors"][0]
+    assert error["field"] == "engagement_drafts"
+    assert error["message"] == "At least one engagement is required before approval."
+
+
+def test_onboarding_drafts_are_visible_to_assigned_manager_not_unrelated_managers(client: TestClient) -> None:
+    admin_headers = auth_headers(client)
+    owner = seeded_user(client, admin_headers, "account_manager")
+    other_owner = create_account_manager_user(client, admin_headers, "unrelated.account.manager@tkxel.com", "Unrelated Account Manager")
+
+    draft_response = client.post("/api/onboarding/drafts", headers=admin_headers, json=draft_payload("Assigned Visibility Workspace", owner["id"]))
+    assert draft_response.status_code == 201
+    draft_id = draft_response.json()["id"]
+
+    assigned_headers = auth_headers(client, owner["email"], "User@12345")
+    assigned_list = client.get("/api/onboarding/drafts", headers=assigned_headers, params={"page": 1, "page_size": 10})
+    assert assigned_list.status_code == 200
+    assert {item["id"] for item in assigned_list.json()["items"]} == {draft_id}
+
+    assigned_read = client.get(f"/api/onboarding/drafts/{draft_id}", headers=assigned_headers)
+    assert assigned_read.status_code == 200
+    assert assigned_read.json()["primary_owner_id"] == owner["id"]
+
+    unrelated_headers = auth_headers(client, other_owner["email"], "User@12345")
+    unrelated_list = client.get("/api/onboarding/drafts", headers=unrelated_headers, params={"page": 1, "page_size": 10})
+    assert unrelated_list.status_code == 200
+    assert unrelated_list.json()["items"] == []
+    assert unrelated_list.json()["total"] == 0
+
+    unrelated_read = client.get(f"/api/onboarding/drafts/{draft_id}", headers=unrelated_headers)
+    assert unrelated_read.status_code == 403
+
+
+def test_account_manager_can_self_assign_but_not_assign_other_managers(client: TestClient) -> None:
+    admin_headers = auth_headers(client)
+    owner = seeded_user(client, admin_headers, "account_manager")
+    other_owner = create_account_manager_user(client, admin_headers, "handoff.account.manager@tkxel.com", "Handoff Account Manager")
+    owner_headers = auth_headers(client, owner["email"], "User@12345")
+
+    create_other_response = client.post("/api/onboarding/drafts", headers=owner_headers, json=draft_payload("AM Other Owner Workspace", other_owner["id"]))
+    assert create_other_response.status_code == 403
+
+    create_self_response = client.post("/api/onboarding/drafts", headers=owner_headers, json=draft_payload("AM Self Owner Workspace", owner["id"]))
+    assert create_self_response.status_code == 201
+    draft_id = create_self_response.json()["id"]
+
+    reassign_response = client.patch(f"/api/onboarding/drafts/{draft_id}", headers=owner_headers, json={"primary_owner_id": other_owner["id"]})
+    assert reassign_response.status_code == 403
+
+
 def test_onboarding_validation_and_authorization_errors_are_enforced(client: TestClient) -> None:
     headers = auth_headers(client)
     owner = seeded_user(client, headers, "account_manager")
@@ -243,6 +1150,14 @@ def test_onboarding_validation_and_authorization_errors_are_enforced(client: Tes
         json={**draft_payload("Invalid Workspace", owner["id"]), "source_documents": []},
     )
     assert invalid_response.status_code == 422
+
+    invalid_linkedin_response = client.post(
+        "/api/onboarding/drafts",
+        headers=headers,
+        json={**draft_payload("Invalid LinkedIn Workspace", owner["id"]), "linkedin_url": "https://customer.example.com/company"},
+    )
+    assert invalid_linkedin_response.status_code == 422
+    assert invalid_linkedin_response.json()["errors"][0]["field"] == "linkedin_url"
     assert invalid_response.json()["message"] == "Validation failed"
 
     draft_response = client.post("/api/onboarding/drafts", headers=headers, json=draft_payload("Authorization Workspace", owner["id"]))
@@ -253,9 +1168,11 @@ def test_onboarding_validation_and_authorization_errors_are_enforced(client: Tes
     assert approve_response.status_code == 403
 
 
-def test_engagement_list_endpoint_returns_items_empty_state_and_rejects_unauthorized_access(client: TestClient) -> None:
+def test_engagement_list_endpoint_returns_items_empty_state_and_rejects_unauthorized_access(client: TestClient, db_session: Session) -> None:
     headers = auth_headers(client)
-    account_id, owner_id, _ = create_approved_account(client, headers, "Engagement List API Workspace")
+    owner = seeded_user(client, headers, "account_manager")
+    account_id = create_account_without_engagement(db_session, owner, "Engagement List API Workspace")
+    owner_id = owner["id"]
 
     empty_response = client.get(f"/api/accounts/{account_id}/engagements", headers=headers)
     assert empty_response.status_code == 200
@@ -310,6 +1227,53 @@ def test_engagement_create_endpoint_validates_payload_calculates_notice_and_retu
 
     negative_notice_response = client.post(f"/api/accounts/{account_id}/engagements", headers=headers, json=engagement_payload(owner_id, notice_period_days=-1))
     assert negative_notice_response.status_code == 422
+
+
+def test_engagement_create_from_charter_upload_stores_source_and_creates_stakeholders(
+    client: TestClient,
+    db_session: Session,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    settings = get_settings()
+    monkeypatch.setattr(settings, "sow_ai_extraction_enabled", False)
+    headers = auth_headers(client)
+    account_id, _, _ = create_approved_account(client, headers, "Charter Import Workspace")
+    content = b"""
+Project Name: Restaurant Digital Experience Modernization
+Client: Cafe Zupas
+Start Date: 01/15/2026
+End Date: 12/31/2026
+Contract Value: USD 240,000
+Service Lines: Product Engineering, QA Automation, DevOps
+Stakeholders:
+Jane Sponsor - VP Digital
+Mark Owner - Product Owner
+Deliverables: customer ordering platform, analytics dashboard, loyalty integrations
+Risks: POS integration dependency, holiday traffic surge
+"""
+
+    response = client.post(
+        f"/api/accounts/{account_id}/engagements/from-charter",
+        headers=headers,
+        files={"file": ("cafe-zupas-charter.txt", content, "text/plain")},
+    )
+
+    assert response.status_code == 201
+    created = response.json()
+    assert created["account_id"] == account_id
+    assert created["name"] == "Restaurant Digital Experience Modernization"
+    assert created["contract_value"] == 240000
+    assert "product engineering" in {item.lower() for item in created["service_lines"]}
+    assert created["source_document_ids"]
+
+    source_document = db_session.query(SourceDocument).filter(SourceDocument.id == created["source_document_ids"][0]).one()
+    assert source_document.account_id == account_id
+    assert source_document.engagement_id == created["id"]
+    assert source_document.extraction_status == "completed"
+    assert db_session.query(DocumentExtraction).filter(DocumentExtraction.document_id == source_document.id).count() >= 1
+    stakeholder_names = {item.name for item in db_session.query(Stakeholder).filter(Stakeholder.engagement_id == created["id"]).all()}
+    assert "Jane Sponsor" in stakeholder_names
+    assert "Mark Owner" in stakeholder_names
 
 
 def test_engagement_detail_endpoint_returns_detail_404_and_rejects_unauthorized_access(client: TestClient) -> None:
@@ -719,6 +1683,31 @@ def test_account_list_supports_server_sorting(client: TestClient) -> None:
     )
     assert owner_sort.status_code == 200
     assert owner_sort.json()["items"][0]["primary_owner"]["user_name"] == "Account Manager KAM"
+
+
+def test_accounts_expose_numeric_display_ids_for_search_and_sort(client: TestClient) -> None:
+    headers = auth_headers(client)
+    first_account_id, _, _ = create_approved_account(client, headers, "Numeric Reference One")
+    second_account_id, _, _ = create_approved_account(client, headers, "Numeric Reference Two")
+
+    first_detail = client.get(f"/api/accounts/{first_account_id}", headers=headers)
+    second_detail = client.get(f"/api/accounts/{second_account_id}", headers=headers)
+    assert first_detail.status_code == 200
+    assert second_detail.status_code == 200
+    first_number = first_detail.json()["account_number"]
+    second_number = second_detail.json()["account_number"]
+    assert isinstance(first_number, int)
+    assert isinstance(second_number, int)
+    assert second_number == first_number + 1
+
+    search_response = client.get("/api/accounts", headers=headers, params={"search": f"Account #{second_number}", "page": 1, "page_size": 10})
+    assert search_response.status_code == 200
+    assert [item["id"] for item in search_response.json()["items"]] == [second_account_id]
+
+    sorted_response = client.get("/api/accounts", headers=headers, params={"sort": "account_number", "direction": "desc", "page": 1, "page_size": 10})
+    assert sorted_response.status_code == 200
+    numbers = [item["account_number"] for item in sorted_response.json()["items"]]
+    assert numbers == sorted(numbers, reverse=True)
 
 
 def test_account_creation_accepts_field_builder_values(client: TestClient, db_session: Session) -> None:

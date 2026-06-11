@@ -1,6 +1,6 @@
 import { Account, RiskStatus } from '@/types/account'
 
-export type SourceDocumentType = 'project_charter' | 'sow' | 'commercial_note' | 'research'
+export type SourceDocumentType = 'project_charter' | 'sow' | 'attachment' | 'source_link' | 'commercial_note' | 'research' | 'manual_import'
 export type DraftStatus = 'ready_for_review' | 'approved' | 'rejected'
 export type EngagementStatus = 'draft' | 'active' | 'on_hold' | 'renewal_watch' | 'at_risk' | 'completed' | 'archived'
 export type EngagementDeliveryStatus = 'not_started' | 'planned' | 'active' | 'watch' | 'blocked' | 'at_risk' | 'completed'
@@ -17,6 +17,8 @@ export interface SourceCitation {
   label: string
   page: number
   excerpt: string
+  fieldKey?: string
+  confidence?: number
 }
 
 export interface SourceDocument {
@@ -30,6 +32,14 @@ export interface SourceDocument {
   confidence: number
   pages: number
   status: 'parsed' | 'needs_review'
+  fileName?: string
+  mimeType?: string
+  sizeBytes?: number
+  extractionStatus?: string
+  extractionError?: string
+  ocrStatus?: string
+  extractedTextChecksum?: string
+  extractedText?: string
   citations: SourceCitation[]
 }
 

@@ -1,5 +1,19 @@
-import { describe, expect, it } from 'vitest'
-import { ApiOpportunity, buildCreatePayload, buildUpdatePayload, mapApiOpportunity } from '@/services/opportunities'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { apiRequest } from '@/services/api'
+import {
+  ApiOpportunity,
+  addOpportunityActionItem,
+  buildCreatePayload,
+  buildUpdatePayload,
+  listOpportunities,
+  mapApiOpportunity,
+} from '@/services/opportunities'
+
+vi.mock('@/services/api', () => ({
+  apiRequest: vi.fn(),
+}))
+
+const apiRequestMock = vi.mocked(apiRequest)
 
 const apiOpportunity: ApiOpportunity = {
   id: 'opp-1',
@@ -84,6 +98,10 @@ const apiOpportunity: ApiOpportunity = {
 }
 
 describe('opportunities service mapping', () => {
+  beforeEach(() => {
+    apiRequestMock.mockReset()
+  })
+
   it('maps opportunity detail records for board, list, and detail consumers', () => {
     const opportunity = mapApiOpportunity(apiOpportunity)
 
@@ -94,6 +112,7 @@ describe('opportunities service mapping', () => {
     expect(opportunity.stageHistory?.[0]?.afterStage).toBe('Qualified')
     expect(opportunity.decisions?.[0]?.decisionText).toBe('Proceed with pilot.')
     expect(opportunity.actionItems?.[0]?.title).toBe('Send proposal recap')
+    expect(opportunity.actionItems?.[0]?.futureTaskId).toBeNull()
   })
 
   it('builds create payloads with snake_case opportunity and action item fields', () => {
@@ -108,7 +127,7 @@ describe('opportunities service mapping', () => {
       stage: 'Identified',
       nextStep: 'Confirm sponsor priority.',
       targetDate: '2026-06-30T12:00:00Z',
-      actionItems: [{ title: 'Send recap', dueDate: '2026-06-07T12:00:00Z', priority: 'medium' }],
+      actionItems: [{ title: 'Send recap', dueDate: '2026-06-07T12:00:00Z', priority: 'medium', createTask: true }],
     })).toMatchObject({
       account_id: 'acc-1',
       type_id: 'type-1',
@@ -116,7 +135,7 @@ describe('opportunities service mapping', () => {
       service_line: 'Data Analytics',
       next_step: 'Confirm sponsor priority.',
       target_date: '2026-06-30T12:00:00Z',
-      action_items: [{ title: 'Send recap', due_date: '2026-06-07T12:00:00Z' }],
+      action_items: [{ title: 'Send recap', due_date: '2026-06-07T12:00:00Z', create_task: true }],
     })
   })
 
@@ -132,5 +151,39 @@ describe('opportunities service mapping', () => {
       source_context: 'engagement',
       outcome_reason: 'Budget approved by sponsor.',
     })
+  })
+
+  it('sends create_task false when the action item task checkbox is off', async () => {
+    apiRequestMock.mockResolvedValue(apiOpportunity.action_items[0])
+
+    await addOpportunityActionItem('test-token', 'opp-1', {
+      title: 'Send recap',
+      dueDate: '2026-06-07T12:00:00Z',
+      createTask: false,
+    })
+
+    expect(apiRequestMock).toHaveBeenCalledWith('/api/opportunities/opp-1/action-items', expect.objectContaining({
+      method: 'POST',
+      token: 'test-token',
+      body: JSON.stringify({ title: 'Send recap', due_date: '2026-06-07T12:00:00Z', create_task: false }),
+    }))
+  })
+
+  it('sends dashboard open and stalled filters as API query params', async () => {
+    apiRequestMock.mockResolvedValue({
+      items: [],
+      total: 0,
+      page: 1,
+      page_size: 25,
+      pages: 0,
+      totals: { open_count: 0, open_value: 0, won_value: 0, total_count: 0, total_value: 0, average_value: 0, stage_counts: {}, stage_values: {} },
+    })
+
+    await listOpportunities('test-token', { openOnly: true, stalled: true, stalledAfterDays: 90, page: 1, pageSize: 25 })
+
+    expect(apiRequestMock).toHaveBeenCalledWith(
+      '/api/opportunities?open_only=true&stalled=true&stalled_after_days=90&page=1&page_size=25',
+      { token: 'test-token' },
+    )
   })
 })
