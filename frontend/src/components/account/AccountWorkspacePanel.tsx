@@ -1,20 +1,24 @@
 import * as Dialog from '@radix-ui/react-dialog'
 import { AlertTriangle, ArrowRight, BookOpen, CalendarClock, CheckCircle2, Download, FileSearch, FileText, GraduationCap, Loader2, PenLine, Plus, RefreshCcw, Send, ShieldAlert, UploadCloud, X } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
-import { FormEvent, useEffect, useState } from 'react'
+import { FormEvent, useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { toast } from 'sonner'
 import { AddGovernanceEventDialog } from '@/components/governance/AddGovernanceEventDialog'
 import { CompleteGovernanceEventDialog } from '@/components/governance/CompleteGovernanceEventDialog'
 import { Account } from '@/types/account'
 import { useGovernanceStore } from '@/stores/governanceStore'
+import { useTimelineStore } from '@/stores/timelineStore'
 import { useV3Store } from '@/stores/v3Store'
 import { RetentionPlan, SourceDocument } from '@/types/v3'
 import { GovernanceEventRecord } from '@/types/governance'
 import { formatDate } from '@/utils/formatters'
 import { useAuth } from '@/contexts/AuthContext'
+import { useRole } from '@/hooks/useRole'
 import { ContentRecommendation, createSentContent, Escalation, listContentRecommendations, listEscalations, listSentContent, SentContent } from '@/services/contentGovernance'
 import { downloadAccountAttachment, extractAccountAttachment, listAccountAttachments, uploadAccountAttachment } from '@/services/accountWorkspace'
+import { createTimelineNote, getAccountTimeline } from '@/services/timeline'
+import { TimelineEntry } from '@/types/timeline'
 
 export function AccountWorkspacePanel({ account, tab }: { account: Account; tab: string }) {
   const documents = useV3Store(state => state.sourceDocuments).filter(document => document.accountId === account.id)
@@ -660,38 +664,104 @@ type AccountNote = {
 }
 
 function NotesPanel({ account, plans }: { account: Account; plans: RetentionPlan[] }) {
-  const [notes, setNotes] = useState<AccountNote[]>(() => [
+  const { token } = useAuth()
+  const user = useRole()
+  const addTimelineEntry = useTimelineStore(state => state.addEntry)
+  const planNotes = useMemo<AccountNote[]>(() => [
     ...plans.map(plan => ({
       id: `plan-${plan.id}`,
       title: plan.title,
       body: plan.successCriteria.join(', '),
       createdAt: new Date().toISOString(),
     })),
-  ])
+  ], [plans])
+  const [notes, setNotes] = useState<AccountNote[]>(planNotes)
+  const [loading, setLoading] = useState(Boolean(token))
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState('')
   const [open, setOpen] = useState(false)
   const [title, setTitle] = useState('')
   const [body, setBody] = useState('')
 
-  function submit(event: FormEvent) {
+  useEffect(() => {
+    if (!token) {
+      setNotes(planNotes)
+      setLoading(false)
+      return
+    }
+    let cancelled = false
+    setLoading(true)
+    setError('')
+    getAccountTimeline(token, account.id, { event_type: 'manual_note', direction: 'desc', page: 1, page_size: 50 })
+      .then(result => {
+        if (cancelled) return
+        setNotes([...result.items.map(timelineEntryToNote), ...planNotes])
+      })
+      .catch(err => {
+        if (cancelled) return
+        setNotes(planNotes)
+        setError(err instanceof Error ? err.message : 'Notes could not be loaded')
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [account.id, planNotes, token])
+
+  async function refreshNotes() {
+    if (!token) return
+    setLoading(true)
+    setError('')
+    try {
+      const result = await getAccountTimeline(token, account.id, { event_type: 'manual_note', direction: 'desc', page: 1, page_size: 50 })
+      setNotes([...result.items.map(timelineEntryToNote), ...planNotes])
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Notes could not be refreshed')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  async function submit(event: FormEvent) {
     event.preventDefault()
     const cleanBody = body.trim()
     if (!cleanBody) {
       toast.error('Note body is required')
       return
     }
-    setNotes(current => [
-      {
-        id: `note-${Date.now()}`,
+    if (!token) {
+      toast.error('You must be signed in to save notes')
+      return
+    }
+    setSaving(true)
+    setError('')
+    try {
+      const entry = await createTimelineNote(token, account.id, {
+        event_type: 'manual_note',
         title: title.trim() || 'Account note',
-        body: cleanBody,
-        createdAt: new Date().toISOString(),
-      },
-      ...current,
-    ])
-    setTitle('')
-    setBody('')
-    setOpen(false)
-    toast.success('Note added')
+        description: cleanBody,
+        event_at: new Date().toISOString(),
+        owner_id: user.id,
+        mentions: [],
+        attachments: [],
+        is_sensitive: false,
+        tags: ['manual', 'notes'],
+      })
+      addTimelineEntry(entry)
+      setNotes(current => [timelineEntryToNote(entry), ...current.filter(note => note.id !== entry.id)])
+      setTitle('')
+      setBody('')
+      setOpen(false)
+      toast.success('Note saved')
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Note could not be saved'
+      setError(message)
+      toast.error(message)
+    } finally {
+      setSaving(false)
+    }
   }
 
   return (
@@ -712,20 +782,41 @@ function NotesPanel({ account, plans }: { account: Account; plans: RetentionPlan
               Capture account-specific context, decisions, and follow-up notes without leaving Account Overview.
             </p>
           </div>
-          <AddAccountNoteDialog
-            open={open}
-            onOpenChange={setOpen}
-            title={title}
-            body={body}
-            onTitleChange={setTitle}
-            onBodyChange={setBody}
-            onSubmit={submit}
-          />
+          <div className="flex flex-wrap gap-2">
+            <button type="button" className="tk-button-secondary shrink-0 bg-white" onClick={() => void refreshNotes()} disabled={!token || loading || saving}>
+              {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCcw className="h-4 w-4" />}
+              Refresh
+            </button>
+            <AddAccountNoteDialog
+              open={open}
+              onOpenChange={setOpen}
+              title={title}
+              body={body}
+              saving={saving}
+              onTitleChange={setTitle}
+              onBodyChange={setBody}
+              onSubmit={submit}
+            />
+          </div>
         </div>
       </header>
       <div className="grid gap-5 p-5 xl:grid-cols-[minmax(0,1fr)_280px]">
         <div className="grid gap-3">
-          {notes.length ? notes.map(note => (
+          {error ? (
+            <div className="flex items-start gap-2 rounded-lg border border-rag-red/20 bg-rag-red/10 p-3 text-sm text-rag-red">
+              <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+              <span>{error}</span>
+            </div>
+          ) : null}
+          {loading ? (
+            <div className="rounded-lg border border-surface-border bg-white p-4">
+              <div className="flex items-center gap-3 text-sm font-semibold text-ink-secondary">
+                <Loader2 className="h-4 w-4 animate-spin text-brand-blue" />
+                Loading notes
+              </div>
+            </div>
+          ) : null}
+          {!loading && notes.length ? notes.map(note => (
             <article key={note.id} className="rounded-lg border border-surface-border bg-white p-4 transition-colors hover:border-brand-blue/40">
               <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
                 <div className="min-w-0">
@@ -736,9 +827,10 @@ function NotesPanel({ account, plans }: { account: Account; plans: RetentionPlan
               </div>
               <p className="mt-3 text-xs font-medium text-ink-tertiary">Added {formatDate(note.createdAt)}</p>
             </article>
-          )) : (
+          )) : null}
+          {!loading && !notes.length ? (
             <EmptyWorkspaceState icon={BookOpen} title="No notes yet" body="Add a note to capture account planning context." />
-          )}
+          ) : null}
         </div>
         <WorkspaceContext title="Notes" count={notes.length} accountName={account.name} body="Notes stay with this account and support timeline, handover, and review preparation." />
       </div>
@@ -746,11 +838,21 @@ function NotesPanel({ account, plans }: { account: Account; plans: RetentionPlan
   )
 }
 
+function timelineEntryToNote(entry: TimelineEntry): AccountNote {
+  return {
+    id: entry.id,
+    title: entry.title || 'Account note',
+    body: entry.description,
+    createdAt: entry.timestamp,
+  }
+}
+
 function AddAccountNoteDialog({
   open,
   onOpenChange,
   title,
   body,
+  saving,
   onTitleChange,
   onBodyChange,
   onSubmit,
@@ -759,9 +861,10 @@ function AddAccountNoteDialog({
   onOpenChange: (open: boolean) => void
   title: string
   body: string
+  saving: boolean
   onTitleChange: (value: string) => void
   onBodyChange: (value: string) => void
-  onSubmit: (event: FormEvent) => void
+  onSubmit: (event: FormEvent) => void | Promise<void>
 }) {
   return (
     <Dialog.Root open={open} onOpenChange={onOpenChange}>
@@ -795,9 +898,9 @@ function AddAccountNoteDialog({
             </label>
             <div className="flex justify-end gap-2 border-t border-surface-border pt-4">
               <Dialog.Close type="button" className="tk-button-secondary">Cancel</Dialog.Close>
-              <button type="submit" className="tk-button-primary">
-                <Plus className="h-4 w-4" />
-                Save note
+              <button type="submit" className="tk-button-primary" disabled={saving}>
+                {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />}
+                {saving ? 'Saving...' : 'Save note'}
               </button>
             </div>
           </form>
