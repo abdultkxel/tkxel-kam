@@ -1192,6 +1192,23 @@ def test_engagement_list_endpoint_returns_items_empty_state_and_rejects_unauthor
     assert unauthorized_response.status_code == 403
 
 
+def test_engagement_list_normalizes_legacy_source_link_routes(client: TestClient, db_session: Session) -> None:
+    headers = auth_headers(client)
+    account_id, owner_id, _ = create_approved_account(client, headers, "Legacy Engagement Source Link Workspace")
+    created = create_engagement_for_account(client, headers, account_id, owner_id, name="Legacy source link coverage")
+    engagement = db_session.get(Engagement, created["id"])
+    assert engagement is not None
+    engagement.source_links = [{"label": "Demo SOW", "source_type": "demo_seed", "route": f"/accounts/{account_id}?tab=kyc"}]
+    db_session.commit()
+
+    list_response = client.get(f"/api/accounts/{account_id}/engagements", headers=headers, params={"page": 1, "page_size": 10})
+
+    assert list_response.status_code == 200
+    listed = next(item for item in list_response.json()["items"] if item["id"] == created["id"])
+    assert listed["source_links"][0]["title"] == "Demo SOW"
+    assert listed["source_links"][0]["url"] == f"/accounts/{account_id}?tab=kyc"
+
+
 def test_engagement_create_endpoint_validates_payload_calculates_notice_and_returns_shape(client: TestClient) -> None:
     headers = auth_headers(client)
     account_id, owner_id, _ = create_approved_account(client, headers, "Engagement Create API Workspace")

@@ -259,7 +259,7 @@ def seed_demo_project_data(db: Session, *, now: datetime | None = None) -> dict[
         engagement.ops_lead_id = delivery_lead.id
         engagement.ops_lead_name = delivery_lead.full_name
         engagement.service_lines = list(spec["service_lines"])
-        engagement.source_links = [{"label": "Demo SOW", "source_type": "demo_seed", "route": source_route}]
+        engagement.source_links = [{"title": "Demo SOW", "url": source_route}]
         engagement.value = float(spec["value"])
         engagement.currency = "USD"
         engagement.delivery_status = "active" if spec["risk"] != "critical" else "watch"
@@ -1198,7 +1198,7 @@ def seed_forecast_demo_data(db: Session, *, now: datetime | None = None) -> dict
     engagement.owner_id = owner.id
     engagement.owner_name = owner.full_name
     engagement.service_lines = ["Engineering", "Data Analytics"]
-    engagement.source_links = [{"label": "Forecast demo seed", "source_type": "demo"}]
+    engagement.source_links = [{"title": "Forecast demo seed", "url": f"/accounts/{account.id}?tab=engagement"}]
     engagement.value = 240000
     engagement.currency = "USD"
     engagement.delivery_status = "active"

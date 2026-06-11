@@ -6,6 +6,7 @@ from sqlalchemy.orm import Session, selectinload
 from app.models import Account, AccountOwner, AccountOwnershipHistory, KycSnapshot, Opportunity, SourceCitation, SourceDocument, User
 
 ACCOUNT_NUMBER_START = 100001
+AM_OWNERSHIP_ROLES = {"primary_am", "supporting_am", "account_manager", "am", "kam"}
 
 
 class AccountRepository:
@@ -20,6 +21,7 @@ class AccountRepository:
         segment: str | None = None,
         region: str | None = None,
         risk_status: str | None = None,
+        am_id: str | None = None,
         primary_am: str | None = None,
         supporting_am: str | None = None,
         ops_lead: str | None = None,
@@ -40,6 +42,7 @@ class AccountRepository:
             segment=segment,
             region=region,
             risk_status=risk_status,
+            am_id=am_id,
             primary_am=primary_am,
             supporting_am=supporting_am,
             ops_lead=ops_lead,
@@ -312,6 +315,7 @@ class AccountRepository:
         segment: str | None,
         region: str | None,
         risk_status: str | None,
+        am_id: str | None,
         primary_am: str | None,
         supporting_am: str | None,
         ops_lead: str | None,
@@ -353,6 +357,14 @@ class AccountRepository:
             conditions.append(Account.risk_status.in_(("warning", "critical")))
         elif risk_status:
             conditions.append(Account.risk_status == risk_status)
+        if am_id:
+            conditions.append(
+                Account.owners.any(and_(
+                    AccountOwner.ownership_role.in_(AM_OWNERSHIP_ROLES),
+                    AccountOwner.user_id == am_id,
+                    AccountOwner.is_active.is_(True),
+                ))
+            )
         for role, user_id in (
             ("primary_am", primary_am),
             ("supporting_am", supporting_am),

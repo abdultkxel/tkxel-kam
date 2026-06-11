@@ -35,6 +35,7 @@ docs/features/_feature-template.md
 - [Role-Based Dashboards](role-based-dashboards.md)
 - [KAM AI Six-Month Forecast](kam-ai-six-month-forecast.md)
 - [KAM AI Chat Sessions And Vector Search](kam-ai-chat-sessions-vector-search.md)
+- [UI Design Quality Tooling](ui-design-quality-tooling.md)
 - [UI KYC, Account, And Engagement Cleanup](ui-kyc-account-engagement-cleanup.md)
 - [Scoring, Signals, Playbooks, and Tasks](scoring-signals-playbooks-and-tasks.md)
 - [Timeline And Handover](timeline-and-handover.md)

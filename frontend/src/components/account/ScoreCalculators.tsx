@@ -462,12 +462,13 @@ export function ScoreCalculators({
   const [selections, setSelections] = useState<CalculatorSelections>(() => seedSelections(account))
   const [selectedServiceLines, setSelectedServiceLines] = useState<string[]>(() => serviceLines.slice(0, account.tags.length + 4))
   const [expandedCalculators, setExpandedCalculators] = useState<Record<ScoreCalculatorId, boolean>>({
-    relationship: true,
-    contract: true,
-    resource: true,
-    csat: true,
-    risk: true,
+    relationship: false,
+    contract: false,
+    resource: false,
+    csat: false,
+    risk: false,
   })
+  const [serviceLinesExpanded, setServiceLinesExpanded] = useState(false)
   const [expandedActivityKeys, setExpandedActivityKeys] = useState<Record<string, boolean>>({})
   const accountTasks = useMemo(() => tasks.filter(task => task.accountId === account.id), [account.id, tasks])
   const activityEvidence = useMemo<ScoreActivityEvidence[]>(
@@ -662,48 +663,60 @@ export function ScoreCalculators({
         })}
       </div>
 
-      <section className="tk-card p-5">
-        <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
-          <div>
+      <section className="tk-card overflow-hidden">
+        <button
+          type="button"
+          className="flex min-h-[64px] w-full flex-col gap-3 bg-surface-secondary/70 px-5 py-4 text-left transition-colors hover:bg-surface-tertiary sm:flex-row sm:items-center sm:justify-between"
+          onClick={() => setServiceLinesExpanded(current => !current)}
+          aria-expanded={serviceLinesExpanded}
+        >
+          <div className="min-w-0">
             <h4 className="text-sm font-semibold text-ink">Service line mapping</h4>
             <p className="mt-1 text-sm text-ink-secondary">{selectedServiceLines.length} of {serviceLines.length} mapped to this account.</p>
           </div>
-          <div className="flex flex-wrap gap-2">
-            <button type="button" className="tk-button-secondary" onClick={() => setSelectedServiceLines(serviceLines)}>
-              Select all
-            </button>
-            <button type="button" className="tk-button-secondary" onClick={() => setSelectedServiceLines([])}>
-              Clear
-            </button>
-            <span className="inline-flex min-h-[44px] items-center rounded-md border border-blue-tint-20 bg-blue-tint-20 px-3 text-[11px] font-semibold uppercase tracking-wider text-brand-blue">
+          <span className="flex flex-wrap items-center gap-2">
+            <span className="inline-flex min-h-[32px] items-center rounded-md border border-blue-tint-20 bg-blue-tint-20 px-3 text-[11px] font-semibold uppercase tracking-wider text-brand-blue">
               {summary.serviceCoverage}% coverage
             </span>
-          </div>
-        </div>
-        <div className="mt-4 grid max-h-[320px] gap-2 overflow-y-auto pr-1 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4">
-          {serviceLines.map(serviceLine => {
-            const selected = selectedServiceLines.includes(serviceLine)
-
-            return (
-              <button
-                key={serviceLine}
-                type="button"
-                className={`flex min-h-[44px] items-center gap-2 rounded-md border px-3 py-2 text-left text-xs font-medium transition-colors ${
-                  selected
-                    ? 'border-brand-blue bg-blue-tint-20 text-brand-blue'
-                    : 'border-surface-border bg-surface-secondary text-ink-secondary hover:bg-surface-tertiary hover:text-ink'
-                }`}
-                onClick={() => toggleServiceLine(serviceLine)}
-                aria-pressed={selected}
-              >
-                <span className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-sm border ${selected ? 'border-brand-blue bg-brand-blue text-white' : 'border-surface-border bg-white'}`}>
-                  {selected ? <Check className="h-3 w-3" /> : null}
-                </span>
-                <span>{serviceLine}</span>
+            <ChevronDown className={cn('h-4 w-4 text-ink-secondary transition-transform', serviceLinesExpanded && 'rotate-180')} />
+          </span>
+        </button>
+        {serviceLinesExpanded ? (
+          <div className="border-t border-surface-border p-5">
+            <div className="flex flex-wrap justify-end gap-2">
+              <button type="button" className="tk-button-secondary" onClick={() => setSelectedServiceLines(serviceLines)}>
+                Select all
               </button>
-            )
-          })}
-        </div>
+              <button type="button" className="tk-button-secondary" onClick={() => setSelectedServiceLines([])}>
+                Clear
+              </button>
+            </div>
+            <div className="mt-4 grid max-h-[320px] gap-2 overflow-y-auto pr-1 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4">
+              {serviceLines.map(serviceLine => {
+                const selected = selectedServiceLines.includes(serviceLine)
+
+                return (
+                  <button
+                    key={serviceLine}
+                    type="button"
+                    className={`flex min-h-[44px] items-center gap-2 rounded-md border px-3 py-2 text-left text-xs font-medium transition-colors ${
+                      selected
+                        ? 'border-brand-blue bg-blue-tint-20 text-brand-blue'
+                        : 'border-surface-border bg-surface-secondary text-ink-secondary hover:bg-surface-tertiary hover:text-ink'
+                    }`}
+                    onClick={() => toggleServiceLine(serviceLine)}
+                    aria-pressed={selected}
+                  >
+                    <span className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-sm border ${selected ? 'border-brand-blue bg-brand-blue text-white' : 'border-surface-border bg-white'}`}>
+                      {selected ? <Check className="h-3 w-3" /> : null}
+                    </span>
+                    <span>{serviceLine}</span>
+                  </button>
+                )
+              })}
+            </div>
+          </div>
+        ) : null}
       </section>
 
       <section className="tk-card p-4">
