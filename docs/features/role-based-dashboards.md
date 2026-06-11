@@ -30,7 +30,7 @@ Implements role-resolved dashboard behavior so users no longer see AM Home, KAM 
 - Account Manager dashboard scope is intentionally focused on clickable attention tiles, paginated account portfolio table, critical tasks, merged task breakdown/listing, opportunities/pipeline, assigned-account forecast, and the global governance calendar. Duplicate AI task summary, escalation, upcoming-governance, and governance-cadence panels are omitted for this role.
 - All role dashboards now expose governance through `governance_calendar` only; standalone upcoming-governance and governance-cadence dashboard panels are omitted.
 - AM workload counts active AM ownership assignments, including supporting AM ownership records, deduped per owner/account.
-- AM workload rows link to `/accounts?primary_am=<user_id>`, and KAM Head/Admin account lists expose an Account Manager filter.
+- AM workload rows link to `/accounts?am_id=<user_id>`, which filters by any active AM ownership assignment included in the workload count; KAM Head/Admin account lists still expose the exact Primary AM filter.
 - At-risk accounts are defined as `warning` or `critical` risk status; at-risk dashboard routes use `risk=at_risk` and row clicks open the account Health tab.
 - At-risk dashboard rows now include a derived user-facing reason from risk status, health-score thresholds, and relevant lifecycle status instead of exposing only a raw risk label.
 - 6-Month Revenue Forecast is calculated for the current dashboard account scope by default and can be filtered to a single account through dashboard/account forecast filters.
@@ -90,6 +90,8 @@ Latest verification:
 - `docker compose run --rm --no-deps backend pytest tests/test_notifications_dashboards_reporting.py tests/test_opportunities.py -q` passed with 11 tests before the final active-only repository cleanup; a later rerun stalled in Docker after 10 passing tests and its one-off container was stopped.
 - `docker compose run --rm --no-deps backend pytest tests/test_opportunities.py::test_opportunity_create_list_stage_decision_action_archive_flow -q` passed after the final active-only repository cleanup.
 - `docker compose run --rm --no-deps frontend npm test -- Dashboard.test.tsx Tasks.test.tsx opportunities.test.ts` passed with 10 tests.
+- `docker compose run --rm --no-deps backend pytest tests/test_notifications_dashboards_reporting.py::test_role_based_dashboard_profiles_and_reduced_direct_endpoints -q` passed after AM workload links switched to the broader `am_id` account filter.
+- `docker compose run --rm --no-deps frontend npm test -- Dashboard.test.tsx Accounts.test.tsx` passed after preserving `am_id` query aliases from dashboard workload clicks.
 
 ## Known Follow-Ups
 

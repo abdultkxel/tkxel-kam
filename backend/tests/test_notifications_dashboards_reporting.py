@@ -424,7 +424,12 @@ def test_role_based_dashboard_profiles_and_reduced_direct_endpoints(client: Test
     workload_widget = next(item for item in kam_dashboard.json()["widgets"] if item["key"] == "am_workload")
     owner_workload = next(item for item in workload_widget["items"] if item["owner_id"] == owner["id"])
     assert owner_workload["accounts"] >= 2
-    assert owner_workload["route"] == f"/accounts?primary_am={owner['id']}"
+    assert owner_workload["route"] == f"/accounts?am_id={owner['id']}"
+    workload_accounts = client.get("/api/accounts", headers=kam_headers, params={"am_id": owner["id"], "page": 1, "page_size": 20})
+    assert workload_accounts.status_code == 200
+    workload_account_ids = {item["id"] for item in workload_accounts.json()["items"]}
+    assert account.id in workload_account_ids
+    assert supporting_account.id in workload_account_ids
     high_risk = next(item for item in kam_dashboard.json()["widgets"] if item["key"] == "high_risk_accounts")
     high_risk_account = next(item for item in high_risk["items"] if item["account_id"] == account.id)
     assert high_risk_account["route"] == f"/accounts/{account.id}?tab=health"

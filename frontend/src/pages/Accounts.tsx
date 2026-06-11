@@ -1,12 +1,11 @@
 import * as Dialog from '@radix-ui/react-dialog'
-import { AlertTriangle, Building2, ChevronLeft, ChevronRight, Download, FileText, LayoutGrid, Loader2, Table2, Tags, Upload, UserRound, X } from 'lucide-react'
-import { useEffect, useState } from 'react'
+import { AlertTriangle, Building2, ChevronLeft, ChevronRight, Download, FileText, LayoutGrid, Loader2, Search, Table2, Tags, Upload, UserRound, X } from 'lucide-react'
+import { ReactNode, useEffect, useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { AccountCard } from '@/components/account/AccountCard'
 import { CreateAccountDialog } from '@/components/account/CreateAccountDialog'
 import { AccountCsvImport } from '@/components/admin/AccountCsvImport'
 import { EmptyState } from '@/components/ui/EmptyState'
-import { FilterBar } from '@/components/ui/FilterBar'
 import { PageHeader } from '@/components/ui/PageHeader'
 import { Skeleton } from '@/components/ui/Skeleton'
 import { Column, SortableTable } from '@/components/ui/SortableTable'
@@ -66,9 +65,9 @@ export function Accounts() {
   const search = params.get('q') ?? ''
   const stage = params.get('stage') ?? ''
   const risk = params.get('risk') ?? ''
-  const primaryAm = params.get('primary_am') ?? params.get('am_id') ?? params.get('owner') ?? ''
-  const segments = params.getAll('segment')
-  const segmentsKey = segments.join('|')
+  const primaryAm = params.get('primary_am') ?? ''
+  const workloadAm = params.get('am_id') ?? params.get('owner') ?? ''
+  const activeAm = primaryAm || workloadAm
   const requestedSort = params.get('sort') ?? 'name'
   const sort: AccountSortOption = accountSortOptions.includes(requestedSort as AccountSortOption) ? requestedSort as AccountSortOption : 'name'
   const direction: SortDirection = params.get('direction') === 'desc' ? 'desc' : 'asc'
@@ -76,6 +75,10 @@ export function Accounts() {
   const privileged = user.role === 'leadership' || user.role === 'kam_head' || user.role === 'admin' || user.role === 'super_admin'
   const canSeeDraftAccounts = user.role === 'kam_head' || user.role === 'admin' || user.role === 'super_admin'
   const tableSort = { column: apiSortToTableColumn[sort] ?? 'name', direction }
+  const activeManagerName = accountManagers.find(manager => manager.id === activeAm)?.name ?? accounts.find(account => account.ownerId === activeAm)?.ownerName ?? activeAm
+  const accountManagerOptions = activeAm && !accountManagers.some(manager => manager.id === activeAm)
+    ? [{ id: activeAm, name: activeManagerName || activeAm }, ...accountManagers]
+    : accountManagers
 
   function setFilter(key: string, value: string) {
     const next = new URLSearchParams(params)
@@ -85,10 +88,12 @@ export function Accounts() {
     setParams(next, { replace: true })
   }
 
-  function setMultiFilter(key: string, values: string[]) {
+  function setAccountManagerFilter(value: string) {
     const next = new URLSearchParams(params)
-    next.delete(key)
-    values.forEach(value => next.append(key, value))
+    next.delete('am_id')
+    next.delete('owner')
+    if (value) next.set('primary_am', value)
+    else next.delete('primary_am')
     next.set('page', '1')
     setParams(next, { replace: true })
   }
@@ -105,16 +110,18 @@ export function Accounts() {
     setSortState(tableColumnToApiSort[nextSort.column] ?? 'name', nextSort.direction)
   }
 
-  function toggleSegment(segment: string) {
-    setMultiFilter('segment', segments.includes(segment) ? segments.filter(item => item !== segment) : [...segments, segment])
-  }
-
   function clearFilters() {
     setParams({}, { replace: true })
     setSelectedIds([])
   }
 
-  const activeFilterCount = [search, stage, risk, primaryAm].filter(Boolean).length + segments.length
+  const activeFilterCount = [search, stage, risk, activeAm].filter(Boolean).length
+  const activeFilterChips = [
+    search ? { key: 'search', label: `Search: ${search}`, onRemove: () => setFilter('q', '') } : null,
+    stage ? { key: 'stage', label: `Stage: ${stage}`, onRemove: () => setFilter('stage', '') } : null,
+    risk ? { key: 'risk', label: `Risk: ${riskLabel(risk)}`, onRemove: () => setFilter('risk', '') } : null,
+    activeAm ? { key: 'am', label: `${workloadAm ? 'AM workload' : 'Account manager'}: ${activeManagerName || activeAm}`, onRemove: () => setAccountManagerFilter('') } : null,
+  ].filter((chip): chip is { key: string; label: string; onRemove: () => void } => Boolean(chip))
 
   const columns: Column<Account>[] = [
     { key: 'name', header: 'Account', sortable: true, render: account => <span className="font-semibold text-ink">{account.name}</span> },
@@ -181,7 +188,7 @@ export function Accounts() {
     if (stage) query.set('lifecycle_status', stage)
     if (risk) query.set('risk_status', risk)
     if (primaryAm) query.set('primary_am', primaryAm)
-    if (segments[0]) query.set('segment', segments[0])
+    else if (workloadAm) query.set('am_id', workloadAm)
     query.set('sort', sort)
     query.set('direction', direction)
     query.set('page', String(Number.isFinite(page) && page > 0 ? page : 1))
@@ -190,7 +197,7 @@ export function Accounts() {
     let active = true
     setLoading(true)
     setError('')
-    const draftQuery = buildDraftAccountQuery({ search, stage, risk, segment: segments[0] })
+    const draftQuery = buildDraftAccountQuery({ search, stage, risk })
     const draftsPromise = canSeeDraftAccounts && draftQuery ? listOnboardingDrafts(token, draftQuery) : Promise.resolve({ items: [], total: 0, page: 1, page_size: 25, pages: 0 })
 
     Promise.all([listAccounts(token, query), draftsPromise])
@@ -214,7 +221,7 @@ export function Accounts() {
     return () => {
       active = false
     }
-  }, [canSeeDraftAccounts, direction, page, primaryAm, risk, search, segmentsKey, setAccounts, sort, stage, token])
+  }, [canSeeDraftAccounts, direction, page, primaryAm, risk, search, setAccounts, sort, stage, token, workloadAm])
 
   useEffect(() => {
     if (!token || !privileged) {
@@ -248,117 +255,111 @@ export function Accounts() {
         }
       />
 
-      <FilterBar
-        onClear={clearFilters}
-        contentClassName="lg:grid-cols-[minmax(220px,1fr)_minmax(150px,0.7fr)_minmax(150px,0.7fr)] xl:grid-cols-[minmax(240px,1.1fr)_160px_160px_minmax(320px,1fr)_auto]"
-      >
-        <label className="space-y-1">
-          <span className="text-xs font-semibold uppercase tracking-wider text-ink-secondary">Search</span>
-          <input className="tk-input" value={search} onChange={event => setFilter('q', event.target.value)} placeholder="Account name, AM, or email" />
-        </label>
-        <label className="space-y-1">
-          <span className="text-xs font-semibold uppercase tracking-wider text-ink-secondary">Stage</span>
-          <select className="tk-input" value={stage} onChange={event => setFilter('stage', event.target.value)}>
-            <option value="">All stages</option>
-            <option>Draft</option>
-            <option>Onboarding</option>
-            <option>Active</option>
-            <option>Adoption</option>
-            <option>Expansion</option>
-            <option>Expansion Focus</option>
-            <option>Renewal</option>
-            <option>Renewal Focus</option>
-            <option>At Risk</option>
-            <option>Dormant</option>
-            <option>Archived</option>
-          </select>
-        </label>
-        <label className="space-y-1">
-          <span className="text-xs font-semibold uppercase tracking-wider text-ink-secondary">Risk</span>
-          <select className="tk-input" value={risk} onChange={event => setFilter('risk', event.target.value)}>
-            <option value="">All risk</option>
-            <option value="at_risk">At risk</option>
-            <option value="healthy">Healthy</option>
-            <option value="warning">Warning</option>
-            <option value="critical">Critical</option>
-          </select>
-        </label>
-        <div className="space-y-1 lg:col-span-2 xl:col-span-1">
-          <span className="text-xs font-semibold uppercase tracking-wider text-ink-secondary">Segments</span>
-          <div className="flex min-h-[44px] gap-2 overflow-x-auto rounded-md border border-surface-border bg-white p-1.5 xl:flex-wrap xl:overflow-visible">
-            {segmentTags.map(tag => {
-              const selected = segments.includes(tag)
-              return (
-                <button
-                  key={tag}
-                  type="button"
-                  className={cn(
-                    'inline-flex min-h-[44px] shrink-0 items-center rounded-md px-3 text-xs font-semibold transition-colors',
-                    selected ? 'bg-brand-blue text-white' : 'bg-surface-secondary text-ink-secondary hover:bg-surface-tertiary hover:text-ink',
-                  )}
-                  onClick={() => toggleSegment(tag)}
-                  aria-pressed={selected}
-                >
-                  {tag}
+      <section className="tk-card mb-4 overflow-hidden">
+        <div className="border-b border-surface-border p-4">
+          <div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
+            <label className="relative min-w-0 flex-1">
+              <span className="sr-only">Search accounts</span>
+              <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-ink-tertiary" />
+              <input className="tk-input pl-10" value={search} onChange={event => setFilter('q', event.target.value)} placeholder="Search account name, AM, or email" />
+            </label>
+            <div className="flex flex-wrap items-center gap-2">
+              <SelectField label="Sort">
+                <select className="tk-input min-w-[170px]" value={sort} onChange={event => setFilter('sort', event.target.value)}>
+                  <option value="name">Name</option>
+                  <option value="lifecycle_status">Lifecycle</option>
+                  <option value="risk_status">Risk</option>
+                  <option value="owner_name">Account manager</option>
+                  <option value="segment">Segment</option>
+                  <option value="commercial_value">Commercial value</option>
+                  <option value="health">Health</option>
+                  <option value="next_governance_at">Next governance</option>
+                  <option value="updated_at">Updated</option>
+                </select>
+              </SelectField>
+              <SelectField label="Order">
+                <select className="tk-input min-w-[120px]" value={direction} onChange={event => setFilter('direction', event.target.value)}>
+                  <option value="asc">Asc</option>
+                  <option value="desc">Desc</option>
+                </select>
+              </SelectField>
+              <div className="inline-flex rounded-md border border-surface-border bg-surface-secondary p-1">
+                <button className={cn('inline-flex min-h-[38px] items-center gap-2 rounded px-3 text-sm font-semibold transition-colors', view === 'cards' ? 'bg-white text-brand-blue shadow-sm' : 'text-ink-secondary hover:text-ink')} onClick={() => setView('cards')} aria-label="Card view" aria-pressed={view === 'cards'}>
+                  <LayoutGrid className="h-4 w-4" />
+                  Cards
                 </button>
-              )
-            })}
+                <button className={cn('inline-flex min-h-[38px] items-center gap-2 rounded px-3 text-sm font-semibold transition-colors', view === 'table' ? 'bg-white text-brand-blue shadow-sm' : 'text-ink-secondary hover:text-ink')} onClick={() => setView('table')} aria-label="Table view" aria-pressed={view === 'table'}>
+                  <Table2 className="h-4 w-4" />
+                  Table
+                </button>
+              </div>
+            </div>
           </div>
-        </div>
-        {privileged ? (
-          <label className="space-y-1">
-            <span className="text-xs font-semibold uppercase tracking-wider text-ink-secondary">Account manager</span>
-            <select className="tk-input" value={primaryAm} onChange={event => setFilter('primary_am', event.target.value)}>
-              <option value="">All account managers</option>
-              {accountManagers.map(manager => <option key={manager.id} value={manager.id}>{manager.name}</option>)}
-            </select>
-          </label>
-        ) : null}
-      </FilterBar>
 
-      <section className="mb-4 flex flex-col gap-3 rounded-lg border border-surface-border bg-white p-3 lg:flex-row lg:items-center lg:justify-between">
-        <div>
-          <p className="text-sm font-semibold text-ink">Portfolio view</p>
-          <p className="mt-1 text-xs text-ink-secondary">
-            {activeFilterCount ? `${activeFilterCount} active filter${activeFilterCount === 1 ? '' : 's'}` : 'All accounts visible'}
-          </p>
-          {loading ? (
-            <p className="mt-1 inline-flex items-center gap-1 text-xs font-medium text-brand-blue">
-              <Loader2 className="h-3.5 w-3.5 animate-spin" />
-              Loading accounts
-            </p>
-          ) : null}
-        </div>
-        <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-end">
-            <label className="flex items-center gap-2">
-              <span className="text-xs font-semibold uppercase tracking-wider text-ink-secondary">Sort</span>
-              <select className="tk-input min-w-[170px]" value={sort} onChange={event => setFilter('sort', event.target.value)}>
-                <option value="name">Name</option>
-                <option value="lifecycle_status">Lifecycle</option>
-                <option value="risk_status">Risk</option>
-                <option value="owner_name">Account manager</option>
-                <option value="segment">Segment</option>
-                <option value="commercial_value">Commercial value</option>
-                <option value="health">Health</option>
-                <option value="next_governance_at">Next governance</option>
-                <option value="updated_at">Updated</option>
+          <div className="mt-4 grid gap-3 md:grid-cols-2 lg:grid-cols-[minmax(180px,0.8fr)_minmax(220px,1fr)]">
+            <SelectField label="Stage">
+              <select className="tk-input" value={stage} onChange={event => setFilter('stage', event.target.value)}>
+                <option value="">All stages</option>
+                <option>Draft</option>
+                <option>Onboarding</option>
+                <option>Active</option>
+                <option>Adoption</option>
+                <option>Expansion</option>
+                <option>Expansion Focus</option>
+                <option>Renewal</option>
+                <option>Renewal Focus</option>
+                <option>At Risk</option>
+                <option>Dormant</option>
+                <option>Archived</option>
               </select>
-            </label>
-            <label className="flex items-center gap-2">
-              <span className="text-xs font-semibold uppercase tracking-wider text-ink-secondary">Order</span>
-              <select className="tk-input min-w-[120px]" value={direction} onChange={event => setFilter('direction', event.target.value)}>
-                <option value="asc">Asc</option>
-                <option value="desc">Desc</option>
-              </select>
-            </label>
-            <div className="inline-flex w-fit rounded-lg border border-surface-border bg-white p-1">
-              <button className={cn('tk-icon-button', view === 'cards' ? 'bg-brand-blue text-white hover:bg-brand-blue-dark hover:text-white' : '')} onClick={() => setView('cards')} aria-label="Card view" aria-pressed={view === 'cards'}>
-                <LayoutGrid className="h-4 w-4" />
-              </button>
-              <button className={cn('tk-icon-button', view === 'table' ? 'bg-brand-blue text-white hover:bg-brand-blue-dark hover:text-white' : '')} onClick={() => setView('table')} aria-label="Table view" aria-pressed={view === 'table'}>
-                <Table2 className="h-4 w-4" />
+            </SelectField>
+            {privileged ? (
+              <SelectField label="Account manager">
+                <select className="tk-input" value={activeAm} onChange={event => setAccountManagerFilter(event.target.value)}>
+                  <option value="">All account managers</option>
+                  {accountManagerOptions.map(manager => <option key={manager.id} value={manager.id}>{manager.name}</option>)}
+                </select>
+              </SelectField>
+            ) : null}
+          </div>
+
+          <div className="mt-4 flex flex-wrap items-center gap-2">
+            <span className="text-xs font-semibold uppercase tracking-wider text-ink-secondary">Risk</span>
+            {[
+              { value: '', label: 'All' },
+              { value: 'healthy', label: 'Healthy' },
+              { value: 'warning', label: 'Warning' },
+              { value: 'at_risk', label: 'At risk' },
+              { value: 'critical', label: 'Critical' },
+            ].map(item => (
+              <RiskFilterButton key={item.value || 'all'} active={risk === item.value} label={item.label} onClick={() => setFilter('risk', item.value)} />
+            ))}
+          </div>
+
+          {activeFilterChips.length ? (
+            <div className="mt-4 flex flex-wrap items-center gap-2">
+              <span className="text-xs font-semibold uppercase tracking-wider text-ink-secondary">Active</span>
+              {activeFilterChips.map(chip => <ActiveFilterChip key={chip.key} label={chip.label} onRemove={chip.onRemove} />)}
+              <button type="button" className="inline-flex min-h-[32px] items-center gap-1 rounded-full border border-surface-border bg-white px-2.5 text-xs font-semibold text-ink-secondary hover:border-brand-blue/40 hover:text-brand-blue" onClick={clearFilters}>
+                <X className="h-3 w-3" />
+                Clear
               </button>
             </div>
+          ) : null}
+        </div>
+        <div className="flex flex-col gap-2 bg-surface-tertiary px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
+          <p className="text-sm font-semibold text-ink">
+            {pagination.total ? `${pagination.total} account${pagination.total === 1 ? '' : 's'}` : 'Portfolio view'}
+          </p>
+          <div className="flex flex-wrap items-center gap-2 text-xs font-medium text-ink-secondary">
+            <span>{activeFilterCount ? `${activeFilterCount} active filter${activeFilterCount === 1 ? '' : 's'}` : 'All accounts visible'}</span>
+            {loading ? (
+              <span className="inline-flex items-center gap-1 text-brand-blue">
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                Loading accounts
+              </span>
+            ) : null}
+          </div>
         </div>
       </section>
 
@@ -440,12 +441,52 @@ export function Accounts() {
   )
 }
 
-function buildDraftAccountQuery({ search, stage, risk, segment }: { search: string; stage: string; risk: string; segment?: string }) {
+function SelectField({ label, children }: { label: string; children: ReactNode }) {
+  return (
+    <label className="space-y-1">
+      <span className="text-xs font-semibold uppercase tracking-wider text-ink-secondary">{label}</span>
+      {children}
+    </label>
+  )
+}
+
+function RiskFilterButton({ active, label, onClick }: { active: boolean; label: string; onClick: () => void }) {
+  return (
+    <button
+      type="button"
+      className={cn(
+        'inline-flex min-h-[36px] items-center rounded-full border px-3 text-xs font-semibold transition-colors',
+        active ? 'border-brand-blue bg-brand-blue text-white shadow-sm' : 'border-surface-border bg-white text-ink-secondary hover:border-brand-blue/40 hover:text-brand-blue',
+      )}
+      onClick={onClick}
+      aria-pressed={active}
+    >
+      {label}
+    </button>
+  )
+}
+
+function ActiveFilterChip({ label, onRemove }: { label: string; onRemove: () => void }) {
+  return (
+    <span className="inline-flex min-h-[32px] items-center gap-1 rounded-full border border-brand-blue/20 bg-white px-2.5 text-xs font-semibold text-brand-blue">
+      {label}
+      <button type="button" className="inline-flex h-5 w-5 items-center justify-center rounded-full hover:bg-blue-tint-20" onClick={onRemove} aria-label={`Remove ${label}`}>
+        <X className="h-3 w-3" />
+      </button>
+    </span>
+  )
+}
+
+function riskLabel(value: string) {
+  if (value === 'at_risk') return 'At risk'
+  return value.replace(/\b\w/g, character => character.toUpperCase())
+}
+
+function buildDraftAccountQuery({ search, stage, risk }: { search: string; stage: string; risk: string }) {
   if (stage && stage !== 'Draft') return null
   if (risk && risk !== 'warning') return null
   const query = new URLSearchParams({ status: 'ready_for_review', page: '1', page_size: '25' })
   if (search) query.set('search', search)
-  if (segment) query.set('segment', segment)
   return query
 }
 

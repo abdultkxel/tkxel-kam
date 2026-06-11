@@ -113,12 +113,86 @@ describe('KYCAgentOverview', () => {
     const onReview = vi.fn()
     render(<KYCAgentOverview accountId="acct-1" onReview={onReview} />)
 
-    expect(await screen.findByText('Market Research')).toBeInTheDocument()
+    const marketResearch = await screen.findByRole('button', { name: /Market Research/i })
+    expect(marketResearch).toHaveAttribute('aria-expanded', 'false')
+    expect(screen.queryByText('Acme is tracked as an enterprise account in North America.')).not.toBeInTheDocument()
+    await user.click(marketResearch)
     expect(screen.getByText('Acme is tracked as an enterprise account in North America.')).toBeInTheDocument()
     expect(screen.queryByText('[object Object]')).not.toBeInTheDocument()
 
     await user.click(screen.getByRole('button', { name: /Refresh AI data/i }))
     await waitFor(() => expect(refreshKycAgentRun).toHaveBeenCalledWith('test-token', 'acct-1', 'run-1'))
+  })
+
+  it('renders Client Research as a readable full-width workstream with nested values and sources', async () => {
+    vi.mocked(listKycAgentRuns).mockResolvedValue({
+      items: [
+        run({
+          workstreams: [
+            {
+              id: 'ws-client',
+              workstream_key: 'client_research',
+              title: 'Client Research',
+              status: 'complete',
+              sort_order: 2,
+              confidence: 91,
+              output: {
+                company_snapshot: {
+                  value: {
+                    employees: '1,200',
+                    headquarters: 'Dallas, TX',
+                    regions: ['North America', 'MENA'],
+                  },
+                  confidence: 91,
+                  citations: [
+                    {
+                      label: 'Approved company profile',
+                      excerpt: 'Company profile lists headquarters and served regions.',
+                      restricted: false,
+                    },
+                  ],
+                },
+                technical_landscape: {
+                  value: ['React client portal', 'Cloud data integrations', 'API modernization roadmap'],
+                  confidence: 88,
+                  citations: [],
+                },
+              } as unknown as KycAgentRun['workstreams'][number]['output'],
+              citations: [],
+              missing_fields: [],
+              reviewer_notes: [],
+              suggested_follow_up_questions: [],
+              retrieved_chunk_ids: [],
+              provider_response_id: 'resp-1',
+              error_message: null,
+              started_at: '2026-06-01T07:00:00Z',
+              completed_at: '2026-06-01T07:01:00Z',
+            },
+          ],
+        }),
+      ],
+      total: 1,
+      page: 1,
+      page_size: 4,
+      pages: 1,
+    })
+
+    render(<KYCAgentOverview accountId="acct-1" onReview={vi.fn()} />)
+
+    const workstreamList = await screen.findByTestId('kyc-workstream-list')
+    const clientResearch = screen.getByTestId('kyc-workstream-client_research')
+    const clientResearchToggle = screen.getByRole('button', { name: /Client Research/i })
+
+    expect(workstreamList).toHaveClass('space-y-3')
+    expect(clientResearch).toHaveTextContent('Client Research')
+    expect(clientResearchToggle).toHaveAttribute('aria-expanded', 'false')
+    expect(clientResearch).not.toHaveTextContent('employees: 1,200')
+    await userEvent.click(clientResearchToggle)
+    expect(clientResearch).toHaveTextContent('employees: 1,200')
+    expect(clientResearch).toHaveTextContent('North America')
+    expect(clientResearch).toHaveTextContent('React client portal')
+    expect(clientResearch).toHaveTextContent('Approved company profile')
+    expect(screen.queryByText('[object Object]')).not.toBeInTheDocument()
   })
 
   it('creates the first run from the empty state', async () => {

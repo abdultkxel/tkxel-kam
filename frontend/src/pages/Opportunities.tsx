@@ -1,5 +1,5 @@
 import * as Dialog from '@radix-ui/react-dialog'
-import { Archive, ArchiveRestore, Check, ChevronLeft, ChevronRight, Eye, LayoutGrid, List, Loader2, Plus, RefreshCw, X } from 'lucide-react'
+import { Archive, ArchiveRestore, Check, ChevronDown, ChevronLeft, ChevronRight, Eye, LayoutGrid, List, Loader2, Plus, RefreshCw, Search, SlidersHorizontal, X } from 'lucide-react'
 import { FormEvent, ReactNode, useEffect, useMemo, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { toast } from 'sonner'
@@ -7,7 +7,6 @@ import { OpportunityBoard } from '@/components/opportunities/OpportunityBoard'
 import { FieldError } from '@/components/form/FieldError'
 import { AnimatedNumber } from '@/components/ui/AnimatedNumber'
 import { EmptyState } from '@/components/ui/EmptyState'
-import { FilterBar } from '@/components/ui/FilterBar'
 import { PageHeader } from '@/components/ui/PageHeader'
 import { useAuth } from '@/contexts/AuthContext'
 import { Account } from '@/types/account'
@@ -84,6 +83,7 @@ export function Opportunities() {
   const to = params.get('to') ?? ''
   const minValue = params.get('minValue') ?? ''
   const maxValue = params.get('maxValue') ?? ''
+  const [advancedOpen, setAdvancedOpen] = useState(() => Boolean(accountId || ownerId || typeId || serviceLine || sourceContext || from || to || minValue || maxValue))
   const openOnly = params.get('openOnly') === 'true' || params.get('open_only') === 'true'
   const stalled = params.get('stalled') === 'true'
   const stalledAfterDays = Math.max(1, Number(params.get('stalledAfterDays') ?? params.get('stalled_after_days') ?? '90') || 90)
@@ -156,6 +156,26 @@ export function Opportunities() {
     setFilter('view', nextView === 'list' ? 'list' : '')
   }
 
+  const selectedAccount = accounts.find(account => account.id === accountId)
+  const selectedOwner = ownerOptions.find(owner => owner.id === ownerId)
+  const selectedType = types.find(type => type.id === typeId)
+  const activeFilterChips = [
+    search ? { key: 'search', label: `Search: ${search}`, onRemove: () => setFilter('search', '') } : null,
+    stage ? { key: 'stage', label: `Stage: ${stage}`, onRemove: () => setFilter('stage', '') } : null,
+    accountId ? { key: 'account', label: `Account: ${selectedAccount?.name ?? accountId}`, onRemove: () => setFilter('accountId', '') } : null,
+    ownerId ? { key: 'owner', label: `Owner: ${selectedOwner?.name ?? ownerId}`, onRemove: () => setFilter('ownerId', '') } : null,
+    typeId ? { key: 'type', label: `Type: ${selectedType?.name ?? typeId}`, onRemove: () => setFilter('typeId', '') } : null,
+    serviceLine ? { key: 'serviceLine', label: `Service: ${serviceLine}`, onRemove: () => setFilter('serviceLine', '') } : null,
+    sourceContext ? { key: 'sourceContext', label: `Source: ${sourceLabel(sourceContext)}`, onRemove: () => setFilter('sourceContext', '') } : null,
+    from ? { key: 'from', label: `From: ${from}`, onRemove: () => setFilter('from', '') } : null,
+    to ? { key: 'to', label: `To: ${to}`, onRemove: () => setFilter('to', '') } : null,
+    minValue ? { key: 'minValue', label: `Min: ${formatFilterCurrency(minValue)}`, onRemove: () => setFilter('minValue', '') } : null,
+    maxValue ? { key: 'maxValue', label: `Max: ${formatFilterCurrency(maxValue)}`, onRemove: () => setFilter('maxValue', '') } : null,
+    openOnly ? { key: 'openOnly', label: 'Open only', onRemove: () => setFilter('openOnly', '') } : null,
+    stalled ? { key: 'stalled', label: 'Stalled', onRemove: () => setFilter('stalled', '') } : null,
+    includeArchived ? { key: 'archived', label: 'Archived', onRemove: () => setFilter('archived', '') } : null,
+  ].filter((chip): chip is { key: string; label: string; onRemove: () => void } => Boolean(chip))
+
   return (
     <div>
       <PageHeader
@@ -165,101 +185,118 @@ export function Opportunities() {
         actions={<AddOpportunityDialog accounts={accounts} types={types} ownerOptions={ownerOptions} onCreated={openDetail} />}
       />
 
-      <FilterBar onClear={clearFilters} contentClassName="md:grid-cols-2 xl:grid-cols-4 2xl:grid-cols-[minmax(220px,1.2fr)_190px_170px_150px_150px_140px_140px_130px_130px_auto]">
-        <label className="space-y-1">
-          <span className="text-xs font-semibold uppercase tracking-wider text-ink-secondary">Search</span>
-          <input className="tk-input" value={search} onChange={event => setFilter('search', event.target.value)} placeholder="Account, opportunity, next step" />
-        </label>
-        <label className="space-y-1">
-          <span className="text-xs font-semibold uppercase tracking-wider text-ink-secondary">Account</span>
-          <select className="tk-input" value={accountId} onChange={event => setFilter('accountId', event.target.value)}>
-            <option value="">All accounts</option>
-            {accounts.map(account => <option key={account.id} value={account.id}>{account.name}</option>)}
-          </select>
-        </label>
-        <label className="space-y-1">
-          <span className="text-xs font-semibold uppercase tracking-wider text-ink-secondary">Owner</span>
-          <select className="tk-input" value={ownerId} onChange={event => setFilter('ownerId', event.target.value)}>
-            <option value="">All owners</option>
-            {ownerOptions.map(owner => <option key={owner.id} value={owner.id}>{owner.name}</option>)}
-          </select>
-        </label>
-        <label className="space-y-1">
-          <span className="text-xs font-semibold uppercase tracking-wider text-ink-secondary">Type</span>
-          <select className="tk-input" value={typeId} onChange={event => setFilter('typeId', event.target.value)}>
-            <option value="">All types</option>
-            {types.map(type => <option key={type.id} value={type.id}>{type.name}</option>)}
-          </select>
-        </label>
-        <label className="space-y-1">
-          <span className="text-xs font-semibold uppercase tracking-wider text-ink-secondary">Stage</span>
-          <select className="tk-input" value={stage} onChange={event => setFilter('stage', event.target.value)}>
-            <option value="">All stages</option>
-            {STAGES.map(item => <option key={item} value={item}>{item}</option>)}
-          </select>
-        </label>
-        <label className="space-y-1">
-          <span className="text-xs font-semibold uppercase tracking-wider text-ink-secondary">Service line</span>
-          <input className="tk-input" value={serviceLine} onChange={event => setFilter('serviceLine', event.target.value)} placeholder="Data Analytics" />
-        </label>
-        <label className="space-y-1">
-          <span className="text-xs font-semibold uppercase tracking-wider text-ink-secondary">Source</span>
-          <select className="tk-input" value={sourceContext} onChange={event => setFilter('sourceContext', event.target.value)}>
-            <option value="">All sources</option>
-            {SOURCE_CONTEXTS.map(item => <option key={item} value={item}>{sourceLabel(item)}</option>)}
-          </select>
-        </label>
-        <label className="space-y-1">
-          <span className="text-xs font-semibold uppercase tracking-wider text-ink-secondary">Target from</span>
-          <input type="date" className="tk-input" value={from} onChange={event => setFilter('from', event.target.value)} />
-        </label>
-        <label className="space-y-1">
-          <span className="text-xs font-semibold uppercase tracking-wider text-ink-secondary">Target to</span>
-          <input type="date" className="tk-input" value={to} onChange={event => setFilter('to', event.target.value)} />
-        </label>
-        <label className="space-y-1">
-          <span className="text-xs font-semibold uppercase tracking-wider text-ink-secondary">Min value</span>
-          <input type="number" min={0} className="tk-input" value={minValue} onChange={event => setFilter('minValue', event.target.value)} placeholder="$0" />
-        </label>
-        <label className="space-y-1">
-          <span className="text-xs font-semibold uppercase tracking-wider text-ink-secondary">Max value</span>
-          <input type="number" min={0} className="tk-input" value={maxValue} onChange={event => setFilter('maxValue', event.target.value)} placeholder="$1M" />
-        </label>
-        <label className="flex min-h-[64px] items-center gap-2 self-end rounded-lg border border-surface-border bg-white px-3 py-2 text-sm font-semibold text-ink-secondary">
-          <input type="checkbox" checked={includeArchived} onChange={event => setFilter('archived', event.target.checked ? 'true' : '')} />
-          Archived
-        </label>
-        <label className="flex min-h-[64px] items-center gap-2 self-end rounded-lg border border-surface-border bg-white px-3 py-2 text-sm font-semibold text-ink-secondary">
-          <input type="checkbox" checked={openOnly} onChange={event => setFilter('openOnly', event.target.checked ? 'true' : '')} />
-          Open only
-        </label>
-        <label className="flex min-h-[64px] items-center gap-2 self-end rounded-lg border border-surface-border bg-white px-3 py-2 text-sm font-semibold text-ink-secondary">
-          <input type="checkbox" checked={stalled} onChange={event => setFilter('stalled', event.target.checked ? 'true' : '')} />
-          Stalled
-        </label>
-      </FilterBar>
+      <section className="tk-card mb-4 overflow-hidden">
+        <div className="border-b border-surface-border p-4">
+          <div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
+            <label className="relative min-w-0 flex-1">
+              <span className="sr-only">Search opportunities</span>
+              <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-ink-tertiary" />
+              <input className="tk-input pl-10" value={search} onChange={event => setFilter('search', event.target.value)} placeholder="Search account, opportunity, or next step" />
+            </label>
+            <div className="flex flex-wrap items-center gap-2">
+              <div className="inline-flex rounded-md border border-surface-border bg-surface-secondary p-1">
+                <button type="button" className={cn('inline-flex min-h-[38px] items-center gap-2 rounded px-3 text-sm font-semibold transition-colors', view === 'board' ? 'bg-white text-brand-blue shadow-sm' : 'text-ink-secondary hover:text-ink')} onClick={() => switchView('board')} aria-pressed={view === 'board'}>
+                  <LayoutGrid className="h-4 w-4" />
+                  Board
+                </button>
+                <button type="button" className={cn('inline-flex min-h-[38px] items-center gap-2 rounded px-3 text-sm font-semibold transition-colors', view === 'list' ? 'bg-white text-brand-blue shadow-sm' : 'text-ink-secondary hover:text-ink')} onClick={() => switchView('list')} aria-pressed={view === 'list'}>
+                  <List className="h-4 w-4" />
+                  List
+                </button>
+              </div>
+              <button type="button" className={cn('tk-button-secondary', advancedOpen && 'border-brand-blue text-brand-blue')} onClick={() => setAdvancedOpen(value => !value)} aria-expanded={advancedOpen}>
+                <SlidersHorizontal className="h-4 w-4" />
+                Filters
+                {activeFilterChips.length ? <span className="rounded-full bg-brand-blue px-2 py-0.5 text-[11px] font-bold text-white">{activeFilterChips.length}</span> : null}
+                <ChevronDown className={cn('h-4 w-4 transition-transform', advancedOpen && 'rotate-180')} />
+              </button>
+              <button type="button" className="tk-button-secondary" onClick={clearFilters} disabled={!activeFilterChips.length}>
+                <X className="h-4 w-4" />
+                Clear
+              </button>
+            </div>
+          </div>
+
+          <div className="mt-4 flex flex-wrap items-center gap-2">
+            <span className="text-xs font-semibold uppercase tracking-wider text-ink-secondary">Stage</span>
+            <StageFilterButton label="All" active={!stage} onClick={() => setFilter('stage', '')} />
+            {STAGES.map(item => <StageFilterButton key={item} label={item} active={stage === item} onClick={() => setFilter('stage', item)} />)}
+          </div>
+
+          <div className="mt-4 flex flex-wrap gap-2">
+            <FilterToggleButton active={openOnly} label="Open only" onClick={() => setFilter('openOnly', openOnly ? '' : 'true')} />
+            <FilterToggleButton active={stalled} label="Stalled" onClick={() => setFilter('stalled', stalled ? '' : 'true')} />
+            <FilterToggleButton active={includeArchived} label="Archived" onClick={() => setFilter('archived', includeArchived ? '' : 'true')} />
+          </div>
+        </div>
+
+        {advancedOpen ? (
+          <div className="grid gap-3 border-b border-surface-border bg-surface-secondary/70 p-4 md:grid-cols-2 xl:grid-cols-4">
+            <FilterField label="Account">
+              <select className="tk-input" value={accountId} onChange={event => setFilter('accountId', event.target.value)}>
+                <option value="">All accounts</option>
+                {accounts.map(account => <option key={account.id} value={account.id}>{account.name}</option>)}
+              </select>
+            </FilterField>
+            <FilterField label="Owner">
+              <select className="tk-input" value={ownerId} onChange={event => setFilter('ownerId', event.target.value)}>
+                <option value="">All owners</option>
+                {ownerOptions.map(owner => <option key={owner.id} value={owner.id}>{owner.name}</option>)}
+              </select>
+            </FilterField>
+            <FilterField label="Type">
+              <select className="tk-input" value={typeId} onChange={event => setFilter('typeId', event.target.value)}>
+                <option value="">All types</option>
+                {types.map(type => <option key={type.id} value={type.id}>{type.name}</option>)}
+              </select>
+            </FilterField>
+            <FilterField label="Source">
+              <select className="tk-input" value={sourceContext} onChange={event => setFilter('sourceContext', event.target.value)}>
+                <option value="">All sources</option>
+                {SOURCE_CONTEXTS.map(item => <option key={item} value={item}>{sourceLabel(item)}</option>)}
+              </select>
+            </FilterField>
+            <FilterField label="Service line">
+              <input className="tk-input" value={serviceLine} onChange={event => setFilter('serviceLine', event.target.value)} placeholder="Data Analytics" />
+            </FilterField>
+            <FilterField label="Target from">
+              <input type="date" className="tk-input" value={from} onChange={event => setFilter('from', event.target.value)} />
+            </FilterField>
+            <FilterField label="Target to">
+              <input type="date" className="tk-input" value={to} onChange={event => setFilter('to', event.target.value)} />
+            </FilterField>
+            <div className="grid grid-cols-2 gap-3">
+              <FilterField label="Min value">
+                <input type="number" min={0} className="tk-input" value={minValue} onChange={event => setFilter('minValue', event.target.value)} placeholder="$0" />
+              </FilterField>
+              <FilterField label="Max value">
+                <input type="number" min={0} className="tk-input" value={maxValue} onChange={event => setFilter('maxValue', event.target.value)} placeholder="$1M" />
+              </FilterField>
+            </div>
+          </div>
+        ) : null}
+
+        {activeFilterChips.length ? (
+          <div className="flex flex-wrap items-center gap-2 bg-surface-tertiary px-4 py-3">
+            <span className="text-xs font-semibold uppercase tracking-wider text-ink-secondary">Active</span>
+            {activeFilterChips.map(chip => <ActiveFilterChip key={chip.key} label={chip.label} onRemove={chip.onRemove} />)}
+          </div>
+        ) : null}
+      </section>
 
       <section className="tk-card mb-4 p-4">
-        <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
-          <div className="flex flex-wrap gap-2">
-            <button type="button" className={cn('tk-button-secondary', view === 'board' ? 'border-brand-blue text-brand-blue' : '')} onClick={() => switchView('board')}>
-              <LayoutGrid className="h-4 w-4" />
-              Board
-            </button>
-            <button type="button" className={cn('tk-button-secondary', view === 'list' ? 'border-brand-blue text-brand-blue' : '')} onClick={() => switchView('list')}>
-              <List className="h-4 w-4" />
-              List
-            </button>
+        {loading || error ? (
+          <div className="mb-4 flex justify-end">
+            {loading ? (
+              <span className="inline-flex items-center gap-2 rounded-full bg-blue-tint-20 px-3 py-1 text-xs font-semibold text-brand-blue">
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                Loading pipeline
+              </span>
+            ) : error ? (
+              <span className="rounded-full bg-rag-red/10 px-3 py-1 text-xs font-semibold text-rag-red">{error}</span>
+            ) : null}
           </div>
-          {loading ? (
-            <span className="inline-flex items-center gap-2 rounded-full bg-blue-tint-20 px-3 py-1 text-xs font-semibold text-brand-blue">
-              <Loader2 className="h-3.5 w-3.5 animate-spin" />
-              Loading pipeline
-            </span>
-          ) : error ? (
-            <span className="rounded-full bg-rag-red/10 px-3 py-1 text-xs font-semibold text-rag-red">{error}</span>
-          ) : null}
-        </div>
+        ) : null}
         <div className="grid grid-cols-2 gap-3 xl:grid-cols-4">
           <PipelineStat label="Open pipeline" value={totals.openValue} format={formatCompactCurrency} />
           <PipelineStat label="Open opportunities" value={totals.openCount} tone={totals.openCount ? 'warning' : 'success'} />
@@ -350,6 +387,59 @@ function OpportunityList({ opportunities, onOpen, page, pages, total, onPageChan
         </div>
       </div>
     </section>
+  )
+}
+
+function StageFilterButton({ label, active, onClick }: { label: string; active: boolean; onClick: () => void }) {
+  return (
+    <button
+      type="button"
+      className={cn(
+        'inline-flex min-h-[36px] items-center rounded-full border px-3 text-xs font-semibold transition-colors',
+        active ? 'border-brand-blue bg-brand-blue text-white shadow-sm' : 'border-surface-border bg-white text-ink-secondary hover:border-brand-blue/40 hover:text-brand-blue',
+      )}
+      onClick={onClick}
+      aria-pressed={active}
+    >
+      {label}
+    </button>
+  )
+}
+
+function FilterToggleButton({ active, label, onClick }: { active: boolean; label: string; onClick: () => void }) {
+  return (
+    <button
+      type="button"
+      className={cn(
+        'inline-flex min-h-[38px] items-center gap-2 rounded-md border px-3 text-sm font-semibold transition-colors',
+        active ? 'border-brand-blue bg-blue-tint-20 text-brand-blue' : 'border-surface-border bg-white text-ink-secondary hover:border-brand-blue/40 hover:text-brand-blue',
+      )}
+      onClick={onClick}
+      aria-pressed={active}
+    >
+      {active ? <Check className="h-4 w-4" /> : null}
+      {label}
+    </button>
+  )
+}
+
+function FilterField({ label, children }: { label: string; children: ReactNode }) {
+  return (
+    <label className="space-y-1">
+      <span className="text-xs font-semibold uppercase tracking-wider text-ink-secondary">{label}</span>
+      {children}
+    </label>
+  )
+}
+
+function ActiveFilterChip({ label, onRemove }: { label: string; onRemove: () => void }) {
+  return (
+    <span className="inline-flex min-h-[32px] items-center gap-1 rounded-full border border-brand-blue/20 bg-white px-2.5 text-xs font-semibold text-brand-blue">
+      {label}
+      <button type="button" className="inline-flex h-5 w-5 items-center justify-center rounded-full hover:bg-blue-tint-20" onClick={onRemove} aria-label={`Remove ${label}`}>
+        <X className="h-3 w-3" />
+      </button>
+    </span>
   )
 }
 
@@ -878,6 +968,11 @@ function dateEnd(value: string) {
 
 function sourceLabel(value: string) {
   return value.replace(/_/g, ' ').replace(/\b\w/g, character => character.toUpperCase())
+}
+
+function formatFilterCurrency(value: string) {
+  const amount = Number(value)
+  return Number.isFinite(amount) ? formatCompactCurrency(amount) : value
 }
 
 function StageBadge({ stage }: { stage: Stage }) {

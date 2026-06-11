@@ -3,7 +3,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import { toast } from 'sonner'
 import { useAuth } from '@/contexts/AuthContext'
 import { cancelKycAgentRun, createKycAgentRun, getKycFreshness, listKycAgentRuns, refreshKycAgentRun, retryKycAgentRun, runPendingKycJobs } from '@/services/kyc'
-import { KycAgentRun, KycRunStatus, KycWorkstream } from '@/types/kyc'
+import { KycAgentRun, KycCitation, KycRunStatus, KycWorkstream } from '@/types/kyc'
 import { EmptyState } from '@/components/ui/EmptyState'
 import { cn } from '@/utils/cn'
 
@@ -91,7 +91,7 @@ export function KYCAgentOverview({ accountId, compact = false, onReview }: { acc
   const [searchTerm, setSearchTerm] = useState('')
   const [statusFilter, setStatusFilter] = useState<KycRunStatus | 'all'>('all')
   const [page, setPage] = useState(1)
-  const [openSteps, setOpenSteps] = useState<string[]>(() => kycAgentSteps.map(step => step.workstream_key))
+  const [openSteps, setOpenSteps] = useState<string[]>([])
   const [loading, setLoading] = useState<'initial' | 'refresh' | 'retry' | 'cancel' | 'runPending' | ''>('initial')
   const [error, setError] = useState<string | null>(null)
 
@@ -128,8 +128,7 @@ export function KYCAgentOverview({ accountId, compact = false, onReview }: { acc
           const keys = runPage.items[0]?.workstreams.length
             ? runPage.items[0].workstreams.map(item => item.workstream_key)
             : kycAgentSteps.map(step => step.workstream_key)
-          const retained = current.filter(item => keys.includes(item))
-          return retained.length ? retained : keys
+          return current.filter(item => keys.includes(item))
         })
       } catch (requestError) {
         setError(requestError instanceof Error ? requestError.message : 'KYC agent request failed')
@@ -213,11 +212,11 @@ export function KYCAgentOverview({ accountId, compact = false, onReview }: { acc
           <div className="min-w-0">
             <p className="text-[10px] font-extrabold uppercase tracking-widest text-brand-blue">AI KYC agent</p>
             <h3 className="mt-1 text-base font-semibold text-ink">KYC intelligence overview</h3>
-              <p className="mt-1 max-w-3xl text-sm leading-6 text-ink-secondary">
-                Latest run status: {latestRun ? latestRun.status.replace(/_/g, ' ') : 'not started'}; approved snapshot freshness: {freshnessStatus}.
-              </p>
-              <p className="mt-1 text-xs leading-5 text-ink-secondary">{providerLabel}</p>
-            </div>
+            <p className="mt-1 max-w-3xl text-sm leading-6 text-ink-secondary">
+              Latest run status: {latestRun ? latestRun.status.replace(/_/g, ' ') : 'not started'}; approved snapshot freshness: {freshnessStatus}.
+            </p>
+            <p className="mt-1 text-xs leading-5 text-ink-secondary">{providerLabel}</p>
+          </div>
           <div className="flex flex-wrap gap-2">
             {latestRun?.status === 'pending' ? (
               <>
@@ -304,14 +303,15 @@ export function KYCAgentOverview({ accountId, compact = false, onReview }: { acc
 
       {runs?.total || latestRun ? (
         <>
-          <div className={cn('grid gap-3 p-5', compact ? 'xl:grid-cols-1' : 'xl:grid-cols-5')}>
+          <div className="space-y-3 p-5" data-testid="kyc-workstream-list">
             {workstreams.map((step, index) => {
               const expanded = openSteps.includes(step.workstream_key)
+              const outputEntries = Object.entries(step.output)
               return (
-                <article key={step.workstream_key} className="rounded-lg border border-surface-border bg-white">
+                <article key={step.workstream_key} className="overflow-hidden rounded-lg border border-surface-border bg-white" data-testid={`kyc-workstream-${step.workstream_key}`}>
                   <button
                     type="button"
-                    className="flex min-h-[88px] w-full items-start justify-between gap-3 p-4 text-left transition-colors hover:bg-surface-secondary"
+                    className="flex min-h-[88px] w-full items-start justify-between gap-4 p-4 text-left transition-colors hover:bg-surface-secondary"
                     onClick={() => setOpenSteps(current => (
                       current.includes(step.workstream_key)
                         ? current.filter(item => item !== step.workstream_key)
@@ -319,36 +319,58 @@ export function KYCAgentOverview({ accountId, compact = false, onReview }: { acc
                     ))}
                     aria-expanded={expanded}
                   >
-                    <div className="min-w-0">
-                      <span className="inline-flex h-7 w-7 items-center justify-center rounded-md bg-blue-tint-20 text-xs font-bold text-brand-blue">{index + 1}</span>
-                      <h4 className="mt-3 text-sm font-semibold text-ink">{step.title}</h4>
-                      <div className="mt-2 flex flex-wrap items-center gap-2">
-                        <StatusBadge status={step.status} />
-                        <span className="text-xs font-semibold text-ink-secondary">{step.confidence}% confidence</span>
+                    <div className="flex min-w-0 gap-3">
+                      <span className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-md bg-blue-tint-20 text-sm font-bold text-brand-blue">{index + 1}</span>
+                      <div className="min-w-0">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <h4 className="text-sm font-semibold text-ink">{step.title}</h4>
+                          <StatusBadge status={step.status} />
+                        </div>
+                        <p className="mt-1 text-xs leading-5 text-ink-secondary">
+                          {outputEntries.length} research block{outputEntries.length === 1 ? '' : 's'}; {step.confidence}% confidence
+                        </p>
+                        {step.missing_fields.length ? (
+                          <p className="mt-1 text-xs font-semibold text-brand-orange">{step.missing_fields.length} missing field{step.missing_fields.length === 1 ? '' : 's'}</p>
+                        ) : null}
                       </div>
                     </div>
                     <ChevronDown className={cn('mt-1 h-4 w-4 shrink-0 text-ink-secondary transition-transform', expanded && 'rotate-180')} />
                   </button>
                   {expanded ? (
-                    <div className="border-t border-surface-border p-4">
-                      <div className="grid gap-3">
-                        {Object.entries(step.output).map(([field, value]) => (
-                          <div key={field}>
-                            <div className="flex items-center gap-2">
-                              {step.status === 'failed' ? <AlertTriangle className="h-4 w-4 text-rag-red" /> : <CheckCircle2 className="h-4 w-4 text-rag-green" />}
-                              <p className="text-xs font-semibold uppercase tracking-wider text-ink">{formatOutputKey(field)}</p>
+                    <div className="border-t border-surface-border bg-surface-secondary/50 p-4">
+                      <div className={cn('grid gap-3', compact ? 'grid-cols-1' : 'lg:grid-cols-2')}>
+                        {outputEntries.map(([field, value]) => {
+                          const citations = outputCitations(value)
+                          const confidence = outputConfidence(value)
+                          const formattedValue = formatOutputValue(value) || 'No research detail has been captured for this field yet.'
+                          return (
+                            <div key={field} className="min-w-0 rounded-md border border-surface-border bg-white p-3">
+                              <div className="flex items-center gap-2">
+                                {step.status === 'failed' ? <AlertTriangle className="h-4 w-4 text-rag-red" /> : <CheckCircle2 className="h-4 w-4 text-rag-green" />}
+                                <p className="min-w-0 break-words text-xs font-semibold uppercase tracking-wider text-ink">{formatOutputKey(field)}</p>
+                                {typeof confidence === 'number' ? <span className="ml-auto shrink-0 rounded-full bg-blue-tint-20 px-2 py-0.5 text-[10px] font-semibold text-brand-blue">{confidence}%</span> : null}
+                              </div>
+                              <p className="mt-2 whitespace-pre-line break-words text-sm leading-6 text-ink-secondary">{formattedValue}</p>
+                              {citations.length ? (
+                                <div className="mt-3 space-y-1 rounded-md border border-blue-tint-20 bg-blue-tint-20 p-2">
+                                  <p className="text-[10px] font-semibold uppercase tracking-wider text-brand-blue">Sources</p>
+                                  {citations.slice(0, 2).map(citation => (
+                                    <p key={`${citation.source_document_id ?? citation.source_chunk_id ?? citation.label}-${citation.field_key ?? field}`} className="break-words text-xs leading-5 text-ink-secondary">
+                                      <span className="font-semibold text-ink">{citation.label}</span>: {citation.excerpt || 'Source reference recorded.'}
+                                    </p>
+                                  ))}
+                                </div>
+                              ) : null}
                             </div>
-                          <p className="mt-2 text-xs leading-5 text-ink-secondary">{formatOutputValue(value)}</p>
-                          </div>
-                        ))}
+                          )
+                        })}
                         {step.error_message ? <p className="rounded-md bg-rag-red/10 p-2 text-xs leading-5 text-rag-red">{step.error_message}</p> : null}
-                        {step.missing_fields.length ? <p className="rounded-md bg-brand-orange/10 p-2 text-xs leading-5 text-brand-orange">{step.missing_fields.length} missing field{step.missing_fields.length === 1 ? '' : 's'}</p> : null}
                         {'citations' in step && step.citations?.length ? (
-                          <div className="rounded-md border border-blue-tint-20 bg-blue-tint-20 p-2">
+                          <div className={cn('rounded-md border border-blue-tint-20 bg-blue-tint-20 p-2', !compact && 'lg:col-span-2')}>
                             <p className="text-[10px] font-semibold uppercase tracking-wider text-brand-blue">Citations</p>
                             <div className="mt-1 space-y-1">
                               {step.citations.slice(0, 3).map(citation => (
-                                <p key={`${citation.source_document_id ?? citation.source_chunk_id ?? citation.label}-${citation.field_key ?? ''}`} className="text-xs leading-5 text-ink-secondary">
+                                <p key={`${citation.source_document_id ?? citation.source_chunk_id ?? citation.label}-${citation.field_key ?? ''}`} className="break-words text-xs leading-5 text-ink-secondary">
                                   <span className="font-semibold text-ink">{citation.label}</span>: {citation.excerpt || 'Source reference recorded.'}
                                 </p>
                               ))}
@@ -439,11 +461,39 @@ function formatOutputKey(value: string) {
   return value.replace(/_/g, ' ')
 }
 
-function formatOutputValue(value: unknown) {
-  if (typeof value === 'string') return value
-  if (typeof value === 'object' && value !== null && 'value' in value) {
-    const nested = (value as { value?: unknown }).value
-    return typeof nested === 'string' ? nested : ''
+function formatOutputValue(value: unknown): string {
+  if (typeof value === 'string') return value.trim()
+  if (typeof value === 'number' || typeof value === 'boolean') return String(value)
+  if (Array.isArray(value)) return value.map(item => formatOutputValue(item)).filter(Boolean).join('\n')
+  if (typeof value === 'object' && value !== null) {
+    if ('value' in value) {
+      const nested = (value as { value?: unknown }).value
+      return formatOutputValue(nested)
+    }
+    return Object.entries(value)
+      .filter(([key]) => !['confidence', 'citations', 'missing_evidence_note', 'conflicts', 'reviewer_notes', 'suggested_follow_up_questions'].includes(key))
+      .map(([key, nestedValue]) => {
+        const formatted: string = formatOutputValue(nestedValue)
+        return formatted ? `${formatOutputKey(key)}: ${formatted}` : ''
+      })
+      .filter(Boolean)
+      .join('\n')
   }
   return ''
+}
+
+function outputConfidence(value: unknown) {
+  if (typeof value !== 'object' || value === null || !('confidence' in value)) return null
+  const confidence = (value as { confidence?: unknown }).confidence
+  return typeof confidence === 'number' ? confidence : null
+}
+
+function outputCitations(value: unknown): KycCitation[] {
+  if (typeof value !== 'object' || value === null || !('citations' in value)) return []
+  const citations = (value as { citations?: unknown }).citations
+  return Array.isArray(citations) ? citations.filter(isKycCitation) : []
+}
+
+function isKycCitation(value: unknown): value is KycCitation {
+  return typeof value === 'object' && value !== null && 'label' in value && 'excerpt' in value
 }
