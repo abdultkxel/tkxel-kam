@@ -8,7 +8,7 @@ from sqlalchemy.pool import StaticPool
 
 from app.database import Base, get_db
 from app.main import app
-from app.models import AiGatewayRun, KamAiChatSession, KamAiSourceChunk
+from app.models import AiGatewayRun, KamAiChatSession, KamAiSourceChunk, User
 from app.services.kam_ai_chat import KamAiChatService
 from app.services.seed import seed_demo_project_data
 
@@ -142,6 +142,277 @@ def test_kam_ai_chat_forecast_query_persists_chart_metadata(client: TestClient) 
     assert chart["scope"] == "account"
     assert len(chart["points"]) == 6
     assert chart["totals"]["account_count"] == 1
+
+
+def test_kam_ai_chat_uses_internal_vector_results_before_openai(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
+    called_openai = False
+
+    def fail_if_openai_called(self, prompt):  # noqa: ANN001, ARG001
+        nonlocal called_openai
+        called_openai = True
+        raise AssertionError("OpenAI should not be called when internal vector evidence exists")
+
+    monkeypatch.setattr(KamAiChatService, "_call_openai", fail_if_openai_called)
+    headers = auth_headers(client)
+    create_response = client.post(
+        "/api/ai/chat-sessions",
+        headers=headers,
+        json={"title": "Internal first", "account_id": "demo-project-cafe-zupas", "scopes": ["timeline", "kyc", "documents", "tasks", "signals"]},
+    )
+    assert create_response.status_code == 201
+
+    message_response = client.post(
+        f"/api/ai/chat-sessions/{create_response.json()['id']}/messages",
+        headers=headers,
+        json={"content": "Cafe Zupas risk signals and next actions", "scopes": ["timeline", "kyc", "documents", "tasks", "signals"], "document_search": True},
+    )
+
+    assert message_response.status_code == 200
+    assistant = message_response.json()["messages"][1]
+    assert assistant["model_provider"] == "internal_vector_search"
+    assert assistant["sources"]
+    assert called_openai is False
+
+
+def test_kam_ai_chat_uses_openai_when_no_internal_vector_evidence(db_session: Session, monkeypatch: pytest.MonkeyPatch) -> None:
+    service = KamAiChatService(db_session)
+    service.settings.kam_ai_provider = "openai"
+    service.settings.kam_ai_api_key = "test-key"
+    service.settings.kam_ai_model = "gpt-test"
+    user = db_session.scalar(select(User).where(User.email == "admin@tkxel.com"))
+    assert user is not None
+    prompts: list[str] = []
+
+    def fake_call_openai(prompt: str):  # noqa: ANN001
+        prompts.append(prompt)
+        return (
+            '{"answer_markdown":"No internal KAM records matched. Here is general guidance from OpenAI fallback.",'
+            '"confidence":"low","intent":"general","recommended_actions":["Add account source records."],'
+            '"missing_evidence":["No matching internal KAM records were found."],"follow_up_questions":["Which account should this be scoped to?"]}',
+            {"usage": {"input_tokens": 20, "output_tokens": 30}},
+        )
+
+    monkeypatch.setattr(service, "_call_openai", fake_call_openai)
+
+    answer = service._generate_answer("Explain an unsupported market topic", sources=[], accounts=[], current_user=user)
+
+    assert prompts
+    assert "unsupported market topic" in prompts[0]
+    assert answer["provider"] == "openai"
+    assert answer["metadata"]["openai_used_because"] == "no_internal_vector_match"
+    assert answer["missing_evidence"] == ["No matching internal KAM records were found."]
+
+
+def test_kam_ai_chat_external_search_keywords_combine_internal_sources_with_openai(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
+    calls: list[dict[str, object]] = []
+
+    def fake_combined(self, query, *, sources, accounts, current_user, reason):  # noqa: ANN001
+        calls.append({"query": query, "source_count": len(sources), "account_count": len(accounts), "role": current_user.role, "reason": reason})
+        return {
+            "answer_markdown": "Combined KAM and OpenAI web search answer for Cafe Zupas.",
+            "confidence": "medium",
+            "intent": "general",
+            "recommended_actions": [],
+            "missing_evidence": [],
+            "follow_up_questions": [],
+            "provider": "openai_combined_search",
+            "model": "gpt-test",
+            "usage": {"test": True},
+            "metadata": {"external_search_requested": True, "combined_internal_and_external": True, "openai_used_because": reason, "internal_source_count": len(sources)},
+        }
+
+    def fail_internal_answer(self, query, *, sources, accounts, current_user):  # noqa: ANN001, ARG001
+        raise AssertionError("Internal answer path should not run for explicit external-search requests")
+
+    monkeypatch.setattr(KamAiChatService, "_generate_combined_openai_answer", fake_combined)
+    monkeypatch.setattr(KamAiChatService, "_generate_answer", fail_internal_answer)
+    headers = auth_headers(client)
+    create_response = client.post(
+        "/api/ai/chat-sessions",
+        headers=headers,
+        json={"title": "External search", "account_id": "demo-project-cafe-zupas", "scopes": ["timeline", "kyc", "documents"]},
+    )
+    assert create_response.status_code == 201
+
+    message_response = client.post(
+        f"/api/ai/chat-sessions/{create_response.json()['id']}/messages",
+        headers=headers,
+        json={"content": "Use OpenAI and search on Google for Cafe Zupas public news", "scopes": ["timeline", "kyc", "documents"], "document_search": True},
+    )
+
+    assert message_response.status_code == 200
+    assistant = message_response.json()["messages"][1]
+    assert calls and calls[0]["query"] == "Use OpenAI and search on Google for Cafe Zupas public news"
+    assert calls[0]["reason"] == "user_requested_external_search"
+    assert calls[0]["source_count"] > 0
+    assert assistant["model_provider"] == "openai_combined_search"
+    assert assistant["metadata_json"]["external_search_requested"] is True
+    assert assistant["metadata_json"]["combined_internal_and_external"] is True
+    assert assistant["metadata_json"]["internal_source_count"] > 0
+    assert assistant["sources"]
+
+
+def test_kam_ai_chat_industry_context_combines_vector_and_openai_search(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
+    calls: list[dict[str, object]] = []
+
+    def fake_combined(self, query, *, sources, accounts, current_user, reason):  # noqa: ANN001, ARG001
+        calls.append({"query": query, "source_count": len(sources), "reason": reason})
+        return {
+            "answer_markdown": "Restaurant industry context combined with Cafe Zupas KAM evidence.",
+            "confidence": "medium",
+            "intent": "general",
+            "recommended_actions": ["Validate public market findings before customer follow-up."],
+            "missing_evidence": [],
+            "follow_up_questions": [],
+            "provider": "openai_combined_search",
+            "model": "gpt-test",
+            "usage": {"test": True},
+            "metadata": {"external_search_requested": True, "combined_internal_and_external": True, "openai_used_because": reason, "internal_source_count": len(sources)},
+        }
+
+    def fail_internal_answer(self, query, *, sources, accounts, current_user):  # noqa: ANN001, ARG001
+        raise AssertionError("Industry context should use OpenAI web search plus internal evidence")
+
+    monkeypatch.setattr(KamAiChatService, "_generate_combined_openai_answer", fake_combined)
+    monkeypatch.setattr(KamAiChatService, "_generate_answer", fail_internal_answer)
+    headers = auth_headers(client)
+    create_response = client.post(
+        "/api/ai/chat-sessions",
+        headers=headers,
+        json={"title": "Industry context", "account_id": "demo-project-cafe-zupas", "scopes": ["timeline", "kyc", "documents"]},
+    )
+    assert create_response.status_code == 201
+
+    message_response = client.post(
+        f"/api/ai/chat-sessions/{create_response.json()['id']}/messages",
+        headers=headers,
+        json={"content": "Get me details from the restaurant industry for Cafe Zupas", "scopes": ["timeline", "kyc", "documents"], "document_search": True},
+    )
+
+    assert message_response.status_code == 200
+    assistant = message_response.json()["messages"][1]
+    assert calls and calls[0]["reason"] == "industry_or_market_context"
+    assert calls[0]["source_count"] > 0
+    assert assistant["model_provider"] == "openai_combined_search"
+    assert assistant["metadata_json"]["combined_internal_and_external"] is True
+    assert assistant["sources"]
+
+
+def test_kam_ai_chat_public_profile_lookup_uses_openai_web_search(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
+    calls: list[dict[str, object]] = []
+
+    def fake_combined(self, query, *, sources, accounts, current_user, reason):  # noqa: ANN001, ARG001
+        calls.append({"query": query, "source_count": len(sources), "reason": reason})
+        return {
+            "answer_markdown": "Best matching public URLs:\n- LinkedIn: https://www.linkedin.com/company/fintua/",
+            "confidence": "medium",
+            "intent": "general",
+            "recommended_actions": ["Verify the URL before saving it to the account profile."],
+            "missing_evidence": [],
+            "follow_up_questions": [],
+            "provider": "openai_combined_search",
+            "model": "gpt-test",
+            "usage": {"test": True},
+            "metadata": {"external_search_requested": True, "combined_internal_and_external": True, "openai_used_because": reason, "internal_source_count": len(sources)},
+        }
+
+    def fail_internal_answer(self, query, *, sources, accounts, current_user):  # noqa: ANN001, ARG001
+        raise AssertionError("Public profile lookups should use OpenAI web search instead of internal-only answers")
+
+    monkeypatch.setattr(KamAiChatService, "_generate_combined_openai_answer", fake_combined)
+    monkeypatch.setattr(KamAiChatService, "_generate_answer", fail_internal_answer)
+    headers = auth_headers(client)
+    create_response = client.post("/api/ai/chat-sessions", headers=headers, json={"title": "Fintua LinkedIn lookup"})
+    assert create_response.status_code == 201
+
+    message_response = client.post(
+        f"/api/ai/chat-sessions/{create_response.json()['id']}/messages",
+        headers=headers,
+        json={"content": "What is Fintua's LinkedIn URL?", "scopes": ["timeline", "kyc", "documents"], "document_search": True},
+    )
+
+    assert message_response.status_code == 200
+    assistant = message_response.json()["messages"][1]
+    assert calls and calls[0]["query"] == "What is Fintua's LinkedIn URL?"
+    assert calls[0]["reason"] == "public_profile_lookup"
+    assert assistant["model_provider"] == "openai_combined_search"
+    assert assistant["metadata_json"]["external_search_requested"] is True
+    assert assistant["metadata_json"]["combined_internal_and_external"] is True
+    assert "linkedin.com/company/fintua" in assistant["content"]
+
+
+def test_kam_ai_chat_combined_openai_search_uses_web_search_tool(db_session: Session, monkeypatch: pytest.MonkeyPatch) -> None:
+    service = KamAiChatService(db_session)
+    service.settings.kam_ai_provider = "openai"
+    service.settings.kam_ai_api_key = "test-key"
+    service.settings.kam_ai_model = "gpt-test"
+    user = db_session.scalar(select(User).where(User.email == "admin@tkxel.com"))
+    assert user is not None
+    calls: list[dict[str, object]] = []
+
+    def fake_call_openai(prompt: str, *, use_web_search: bool = False):  # noqa: ANN001
+        calls.append({"prompt": prompt, "use_web_search": use_web_search})
+        return (
+            '{"answer_markdown":"OpenAI web search fallback answer.", "confidence":"medium", "intent":"general",'
+            '"recommended_actions":[], "missing_evidence":[], "follow_up_questions":[]}',
+            {
+                "usage": {"input_tokens": 40, "output_tokens": 50},
+                "web_search_used": use_web_search,
+                "url_citations": [{"title": "Cafe Zupas", "url": "https://example.com/cafe-zupas"}],
+                "web_sources": [],
+                "response_id": "resp-test",
+            },
+        )
+
+    monkeypatch.setattr(service, "_call_openai", fake_call_openai)
+
+    answer = service._generate_external_openai_answer("Search the web for Cafe Zupas", accounts=[], current_user=user)
+
+    assert calls and calls[0]["use_web_search"] is True
+    assert "Search the web for Cafe Zupas" in str(calls[0]["prompt"])
+    assert answer["provider"] == "openai_combined_search"
+    assert answer["metadata"]["openai_web_search_used"] is True
+    assert answer["metadata"]["openai_url_citations"][0]["url"] == "https://example.com/cafe-zupas"
+
+
+def test_kam_ai_chat_openai_call_requests_web_search_sources(db_session: Session, monkeypatch: pytest.MonkeyPatch) -> None:
+    service = KamAiChatService(db_session)
+    service.settings.kam_ai_api_key = "test-key"
+    service.settings.kam_ai_model = "gpt-test"
+    captured: dict[str, object] = {}
+
+    class FakeResponse:
+        id = "resp-test"
+        output_text = '{"answer_markdown":"ok","confidence":"medium","intent":"general","recommended_actions":[],"missing_evidence":[],"follow_up_questions":[]}'
+        usage = {"input_tokens": 10, "output_tokens": 20}
+
+        def model_dump(self):  # noqa: ANN201
+            return {
+                "output": [
+                    {"type": "web_search_call", "action": {"sources": [{"title": "Industry report", "url": "https://example.com/report"}]}},
+                    {"type": "message", "content": [{"annotations": [{"type": "url_citation", "title": "Industry report", "url": "https://example.com/report", "start_index": 0, "end_index": 6}]}]},
+                ]
+            }
+
+    class FakeResponses:
+        def create(self, **kwargs):  # noqa: ANN003, ANN201
+            captured.update(kwargs)
+            return FakeResponse()
+
+    class FakeOpenAI:
+        def __init__(self, **kwargs):  # noqa: ANN003
+            self.responses = FakeResponses()
+
+    monkeypatch.setattr("openai.OpenAI", FakeOpenAI)
+
+    text, metadata = service._call_openai("Summarize public industry context", use_web_search=True)
+
+    assert "ok" in text
+    assert captured["tools"] == [{"type": "web_search", "search_context_size": "medium", "user_location": {"type": "approximate", "country": "US"}}]
+    assert captured["include"] == ["web_search_call.action.sources"]
+    assert metadata["web_search_used"] is True
+    assert metadata["web_sources"][0]["url"] == "https://example.com/report"
+    assert metadata["url_citations"][0]["url"] == "https://example.com/report"
 
 
 def test_kam_ai_chat_archive_hides_session_from_default_list(client: TestClient, db_session: Session) -> None:

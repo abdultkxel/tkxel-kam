@@ -198,6 +198,7 @@ class PlaybooksTasksService:
         return sorted(recommendations, key=lambda item: item.match_score, reverse=True)
 
     def execute_playbook(self, template_id: str, payload: PlaybookExecutionRequest, current_user: User) -> PlaybookExecutionRead:
+        self._require_playbook_operation(current_user)
         self.access.require_module_permission(current_user, MODULE, "create")
         if not payload.confirmed:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Playbook execution requires explicit confirmation")
@@ -494,9 +495,13 @@ class PlaybooksTasksService:
         return CalendarItemPageRead(items=items[start:start + page_size], total=total, page=page, page_size=page_size, pages=page_count(total, page_size))
 
     def _require_configure(self, user: User) -> None:
+        self._require_playbook_operation(user)
         self.access.require_module_permission(user, MODULE, "configure")
-        if user.role not in {"super_admin", "admin", "kam_head"}:
-            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Only Admin or KAM Head can configure playbooks")
+
+    @staticmethod
+    def _require_playbook_operation(user: User) -> None:
+        if user.role != "super_admin":
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Only Super Admin can operate playbooks. Other roles can view the playbook manual.")
 
     def _require_account_work(self, user: User, account: Account, *, action: str) -> None:
         self.access.require_module_permission(user, MODULE, action)

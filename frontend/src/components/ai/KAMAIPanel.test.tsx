@@ -161,6 +161,64 @@ const forecastSession = {
   ],
 }
 
+const externalSearchSession = {
+  ...emptySession,
+  title: 'Cafe Zupas public research',
+  message_count: 2,
+  last_message_preview: 'OpenAI web search answer',
+  last_message_at: '2026-06-10T10:08:00.000Z',
+  messages: [
+    {
+      id: 'msg-user-external',
+      session_id: 'session-1',
+      role: 'user',
+      content: 'Use OpenAI and search the web for Cafe Zupas',
+      status: 'complete',
+      token_usage_json: {},
+      metadata_json: {},
+      sources: [],
+      created_at: '2026-06-10T10:08:00.000Z',
+      completed_at: '2026-06-10T10:08:00.000Z',
+    },
+    {
+      id: 'msg-assistant-external',
+      session_id: 'session-1',
+      role: 'assistant',
+      content: 'OpenAI web search found public company information for Cafe Zupas.',
+      status: 'complete',
+      intent: 'general',
+      confidence: 'medium',
+      model_provider: 'openai_combined_search',
+      model_name: 'gpt-test',
+      token_usage_json: {},
+      metadata_json: {
+        external_search_requested: true,
+        combined_internal_and_external: true,
+        openai_external_sources: [{ title: 'Cafe Zupas official site', url: 'https://example.com/cafe-zupas' }],
+      },
+      error_message: null,
+      ai_gateway_run_id: 'run-external',
+      sources: [
+        {
+          id: 'source-internal-1',
+          account_id: 'demo-project-cafe-zupas',
+          account_name: 'Cafe Zupas',
+          source_type: 'kyc',
+          source_record_id: 'kyc-1',
+          title: 'Cafe Zupas KYC snapshot',
+          excerpt: 'Cafe Zupas internal KAM context for digital guest experience.',
+          source_route: '/accounts/demo-project-cafe-zupas?tab=kyc',
+          relevance_score: 91,
+          citation_index: 1,
+          metadata_json: {},
+        },
+      ],
+      created_at: '2026-06-10T10:08:01.000Z',
+      completed_at: '2026-06-10T10:08:03.000Z',
+    },
+  ],
+}
+
 describe('KAM AI shared input', () => {
   beforeEach(() => {
     class ResizeObserverMock {
@@ -180,6 +238,7 @@ describe('KAM AI shared input', () => {
     useUIStore.setState({
       aiOpen: false,
       aiPrefill: '',
+      aiAutoSubmitRequest: null,
       activeAccountId: 'amd-001',
       mobileNavOpen: false,
       sidebarCollapsed: false,
@@ -188,7 +247,27 @@ describe('KAM AI shared input', () => {
     })
   })
 
-  it('opens KAM AI from the top search bar and keeps the composer in sync', async () => {
+  it('opens the KAM AI panel without sending when the top search is empty', async () => {
+    const user = userEvent.setup()
+    render(
+      <MemoryRouter>
+        <AISearchBar compact />
+        <KAMAIPanel />
+      </MemoryRouter>,
+    )
+
+    await user.click(screen.getByRole('button', { name: /KAM AI/i }))
+
+    expect(useUIStore.getState().aiOpen).toBe(true)
+    const composer = await screen.findByPlaceholderText(/Ask about risks/i)
+    expect(composer).toHaveValue('')
+    await waitFor(() => {
+      expect(chatMocks.createKamAiChatSession).toHaveBeenCalledWith('token-1', expect.objectContaining({ title: 'New KAM AI chat' }))
+    })
+    expect(chatMocks.sendKamAiChatMessage).not.toHaveBeenCalled()
+  })
+
+  it('opens KAM AI from the top search bar, starts a fresh chat, and keeps the composer in sync', async () => {
     const user = userEvent.setup()
     render(
       <MemoryRouter>
@@ -203,9 +282,20 @@ describe('KAM AI shared input', () => {
 
     expect(useUIStore.getState().aiOpen).toBe(true)
     const composer = await screen.findByPlaceholderText(/Ask about risks/i)
-    expect(composer).toHaveValue('Cafe Zupas risks')
+    await waitFor(() => {
+      expect(chatMocks.createKamAiChatSession).toHaveBeenCalledWith('token-1', expect.objectContaining({ title: 'New KAM AI chat' }))
+      expect(chatMocks.sendKamAiChatMessage).toHaveBeenCalledWith(
+        'token-1',
+        'session-1',
+        expect.objectContaining({
+          content: 'Cafe Zupas risks',
+          document_search: true,
+        }),
+      )
+    })
+    expect((await screen.findAllByText('Cafe Zupas risks')).length).toBeGreaterThan(0)
+    expect(composer).toHaveValue('')
 
-    await user.clear(composer)
     await user.type(composer, 'Renewal risks')
 
     expect(topbarInput).toHaveValue('Renewal risks')
@@ -239,6 +329,51 @@ describe('KAM AI shared input', () => {
     const boldText = await screen.findByText((_, node) => node?.tagName.toLowerCase() === 'strong' && node.textContent === 'source-backed delivery risk')
     expect(boldText.tagName.toLowerCase()).toBe('strong')
     expect(screen.getByText(/Sources \(1\)/i)).toBeInTheDocument()
+  })
+
+  it('shows a live loader while KAM AI is searching', async () => {
+    let resolveMessage: (value: typeof answeredSession) => void = () => {}
+    chatMocks.sendKamAiChatMessage.mockImplementationOnce(() => new Promise<typeof answeredSession>(resolve => {
+      resolveMessage = resolve
+    }))
+    const user = userEvent.setup()
+    useUIStore.setState({ aiOpen: true, aiPrefill: 'Cafe Zupas risks' })
+
+    render(
+      <MemoryRouter>
+        <KAMAIPanel />
+      </MemoryRouter>,
+    )
+
+    await screen.findByPlaceholderText(/Ask about risks/i)
+    await user.click(screen.getByRole('button', { name: /Send KAM AI message/i }))
+
+    expect(await screen.findByText(/Searching requested sources and preparing an answer/i)).toBeInTheDocument()
+
+    resolveMessage(answeredSession)
+
+    expect(await screen.findByText((_, node) => node?.tagName.toLowerCase() === 'strong' && node.textContent === 'source-backed delivery risk')).toBeInTheDocument()
+  })
+
+  it('renders combined OpenAI web sources and internal sources separately', async () => {
+    chatMocks.sendKamAiChatMessage.mockResolvedValueOnce(externalSearchSession)
+    const user = userEvent.setup()
+    useUIStore.setState({ aiOpen: true, aiPrefill: 'Use OpenAI and search the web for Cafe Zupas' })
+
+    render(
+      <MemoryRouter>
+        <KAMAIPanel />
+      </MemoryRouter>,
+    )
+
+    await screen.findByPlaceholderText(/Ask about risks/i)
+    await user.click(screen.getByRole('button', { name: /Send KAM AI message/i }))
+
+    expect(await screen.findByText(/OpenAI web search found public company information/i)).toBeInTheDocument()
+    expect(screen.getByText(/OpenAI web sources \(1\)/i)).toBeInTheDocument()
+    expect(screen.getByText('Cafe Zupas official site')).toBeInTheDocument()
+    expect(screen.getByText(/^Sources \(1\)$/i)).toBeInTheDocument()
+    expect(screen.getByText('Cafe Zupas KYC snapshot')).toBeInTheDocument()
   })
 
   it('renders forecast chart responses with cleaned heading and list formatting', async () => {

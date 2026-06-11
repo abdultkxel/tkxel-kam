@@ -61,9 +61,69 @@ from app.services.user_management import page_count
 logger = logging.getLogger(__name__)
 
 AI_MODULE = "ai_assistance_search"
-AI_DISCLAIMER = "AI-assisted output is advisory and based only on source records you are authorized to view."
+AI_DISCLAIMER = "AI-assisted output is advisory. Internal claims use authorized KAM records; public web context is included only when OpenAI search is used."
 SENSITIVE_LEVELS = {"sensitive", "commercial", "financial", "executive", "confidential", "restricted"}
 DEFAULT_SCOPES = ["timeline", "opportunities", "governance", "notes", "kyc", "documents"]
+EXTERNAL_SEARCH_PATTERNS = [
+    r"\buse\s+(?:open\s*ai|openai|chatgpt|gpt|llm)\b",
+    r"\b(?:open\s*ai|openai|chatgpt|gpt|llm)\s+(?:search|lookup|research|find|check)\b",
+    r"\buse\s+(?:ai|llm)\s+to\s+(?:search|lookup|research|find|check)\b",
+    r"\b(?:web|internet|online|external|public)\s+(?:search|lookup|research|sources?)\b",
+    r"\bsearch\s+(?:the\s+)?(?:web|internet|online|google|public\s+sources?)\b",
+    r"\b(?:google\s+search|search\s+on\s+google|google\s+it)\b",
+    r"\boutside\s+(?:of\s+)?kam\b",
+    r"\bgo\s+outside\s+(?:of\s+)?kam\b",
+]
+PUBLIC_CONTEXT_LOOKUP_PATTERNS = [
+    r"\b(?:get|give|show|tell|explain|research|summari[sz]e).{0,80}\bindustry\b",
+    r"\bdetails?\s+(?:from|about|on)\s+(?:the\s+)?(?:industry|market|sector)\b",
+    r"\bindustry\s+(?:details?|overview|context|trends?|analysis|benchmarks?|risks?|outlook|news)\b",
+    r"\bindustry\b.{0,60}\b(?:details?|overview|context|research|summary)\b",
+    r"\b(?:market|sector)\s+(?:details?|overview|context|trends?|analysis|benchmarks?|risks?|outlook|news)\b",
+    r"\b(?:industry|market|sector)\b.*\b(?:trends?|benchmarks?|regulations?|regulatory|outlook|news|risks?|opportunities|landscape)\b",
+    r"\b(?:competitor|competitive)\s+(?:analysis|landscape|benchmark|benchmarks|positioning)\b",
+    r"\bpublic\s+(?:company|industry|market|sector)\s+(?:details?|overview|context|research|news)\b",
+]
+PUBLIC_PROFILE_LOOKUP_PATTERNS = [
+    r"\blinked\s*in\b",
+    r"\blinkedin\b",
+    r"\bcompany\s+(?:url|link|website|site|domain)\b",
+    r"\bofficial\s+(?:url|link|website|site|domain)\b",
+    r"\b(?:website|homepage|domain)\s+(?:url|link)\b",
+    r"\bpublic\s+(?:profile|url|link|website|site)\b",
+    r"\bsocial\s+(?:profile|url|link)\b",
+]
+KAM_AI_STOP_WORDS = {
+    "about",
+    "across",
+    "after",
+    "again",
+    "also",
+    "and",
+    "any",
+    "are",
+    "can",
+    "chart",
+    "could",
+    "for",
+    "from",
+    "give",
+    "how",
+    "into",
+    "kam",
+    "next",
+    "please",
+    "show",
+    "six",
+    "tell",
+    "the",
+    "this",
+    "through",
+    "what",
+    "when",
+    "where",
+    "with",
+}
 
 
 @dataclass(frozen=True)
@@ -141,6 +201,8 @@ class KamAiChatService:
         account_id = payload.account_id or session.account_id
         accounts = self._accounts_for_scope(current_user, account_id)
         intent = self._intent(payload.content)
+        external_search_reason = self._external_search_reason(payload.content)
+        external_search_requested = external_search_reason != "not_requested"
         if intent == "forecast" and not account_id:
             matched_account = self._account_from_query(payload.content, accounts)
             if matched_account:
@@ -190,15 +252,20 @@ class KamAiChatService:
                 limit=payload.limit,
             )
             if intent == "forecast":
+                answer_sources = sources
                 answer = self._generate_forecast_answer(payload.content, sources=sources, accounts=accounts, current_user=current_user)
+            elif external_search_requested:
+                answer_sources = self._usable_internal_sources(sources)
+                answer = self._generate_combined_openai_answer(payload.content, sources=answer_sources, accounts=accounts, current_user=current_user, reason=external_search_reason)
             else:
-                answer = self._generate_answer(payload.content, sources=sources, accounts=accounts, current_user=current_user)
+                answer_sources = self._usable_internal_sources(sources)
+                answer = self._generate_answer(payload.content, sources=answer_sources, accounts=accounts, current_user=current_user)
             run_id = self._log_ai_run(
                 current_user,
                 session=session,
                 query=payload.content,
                 response=answer,
-                sources=sources,
+                sources=answer_sources,
                 latency_ms=round((time.monotonic() - started) * 1000),
                 indexed_chunks=indexed,
             )
@@ -214,7 +281,7 @@ class KamAiChatService:
                 "recommended_actions": answer.get("recommended_actions") or [],
                 "missing_evidence": answer.get("missing_evidence") or [],
                 "follow_up_questions": answer.get("follow_up_questions") or [],
-                "source_count": len(sources),
+                "source_count": len(answer_sources),
                 "indexed_chunks": indexed,
                 "fallback_used": answer.get("fallback_used", False),
                 **dict(answer.get("metadata") or {}),
@@ -222,11 +289,11 @@ class KamAiChatService:
             assistant_message.ai_gateway_run_id = run_id
             assistant_message.completed_at = utc_now()
             self.repository.save_message(assistant_message)
-            self._store_message_sources(assistant_message, sources)
+            self._store_message_sources(assistant_message, answer_sources)
             session.last_message_at = assistant_message.completed_at
             session.updated_at = utc_now()
             self.repository.save_session(session)
-            self.audit.log(module=AI_MODULE, action="chat_message_generated", entity_type="kam_ai_chat_session", entity_id=session.id, actor=current_user, after_value={"message_id": assistant_message.id, "source_count": len(sources), "confidence": assistant_message.confidence})
+            self.audit.log(module=AI_MODULE, action="chat_message_generated", entity_type="kam_ai_chat_session", entity_id=session.id, actor=current_user, after_value={"message_id": assistant_message.id, "source_count": len(answer_sources), "confidence": assistant_message.confidence})
         except Exception as exc:
             logger.exception("KAM AI chat message failed for session %s", session.id)
             assistant_message.status = "failed"
@@ -657,33 +724,79 @@ class KamAiChatService:
         }
 
     def _generate_answer(self, query: str, *, sources: list[RetrievedKamAiSource], accounts: list[Account], current_user: User) -> dict[str, Any]:
-        if not sources:
-            return self._fallback_answer(query, sources=sources, accounts=accounts, reason="no_sources")
+        if sources:
+            return self._fallback_answer(query, sources=sources, accounts=accounts, reason="internal_vector_search")
         if self.settings.kam_ai_provider != "openai" or not self.settings.kam_ai_api_key:
-            return self._fallback_answer(query, sources=sources, accounts=accounts, reason="openai_not_configured")
-        prompt = self._openai_prompt(query, sources=sources, accounts=accounts, current_user=current_user)
+            return self._fallback_answer(query, sources=sources, accounts=accounts, reason="no_internal_sources_openai_not_configured")
+        prompt = self._openai_general_prompt(query, accounts=accounts, current_user=current_user)
         if estimate_tokens(prompt) > self.settings.kam_ai_max_input_tokens:
-            prompt = self._openai_prompt(query, sources=sources[: max(3, self.settings.kam_ai_retrieval_top_k // 2)], accounts=accounts, current_user=current_user)
+            prompt = prompt[: self.settings.kam_ai_max_input_tokens * 4]
         try:
             text, metadata = self._call_openai(prompt)
             parsed = self._parse_openai_response(text)
             return {
                 "answer_markdown": parsed.get("answer_markdown") or text,
-                "confidence": parsed.get("confidence") or self._confidence_from_sources(sources),
+                "confidence": parsed.get("confidence") or "low",
                 "intent": parsed.get("intent") or self._intent(query),
                 "recommended_actions": parsed.get("recommended_actions") if isinstance(parsed.get("recommended_actions"), list) else [],
-                "missing_evidence": parsed.get("missing_evidence") if isinstance(parsed.get("missing_evidence"), list) else [],
+                "missing_evidence": parsed.get("missing_evidence") if isinstance(parsed.get("missing_evidence"), list) else ["No matching internal KAM records were found."],
                 "follow_up_questions": parsed.get("follow_up_questions") if isinstance(parsed.get("follow_up_questions"), list) else [],
                 "provider": "openai",
                 "model": self.settings.kam_ai_model,
                 "usage": metadata.get("usage") or {},
                 "raw_response": text,
+                "metadata": {"openai_used_because": "no_internal_vector_match"},
             }
         except Exception as exc:
             logger.exception("KAM AI OpenAI response failed")
-            fallback = self._fallback_answer(query, sources=sources, accounts=accounts, reason=f"openai_failed: {str(exc)[:240]}")
+            fallback = self._fallback_answer(query, sources=sources, accounts=accounts, reason=f"no_internal_sources_openai_failed: {str(exc)[:240]}")
             fallback["fallback_used"] = True
             return fallback
+
+    def _generate_combined_openai_answer(self, query: str, *, sources: list[RetrievedKamAiSource], accounts: list[Account], current_user: User, reason: str) -> dict[str, Any]:
+        if self.settings.kam_ai_provider != "openai" or not self.settings.kam_ai_api_key:
+            fallback_reason = f"{reason}_openai_web_search_not_configured"
+            return self._fallback_answer(query, sources=sources, accounts=accounts, reason=fallback_reason)
+        prompt = self._openai_combined_search_prompt(query, sources=sources, accounts=accounts, current_user=current_user, reason=reason)
+        if estimate_tokens(prompt) > self.settings.kam_ai_max_input_tokens:
+            prompt = prompt[: self.settings.kam_ai_max_input_tokens * 4]
+        try:
+            text, metadata = self._call_openai(prompt, use_web_search=True)
+            parsed = self._parse_openai_response(text)
+            citations = metadata.get("url_citations") or []
+            external_sources = metadata.get("web_sources") or []
+            missing = parsed.get("missing_evidence") if isinstance(parsed.get("missing_evidence"), list) else []
+            return {
+                "answer_markdown": parsed.get("answer_markdown") or text,
+                "confidence": parsed.get("confidence") or ("medium" if citations or external_sources else "low"),
+                "intent": parsed.get("intent") or "general",
+                "recommended_actions": parsed.get("recommended_actions") if isinstance(parsed.get("recommended_actions"), list) else [],
+                "missing_evidence": missing,
+                "follow_up_questions": parsed.get("follow_up_questions") if isinstance(parsed.get("follow_up_questions"), list) else [],
+                "provider": "openai_combined_search",
+                "model": self.settings.kam_ai_model,
+                "usage": {**dict(metadata.get("usage") or {}), "internal_source_count": len(sources)},
+                "raw_response": text,
+                "metadata": {
+                    "external_search_requested": True,
+                    "combined_internal_and_external": True,
+                    "openai_used_because": reason,
+                    "openai_web_search_used": metadata.get("web_search_used", False),
+                    "openai_url_citations": citations,
+                    "openai_external_sources": external_sources,
+                    "internal_source_count": len(sources),
+                    "response_id": metadata.get("response_id"),
+                },
+            }
+        except Exception as exc:
+            logger.exception("KAM AI combined OpenAI search failed")
+            fallback = self._fallback_answer(query, sources=sources, accounts=accounts, reason=f"{reason}_openai_web_search_failed: {str(exc)[:240]}")
+            fallback["fallback_used"] = True
+            fallback["metadata"] = {"external_search_requested": True, "combined_internal_and_external": bool(sources), "openai_used_because": reason, "internal_source_count": len(sources)}
+            return fallback
+
+    def _generate_external_openai_answer(self, query: str, *, accounts: list[Account], current_user: User) -> dict[str, Any]:
+        return self._generate_combined_openai_answer(query, sources=[], accounts=accounts, current_user=current_user, reason="user_requested_external_search")
 
     def _generate_forecast_answer(self, query: str, *, sources: list[RetrievedKamAiSource], accounts: list[Account], current_user: User) -> dict[str, Any]:
         months = self._forecast_months(query)
@@ -757,7 +870,63 @@ class KamAiChatService:
             f"Payload:\n{json.dumps(payload, default=str)}"
         )
 
-    def _call_openai(self, prompt: str) -> tuple[str, dict[str, Any]]:
+    def _openai_general_prompt(self, query: str, *, accounts: list[Account], current_user: User) -> str:
+        payload = {
+            "question": query,
+            "user": {"id": current_user.id, "role": current_user.role},
+            "authorized_account_names": [account.name for account in accounts],
+            "internal_search_status": "No reliable matching internal KAM vector records were found for this question.",
+        }
+        return (
+            "You are KAM AI, a strategic account-management assistant.\n"
+            "The internal KAM vector search did not find reliable source-backed evidence for the user's question.\n"
+            "Use OpenAI model knowledge as a fallback only. Do not pretend this is live web search or internal record evidence.\n"
+            "State clearly that no matching internal KAM records were found, and keep advice practical for account-management review.\n"
+            "Do not invent account-specific commercial, stakeholder, escalation, or delivery facts. Ask for source records when needed.\n"
+            "Return JSON only with this shape: {\"answer_markdown\":\"...\", \"confidence\":\"high|medium|low\", \"intent\":\"risk|renewal|governance|growth|forecast|handoff|general\", \"recommended_actions\":[], \"missing_evidence\":[], \"follow_up_questions\":[]}.\n"
+            f"Payload:\n{json.dumps(payload, default=str)}"
+        )
+
+    def _openai_external_search_prompt(self, query: str, *, accounts: list[Account], current_user: User) -> str:
+        return self._openai_combined_search_prompt(query, sources=[], accounts=accounts, current_user=current_user, reason="user_requested_external_search")
+
+    def _openai_combined_search_prompt(self, query: str, *, sources: list[RetrievedKamAiSource], accounts: list[Account], current_user: User, reason: str) -> str:
+        payload = {
+            "question": query,
+            "user": {"id": current_user.id, "role": current_user.role},
+            "authorized_account_names": [account.name for account in accounts],
+            "external_search_reason": reason,
+            "external_search_policy": "Use OpenAI web search for public/industry/company context that is not expected to live in KAM records. Combine it with any authorized KAM source records supplied below.",
+            "internal_sources": [
+                {
+                    "citation_index": index,
+                    "account_id": item.chunk.account_id,
+                    "account_name": item.account_name,
+                    "source_type": item.chunk.source_type,
+                    "source_record_id": item.chunk.source_record_id,
+                    "title": item.chunk.title,
+                    "excerpt": item.chunk.chunk_text[:1800],
+                    "source_route": item.chunk.source_route,
+                    "relevance_score": round(item.relevance_score, 4),
+                    "rank_reason": item.rank_reason,
+                }
+                for index, item in enumerate(sources, start=1)
+            ],
+        }
+        return (
+            "You are KAM AI, a strategic account-management assistant.\n"
+            "Use BOTH evidence channels when available: authorized internal KAM source records and OpenAI web search/public web research.\n"
+            "Use OpenAI web search for industry, market, competitor, public company, public URL/profile, or current public-news context. Do not claim Google-specific scraping; describe it as OpenAI web search or public web research.\n"
+            "Clearly separate internal KAM facts from public/industry findings. Do not let public web information override internal account facts; call out conflicts or stale evidence instead.\n"
+            "Cite internal KAM claims with [source #] markers that match citation_index. Cite public web claims in natural language using source names or URLs when available from the search result context.\n"
+            "For URL/profile lookup questions, return the best matching URL list first, then add a short note about confidence or ambiguity.\n"
+            "Do not invent account-specific commercial, stakeholder, escalation, or delivery facts.\n"
+            "Write the final answer in clear, human-readable markdown with concise headings when useful.\n"
+            "Return JSON only with this shape: {\"answer_markdown\":\"...\", \"confidence\":\"high|medium|low\", \"intent\":\"risk|renewal|governance|growth|forecast|handoff|general\", \"recommended_actions\":[], \"missing_evidence\":[], \"follow_up_questions\":[]}.\n"
+            f"Payload:\n{json.dumps(payload, default=str)}"
+        )
+
+    def _call_openai(self, prompt: str, *, use_web_search: bool = False) -> tuple[str, dict[str, Any]]:
         from openai import OpenAI
 
         client_kwargs: dict[str, Any] = {"api_key": self.settings.kam_ai_api_key, "timeout": self.settings.kam_ai_timeout_seconds}
@@ -773,10 +942,27 @@ class KamAiChatService:
                     "input": prompt,
                     "max_output_tokens": self.settings.kam_ai_max_output_tokens,
                 }
+                if use_web_search:
+                    request_kwargs["tools"] = [
+                        {
+                            "type": "web_search",
+                            "search_context_size": "medium",
+                            "user_location": {"type": "approximate", "country": "US"},
+                        }
+                    ]
+                    request_kwargs["include"] = ["web_search_call.action.sources"]
                 if not self.settings.kam_ai_model.lower().startswith("gpt-5"):
                     request_kwargs["temperature"] = self.settings.kam_ai_temperature
                 response = client.responses.create(**request_kwargs)
-                return getattr(response, "output_text", "") or "", {"response_id": getattr(response, "id", None), "usage": self._usage_dict(getattr(response, "usage", None)), "latency_ms": round((time.monotonic() - started) * 1000)}
+                response_payload = response.model_dump() if hasattr(response, "model_dump") else {}
+                return getattr(response, "output_text", "") or "", {
+                    "response_id": getattr(response, "id", None),
+                    "usage": self._usage_dict(getattr(response, "usage", None)),
+                    "latency_ms": round((time.monotonic() - started) * 1000),
+                    "web_search_used": use_web_search,
+                    "url_citations": self._openai_url_citations(response_payload),
+                    "web_sources": self._openai_web_sources(response_payload),
+                }
             except Exception as exc:
                 last_error = exc
                 if attempt >= self.settings.kam_ai_max_retries:
@@ -798,6 +984,41 @@ class KamAiChatService:
         parsed = json.loads(value)
         return parsed if isinstance(parsed, dict) else {}
 
+    @staticmethod
+    def _openai_url_citations(payload: dict[str, Any]) -> list[dict[str, Any]]:
+        citations: list[dict[str, Any]] = []
+        for item in payload.get("output") or []:
+            if not isinstance(item, dict) or item.get("type") != "message":
+                continue
+            for content in item.get("content") or []:
+                if not isinstance(content, dict):
+                    continue
+                for annotation in content.get("annotations") or []:
+                    if isinstance(annotation, dict) and annotation.get("type") == "url_citation":
+                        citations.append(
+                            {
+                                "title": annotation.get("title"),
+                                "url": annotation.get("url"),
+                                "start_index": annotation.get("start_index"),
+                                "end_index": annotation.get("end_index"),
+                            }
+                        )
+        return citations
+
+    @staticmethod
+    def _openai_web_sources(payload: dict[str, Any]) -> list[dict[str, Any]]:
+        sources: list[dict[str, Any]] = []
+        for item in payload.get("output") or []:
+            if not isinstance(item, dict) or item.get("type") != "web_search_call":
+                continue
+            action = item.get("action") or {}
+            if not isinstance(action, dict):
+                continue
+            for source in action.get("sources") or []:
+                if isinstance(source, dict):
+                    sources.append({"title": source.get("title"), "url": source.get("url")})
+        return sources
+
     def _fallback_answer(self, query: str, *, sources: list[RetrievedKamAiSource], accounts: list[Account], reason: str) -> dict[str, Any]:
         if not sources:
             answer = f"I could not find enough authorized source records to answer '{query}' with confidence."
@@ -806,22 +1027,27 @@ class KamAiChatService:
                 f"- [{index}] {item.account_name}: {item.chunk.title} ({item.chunk.source_type})"
                 for index, item in enumerate(sources[:8], start=1)
             )
+            closing = (
+                "Internal vector search found matching KAM records, so OpenAI was not needed for this response."
+                if reason == "internal_vector_search"
+                else "OpenAI synthesis was not available for this response, so this is a source-ranked summary for review."
+            )
             answer = (
                 f"I found {len(sources)} authorized source record(s) across {len(accounts)} account(s) for '{query}'.\n\n"
                 f"Top evidence:\n{source_lines}\n\n"
-                "OpenAI synthesis was not available for this response, so this is a source-ranked summary for review."
+                + closing
             )
         return {
             "answer_markdown": answer,
             "confidence": self._confidence_from_sources(sources),
             "intent": self._intent(query),
             "recommended_actions": ["Open the cited source records and validate the recommendation before taking account action."] if sources else [],
-            "missing_evidence": [reason],
+            "missing_evidence": [] if reason == "internal_vector_search" else [reason],
             "follow_up_questions": ["Which account or time window should KAM AI narrow the answer to?"] if len(accounts) > 1 else [],
-            "provider": "deterministic_fallback",
+            "provider": "internal_vector_search" if reason == "internal_vector_search" else "deterministic_fallback",
             "model": "source-ranked",
             "usage": {"source_count": len(sources), "account_count": len(accounts), "fallback_reason": reason},
-            "fallback_used": True,
+            "fallback_used": reason != "internal_vector_search",
         }
 
     def _store_message_sources(self, message: KamAiChatMessage, sources: list[RetrievedKamAiSource]) -> None:
@@ -843,7 +1069,7 @@ class KamAiChatService:
             )
 
     def _rank_chunk(self, chunk: KamAiSourceChunk, *, query: str, query_embedding: list[float]) -> tuple[float, dict[str, Any]]:
-        terms = {term.lower() for term in query.split() if len(term) > 2}
+        terms = self._query_terms(query)
         text = f"{chunk.title} {chunk.chunk_text}".lower()
         matched_terms = sorted(term for term in terms if term in text)[:12]
         keyword_score = len(matched_terms) * 4
@@ -852,6 +1078,29 @@ class KamAiChatService:
         recency_bonus = 1.5 if chunk.updated_at else 0
         score = trust_score + keyword_score + vector_score + recency_bonus
         return score, {"matched_terms": matched_terms, "vector_similarity": round(cosine_similarity(chunk.embedding_json, query_embedding), 4) if chunk.embedding_json else None, "trust_score": trust_score, "source_type": chunk.source_type}
+
+    @staticmethod
+    def _query_terms(query: str) -> set[str]:
+        return {
+            term
+            for term in re.findall(r"[a-z0-9]+", query.lower())
+            if len(term) > 2 and term not in KAM_AI_STOP_WORDS
+        }
+
+    @staticmethod
+    def _usable_internal_sources(sources: list[RetrievedKamAiSource]) -> list[RetrievedKamAiSource]:
+        if not sources:
+            return []
+        usable = [
+            source
+            for source in sources
+            if source.rank_reason.get("matched_terms")
+            or (
+                str(source.chunk.embedding_provider or "").lower() != "local_hash"
+                and float(source.rank_reason.get("vector_similarity") or 0) >= 0.42
+            )
+        ]
+        return usable[: len(sources)]
 
     def _chunk_in_scope(self, chunk: KamAiSourceChunk, scopes: set[str], *, include_documents: bool) -> bool:
         if "all" in scopes:
@@ -957,6 +1206,21 @@ class KamAiChatService:
         if "governance" in normalized or "qbr" in normalized:
             return "governance"
         return "general"
+
+    @staticmethod
+    def _external_search_requested(query: str) -> bool:
+        return KamAiChatService._external_search_reason(query) != "not_requested"
+
+    @staticmethod
+    def _external_search_reason(query: str) -> str:
+        normalized = " ".join(query.lower().split())
+        if any(re.search(pattern, normalized) for pattern in EXTERNAL_SEARCH_PATTERNS):
+            return "user_requested_external_search"
+        if any(re.search(pattern, normalized) for pattern in PUBLIC_PROFILE_LOOKUP_PATTERNS):
+            return "public_profile_lookup"
+        if any(re.search(pattern, normalized) for pattern in PUBLIC_CONTEXT_LOOKUP_PATTERNS):
+            return "industry_or_market_context"
+        return "not_requested"
 
     @staticmethod
     def _forecast_months(query: str) -> int:

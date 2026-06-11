@@ -10,7 +10,7 @@ from sqlalchemy.pool import StaticPool
 
 from app.database import Base, get_db
 from app.main import app
-from app.models import AuditLog, IntegrationSyncLog, MeetingArtifact, Task, TimelineEntry, User
+from app.models import AuditLog, GovernanceEvent, IntegrationSyncLog, MeetingArtifact, Task, TimelineEntry, User
 from app.services.integrations import IntegrationService
 from app.services.seed import seed_default_data
 
@@ -379,6 +379,9 @@ def test_governance_update_cancel_and_sort_flow(client: TestClient, db_session: 
     assert updated["governance_type"] == "SteerCo"
     assert updated["scheduled_at"].startswith("2026-06-12T11:00:00")
     assert updated["attendee_emails"] == ["delivery.lead@example.com"]
+    db_event = db_session.get(GovernanceEvent, first_id)
+    assert db_event is not None
+    assert db_event.deduplication_key == f"manual:{account_id}:SteerCo:2026-06-12T11:00:00+00:00"
     reminder_task = db_session.query(Task).filter_by(source_type="governance_event", source_record_id=first_id).one()
     assert reminder_task.title == "SteerCo: Sortable Governance Workspace"
     assert reminder_task.due_at.isoformat().startswith("2026-06-12T11:00:00")
@@ -399,6 +402,50 @@ def test_governance_update_cancel_and_sort_flow(client: TestClient, db_session: 
     db_session.refresh(reminder_task)
     assert reminder_task.status == "cancelled"
     assert reminder_task.skipped_reason == "Governance event was cancelled."
+
+
+def test_governance_delete_removes_event_and_cancels_linked_tasks(client: TestClient, db_session: Session) -> None:
+    headers = auth_headers(client)
+    account_id, engagement_id, owner_id = create_approved_account(client, headers, "Deleted Governance Workspace")
+
+    create_response = client.post(
+        "/api/governance-events",
+        headers=headers,
+        json=governance_payload(account_id, engagement_id, owner_id, scheduled_at="2026-06-25T10:00:00Z"),
+    )
+    assert create_response.status_code == 201
+    event_id = create_response.json()["id"]
+
+    complete_response = client.post(
+        f"/api/governance-events/{event_id}/complete",
+        headers=headers,
+        json={
+            "notes": "Reviewed risks before deleting the duplicate governance record.",
+            "action_items": [{"title": "Close duplicate follow-up", "owner_email": "owner@example.com", "due_date": "2026-06-28T17:00:00Z"}],
+        },
+    )
+    assert complete_response.status_code == 200
+    action_item_id = complete_response.json()["action_items"][0]["id"]
+    reminder_task = db_session.query(Task).filter_by(source_type="governance_event", source_record_id=event_id).one()
+    action_task = db_session.query(Task).filter_by(source_type="governance_action_item", source_record_id=action_item_id).one()
+
+    delete_response = client.delete(f"/api/governance-events/{event_id}", headers=headers)
+    assert delete_response.status_code == 200
+    assert delete_response.json()["message"] == "Governance event deleted successfully"
+
+    assert client.get(f"/api/governance-events/{event_id}", headers=headers).status_code == 404
+    list_response = client.get("/api/governance-events", headers=headers, params={"account_id": account_id})
+    assert list_response.status_code == 200
+    assert list_response.json()["total"] == 0
+    assert db_session.get(GovernanceEvent, event_id) is None
+
+    db_session.refresh(reminder_task)
+    db_session.refresh(action_task)
+    assert reminder_task.status == "cancelled"
+    assert reminder_task.skipped_reason == "Governance event was deleted."
+    assert action_task.status == "cancelled"
+    assert action_task.skipped_reason == "Governance event was deleted."
+    assert db_session.query(AuditLog).filter_by(entity_id=event_id, module="governance_reviews", action="delete").count() == 1
 
 
 def test_governance_completion_audit_timeline_overdue_and_openapi(client: TestClient, db_session: Session) -> None:
@@ -466,6 +513,7 @@ def test_governance_completion_audit_timeline_overdue_and_openapi(client: TestCl
     assert openapi.status_code == 200
     paths = openapi.json()["paths"]
     assert paths["/api/governance-events"]["post"]["summary"] == "Create governance event"
+    assert paths["/api/governance-events/{event_id}"]["delete"]["summary"] == "Delete governance event"
     assert paths["/api/governance-events/{event_id}/complete"]["post"]["summary"] == "Complete governance event"
     assert paths["/api/governance-events/{event_id}/ai-brief"]["post"]["summary"] == "Generate governance brief"
 

@@ -16,8 +16,8 @@ export function FilterBar({
   const [open, setOpen] = useState(false)
 
   return (
-    <div className={cn('tk-card mb-4 p-3 sm:p-4', className)}>
-      <div className="flex items-center justify-between gap-3">
+    <div className={cn('tk-card mb-4 min-w-0 p-3 sm:p-4', className)}>
+      <div className="flex min-w-0 flex-wrap items-center justify-between gap-3">
         <div className="hidden items-center gap-2 md:flex">
           <span className="inline-flex h-9 w-9 items-center justify-center rounded-md bg-surface-tertiary text-brand-blue">
             <SlidersHorizontal className="h-4 w-4" />
@@ -37,7 +37,7 @@ export function FilterBar({
           </button>
         ) : null}
       </div>
-      <div className={cn('mt-3 grid grid-cols-1 gap-3 md:grid md:items-end', contentClassName ?? 'md:grid-cols-5', open ? 'grid' : 'hidden md:grid')}>
+      <div className={cn('mt-3 min-w-0 grid-cols-1 gap-3 md:grid md:items-end [&>*]:min-w-0', contentClassName ?? 'md:grid-cols-5', open ? 'grid' : 'hidden md:grid')}>
         {children}
         {onClear ? (
           <button className="tk-button-secondary" onClick={onClear}>

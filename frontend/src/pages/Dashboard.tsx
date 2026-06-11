@@ -1,5 +1,5 @@
 import { FormEvent, useEffect, useMemo, useState } from 'react'
-import { useSearchParams } from 'react-router-dom'
+import { useLocation, useSearchParams } from 'react-router-dom'
 import { toast } from 'sonner'
 import { RoleDashboard } from '@/components/dashboard/RoleDashboard'
 import { useAuth } from '@/contexts/AuthContext'
@@ -7,6 +7,7 @@ import { DashboardRead, getMyDashboard, refreshAmTaskSummary } from '@/services/
 
 export function Dashboard() {
   const { token, user } = useAuth()
+  const location = useLocation()
   const [params, setParams] = useSearchParams()
   const [dashboard, setDashboard] = useState<DashboardRead | null>(null)
   const [loading, setLoading] = useState(false)
@@ -51,6 +52,17 @@ export function Dashboard() {
       active = false
     }
   }, [dashboardRequest, token])
+
+  useEffect(() => {
+    if (!dashboard || location.hash !== '#governance-calendar') return
+    const frame = window.requestAnimationFrame(() => {
+      const target = document.getElementById('governance-calendar')
+      if (typeof target?.scrollIntoView === 'function') {
+        target.scrollIntoView({ behavior: 'smooth', block: 'start' })
+      }
+    })
+    return () => window.cancelAnimationFrame(frame)
+  }, [dashboard, location.hash])
 
   const taskSummary = dashboard?.widgets.find(widget => widget.key === 'ai_task_summary')
   const canRefreshSummary = Boolean(taskSummary && !dashboard?.read_only && taskSummary.metadata.manual_refresh !== false)

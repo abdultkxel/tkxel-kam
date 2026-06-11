@@ -156,6 +156,13 @@ export async function updateGovernanceEvent(token: string, eventId: string, payl
   )
 }
 
+export async function deleteGovernanceEvent(token: string, eventId: string) {
+  return apiRequest<{ message: string }>(`/api/governance-events/${eventId}`, {
+    method: 'DELETE',
+    token,
+  })
+}
+
 export async function completeGovernanceEvent(token: string, eventId: string, payload: GovernanceEventCompleteInput) {
   return mapApiGovernanceEvent(
     await apiRequest<ApiGovernanceEvent>(`/api/governance-events/${eventId}/complete`, {
@@ -242,7 +249,7 @@ export function buildCreatePayload(payload: GovernanceEventCreateInput) {
   }
 }
 
-function buildUpdatePayload(payload: GovernanceEventUpdateInput) {
+export function buildUpdatePayload(payload: GovernanceEventUpdateInput) {
   return {
     engagement_id: payload.engagementId,
     governance_type: payload.governanceType,
