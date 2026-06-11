@@ -40,6 +40,8 @@ Implemented:
 - Topbar search is now the KAM AI input; its text stays synchronized with the KAM AI composer and opens the KAM AI panel through the embedded `KAM AI` button.
 - RBAC-aware account/module/sensitive-source filtering.
 - OpenAI response path with deterministic source-ranked fallback when OpenAI is not configured or fails.
+- Forecast, prediction, chart, graph, and next-six-month prompts now use the shared forecasting service and persist a `forecast_chart` payload on the assistant message for reload-safe chart rendering.
+- Assistant responses render in a structured human-friendly style: markdown headings become styled headings, bold markers become bold text, and raw list markers are replaced with clean visual bullets.
 - AI gateway run logging and audit logging for session/message activity.
 
 Remaining:
@@ -66,3 +68,5 @@ Coverage added:
 - Archive behavior.
 - OpenAI synthesis mocked to avoid external calls in tests.
 - Topbar KAM AI input and KAM AI composer synchronization.
+- Forecast query chart metadata persistence.
+- Forecast chart rendering and markdown-marker cleanup in KAM AI responses.

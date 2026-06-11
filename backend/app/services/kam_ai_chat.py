@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -54,6 +55,7 @@ from app.services.account_access import AccountAccessService, GLOBAL_VIEW_ROLES
 from app.services.audit import AuditService
 from app.services.kyc_document_extraction import estimate_tokens
 from app.services.kyc_embeddings import LocalHashEmbeddingClient, OpenAiEmbeddingClient, cosine_similarity
+from app.services.forecasting import ForecastingService
 from app.services.user_management import page_count
 
 logger = logging.getLogger(__name__)
@@ -138,6 +140,12 @@ class KamAiChatService:
 
         account_id = payload.account_id or session.account_id
         accounts = self._accounts_for_scope(current_user, account_id)
+        intent = self._intent(payload.content)
+        if intent == "forecast" and not account_id:
+            matched_account = self._account_from_query(payload.content, accounts)
+            if matched_account:
+                account_id = matched_account.id
+                accounts = [matched_account]
         scopes = self._normalized_scopes(payload.scopes or session.scope_json or DEFAULT_SCOPES)
         user_message = KamAiChatMessage(
             session_id=session.id,
@@ -162,7 +170,7 @@ class KamAiChatService:
             role="assistant",
             content="",
             status="running",
-            intent=self._intent(payload.content),
+            intent=intent,
             model_provider=self.settings.kam_ai_provider,
             model_name=self.settings.kam_ai_model,
             created_at=utc_now(),
@@ -181,7 +189,10 @@ class KamAiChatService:
                 include_documents=payload.document_search,
                 limit=payload.limit,
             )
-            answer = self._generate_answer(payload.content, sources=sources, accounts=accounts, current_user=current_user)
+            if intent == "forecast":
+                answer = self._generate_forecast_answer(payload.content, sources=sources, accounts=accounts, current_user=current_user)
+            else:
+                answer = self._generate_answer(payload.content, sources=sources, accounts=accounts, current_user=current_user)
             run_id = self._log_ai_run(
                 current_user,
                 session=session,
@@ -206,6 +217,7 @@ class KamAiChatService:
                 "source_count": len(sources),
                 "indexed_chunks": indexed,
                 "fallback_used": answer.get("fallback_used", False),
+                **dict(answer.get("metadata") or {}),
             }
             assistant_message.ai_gateway_run_id = run_id
             assistant_message.completed_at = utc_now()
@@ -673,6 +685,48 @@ class KamAiChatService:
             fallback["fallback_used"] = True
             return fallback
 
+    def _generate_forecast_answer(self, query: str, *, sources: list[RetrievedKamAiSource], accounts: list[Account], current_user: User) -> dict[str, Any]:
+        months = self._forecast_months(query)
+        forecast = ForecastingService(self.db).generate(accounts, months=months)
+        forecast_payload = forecast.model_dump(mode="json")
+        account_scope = "portfolio" if len(accounts) != 1 else accounts[0].name
+        highlights = [str(item) for item in forecast.highlights[:3]]
+        missing = [str(item) for item in forecast.missing_data[:6]]
+        actions = [str(item) for item in forecast.recommended_actions[:5]]
+        content_parts = [
+            forecast.title,
+            forecast.summary,
+            f"Scope: {account_scope}.",
+        ]
+        if highlights:
+            content_parts.extend(["Key drivers", *highlights])
+        if missing:
+            content_parts.extend(["Data caveats", *missing])
+        if actions:
+            content_parts.extend(["Recommended next actions", *actions])
+        content_parts.append("The chart below visualizes forecast revenue and baseline revenue for the requested period.")
+        confidence = forecast.confidence if forecast.confidence != "not_available" else "low"
+        return {
+            "answer_markdown": "\n".join(content_parts),
+            "confidence": confidence,
+            "intent": "forecast",
+            "recommended_actions": actions,
+            "missing_evidence": missing,
+            "follow_up_questions": [],
+            "provider": "deterministic_forecast",
+            "model": "forecasting_service",
+            "usage": {
+                "source_count": len(sources),
+                "account_count": len(accounts),
+                "months": months,
+                "forecast_run_id": forecast.run_id,
+            },
+            "metadata": {
+                "visualization_type": "forecast_chart",
+                "forecast_chart": forecast_payload,
+            },
+        }
+
     def _openai_prompt(self, query: str, *, sources: list[RetrievedKamAiSource], accounts: list[Account], current_user: User) -> str:
         payload = {
             "question": query,
@@ -890,7 +944,7 @@ class KamAiChatService:
     @staticmethod
     def _intent(query: str) -> str:
         normalized = query.lower()
-        if "forecast" in normalized:
+        if any(term in normalized for term in ["forecast", "prediction", "predict", "projection", "chart", "graph", "next 6 months", "next six months"]):
             return "forecast"
         if "handoff" in normalized:
             return "handoff"
@@ -903,6 +957,33 @@ class KamAiChatService:
         if "governance" in normalized or "qbr" in normalized:
             return "governance"
         return "general"
+
+    @staticmethod
+    def _forecast_months(query: str) -> int:
+        normalized = query.lower()
+        if "next six" in normalized:
+            return 6
+        match = re.search(r"(?:next|for|over)\s+(\d{1,2})\s+month", normalized)
+        if match:
+            return max(1, min(int(match.group(1)), 12))
+        return 6
+
+    @staticmethod
+    def _account_from_query(query: str, accounts: list[Account]) -> Account | None:
+        normalized = re.sub(r"[^a-z0-9]+", " ", query.lower()).strip()
+        best: tuple[int, Account] | None = None
+        for account in accounts:
+            name = re.sub(r"[^a-z0-9]+", " ", account.name.lower()).strip()
+            if not name:
+                continue
+            words = [word for word in name.split() if len(word) > 2]
+            score = 0
+            if name in normalized:
+                score += 100
+            score += sum(10 for word in words if word in normalized)
+            if score and (best is None or score > best[0]):
+                best = (score, account)
+        return best[1] if best and best[0] >= 10 else None
 
     @staticmethod
     def _confidence_from_sources(sources: list[RetrievedKamAiSource]) -> str:
