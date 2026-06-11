@@ -116,6 +116,34 @@ def test_kam_ai_chat_sessions_are_private_to_session_owner(client: TestClient) -
     assert read_response.status_code == 404
 
 
+def test_kam_ai_chat_forecast_query_persists_chart_metadata(client: TestClient) -> None:
+    headers = auth_headers(client)
+    create_response = client.post(
+        "/api/ai/chat-sessions",
+        headers=headers,
+        json={"title": "Forecast chart", "scopes": ["timeline", "kyc", "documents", "opportunities"]},
+    )
+    assert create_response.status_code == 201
+    session_id = create_response.json()["id"]
+
+    message_response = client.post(
+        f"/api/ai/chat-sessions/{session_id}/messages",
+        headers=headers,
+        json={"content": "Give me a forecasting chart for Cafe Zupas for the next 6 months", "scopes": ["timeline", "kyc", "documents", "opportunities"], "document_search": True},
+    )
+
+    assert message_response.status_code == 200
+    assistant = message_response.json()["messages"][1]
+    assert assistant["intent"] == "forecast"
+    assert assistant["model_provider"] == "deterministic_forecast"
+    assert assistant["metadata_json"]["visualization_type"] == "forecast_chart"
+    chart = assistant["metadata_json"]["forecast_chart"]
+    assert chart["title"] == "6-Month Revenue Forecast"
+    assert chart["scope"] == "account"
+    assert len(chart["points"]) == 6
+    assert chart["totals"]["account_count"] == 1
+
+
 def test_kam_ai_chat_archive_hides_session_from_default_list(client: TestClient, db_session: Session) -> None:
     headers = auth_headers(client)
     create_response = client.post("/api/ai/chat-sessions", headers=headers, json={"title": "Archive me"})

@@ -1,7 +1,8 @@
 import * as Dialog from '@radix-ui/react-dialog'
 import { Archive, Check, ExternalLink, FileText, Loader2, MessageSquare, Plus, Send, Sparkles, X } from 'lucide-react'
-import { Fragment, FormEvent, useEffect, useMemo, useRef, useState } from 'react'
+import { FormEvent, useEffect, useMemo, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
+import { CartesianGrid, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
 import { useAuth } from '@/contexts/AuthContext'
 import {
   createKamAiChatSession,
@@ -15,7 +16,7 @@ import {
 } from '@/services/kamAiChat'
 import { useUIStore } from '@/stores/uiStore'
 import { cn } from '@/utils/cn'
-import { formatRelative, titleize } from '@/utils/formatters'
+import { formatCompactCurrency, formatCurrency, formatRelative, titleize } from '@/utils/formatters'
 
 const DEFAULT_SCOPES = ['timeline', 'opportunities', 'governance', 'notes', 'kyc', 'documents']
 const SCOPE_OPTIONS = [
@@ -28,6 +29,41 @@ const SCOPE_OPTIONS = [
   { label: 'Signals', value: 'signals' },
   { label: 'Tasks', value: 'tasks' },
 ]
+
+interface ForecastChartPoint {
+  month: string
+  baseline_revenue?: number
+  weighted_opportunity?: number
+  growth_adjustment?: number
+  risk_adjustment?: number
+  forecast_revenue?: number
+  health?: number
+  open_opportunities?: number
+}
+
+interface ForecastChartPayload {
+  title?: string
+  summary?: string
+  points?: ForecastChartPoint[]
+  months?: number
+  scope?: string
+  confidence?: string
+  trend_label?: string
+  totals?: {
+    account_count?: number
+    active_sow_count?: number
+    open_opportunities?: number
+    baseline_revenue?: number
+    weighted_opportunity?: number
+    growth_adjustment?: number
+    risk_adjustment?: number
+    forecast_revenue?: number
+  }
+  highlights?: string[]
+  missing_data?: string[]
+  recommended_actions?: string[]
+  disclaimer?: string
+}
 
 export function KAMAIPanel() {
   const open = useUIStore(state => state.aiOpen)
@@ -213,7 +249,7 @@ export function KAMAIPanel() {
                   )}
                 >
                   <span className="block truncate text-sm font-semibold">{session.title}</span>
-                  <span className="mt-1 block truncate text-xs">{session.last_message_preview || 'Empty chat'}</span>
+                  <span className="mt-1 block truncate text-xs">{stripLooseMarkdown(session.last_message_preview || 'Empty chat')}</span>
                   <span className="mt-1 block text-[11px] text-ink-tertiary">{session.last_message_at ? formatRelative(session.last_message_at) : formatRelative(session.created_at)}</span>
                 </button>
               ))}
@@ -334,6 +370,7 @@ function ChatMessage({ message }: { message: KamAiChatMessage }) {
   const metadata = message.metadata_json ?? {}
   const recommended = Array.isArray(metadata.recommended_actions) ? metadata.recommended_actions.map(String) : []
   const missing = Array.isArray(metadata.missing_evidence) ? metadata.missing_evidence.map(String) : []
+  const forecastChart = forecastChartFromMetadata(metadata)
   return (
     <article className={cn('flex', isUser ? 'justify-end' : 'justify-start')}>
       <div className={cn('max-w-[92%] rounded-2xl border px-4 py-3 shadow-sm', isUser ? 'border-brand-blue bg-brand-blue text-white' : 'border-surface-border bg-white text-ink')}>
@@ -343,6 +380,7 @@ function ChatMessage({ message }: { message: KamAiChatMessage }) {
           {!isUser && message.status === 'running' ? <Loader2 className="h-3.5 w-3.5 animate-spin text-brand-blue" /> : null}
         </div>
         <MessageContent content={message.content} />
+        {!isUser && forecastChart ? <ForecastChartCard chart={forecastChart} /> : null}
         {!isUser && message.status === 'failed' && message.error_message ? <p className="mt-2 rounded-md bg-rag-red/10 p-2 text-xs text-rag-red">{message.error_message}</p> : null}
         {!isUser ? (
           <div className="mt-3 flex flex-wrap gap-2 text-[11px] font-semibold text-ink-secondary">
@@ -360,15 +398,23 @@ function ChatMessage({ message }: { message: KamAiChatMessage }) {
 }
 
 function MessageContent({ content }: { content: string }) {
-  const lines = content.split('\n')
+  const blocks = messageBlocks(content)
   return (
-    <div className="whitespace-pre-wrap text-sm leading-6">
-      {lines.map((line, index) => (
-        <Fragment key={`${index}-${line.slice(0, 24)}`}>
-          {renderInlineBold(line)}
-          {index < lines.length - 1 ? '\n' : null}
-        </Fragment>
-      ))}
+    <div className="grid gap-2 text-sm leading-6">
+      {blocks.map((block, index) => {
+        if (block.type === 'heading') {
+          return <h3 key={`${index}-${block.text.slice(0, 24)}`} className="mt-1 text-base font-bold leading-6 text-ink">{renderInlineBold(block.text)}</h3>
+        }
+        if (block.type === 'list') {
+          return (
+            <div key={`${index}-${block.text.slice(0, 24)}`} className="flex gap-2 rounded-md bg-surface-secondary px-3 py-2">
+              <span className="mt-2 h-1.5 w-1.5 shrink-0 rounded-full bg-brand-blue" />
+              <p className="min-w-0 text-sm leading-6 text-ink-secondary">{renderInlineBold(block.text)}</p>
+            </div>
+          )
+        }
+        return <p key={`${index}-${block.text.slice(0, 24)}`} className="text-sm leading-6">{renderInlineBold(block.text)}</p>
+      })}
     </div>
   )
 }
@@ -389,7 +435,31 @@ function renderInlineBold(value: string) {
     match = pattern.exec(value)
   }
   if (lastIndex < value.length) nodes.push(value.slice(lastIndex))
-  return nodes.length ? nodes : value
+  return nodes.length ? nodes.map(node => (typeof node === 'string' ? stripLooseMarkdown(node, false) : node)) : stripLooseMarkdown(value, false)
+}
+
+function stripLooseMarkdown(value: string, trim = true) {
+  const cleaned = value.replace(/[*#`]+/g, '')
+  return trim ? cleaned.trim() : cleaned
+}
+
+function messageBlocks(content: string): Array<{ type: 'heading' | 'paragraph' | 'list'; text: string }> {
+  return content
+    .split('\n')
+    .map(line => line.trim())
+    .filter(Boolean)
+    .map(line => {
+      const heading = line.match(/^#{1,6}\s+(.+)$/)
+      if (heading) return { type: 'heading' as const, text: heading[1].trim() }
+      const markdownList = line.match(/^[-*]\s+(.+)$/)
+      if (markdownList) return { type: 'list' as const, text: markdownList[1].trim() }
+      const numberedList = line.match(/^\d+[.)]\s+(.+)$/)
+      if (numberedList) return { type: 'list' as const, text: numberedList[1].trim() }
+      if (line.length <= 42 && !/[.!?]$/.test(line) && /^[A-Z0-9][\w\s/&-]+$/.test(line)) {
+        return { type: 'heading' as const, text: line }
+      }
+      return { type: 'paragraph' as const, text: line }
+    })
 }
 
 function MessageList({ title, items, muted = false }: { title: string; items: string[]; muted?: boolean }) {
@@ -397,10 +467,73 @@ function MessageList({ title, items, muted = false }: { title: string; items: st
     <div className={cn('mt-3 rounded-md p-3', muted ? 'bg-brand-orange/10 text-ink-secondary' : 'bg-blue-tint-20 text-ink')}>
       <p className="text-xs font-bold uppercase tracking-wider">{title}</p>
       <ul className="mt-2 grid gap-1 text-sm leading-5">
-        {items.slice(0, 5).map(item => <li key={item}>- {item}</li>)}
+        {items.slice(0, 5).map(item => (
+          <li key={item} className="flex gap-2">
+            <span className="mt-2 h-1.5 w-1.5 shrink-0 rounded-full bg-current opacity-70" />
+            <span>{stripLooseMarkdown(item)}</span>
+          </li>
+        ))}
       </ul>
     </div>
   )
+}
+
+function ForecastChartCard({ chart }: { chart: ForecastChartPayload }) {
+  const points = Array.isArray(chart.points) ? chart.points : []
+  const chartData = points.map(point => ({
+    month: point.month,
+    forecast: Number(point.forecast_revenue ?? 0),
+    baseline: Number(point.baseline_revenue ?? 0),
+    opportunity: Number(point.weighted_opportunity ?? 0),
+  }))
+  const totals = chart.totals ?? {}
+  return (
+    <section className="mt-4 overflow-hidden rounded-xl border border-surface-border bg-white">
+      <div className="border-b border-surface-border bg-surface-secondary p-4">
+        <p className="text-[10px] font-extrabold uppercase tracking-widest text-brand-blue">Forecast visualization</p>
+        <h3 className="mt-1 text-base font-bold text-ink">{chart.title || 'Forecast Chart'}</h3>
+        {chart.summary ? <p className="mt-1 text-sm leading-6 text-ink-secondary">{stripLooseMarkdown(chart.summary)}</p> : null}
+      </div>
+      <div className="grid gap-3 p-4 sm:grid-cols-3">
+        <ForecastMetric label="Forecast revenue" value={totals.forecast_revenue} />
+        <ForecastMetric label="Baseline" value={totals.baseline_revenue} />
+        <ForecastMetric label="Weighted pipeline" value={totals.weighted_opportunity} />
+      </div>
+      {chartData.length ? (
+        <div className="h-[260px] px-2 pb-4 text-brand-blue" role="img" aria-label="KAM AI six-month forecast chart">
+          <ResponsiveContainer width="100%" height="100%">
+            <LineChart data={chartData} margin={{ top: 12, right: 16, bottom: 6, left: 6 }}>
+              <CartesianGrid strokeDasharray="3 3" stroke="#d9e2ec" />
+              <XAxis dataKey="month" tick={{ fontSize: 11 }} tickLine={false} axisLine={false} />
+              <YAxis tickFormatter={value => formatCompactCurrency(Number(value))} tick={{ fontSize: 11 }} tickLine={false} axisLine={false} width={58} />
+              <Tooltip formatter={value => formatCurrency(Number(value))} labelClassName="font-semibold text-ink" />
+              <Line type="monotone" dataKey="forecast" name="Forecast revenue" stroke="#0066b3" strokeWidth={3} dot={{ r: 3 }} activeDot={{ r: 5 }} />
+              <Line type="monotone" dataKey="baseline" name="Baseline revenue" stroke="#f97316" strokeWidth={2} dot={false} strokeDasharray="5 5" />
+              <Line type="monotone" dataKey="opportunity" name="Weighted opportunity" stroke="#22c55e" strokeWidth={2} dot={false} />
+            </LineChart>
+          </ResponsiveContainer>
+        </div>
+      ) : (
+        <p className="px-4 pb-4 text-sm font-medium text-ink-secondary">No chart points are available for this forecast.</p>
+      )}
+    </section>
+  )
+}
+
+function ForecastMetric({ label, value }: { label: string; value?: number }) {
+  return (
+    <div className="rounded-lg border border-surface-border bg-surface-secondary p-3">
+      <p className="text-[10px] font-bold uppercase tracking-wider text-ink-secondary">{label}</p>
+      <p className="mt-1 text-lg font-bold text-ink">{formatCompactCurrency(Number(value ?? 0))}</p>
+    </div>
+  )
+}
+
+function forecastChartFromMetadata(metadata: Record<string, unknown>): ForecastChartPayload | null {
+  const value = metadata.forecast_chart
+  if (!value || typeof value !== 'object') return null
+  const chart = value as ForecastChartPayload
+  return Array.isArray(chart.points) ? chart : null
 }
 
 function SourceList({ sources }: { sources: KamAiChatMessage['sources'] }) {

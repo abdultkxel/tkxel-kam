@@ -103,8 +103,72 @@ const answeredSession = {
   ],
 }
 
+const forecastSession = {
+  ...emptySession,
+  title: 'Cafe Zupas forecast',
+  message_count: 2,
+  last_message_preview: '6-Month Revenue Forecast',
+  last_message_at: '2026-06-10T10:05:00.000Z',
+  messages: [
+    {
+      id: 'msg-user-forecast',
+      session_id: 'session-1',
+      role: 'user',
+      content: 'Give me forecasting chart for Cafe Zupas next 6 months',
+      status: 'complete',
+      token_usage_json: {},
+      metadata_json: {},
+      sources: [],
+      created_at: '2026-06-10T10:05:00.000Z',
+      completed_at: '2026-06-10T10:05:00.000Z',
+    },
+    {
+      id: 'msg-assistant-forecast',
+      session_id: 'session-1',
+      role: 'assistant',
+      content: '### 6-Month Revenue Forecast\n**Key drivers**\n* Baseline is available from active SOWs.\n* Risk adjustment is included.',
+      status: 'complete',
+      intent: 'forecast',
+      confidence: 'high',
+      model_provider: 'deterministic_forecast',
+      model_name: 'forecasting_service',
+      token_usage_json: {},
+      metadata_json: {
+        visualization_type: 'forecast_chart',
+        forecast_chart: {
+          title: '6-Month Revenue Forecast',
+          summary: 'Forecast calculated from authorized source records.',
+          points: [
+            { month: 'Jul 2026', baseline_revenue: 10000, weighted_opportunity: 2500, forecast_revenue: 12500 },
+            { month: 'Aug 2026', baseline_revenue: 11000, weighted_opportunity: 2800, forecast_revenue: 13800 },
+            { month: 'Sep 2026', baseline_revenue: 12000, weighted_opportunity: 3000, forecast_revenue: 15000 },
+          ],
+          totals: {
+            forecast_revenue: 41300,
+            baseline_revenue: 33000,
+            weighted_opportunity: 8300,
+          },
+        },
+        recommended_actions: ['Review renewal assumptions.'],
+        missing_evidence: [],
+      },
+      error_message: null,
+      ai_gateway_run_id: 'run-forecast',
+      sources: [],
+      created_at: '2026-06-10T10:05:01.000Z',
+      completed_at: '2026-06-10T10:05:02.000Z',
+    },
+  ],
+}
+
 describe('KAM AI shared input', () => {
   beforeEach(() => {
+    class ResizeObserverMock {
+      observe = vi.fn()
+      unobserve = vi.fn()
+      disconnect = vi.fn()
+    }
+    vi.stubGlobal('ResizeObserver', ResizeObserverMock)
     chatMocks.listKamAiChatSessions.mockReset()
     chatMocks.createKamAiChatSession.mockReset()
     chatMocks.getKamAiChatSession.mockReset()
@@ -172,8 +236,29 @@ describe('KAM AI shared input', () => {
       )
     })
     expect(composer).toHaveValue('')
-    const boldText = await screen.findByText('source-backed delivery risk')
+    const boldText = await screen.findByText((_, node) => node?.tagName.toLowerCase() === 'strong' && node.textContent === 'source-backed delivery risk')
     expect(boldText.tagName.toLowerCase()).toBe('strong')
     expect(screen.getByText(/Sources \(1\)/i)).toBeInTheDocument()
+  })
+
+  it('renders forecast chart responses with cleaned heading and list formatting', async () => {
+    chatMocks.sendKamAiChatMessage.mockResolvedValueOnce(forecastSession)
+    const user = userEvent.setup()
+    useUIStore.setState({ aiOpen: true, aiPrefill: 'Give me forecasting chart for Cafe Zupas next 6 months' })
+
+    render(
+      <MemoryRouter>
+        <KAMAIPanel />
+      </MemoryRouter>,
+    )
+
+    await screen.findByPlaceholderText(/Ask about risks/i)
+    await user.click(screen.getByRole('button', { name: /Send KAM AI message/i }))
+
+    expect((await screen.findAllByRole('heading', { name: '6-Month Revenue Forecast' })).length).toBeGreaterThan(0)
+    expect(screen.getByRole('img', { name: /KAM AI six-month forecast chart/i })).toBeInTheDocument()
+    expect(screen.getByText('Baseline is available from active SOWs.')).toBeInTheDocument()
+    expect(screen.queryByText(/###/)).not.toBeInTheDocument()
+    expect(screen.queryByText(/\*\*/)).not.toBeInTheDocument()
   })
 })
