@@ -133,46 +133,6 @@ function calendarPage() {
   }
 }
 
-function taskPage(items: Record<string, unknown>[]) {
-  return {
-    items,
-    total: items.length,
-    page: 1,
-    page_size: 6,
-    pages: 1,
-  }
-}
-
-function todayTask() {
-  return {
-    id: 'task-today-1',
-    account_id: 'acc-1',
-    engagement_id: null,
-    playbook_execution_id: null,
-    template_activity_id: null,
-    source_type: 'manual',
-    source_record_id: null,
-    source_metric: null,
-    title: 'Prep renewal agenda',
-    description: 'Confirm decision owner and renewal next steps.',
-    owner_id: 'usr-am',
-    owner_name: 'Account Manager',
-    due_at: '2026-06-11T15:00:00Z',
-    status: 'open',
-    priority: 'high',
-    notes: null,
-    outcome: null,
-    success_criteria: [],
-    requires_evidence: false,
-    skipped_reason: null,
-    completed_at: null,
-    evidence: [],
-    custom_field_values: {},
-    created_at: '2026-06-10T10:00:00Z',
-    updated_at: '2026-06-10T10:00:00Z',
-  }
-}
-
 function accountManagerDashboard() {
   return dashboard({
     dashboard: 'am_home',
@@ -592,7 +552,6 @@ describe('Dashboard', () => {
     const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input)
       if (url.includes('/api/governance-events/calendar')) return jsonResponse(calendarPage())
-      if (url.includes('/api/tasks')) return jsonResponse(taskPage([todayTask()]))
       if (url.includes('/api/dashboards/me')) return jsonResponse(accountManagerDashboard())
       return jsonResponse({})
     })
@@ -605,21 +564,6 @@ describe('Dashboard', () => {
     )
 
     await screen.findByText('AM Home')
-    expect(await screen.findByRole('heading', { name: "Today's tasks" })).toBeInTheDocument()
-    expect(await screen.findByText('Prep renewal agenda')).toBeInTheDocument()
-    expect(screen.getByText('Confirm decision owner and renewal next steps.')).toBeInTheDocument()
-    expect(screen.getByRole('link', { name: /open today/i })).toHaveAttribute('href', '/tasks?due=today&my_items=true')
-    await waitFor(() => {
-      const taskRequest = fetchMock.mock.calls.find(call => new URL(String(call[0]), 'http://localhost').pathname.endsWith('/api/tasks'))
-      expect(taskRequest).toBeTruthy()
-      const url = new URL(String(taskRequest?.[0]), 'http://localhost')
-      expect(url.searchParams.get('my_items')).toBe('true')
-      expect(url.searchParams.get('page_size')).toBe('6')
-      expect(url.searchParams.get('sort')).toBe('due_at')
-      expect(url.searchParams.get('direction')).toBe('asc')
-      expect(url.searchParams.get('due_from')).toBeTruthy()
-      expect(url.searchParams.get('due_to')).toBeTruthy()
-    })
     expect(screen.getByRole('link', { name: /my accounts/i })).toHaveAttribute('href', '/accounts')
     expect(screen.getByRole('link', { name: /at risk/i })).toHaveAttribute('href', '/accounts?risk=at_risk')
     expect(screen.getByRole('link', { name: /critical tasks/i })).toHaveAttribute('href', '/tasks?priority=critical')
@@ -640,9 +584,6 @@ describe('Dashboard', () => {
     expect(screen.getByRole('link', { name: /open opps 9/i })).toHaveAttribute('href', '/opportunities?openOnly=true')
     expect(screen.getByRole('link', { name: /total value \$840/i })).toHaveAttribute('href', '/opportunities?openOnly=true')
     expect(screen.getByRole('link', { name: /stalled 2 >90 days no move/i })).toHaveAttribute('href', '/opportunities?stalled=true')
-    const portfolioHeading = screen.getByRole('heading', { name: 'Account portfolio table' })
-    const forecastHeading = screen.getByRole('heading', { name: '6-Month Revenue Forecast' })
-    expect(Boolean(portfolioHeading.compareDocumentPosition(forecastHeading) & Node.DOCUMENT_POSITION_FOLLOWING)).toBe(true)
     expect(screen.queryByText('Pipeline by stage')).not.toBeInTheDocument()
     expect(screen.queryByText('Stale KYC')).not.toBeInTheDocument()
     expect(screen.queryByText('Renewal focus')).not.toBeInTheDocument()

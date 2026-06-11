@@ -27,7 +27,7 @@ Implements role-resolved dashboard behavior so users no longer see AM Home, KAM 
 - Admin/system alerts are sourced from failed worker runs, failed notification records, integration error connections, and persisted account-change alert counts.
 - Executive summaries are account fact rows from authorized account records, not generated placeholder prose.
 - Stale KYC, Renewal focus, Health distribution, SLA compliance, Account-change alerts, Decision queue, and escalation panels are omitted from all role dashboards.
-- Account Manager dashboard scope is intentionally focused on clickable attention tiles, today's assigned task list, paginated account portfolio table, critical tasks, merged task breakdown/listing, opportunities/pipeline, assigned-account forecast, and the global governance calendar. Duplicate AI task summary, escalation, upcoming-governance, and governance-cadence panels are omitted for this role.
+- Account Manager dashboard scope is intentionally focused on clickable attention tiles, paginated account portfolio table, critical tasks, merged task breakdown/listing, opportunities/pipeline, assigned-account forecast, and the global governance calendar. Duplicate AI task summary, escalation, upcoming-governance, and governance-cadence panels are omitted for this role.
 - All role dashboards now expose governance through `governance_calendar` only; standalone upcoming-governance and governance-cadence dashboard panels are omitted.
 - AM workload counts active AM ownership assignments, including supporting AM ownership records, deduped per owner/account.
 - AM workload rows link to `/accounts?primary_am=<user_id>`, and KAM Head/Admin account lists expose an Account Manager filter.
@@ -43,7 +43,6 @@ Implements role-resolved dashboard behavior so users no longer see AM Home, KAM 
 - Dashboard top metric tiles are clickable for all roles, using backend-provided routes when present and route fallbacks by metric key otherwise.
 - Task summary tiles deep-link to `/tasks` with real module filters (`status`, `due`, `my_items`, and account query aliases). AI task summary source-count tiles also link to their source module.
 - Opportunity Open opps/Total value/Stalled tiles deep-link to `/opportunities` with persisted API filters (`open_only` and `stalled`) rather than client-only or hardcoded filtering.
-- The dashboard now fetches the current user's tasks due today through `GET /api/tasks` with `my_items=true`, today's due window, due-date sorting, and a six-row limit. The 6-Month Revenue Forecast renders lower on the page after the operational task, pipeline, portfolio, and list panels.
 
 ## Backend
 
@@ -60,7 +59,6 @@ Implements role-resolved dashboard behavior so users no longer see AM Home, KAM 
 - Page: `frontend/src/pages/Dashboard.tsx`
 - Components: `frontend/src/components/dashboard/RoleDashboard.tsx`
 - API service: `frontend/src/services/notificationsReporting.ts`
-- Task API service: `frontend/src/services/playbooksTasks.ts`
 - Calendar API service: `frontend/src/services/governance.ts`
 - Role types: `frontend/src/types/user.ts`, `frontend/src/types/timeline.ts`
 
@@ -84,8 +82,6 @@ Latest verification:
 - `docker compose run --rm --no-deps backend python -m py_compile app/services/dashboards.py app/repositories/dashboards.py app/routers/dashboards.py` passed.
 - `docker compose run --rm --no-deps frontend npm test -- Dashboard.test.tsx` passed with 4 tests after generic top/task/opportunity tile clickability coverage.
 - `docker compose run --rm --no-deps frontend npm run typecheck` passed after generic tile clickability updates.
-- `docker compose run --rm --no-deps frontend npm test -- Dashboard.test.tsx` passed with 8 tests after adding the today's-tasks dashboard list and moving the forecast lower.
-- `docker compose run --rm --no-deps frontend npm run typecheck` passed after the today's-tasks dashboard update.
 - `python3 -m py_compile backend/app/services/dashboards.py` passed.
 - `python3 -m py_compile backend/app/routers/opportunities.py backend/app/services/opportunities.py backend/app/repositories/opportunities.py backend/app/services/dashboards.py` passed.
 - `docker compose run --rm --no-deps backend pytest tests/test_notifications_dashboards_reporting.py -q` passed with 9 tests after removing Stale KYC and Renewal focus panels.
