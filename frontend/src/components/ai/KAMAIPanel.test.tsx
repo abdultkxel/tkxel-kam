@@ -188,16 +188,31 @@ const externalSearchSession = {
       status: 'complete',
       intent: 'general',
       confidence: 'medium',
-      model_provider: 'openai_external_search',
+      model_provider: 'openai_combined_search',
       model_name: 'gpt-test',
       token_usage_json: {},
       metadata_json: {
         external_search_requested: true,
+        combined_internal_and_external: true,
         openai_external_sources: [{ title: 'Cafe Zupas official site', url: 'https://example.com/cafe-zupas' }],
       },
       error_message: null,
       ai_gateway_run_id: 'run-external',
-      sources: [],
+      sources: [
+        {
+          id: 'source-internal-1',
+          account_id: 'demo-project-cafe-zupas',
+          account_name: 'Cafe Zupas',
+          source_type: 'kyc',
+          source_record_id: 'kyc-1',
+          title: 'Cafe Zupas KYC snapshot',
+          excerpt: 'Cafe Zupas internal KAM context for digital guest experience.',
+          source_route: '/accounts/demo-project-cafe-zupas?tab=kyc',
+          relevance_score: 91,
+          citation_index: 1,
+          metadata_json: {},
+        },
+      ],
       created_at: '2026-06-10T10:08:01.000Z',
       completed_at: '2026-06-10T10:08:03.000Z',
     },
@@ -340,7 +355,7 @@ describe('KAM AI shared input', () => {
     expect(await screen.findByText((_, node) => node?.tagName.toLowerCase() === 'strong' && node.textContent === 'source-backed delivery risk')).toBeInTheDocument()
   })
 
-  it('renders OpenAI external web sources separately from internal sources', async () => {
+  it('renders combined OpenAI web sources and internal sources separately', async () => {
     chatMocks.sendKamAiChatMessage.mockResolvedValueOnce(externalSearchSession)
     const user = userEvent.setup()
     useUIStore.setState({ aiOpen: true, aiPrefill: 'Use OpenAI and search the web for Cafe Zupas' })
@@ -357,7 +372,8 @@ describe('KAM AI shared input', () => {
     expect(await screen.findByText(/OpenAI web search found public company information/i)).toBeInTheDocument()
     expect(screen.getByText(/OpenAI web sources \(1\)/i)).toBeInTheDocument()
     expect(screen.getByText('Cafe Zupas official site')).toBeInTheDocument()
-    expect(screen.queryByText(/^Sources \(1\)$/i)).not.toBeInTheDocument()
+    expect(screen.getByText(/^Sources \(1\)$/i)).toBeInTheDocument()
+    expect(screen.getByText('Cafe Zupas KYC snapshot')).toBeInTheDocument()
   })
 
   it('renders forecast chart responses with cleaned heading and list formatting', async () => {

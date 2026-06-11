@@ -39,6 +39,7 @@ import { AnimatedNumber } from '@/components/ui/AnimatedNumber'
 import { Skeleton } from '@/components/ui/Skeleton'
 import { DashboardRead, DashboardWidget } from '@/services/notificationsReporting'
 import { listGovernanceCalendarItems } from '@/services/governance'
+import { listTasks, type PlaybookTask } from '@/services/playbooksTasks'
 import { GovernanceCalendarItemRecord } from '@/types/governance'
 import { cn } from '@/utils/cn'
 import { formatCompactCurrency } from '@/utils/formatters'
@@ -136,6 +137,51 @@ export function RoleDashboard({
   const ownerOptions = useMemo(() => collectOwnerOptions(widgets), [widgets])
   const allowedFilters = dashboard?.allowed_filters ?? []
   const fallbackWidgets = widgets.filter(widget => !knownWidgetKeys.has(widget.key))
+  const [todayTasks, setTodayTasks] = useState<PlaybookTask[]>([])
+  const [todayTaskTotal, setTodayTaskTotal] = useState(0)
+  const [todayTasksLoading, setTodayTasksLoading] = useState(false)
+  const [todayTasksError, setTodayTasksError] = useState('')
+
+  useEffect(() => {
+    if (!token || !dashboard || widgets.length === 0) {
+      setTodayTasks([])
+      setTodayTaskTotal(0)
+      setTodayTasksError('')
+      setTodayTasksLoading(false)
+      return
+    }
+
+    let active = true
+    const range = todayRange()
+    const params = new URLSearchParams({
+      page: '1',
+      page_size: '6',
+      my_items: 'true',
+      sort: 'due_at',
+      direction: 'asc',
+      due_from: range.due_from,
+      due_to: range.due_to,
+    })
+
+    setTodayTasksLoading(true)
+    setTodayTasksError('')
+    listTasks(token, params)
+      .then(response => {
+        if (!active) return
+        setTodayTasks(Array.isArray(response.items) ? response.items : [])
+        setTodayTaskTotal(typeof response.total === 'number' ? response.total : 0)
+      })
+      .catch(err => {
+        if (active) setTodayTasksError(err instanceof Error ? err.message : "Today's tasks could not be loaded")
+      })
+      .finally(() => {
+        if (active) setTodayTasksLoading(false)
+      })
+
+    return () => {
+      active = false
+    }
+  }, [dashboard, token, widgets.length])
 
   return (
     <div className="space-y-5">
@@ -173,6 +219,8 @@ export function RoleDashboard({
         <>
           <MetricGrid summary={summary} />
 
+          <TodaysTasksPanel tasks={todayTasks} total={todayTaskTotal} loading={todayTasksLoading} error={todayTasksError} />
+
           {taskPanel ? (
             <TaskSummaryPanel
               widget={taskPanel}
@@ -182,12 +230,7 @@ export function RoleDashboard({
             />
           ) : null}
 
-          {(opportunities || forecast) ? (
-          <section className={cn('grid gap-4', opportunities && forecast ? 'xl:grid-cols-[minmax(0,0.95fr)_minmax(320px,0.65fr)]' : '')}>
-            {opportunities ? <PipelinePanel widget={opportunities} /> : null}
-            {forecast ? <ForecastPanel widget={forecast} accountOptions={accountOptions} accountId={accountId} onAccountChange={onAccountChange} /> : null}
-          </section>
-          ) : null}
+          {opportunities ? <PipelinePanel widget={opportunities} /> : null}
 
           {portfolio ? <PortfolioTable widget={portfolio} onPageChange={onPageChange} /> : null}
 
@@ -209,6 +252,8 @@ export function RoleDashboard({
             ))}
           </section>
 
+          {forecast ? <ForecastPanel widget={forecast} accountOptions={accountOptions} accountId={accountId} onAccountChange={onAccountChange} /> : null}
+
           {calendar && token ? (
             <GovernanceCalendarPanel
               token={token}
@@ -221,6 +266,76 @@ export function RoleDashboard({
         </>
       ) : null}
     </div>
+  )
+}
+
+function TodaysTasksPanel({ tasks, total, loading, error }: { tasks: PlaybookTask[]; total: number; loading: boolean; error: string }) {
+  return (
+    <section className="tk-card overflow-hidden">
+      <div className="flex flex-col gap-3 border-b border-surface-border p-5 sm:flex-row sm:items-start sm:justify-between">
+        <div className="flex min-w-0 items-start gap-3">
+          <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-brand-orange/10 text-brand-orange">
+            <ListChecks className="h-5 w-5" />
+          </span>
+          <div>
+            <p className="text-[10px] font-extrabold uppercase tracking-widest text-brand-blue">My work queue</p>
+            <h2 className="text-xl font-semibold text-ink">Today's tasks</h2>
+            <p className="mt-1 text-sm leading-6 text-ink-secondary">Tasks assigned to you and due today, sorted by due time.</p>
+          </div>
+        </div>
+        <Link to="/tasks?due=today&my_items=true" className="tk-button-secondary w-fit">
+          Open today
+          <ArrowRight className="h-4 w-4" />
+        </Link>
+      </div>
+
+      {loading ? (
+        <div className="flex min-h-[156px] items-center justify-center px-5 py-8 text-sm font-semibold text-ink-secondary">
+          <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+          Loading today's tasks
+        </div>
+      ) : error ? (
+        <div className="m-5 rounded-md border border-rag-red/20 bg-rag-red/10 p-3 text-sm font-semibold text-rag-red">{error}</div>
+      ) : tasks.length ? (
+        <>
+          <div className="divide-y divide-surface-border">
+            {tasks.slice(0, 6).map(task => <TodayTaskRow key={task.id} task={task} />)}
+          </div>
+          <div className="border-t border-surface-border bg-surface-secondary px-5 py-3">
+            <p className="text-xs font-medium text-ink-secondary">
+              Showing {Math.min(tasks.length, 6)} of {total || tasks.length} task{(total || tasks.length) === 1 ? '' : 's'} due today.
+            </p>
+          </div>
+        </>
+      ) : (
+        <div className="grid min-h-[156px] place-items-center px-5 py-8 text-center">
+          <div>
+            <p className="text-sm font-semibold text-ink">No tasks due today</p>
+            <p className="mt-1 text-sm text-ink-secondary">Your assigned work queue is clear for today.</p>
+          </div>
+        </div>
+      )}
+    </section>
+  )
+}
+
+function TodayTaskRow({ task }: { task: PlaybookTask }) {
+  const route = `/tasks?due=today&my_items=true&account_id=${encodeURIComponent(task.account_id)}`
+  return (
+    <Link to={route} className="grid min-h-[76px] gap-3 px-5 py-4 hover:bg-surface-secondary md:grid-cols-[minmax(0,1fr)_auto] md:items-center">
+      <span className="min-w-0">
+        <span className="flex flex-wrap items-center gap-2">
+          <span className={cn('inline-flex rounded-full border px-2 py-1 text-[11px] font-semibold uppercase tracking-wider', taskPriorityClass(task.priority))}>{task.priority}</span>
+          <span className={cn('inline-flex rounded-full border px-2 py-1 text-[11px] font-semibold uppercase tracking-wider', taskStatusClass(task.status))}>{task.status.replace('_', ' ')}</span>
+        </span>
+        <span className="mt-2 block truncate text-sm font-semibold text-ink">{task.title}</span>
+        <span className="mt-1 block truncate text-xs text-ink-secondary">{task.description || task.owner_name || 'No task description recorded.'}</span>
+      </span>
+      <span className="flex items-center gap-2 text-sm font-semibold text-brand-blue">
+        <CalendarCheck2 className="h-4 w-4" />
+        {taskDueTime(task.due_at)}
+      </span>
+    </Link>
   )
 }
 
@@ -1218,6 +1333,33 @@ function calendarDotClass(item: GovernanceCalendarItemRecord) {
   if (new Date(item.date) < new Date() && item.status !== 'completed') return 'bg-rag-red'
   if (item.status === 'review_required' || item.status === 'draft') return 'bg-brand-orange'
   return 'bg-brand-blue'
+}
+
+function todayRange() {
+  const start = new Date()
+  start.setHours(0, 0, 0, 0)
+  const end = new Date()
+  end.setHours(23, 59, 59, 999)
+  return { due_from: start.toISOString(), due_to: end.toISOString() }
+}
+
+function taskDueTime(value: string) {
+  const date = new Date(value)
+  return Number.isNaN(date.getTime()) ? '-' : format(date, 'h:mm a')
+}
+
+function taskStatusClass(status: string) {
+  if (status === 'done') return 'border-rag-green/20 bg-rag-green/10 text-rag-green'
+  if (status === 'in_progress') return 'border-blue-tint-20 bg-blue-tint-20 text-brand-blue'
+  if (status === 'blocked') return 'border-brand-orange/20 bg-brand-orange/10 text-brand-orange'
+  if (status === 'cancelled') return 'border-surface-border bg-surface-tertiary text-ink-secondary'
+  return 'border-surface-border bg-surface-tertiary text-ink-secondary'
+}
+
+function taskPriorityClass(priority: string) {
+  if (priority === 'urgent' || priority === 'high') return 'border-brand-orange/20 bg-brand-orange/10 text-brand-orange'
+  if (priority === 'low') return 'border-surface-border bg-surface-tertiary text-ink-secondary'
+  return 'border-blue-tint-20 bg-blue-tint-20 text-brand-blue'
 }
 
 function itemName(item: Record<string, unknown>) {

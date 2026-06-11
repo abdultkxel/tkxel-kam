@@ -2,7 +2,7 @@
 
 ## Summary
 
-KAM AI upgrade from a single-query source search drawer to a GPT-like, persisted chat assistant with session history, bottom chat composer, vector-style source retrieval, OpenAI-generated responses when configured, citations, and RBAC-aware source filtering.
+KAM AI upgrade from a single-query source search drawer to a GPT-like, persisted chat assistant with session history, bottom chat composer, vector-style source retrieval, OpenAI-generated responses when configured, OpenAI web search for public/industry context, citations, and RBAC-aware source filtering.
 
 Planning document:
 
@@ -24,7 +24,7 @@ It now provides persisted ChatGPT-like sessions for the topbar KAM AI panel whil
 - Persisted chat sessions and messages.
 - ChatGPT-like UI with session sidebar and bottom chat input.
 - Vector search over authorized KAM source records.
-- OpenAI response generation from retrieved sources.
+- OpenAI response generation from retrieved sources, plus OpenAI web search when public/industry context is requested.
 - Source citations and source links.
 - RBAC-aware filtering and sensitive-data controls.
 - Backend audit and run history.
@@ -41,11 +41,12 @@ Implemented:
 - Clicking `KAM AI` with an empty topbar search opens the KAM AI panel without sending a message.
 - Submitting from the topbar creates a fresh KAM AI chat and sends the query automatically, matching the expected ChatGPT-style handoff instead of only pre-filling the drawer composer.
 - RBAC-aware account/module/sensitive-source filtering.
-- Internal vector/source-ranked response path is used first when reliable authorized KAM records match the query.
-- OpenAI is used only as a fallback when internal vector search does not return reliable evidence, and those answers are marked as non-source-backed fallback guidance.
-- User-explicit external search requests bypass internal-first behavior and use OpenAI external search. Trigger phrases include OpenAI, ChatGPT, GPT, LLM, AI search, web search, internet/online/public search, Google search wording, and outside-KAM wording.
-- Public company profile and URL lookup questions also use OpenAI web search when internal evidence is missing or unsuitable, including LinkedIn URL, official website, company URL, domain, homepage, and public/social profile requests.
-- OpenAI external search citations are displayed separately from internal KAM source citations.
+- Internal vector/source-ranked response path is used first for account-grounded KAM questions when reliable authorized KAM records match the query.
+- OpenAI is used as a fallback when internal vector search does not return reliable evidence, and those answers are marked as non-source-backed fallback guidance.
+- User-explicit external search requests now retrieve authorized internal KAM sources first, then use OpenAI web search and synthesize a combined answer that separates internal KAM facts from public web findings. Trigger phrases include OpenAI, ChatGPT, GPT, LLM, AI search, web search, internet/online/public search, Google search wording, and outside-KAM wording.
+- Industry, market, sector, competitor, benchmark, public context, public profile, and URL lookup questions also use the combined internal-vector plus OpenAI web-search path, including LinkedIn URL, official website, company URL, domain, homepage, and public/social profile requests.
+- OpenAI web citations are displayed separately from internal KAM source citations, while internal citations remain persisted on the assistant message.
+- Docker exposes explicit `KAM_AI_*` environment variables so KAM AI can use a real OpenAI API key/model independently of local KYC defaults. `KAM_AI_API_KEY` may come from `KAM_AI_API_KEY`, `OPENAI_API_KEY`, or an intentionally shared `AI_KYC_API_KEY`.
 - Forecast, prediction, chart, graph, and next-six-month prompts now use the shared forecasting service and persist a `forecast_chart` payload on the assistant message for reload-safe chart rendering.
 - Assistant responses render in a structured human-friendly style: markdown headings become styled headings, bold markers become bold text, and raw list markers are replaced with clean visual bullets.
 - AI gateway run logging and audit logging for session/message activity.
@@ -65,6 +66,12 @@ Verified with:
 - `docker compose exec -T frontend npm test -- KAMAIPanel.test.tsx`
 - `docker compose exec -T frontend npm run typecheck`
 - `docker compose exec -T frontend npm run build`
+- `docker compose run --rm --no-deps backend python -m py_compile app/services/kam_ai_chat.py`
+- `docker compose run --rm --no-deps backend pytest tests/test_kam_ai_chat.py -q` passed with 11 tests after the combined internal-vector/OpenAI web-search update.
+- `docker compose run --rm --no-deps frontend npm test -- KAMAIPanel.test.tsx` passed with 6 tests after updating KAM AI UI helper text and combined-source rendering coverage.
+- `docker compose run --rm --no-deps backend python -m py_compile app/services/kam_ai_chat.py app/config.py`
+- `docker compose run --rm --no-deps frontend npm run typecheck`
+- `docker compose config --quiet`
 
 Coverage added:
 
@@ -77,8 +84,9 @@ Coverage added:
 - Empty topbar `KAM AI` click opens the panel without sending a message.
 - Topbar KAM AI submit creates a new session and auto-sends the query.
 - Internal-first KAM AI behavior with OpenAI fallback only when no reliable internal match is available.
-- Explicit external-search KAM AI requests bypass internal results and call OpenAI with web-search tooling.
-- Public profile lookup prompts such as LinkedIn URL requests route to the OpenAI web-search path.
+- Explicit external-search KAM AI requests combine internal results with OpenAI web-search tooling.
+- Industry context prompts route to the combined internal-vector plus OpenAI web-search path.
+- Public profile lookup prompts such as LinkedIn URL requests route to the combined OpenAI web-search path.
 - KAM AI UI renders OpenAI web sources separately from internal KAM sources.
 - Live KAM AI loader while a query is running.
 - Forecast query chart metadata persistence.
