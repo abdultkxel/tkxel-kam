@@ -3,6 +3,7 @@ import { CheckCircle2, FileText, Loader2, Plus, Trash2, X } from 'lucide-react'
 import { FormEvent, useEffect, useState } from 'react'
 import { toast } from 'sonner'
 import { ApiError, ApiFieldError } from '@/services/api'
+import { RichTextEditor } from '@/components/ui/RichTextEditor'
 import { useAuth } from '@/contexts/AuthContext'
 import {
   readPersonalFathomConnection,
@@ -25,7 +26,6 @@ interface CompleteGovernanceEventDialogProps {
 
 interface ActionDraft {
   id: string
-  selected: boolean
   title: string
   dueDate: string
   createTask: boolean
@@ -98,11 +98,10 @@ export function CompleteGovernanceEventDialog({
     }
 
     const nextErrors: Record<string, string> = {}
-    if (!notes.trim()) nextErrors.notes = 'Add completion notes before marking governance complete.'
-    const selectedActions = actionDrafts.filter(item => item.selected)
-    if (selectedActions.some(item => !item.title.trim())) nextErrors.action_items = 'Add a title for each selected action item.'
-    if (selectedActions.some(item => !item.dueDate)) nextErrors.action_items = 'Choose a due date for each selected action item.'
-    if (selectedActions.length && !event.ownerId && !event.ownerEmail) nextErrors.action_items = 'Governance owner is required before creating action items.'
+    if (!hasReadableText(notes)) nextErrors.notes = 'Add completion notes before marking governance complete.'
+    if (actionDrafts.some(item => !item.title.trim())) nextErrors.action_items = 'Add a title for each action item.'
+    if (actionDrafts.some(item => !item.dueDate)) nextErrors.action_items = 'Choose a due date for each action item.'
+    if (actionDrafts.length && !event.ownerId && !event.ownerEmail) nextErrors.action_items = 'Governance owner is required before creating action items.'
     if (Object.keys(nextErrors).length) {
       setFieldErrors(nextErrors)
       return
@@ -114,7 +113,7 @@ export function CompleteGovernanceEventDialog({
         meetingArtifactId: meetingArtifactId || null,
         notes: notes.trim(),
         decisions: decisionText.trim() ? [{ decisionText: decisionText.trim() }] : [],
-        actionItems: selectedActions.map(item => ({
+        actionItems: actionDrafts.map(item => ({
           title: item.title.trim(),
           ownerId: event.ownerId || null,
           ownerEmail: event.ownerEmail ?? null,
@@ -175,8 +174,13 @@ export function CompleteGovernanceEventDialog({
       })
       setFetchedMeeting(meeting)
       setMeetingArtifactId(meeting.id)
-      if (meeting.summary) setNotes(meeting.summary.replace(/#/g, '').trim())
-      setActionDrafts(meeting.actionItems.map((item, index) => buildActionDraft(item, index)))
+      if (meeting.summary) setNotes(meetingSummaryToEditorHtml(meeting.summary))
+      setActionDrafts(
+        meeting.actionItems
+          .map(cleanActionTitle)
+          .filter(isLikelyActionItem)
+          .map((item, index) => buildActionDraft(item, index)),
+      )
       toast.success(meetingProviderCopy[meetingProvider].loadedMessage)
     } catch (err) {
       if (err instanceof ApiError && err.fieldErrors.length) {
@@ -296,7 +300,14 @@ export function CompleteGovernanceEventDialog({
             </div>
             <label className="space-y-1">
               <span className="tk-label text-xs">Completion notes</span>
-              <textarea className="tk-input min-h-[130px] resize-y" value={notes} onChange={item => setNotes(item.target.value)} placeholder="Summarize outcomes, risks, follow-ups, and client commitments." />
+              <RichTextEditor
+                value={notes}
+                onChange={setNotes}
+                placeholder="Summarize outcomes, risks, follow-ups, and client commitments."
+                ariaLabel="Completion notes"
+                editorHeight="180px"
+                clickToEdit={false}
+              />
               <InlineError message={fieldErrors.notes} />
             </label>
             <label className="space-y-1">
@@ -313,10 +324,7 @@ export function CompleteGovernanceEventDialog({
                 </button>
               </div>
               {actionDrafts.length ? actionDrafts.map((item, index) => (
-                <div key={item.id} className="grid gap-2 rounded-lg border border-surface-border p-3 sm:grid-cols-[auto_minmax(0,1fr)_150px_auto_auto] sm:items-end">
-                  <label className="flex min-h-[44px] items-center justify-center" title="Include action item">
-                    <input type="checkbox" checked={item.selected} onChange={event => updateActionDraft(index, { selected: event.target.checked })} />
-                  </label>
+                <div key={item.id} className="grid gap-2 rounded-lg border border-surface-border p-3 sm:grid-cols-[minmax(0,1fr)_150px_126px_auto] sm:items-end">
                   <label className="space-y-1">
                     <span className="tk-label text-xs">Title</span>
                     <input className="tk-input" value={item.title} onChange={event => updateActionDraft(index, { title: event.target.value })} placeholder="Share roadmap deck" />
@@ -325,9 +333,12 @@ export function CompleteGovernanceEventDialog({
                     <span className="tk-label text-xs">Due date</span>
                     <input type="date" className="tk-input" value={item.dueDate} onChange={event => updateActionDraft(index, { dueDate: event.target.value })} />
                   </label>
-                  <label className="flex min-h-[44px] items-center gap-2 text-xs font-semibold text-ink-secondary">
-                    <input type="checkbox" checked={item.createTask} onChange={event => updateActionDraft(index, { createTask: event.target.checked })} />
-                    Task
+                  <label className="space-y-1">
+                    <span className="tk-label text-xs">Task</span>
+                    <span className="flex min-h-[44px] items-center gap-2 text-xs font-semibold text-ink-secondary" title="Create a linked task from this saved action item.">
+                      <input aria-label={`Create task for action item ${index + 1}`} type="checkbox" checked={item.createTask} onChange={event => updateActionDraft(index, { createTask: event.target.checked })} />
+                      Create task
+                    </span>
                   </label>
                   <button type="button" className="tk-icon-button" onClick={() => removeActionDraft(index)} aria-label="Remove action item">
                     <Trash2 className="h-4 w-4" />
@@ -372,7 +383,6 @@ function InlineError({ id, message }: { id?: string; message?: string }) {
 function buildActionDraft(title: string, index: number): ActionDraft {
   return {
     id: `${Date.now()}-${index}-${title}`,
-    selected: true,
     title,
     dueDate: defaultDueDate(),
     createTask: true,
@@ -383,4 +393,156 @@ function defaultDueDate() {
   const value = new Date()
   value.setDate(value.getDate() + 7)
   return value.toISOString().slice(0, 10)
+}
+
+const actionVerbs = [
+  'align',
+  'assign',
+  'circulate',
+  'collect',
+  'complete',
+  'confirm',
+  'coordinate',
+  'create',
+  'define',
+  'deliver',
+  'develop',
+  'document',
+  'draft',
+  'email',
+  'finalize',
+  'follow up',
+  'follow-up',
+  'gather',
+  'identify',
+  'implement',
+  'investigate',
+  'monitor',
+  'prepare',
+  'present',
+  'provide',
+  'reach out',
+  'resolve',
+  'review',
+  'schedule',
+  'send',
+  'set up',
+  'setup',
+  'share',
+  'submit',
+  'sync',
+  'track',
+  'update',
+  'validate',
+]
+
+const nonActionHeadings = new Set([
+  'action',
+  'actions',
+  'action item',
+  'action items',
+  'agenda',
+  'discussion',
+  'discussion notes',
+  'follow ups',
+  'follow-ups',
+  'key takeaways',
+  'meeting notes',
+  'next steps',
+  'notes',
+  'overview',
+  'q&a',
+  'questions',
+  'summary',
+  'takeaways',
+  'transcript',
+])
+
+function meetingSummaryToEditorHtml(summary: string) {
+  const lines = cleanMeetingText(summary)
+    .split('\n')
+    .map(line => line.trim())
+    .filter(Boolean)
+  return lines.length ? lines.map(line => `<p>${escapeHtml(line)}</p>`).join('') : ''
+}
+
+function cleanActionTitle(value: string) {
+  let title = cleanMeetingLine(value)
+  title = title.replace(/^(?:action items?|actions?|follow[- ]?ups?|next steps?)\s*:\s*/i, '').trim()
+  const ownerPrefix = title.match(/^([A-Z][A-Za-z.'_-]+(?:\s+[A-Z][A-Za-z.'_-]+){0,3})\s*[:\-–—]\s+(.+)$/)
+  if (ownerPrefix && hasActionSignal(ownerPrefix[2])) title = ownerPrefix[2].trim()
+  return title
+}
+
+function isLikelyActionItem(value: string) {
+  const title = value.trim()
+  if (!title) return false
+  const normalized = title.toLowerCase().replace(/[ .:]+$/g, '')
+  if (nonActionHeadings.has(normalized)) return false
+  const words = title.match(/[A-Za-z0-9]+/g) ?? []
+  if (words.length < 2 && !hasActionSignal(title)) return false
+  if (/^[A-Z][A-Za-z.'_-]+(?:\s+[A-Z][A-Za-z.'_-]+){0,3}$/.test(title) && !hasActionSignal(title)) return false
+  return hasActionSignal(title)
+}
+
+function cleanMeetingText(value: string) {
+  return value
+    .replace(/<br\s*\/?>/gi, '\n')
+    .replace(/<\/(?:p|div|li|h[1-6])\s*>/gi, '\n')
+    .replace(/<[^>]+>/g, '')
+    .replace(/\r\n?/g, '\n')
+    .split('\n')
+    .map(cleanMeetingLine)
+    .filter(line => line && !nonActionHeadings.has(line.toLowerCase().replace(/[ .:]+$/g, '')))
+    .join('\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim()
+}
+
+function cleanMeetingLine(value: string) {
+  return stripTimecodes(stripMarkdown(value.replace(/^\s*#{1,6}\s*/, '')))
+    .replace(/^\s*(?:[-•]|\d+[.)])\s*/, '')
+    .replace(/\s+/g, ' ')
+    .replace(/^[\s\-–—:]+|[\s\-–—:]+$/g, '')
+}
+
+function stripMarkdown(value: string) {
+  return value
+    .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1')
+    .replace(/`([^`]+)`/g, '$1')
+    .replace(/\*\*([^*]+)\*\*/g, '$1')
+    .replace(/__([^_]+)__/g, '$1')
+    .replace(/(?<!\*)\*([^*\n]+)\*(?!\*)/g, '$1')
+    .replace(/(?<!_)_([^_\n]+)_(?!_)/g, '$1')
+}
+
+function stripTimecodes(value: string) {
+  const timecode = String.raw`(?:\d{1,2}:)?\d{1,2}:\d{2}(?:\.\d+)?`
+  return value.replace(new RegExp(String.raw`\s*[\[(]?\s*${timecode}(?:\s*[-–—]\s*${timecode})?\s*[\])]?`, 'g'), ' ')
+}
+
+function hasActionSignal(value: string) {
+  const normalized = value.toLowerCase()
+  return actionVerbs.some(verb => new RegExp(`\\b${escapeRegExp(verb)}\\b`).test(normalized)) || /\b(?:before|due|deadline|owner|needs?|should|must|will)\b/.test(normalized)
+}
+
+function hasReadableText(value: string) {
+  return value
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/&nbsp;/gi, ' ')
+    .replace(/\s+/g, ' ')
+    .trim().length > 0
+}
+
+function escapeHtml(value: string) {
+  return value
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;')
+}
+
+function escapeRegExp(value: string) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 }

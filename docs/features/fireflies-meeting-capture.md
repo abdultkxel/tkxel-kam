@@ -12,7 +12,7 @@ Adds Fireflies.ai as a second personal meeting provider beside Fathom. Users sav
   - `POST /api/meeting-capture/fireflies/resolve` for one on-demand transcript lookup.
   - User-owned `meeting_artifacts` with provider `fireflies`.
   - Governance completion provider selector for Fathom or Fireflies.
-  - Summary and action-item prefill for human review before completion.
+  - Sanitized summary and action-item prefill for human review before completion.
 - Out of scope:
   - Fireflies webhooks.
   - Admin/global Fireflies integration settings.
@@ -26,8 +26,9 @@ Adds Fireflies.ai as a second personal meeting provider beside Fathom. Users sav
 2. User saves a personal Fireflies API key, or disconnects to clear it.
 3. During governance completion, user selects Fireflies and enters a transcript ID or transcript URL.
 4. Backend calls Fireflies GraphQL for that one transcript using the user's personal key.
-5. The returned summary and action items populate editable completion notes and action drafts.
-6. Completion submits the selected `meetingArtifactId`; governance owns any created action tasks.
+5. The returned summary is stripped of markdown/timestamps and loaded into the CKEditor completion notes field.
+6. Returned action items are filtered to remove speaker names, headings, timecode-only lines, and other non-action text before becoming editable action drafts.
+7. Completion submits the selected `meetingArtifactId`; governance owns any created action tasks.
 
 ## API Contract
 
@@ -48,6 +49,8 @@ Adds Fireflies.ai as a second personal meeting provider beside Fathom. Users sav
 - Requests only `id`, `title`, `transcript_url`, `meeting_link`, `date`, and safe summary fields.
 - Does not request or store raw transcript sentences.
 - Account and engagement links use existing account-access validation.
+- Fireflies summary notes are normalized by removing markdown markers, HTML wrappers, generic headings, and timestamp ranges before storing the meeting artifact summary.
+- Fireflies action items are deduped and filtered with deterministic action-signal checks so names/headings like `**Hassan**` are not saved as action drafts.
 
 ## Frontend Notes
 
@@ -57,6 +60,8 @@ Adds Fireflies.ai as a second personal meeting provider beside Fathom. Users sav
   - Notifications
 - The Meeting Integrations tab contains Fathom and Fireflies cards with connected state, save, and disconnect.
 - Governance completion has a provider selector and provider-specific placeholder text.
+- Governance completion notes use the shared `RichTextEditor`; imported meeting notes are converted into editable HTML paragraphs.
+- Imported action rows are saved unless deleted; the `Task` checkbox only controls whether a saved governance action creates a linked first-class task.
 - Backend field errors are shown beside the meeting identifier field.
 
 ## Tests
@@ -65,13 +70,13 @@ Adds Fireflies.ai as a second personal meeting provider beside Fathom. Users sav
   - Fireflies connection save/read masks the key.
   - Fireflies disconnect clears the key.
   - Resolve by transcript ID creates or returns one owned artifact.
-  - Summary and action items map from safe Fireflies summary fields.
+  - Summary and action items map from safe Fireflies summary fields with markdown/timestamp cleanup and non-action filtering.
   - Missing key, bad URL, and inaccessible transcript return displayable errors.
   - Governance completion accepts Fireflies artifacts and preserves owner isolation.
 - Frontend:
   - Profile tabs render the new panes.
   - Fireflies key save and disconnect work.
-  - Governance completion calls the Fireflies resolve endpoint and uses the returned artifact.
+  - Governance completion calls the Fireflies resolve endpoint, sanitizes imported notes/action drafts, and uses the returned artifact.
   - Existing Fathom flow remains intact.
 
 ## Verification

@@ -843,26 +843,27 @@ def test_personal_fireflies_connection_can_disconnect_and_clear_api_key(client: 
 def test_personal_fireflies_resolve_fetches_transcript_summary_and_action_items(client: TestClient, db_session: Session, monkeypatch: pytest.MonkeyPatch) -> None:
     headers = auth_headers(client)
     requests: list[dict[str, object]] = []
+    fireflies_url = "https://app.fireflies.ai/view/Upskill-Friday-Learning-Session-Managing-the-AI-Intern-6th-Floor-Babar-Block-::01KMMBSYKPMV05EQ0ZXC5EKJKN"
 
     def fireflies_post(url: str, request_headers: dict[str, str], body: dict) -> dict:
         requests.append({"url": url, "headers": request_headers, "body": body})
         assert url == "https://api.fireflies.ai/graphql"
         assert request_headers["Authorization"] == "Bearer personal-fireflies-key"
         assert "sentences" not in body["query"]
-        assert body["variables"]["transcriptId"] == "transcript-123"
+        assert body["variables"]["transcriptId"] == "01KMMBSYKPMV05EQ0ZXC5EKJKN"
         return {
             "data": {
                 "transcript": {
-                    "id": "transcript-123",
-                    "title": "Fireflies governance call",
-                    "transcript_url": "https://app.fireflies.ai/view/transcript-123",
+                    "id": "01KMMBSYKPMV05EQ0ZXC5EKJKN",
+                    "title": "Upskill Friday Learning Session",
+                    "transcript_url": fireflies_url,
                     "meeting_link": "https://meet.example.com/governance",
                     "date": "2026-06-03T10:00:00Z",
                     "summary": {
-                        "notes": "Fireflies governance summary.",
+                        "notes": "## **Summary**\n[00:00 - 00:12] **Hassan** introduced the AI Intern framework.\n- (00:15) Reviewed **governance** follow-ups and risks.",
                         "overview": "Fallback overview.",
                         "short_summary": "Fallback short summary.",
-                        "action_items": "- Send Fireflies recap\n- Confirm action owner",
+                        "action_items": "- **Hassan**\n- [00:20] Develop and share best practices/framework for managing AI as an intern\n- Discussion notes\n- 00:45",
                     },
                 }
             }
@@ -877,7 +878,7 @@ def test_personal_fireflies_resolve_fetches_transcript_summary_and_action_items(
         "/api/meeting-capture/fireflies/resolve",
         headers=headers,
         json={
-            "identifier": "transcript-123",
+            "identifier": fireflies_url,
             "account_id": "account-cafe-zupas",
             "linked_object_type": "governance_event",
             "linked_object_id": "gov-fireflies-1",
@@ -886,24 +887,25 @@ def test_personal_fireflies_resolve_fetches_transcript_summary_and_action_items(
     assert resolved.status_code == 200
     body = resolved.json()
     assert body["provider"] == "fireflies"
-    assert body["external_id"] == "transcript-123"
-    assert body["title"] == "Fireflies governance call"
-    assert body["summary"] == "Fireflies governance summary."
-    assert body["action_items"] == ["Send Fireflies recap", "Confirm action owner"]
-    assert body["source_link"] == "https://app.fireflies.ai/view/transcript-123"
+    assert body["external_id"] == "01KMMBSYKPMV05EQ0ZXC5EKJKN"
+    assert body["title"] == "Upskill Friday Learning Session"
+    assert body["summary"] == "Hassan introduced the AI Intern framework.\nReviewed governance follow-ups and risks."
+    assert body["action_items"] == ["Develop and share best practices/framework for managing AI as an intern"]
+    assert body["source_link"] == fireflies_url
     assert body["meeting_url"] == "https://meet.example.com/governance"
     assert body["account_id"] == "account-cafe-zupas"
     assert body["linked_object_type"] == "governance_event"
     assert body["linked_object_id"] == "gov-fireflies-1"
 
-    artifact = db_session.scalar(select(MeetingArtifact).where(MeetingArtifact.provider == "fireflies", MeetingArtifact.external_id == "transcript-123"))
+    artifact = db_session.scalar(select(MeetingArtifact).where(MeetingArtifact.provider == "fireflies", MeetingArtifact.external_id == "01KMMBSYKPMV05EQ0ZXC5EKJKN"))
     assert artifact is not None
-    assert artifact.summary == "Fireflies governance summary."
-    assert artifact.metadata_json["summary"]["notes"] == "Fireflies governance summary."
+    assert artifact.summary == "Hassan introduced the AI Intern framework.\nReviewed governance follow-ups and risks."
+    assert artifact.metadata_json["summary"]["notes"] == artifact.summary
+    assert artifact.metadata_json["summary"]["action_items"] == ["Develop and share best practices/framework for managing AI as an intern"]
     assert "sentences" not in json.dumps(artifact.metadata_json).lower()
     assert len(list(db_session.scalars(select(MeetingArtifact).where(MeetingArtifact.provider == "fireflies")))) == 1
 
-    resolved_again = client.post("/api/meeting-capture/fireflies/resolve", headers=headers, json={"identifier": "https://app.fireflies.ai/view/transcript-123"})
+    resolved_again = client.post("/api/meeting-capture/fireflies/resolve", headers=headers, json={"identifier": fireflies_url})
     assert resolved_again.status_code == 200
     assert resolved_again.json()["id"] == body["id"]
     assert len(requests) == 1

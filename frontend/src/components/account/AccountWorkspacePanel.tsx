@@ -350,7 +350,7 @@ function GovernanceAccountPanel({ account, governance }: { account: Account; gov
                 <GovernanceDetailList title="Attendees" items={event.attendeeEmails} empty="No attendee emails recorded." />
                 <GovernanceDetailList title="Decisions" items={event.decisions.map(item => item.decisionText)} empty="No decisions captured yet." />
                 <GovernanceDetailList title="Action items" items={event.actionItems} empty="No governance action items." />
-                <GovernanceDetailList title="Notes" items={event.notes.map(item => item.body)} empty="No completion notes yet." />
+                <GovernanceDetailList title="Notes" items={event.notes.map(item => item.body)} empty="No completion notes yet." richText />
               </div>
               {event.status !== 'completed' && event.status !== 'cancelled' ? (
                 <div className="mt-4 flex justify-end">
@@ -373,15 +373,25 @@ function GovernanceAccountPanel({ account, governance }: { account: Account; gov
   )
 }
 
-function GovernanceDetailList({ title, items, empty }: { title: string; items: string[]; empty: string }) {
+function GovernanceDetailList({ title, items, empty, richText = false }: { title: string; items: string[]; empty: string; richText?: boolean }) {
   return (
     <div className="rounded-lg border border-surface-border bg-surface-secondary p-3">
       <p className="text-xs font-semibold uppercase tracking-wider text-ink-secondary">{title}</p>
       <div className="mt-2 space-y-1">
-        {items.length ? items.slice(0, 4).map(item => <p key={item} className="text-sm leading-5 text-ink-secondary">{item}</p>) : <p className="text-sm text-ink-tertiary">{empty}</p>}
+        {items.length ? items.slice(0, 4).map(item => (
+          richText && looksLikeHtml(item) ? (
+            <div key={item} className="prose prose-sm max-w-none text-ink-secondary" dangerouslySetInnerHTML={{ __html: item }} />
+          ) : (
+            <p key={item} className="whitespace-pre-line text-sm leading-5 text-ink-secondary">{item}</p>
+          )
+        )) : <p className="text-sm text-ink-tertiary">{empty}</p>}
       </div>
     </div>
   )
+}
+
+function looksLikeHtml(value: string) {
+  return /<\/?[a-z][\s\S]*>/i.test(value)
 }
 
 function EducationPanel({ account }: { account: Account }) {
