@@ -51,7 +51,7 @@ def seeded_user(session: Session, role: str) -> User:
 
 def seed_account_and_engagement(session: Session) -> None:
     owner = seeded_user(session, "account_manager")
-    ops = seeded_user(session, "ops_lead")
+    ops = seeded_user(session, "delivery_lead")
     account = Account(
         id="account-playbook",
         name="Playbook Customer",
@@ -285,3 +285,31 @@ def test_playbooks_tasks_authorization_and_validation(client: TestClient, db_ses
 
     bad_link = client.post(f"/api/tasks/{task.json()['id']}/evidence", headers=headers, data={"evidence_type": "link", "url": "ftp://bad.example"})
     assert bad_link.status_code == 422 or bad_link.status_code == 400
+
+
+def test_only_super_admin_can_operate_playbooks(client: TestClient, db_session: Session) -> None:
+    super_admin_headers = auth_headers(client)
+    admin_headers = auth_headers(client, "admin.user@tkxel.com", "User@12345")
+    kam_head_headers = auth_headers(client, "kam.head.user@tkxel.com", "User@12345")
+    owner = seeded_user(db_session, "account_manager")
+
+    admin_create = client.post("/api/admin/playbook-templates", headers=admin_headers, json={**template_payload(owner.id), "custom_field_values": {}})
+    assert admin_create.status_code == 403
+    assert "Only Super Admin" in admin_create.json()["detail"]
+
+    kam_head_create = client.post("/api/admin/playbook-templates", headers=kam_head_headers, json={**template_payload(owner.id), "name": "KAM Head blocked", "custom_field_values": {}})
+    assert kam_head_create.status_code == 403
+
+    created = client.post("/api/admin/playbook-templates", headers=super_admin_headers, json={**template_payload(owner.id), "custom_field_values": {}})
+    assert created.status_code == 201
+    template_id = created.json()["id"]
+
+    admin_update = client.patch(f"/api/admin/playbook-templates/{template_id}", headers=admin_headers, json={"objective": "Admin cannot update"})
+    assert admin_update.status_code == 403
+
+    admin_execute = client.post(f"/api/playbooks/{template_id}/execute", headers=admin_headers, json={"account_id": "account-playbook", "confirmed": True})
+    assert admin_execute.status_code == 403
+    assert "Only Super Admin" in admin_execute.json()["detail"]
+
+    super_execute = client.post(f"/api/playbooks/{template_id}/execute", headers=super_admin_headers, json={"account_id": "account-playbook", "confirmed": True})
+    assert super_execute.status_code == 201

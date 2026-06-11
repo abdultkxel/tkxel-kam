@@ -6,6 +6,10 @@ This feature covers backend-backed task execution for playbooks, signals, govern
 
 ## Current Update
 
+- Playbook operations are now Super Admin-only:
+  - Super Admin can access the operational template catalog, recommendations, execution controls, create/edit form, and manual.
+  - Admin, KAM Head, Account Manager, Delivery Lead, Leadership/Executive, and all other roles see the KAM playbook as a read-only manual on `/playbook`.
+  - Backend template creation, template update, and playbook execution endpoints reject non-Super Admin users even if they hold broader module permissions.
 - The Tasks page now supports two presentation modes:
   - Kanban board grouped by canonical lifecycle status: Open, In progress, Blocked, Done, Cancelled.
   - List view using the existing full-detail task cards with notes, outcomes, evidence, and lifecycle actions.
@@ -17,7 +21,10 @@ This feature covers backend-backed task execution for playbooks, signals, govern
 
 - `frontend/src/pages/Tasks.tsx`
 - `frontend/src/pages/Tasks.test.tsx`
+- `frontend/src/pages/Playbook.tsx`
 - `frontend/src/pages/PlaybooksTasksCalendar.test.tsx`
+- `backend/app/services/playbooks_tasks.py`
+- `backend/tests/test_playbooks_tasks_calendar.py`
 
 ## API Contract
 
@@ -25,6 +32,8 @@ No backend API changes were required. Both Kanban and List views use the existin
 
 ## RBAC
 
+- Playbook template operations and playbook execution are restricted to `super_admin`.
+- Non-Super Admin users can view the static/manual KAM playbook only from the Playbook page.
 - Leadership Viewer remains read-only.
 - Authorized task users can continue starting, blocking, resuming, completing, cancelling, adding notes, and adding evidence where the backend allows it.
 
