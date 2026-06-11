@@ -14,6 +14,7 @@ interface EditGovernanceEventDialogProps {
   event: GovernanceEventRecord
   triggerClassName?: string
   triggerLabel?: string
+  triggerAriaLabel?: string
   onSaved?: (event: GovernanceEventRecord) => void
 }
 
@@ -21,6 +22,7 @@ export function EditGovernanceEventDialog({
   event,
   triggerClassName = 'tk-button-secondary',
   triggerLabel = 'Edit',
+  triggerAriaLabel,
   onSaved,
 }: EditGovernanceEventDialogProps) {
   const { token } = useAuth()
@@ -95,9 +97,9 @@ export function EditGovernanceEventDialog({
   return (
     <Dialog.Root open={open} onOpenChange={setOpen}>
       <Dialog.Trigger asChild>
-        <button type="button" className={triggerClassName}>
+        <button type="button" className={triggerClassName} aria-label={triggerAriaLabel} title={triggerAriaLabel ?? triggerLabel}>
           <Pencil className="h-4 w-4" />
-          {triggerLabel}
+          {triggerLabel ? <span>{triggerLabel}</span> : null}
         </button>
       </Dialog.Trigger>
       <Dialog.Portal>

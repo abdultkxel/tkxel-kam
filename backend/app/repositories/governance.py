@@ -100,6 +100,10 @@ class GovernanceRepository:
         self.db.flush()
         return event
 
+    def delete_event(self, event: GovernanceEvent) -> None:
+        self.db.delete(event)
+        self.db.flush()
+
     def add_decision(self, decision: GovernanceDecision) -> GovernanceDecision:
         self.db.add(decision)
         self.db.flush()

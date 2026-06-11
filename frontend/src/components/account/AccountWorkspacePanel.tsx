@@ -4,8 +4,10 @@ import type { LucideIcon } from 'lucide-react'
 import { FormEvent, useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { toast } from 'sonner'
+import { FieldError } from '@/components/form/FieldError'
 import { AddGovernanceEventDialog } from '@/components/governance/AddGovernanceEventDialog'
 import { CompleteGovernanceEventDialog } from '@/components/governance/CompleteGovernanceEventDialog'
+import { GovernanceEventActions } from '@/components/governance/GovernanceEventActions'
 import { Account } from '@/types/account'
 import { useGovernanceStore } from '@/stores/governanceStore'
 import { useTimelineStore } from '@/stores/timelineStore'
@@ -17,8 +19,11 @@ import { useAuth } from '@/contexts/AuthContext'
 import { useRole } from '@/hooks/useRole'
 import { ContentRecommendation, createSentContent, Escalation, listContentRecommendations, listEscalations, listSentContent, SentContent } from '@/services/contentGovernance'
 import { downloadAccountAttachment, extractAccountAttachment, listAccountAttachments, uploadAccountAttachment } from '@/services/accountWorkspace'
+import { ApiError } from '@/services/api'
 import { createTimelineNote, getAccountTimeline } from '@/services/timeline'
 import { TimelineEntry } from '@/types/timeline'
+import { cn } from '@/utils/cn'
+import { apiFieldErrors, clearFieldError, FieldErrors, hasFieldErrors } from '@/utils/formErrors'
 
 export function AccountWorkspacePanel({ account, tab }: { account: Account; tab: string }) {
   const documents = useV3Store(state => state.sourceDocuments).filter(document => document.accountId === account.id)
@@ -322,7 +327,7 @@ function GovernanceAccountPanel({ account, governance }: { account: Account; gov
             </p>
           </div>
           <div className="flex flex-wrap gap-2">
-            <Link className="tk-button-secondary shrink-0 bg-white" to="/dashboard">
+            <Link className="tk-button-secondary shrink-0 bg-white" to="/dashboard#governance-calendar">
               View calendar
               <ArrowRight className="h-4 w-4" />
             </Link>
@@ -339,7 +344,10 @@ function GovernanceAccountPanel({ account, governance }: { account: Account; gov
                   <h4 className="text-sm font-semibold text-ink">{event.type} on {formatDate(event.date)}</h4>
                   <p className="mt-1 max-w-3xl text-sm leading-6 text-ink-secondary">{event.agenda}</p>
                 </div>
-                <StatusBadge tone={event.status === 'overdue' ? 'red' : event.status === 'completed' ? 'green' : 'blue'} label={event.status} />
+                <div className="flex shrink-0 items-center gap-2">
+                  <StatusBadge tone={event.status === 'overdue' ? 'red' : event.status === 'completed' ? 'green' : 'blue'} label={event.status} />
+                  <GovernanceEventActions event={event} />
+                </div>
               </div>
               <div className="mt-3 flex flex-wrap gap-2">
                 <span className="rounded-full bg-surface-secondary px-2.5 py-1 text-[11px] font-semibold uppercase tracking-wider text-ink-secondary">{event.attendeeEmails.length} attendees</span>
@@ -682,6 +690,8 @@ function NotesPanel({ account, plans }: { account: Account; plans: RetentionPlan
   const [open, setOpen] = useState(false)
   const [title, setTitle] = useState('')
   const [body, setBody] = useState('')
+  const [formError, setFormError] = useState('')
+  const [fieldErrors, setFieldErrors] = useState<FieldErrors>({})
 
   useEffect(() => {
     if (!token) {
@@ -726,21 +736,28 @@ function NotesPanel({ account, plans }: { account: Account; plans: RetentionPlan
 
   async function submit(event: FormEvent) {
     event.preventDefault()
+    const cleanTitle = title.trim()
     const cleanBody = body.trim()
-    if (!cleanBody) {
-      toast.error('Note body is required')
+    const nextFieldErrors = validateNoteFields(cleanTitle, cleanBody)
+
+    if (hasFieldErrors(nextFieldErrors)) {
+      setFieldErrors(nextFieldErrors)
+      setFormError('Fix the highlighted fields before saving.')
+      toast.error('Fix the highlighted validation errors')
       return
     }
     if (!token) {
+      setFormError('You must be signed in to save notes.')
       toast.error('You must be signed in to save notes')
       return
     }
     setSaving(true)
-    setError('')
+    setFormError('')
+    setFieldErrors({})
     try {
       const entry = await createTimelineNote(token, account.id, {
         event_type: 'manual_note',
-        title: title.trim() || 'Account note',
+        title: cleanTitle || 'Account note',
         description: cleanBody,
         event_at: new Date().toISOString(),
         owner_id: user.id,
@@ -756,12 +773,35 @@ function NotesPanel({ account, plans }: { account: Account; plans: RetentionPlan
       setOpen(false)
       toast.success('Note saved')
     } catch (err) {
-      const message = err instanceof Error ? err.message : 'Note could not be saved'
-      setError(message)
+      const nextErrors = apiFieldErrors(err, noteFieldAliases)
+      const hiddenFieldMessage = firstHiddenNoteFieldMessage(nextErrors)
+      const message = err instanceof ApiError
+        ? hiddenFieldMessage || (hasFieldErrors(nextErrors) ? 'Fix the highlighted fields before saving.' : err.message)
+        : 'Note could not be saved'
+      setFieldErrors(nextErrors)
+      setFormError(message)
       toast.error(message)
     } finally {
       setSaving(false)
     }
+  }
+
+  function updateTitle(value: string) {
+    setTitle(value)
+    setFieldErrors(errors => clearFieldError(errors, 'title'))
+    setFormError('')
+  }
+
+  function updateBody(value: string) {
+    setBody(value)
+    setFieldErrors(errors => clearFieldError(errors, 'body'))
+    setFormError('')
+  }
+
+  function handleDialogOpenChange(nextOpen: boolean) {
+    setOpen(nextOpen)
+    setFormError('')
+    setFieldErrors({})
   }
 
   return (
@@ -789,12 +829,14 @@ function NotesPanel({ account, plans }: { account: Account; plans: RetentionPlan
             </button>
             <AddAccountNoteDialog
               open={open}
-              onOpenChange={setOpen}
+              onOpenChange={handleDialogOpenChange}
               title={title}
               body={body}
               saving={saving}
-              onTitleChange={setTitle}
-              onBodyChange={setBody}
+              formError={formError}
+              fieldErrors={fieldErrors}
+              onTitleChange={updateTitle}
+              onBodyChange={updateBody}
               onSubmit={submit}
             />
           </div>
@@ -838,6 +880,26 @@ function NotesPanel({ account, plans }: { account: Account; plans: RetentionPlan
   )
 }
 
+const noteFieldAliases = {
+  description: 'body',
+  event_type: 'eventType',
+  owner_id: 'ownerId',
+} satisfies Record<string, string>
+
+function validateNoteFields(title: string, body: string): FieldErrors {
+  const errors: FieldErrors = {}
+  if (title.length > 220) errors.title = 'Title must be 220 characters or fewer.'
+  if (!body) errors.body = 'Note is required.'
+  else if (body.length < 3) errors.body = 'Note must be at least 3 characters.'
+  else if (body.length > 2000) errors.body = 'Note must be 2000 characters or fewer.'
+  return errors
+}
+
+function firstHiddenNoteFieldMessage(fieldErrors: FieldErrors) {
+  const hiddenError = Object.entries(fieldErrors).find(([field]) => field !== 'title' && field !== 'body')
+  return hiddenError?.[1] ?? ''
+}
+
 function timelineEntryToNote(entry: TimelineEntry): AccountNote {
   return {
     id: entry.id,
@@ -853,6 +915,8 @@ function AddAccountNoteDialog({
   title,
   body,
   saving,
+  formError,
+  fieldErrors,
   onTitleChange,
   onBodyChange,
   onSubmit,
@@ -862,6 +926,8 @@ function AddAccountNoteDialog({
   title: string
   body: string
   saving: boolean
+  formError: string
+  fieldErrors: FieldErrors
   onTitleChange: (value: string) => void
   onBodyChange: (value: string) => void
   onSubmit: (event: FormEvent) => void | Promise<void>
@@ -888,13 +954,38 @@ function AddAccountNoteDialog({
             </Dialog.Close>
           </div>
           <form onSubmit={onSubmit} className="mt-5 space-y-4">
+            {formError ? (
+              <div className="flex items-start gap-2 rounded-lg border border-rag-red/20 bg-rag-red/10 p-3 text-sm font-semibold text-rag-red">
+                <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+                <span>{formError}</span>
+              </div>
+            ) : null}
             <label className="space-y-1">
-              <span className="tk-label text-xs">Title</span>
-              <input className="tk-input" value={title} onChange={event => onTitleChange(event.target.value)} placeholder="Renewal prep, stakeholder update, delivery context" />
+              <span className={cn('tk-label text-xs', fieldErrors.title && 'text-rag-red')}>Title</span>
+              <input
+                className={noteInputClass(fieldErrors.title)}
+                value={title}
+                onChange={event => onTitleChange(event.target.value)}
+                placeholder="Renewal prep, stakeholder update, delivery context"
+                aria-invalid={Boolean(fieldErrors.title)}
+                aria-describedby={fieldErrors.title ? 'account-note-title-error' : undefined}
+              />
+              <FieldError id="account-note-title-error" message={fieldErrors.title} />
             </label>
             <label className="space-y-1">
-              <span className="tk-label text-xs">Note <span className="text-brand-orange">*</span></span>
-              <textarea className="tk-input min-h-[150px] resize-y" value={body} onChange={event => onBodyChange(event.target.value)} placeholder="Write the account note..." />
+              <span className={cn('tk-label text-xs', fieldErrors.body && 'text-rag-red')}>Note <span className="text-brand-orange">*</span></span>
+              <textarea
+                className={noteInputClass(fieldErrors.body, 'min-h-[150px] resize-y')}
+                value={body}
+                onChange={event => onBodyChange(event.target.value)}
+                placeholder="Write the account note..."
+                aria-invalid={Boolean(fieldErrors.body)}
+                aria-describedby={fieldErrors.body ? 'account-note-body-error' : undefined}
+              />
+              <div className="flex flex-wrap items-start justify-between gap-2">
+                <FieldError id="account-note-body-error" message={fieldErrors.body} />
+                <p className={cn('ml-auto text-xs font-semibold text-ink-tertiary', body.length > 2000 && 'text-rag-red')}>{body.length}/2000</p>
+              </div>
             </label>
             <div className="flex justify-end gap-2 border-t border-surface-border pt-4">
               <Dialog.Close type="button" className="tk-button-secondary">Cancel</Dialog.Close>
@@ -908,6 +999,10 @@ function AddAccountNoteDialog({
       </Dialog.Portal>
     </Dialog.Root>
   )
+}
+
+function noteInputClass(error?: string, extra?: string) {
+  return cn('tk-input', error && 'border-rag-red focus:border-rag-red focus:ring-rag-red/20', extra)
 }
 
 function EmptyWorkspaceState({ icon: Icon, title, body }: { icon: LucideIcon; title: string; body: string }) {

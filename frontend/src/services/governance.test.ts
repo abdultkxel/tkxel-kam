@@ -1,5 +1,5 @@
-import { describe, expect, it } from 'vitest'
-import { ApiGovernanceEvent, buildCompletePayload, buildCreatePayload, mapApiGovernanceEvent } from '@/services/governance'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import { ApiGovernanceEvent, buildCompletePayload, buildCreatePayload, buildUpdatePayload, deleteGovernanceEvent, mapApiGovernanceEvent } from '@/services/governance'
 
 const apiEvent: ApiGovernanceEvent = {
   id: 'gov-1',
@@ -26,6 +26,10 @@ const apiEvent: ApiGovernanceEvent = {
 }
 
 describe('governance service mapping', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals()
+  })
+
   it('maps governance events into UI records with normalized attendee emails', () => {
     const event = mapApiGovernanceEvent(apiEvent)
 
@@ -52,6 +56,20 @@ describe('governance service mapping', () => {
     })
   })
 
+  it('builds update payloads with editable governance fields', () => {
+    expect(buildUpdatePayload({
+      governanceType: 'SteerCo',
+      scheduledAt: '2026-06-18T12:00:00Z',
+      agenda: 'Updated SteerCo agenda.',
+      attendeeEmails: ['Client@Example.com', 'client@example.com', 'delivery@example.com'],
+    })).toMatchObject({
+      governance_type: 'SteerCo',
+      scheduled_at: '2026-06-18T12:00:00Z',
+      agenda: 'Updated SteerCo agenda.',
+      attendee_emails: ['client@example.com', 'delivery@example.com'],
+    })
+  })
+
   it('builds completion payloads with meeting artifacts and task flags', () => {
     expect(buildCompletePayload({
       meetingArtifactId: 'meeting-1',
@@ -63,5 +81,20 @@ describe('governance service mapping', () => {
       decisions: [{ decision_text: 'Approve cadence.' }],
       action_items: [{ title: 'Share plan', owner_id: 'usr-1', due_date: '2026-06-22T17:00:00Z', create_task: false }],
     })
+  })
+
+  it('deletes governance events through the API service', async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      expect(String(input)).toBe('http://127.0.0.1:8001/api/governance-events/gov-1')
+      expect(init?.method).toBe('DELETE')
+      expect(init?.headers).toMatchObject({ Authorization: 'Bearer test-token' })
+      return new Response(JSON.stringify({ message: 'Governance event deleted successfully' }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      })
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    await expect(deleteGovernanceEvent('test-token', 'gov-1')).resolves.toEqual({ message: 'Governance event deleted successfully' })
   })
 })

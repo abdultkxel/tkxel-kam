@@ -95,6 +95,11 @@ def update_event(event_id: str, payload: GovernanceEventUpdateRequest, current_u
     return service.update_event(event_id, payload, current_user)
 
 
+@router.delete("/governance-events/{event_id}", response_model=MessageResponse, summary="Delete governance event", description="Deletes a governance event after cancelling linked reminder/action tasks and refreshing account governance rollups.")
+def delete_event(event_id: str, current_user: Annotated[User, Depends(get_current_user)], service: Annotated[GovernanceService, Depends(get_governance_service)]) -> MessageResponse:
+    return service.delete_event(event_id, current_user)
+
+
 @router.post("/governance-events/{event_id}/complete", response_model=GovernanceEventRead, summary="Complete governance event", description="Marks governance event complete after notes or decisions exist and writes timeline/audit entries.")
 def complete_event(event_id: str, current_user: Annotated[User, Depends(get_current_user)], service: Annotated[GovernanceService, Depends(get_governance_service)], payload: Annotated[GovernanceEventCompleteRequest | None, Body()] = None) -> GovernanceEventRead:
     return service.complete_event(event_id, current_user, payload)
