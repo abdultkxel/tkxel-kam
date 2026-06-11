@@ -68,6 +68,7 @@ EXTERNAL_SEARCH_PATTERNS = [
     r"\buse\s+(?:open\s*ai|openai|chatgpt|gpt|llm)\b",
     r"\b(?:open\s*ai|openai|chatgpt|gpt|llm)\s+(?:search|lookup|research|find|check)\b",
     r"\buse\s+(?:ai|llm)\s+to\s+(?:search|lookup|research|find|check)\b",
+    r"\b(?:search|research|lookup|look\s+up)\b",
     r"\b(?:web|internet|online|external|public)\s+(?:search|lookup|research|sources?)\b",
     r"\bsearch\s+(?:the\s+)?(?:web|internet|online|google|public\s+sources?)\b",
     r"\b(?:google\s+search|search\s+on\s+google|google\s+it)\b",
@@ -83,6 +84,11 @@ PUBLIC_CONTEXT_LOOKUP_PATTERNS = [
     r"\b(?:industry|market|sector)\b.*\b(?:trends?|benchmarks?|regulations?|regulatory|outlook|news|risks?|opportunities|landscape)\b",
     r"\b(?:competitor|competitive)\s+(?:analysis|landscape|benchmark|benchmarks|positioning)\b",
     r"\bpublic\s+(?:company|industry|market|sector)\s+(?:details?|overview|context|research|news)\b",
+]
+GENERAL_PUBLIC_LOOKUP_PATTERNS = [
+    r"\b(?:get|give|show|tell)\s+me\s+(?:details?|information|info|overview|summary|profile)\s+(?:about|on|for)\b",
+    r"\b(?:details?|information|info|overview|summary|profile)\s+(?:about|on|for)\b",
+    r"\bcompany\s+(?:details?|information|info|overview|summary|profile)\b",
 ]
 PUBLIC_PROFILE_LOOKUP_PATTERNS = [
     r"\blinked\s*in\b",
@@ -254,12 +260,10 @@ class KamAiChatService:
             if intent == "forecast":
                 answer_sources = sources
                 answer = self._generate_forecast_answer(payload.content, sources=sources, accounts=accounts, current_user=current_user)
-            elif external_search_requested:
-                answer_sources = self._usable_internal_sources(sources)
-                answer = self._generate_combined_openai_answer(payload.content, sources=answer_sources, accounts=accounts, current_user=current_user, reason=external_search_reason)
             else:
                 answer_sources = self._usable_internal_sources(sources)
-                answer = self._generate_answer(payload.content, sources=answer_sources, accounts=accounts, current_user=current_user)
+                combined_reason = external_search_reason if external_search_requested else "default_combined_search"
+                answer = self._generate_combined_openai_answer(payload.content, sources=answer_sources, accounts=accounts, current_user=current_user, reason=combined_reason)
             run_id = self._log_ai_run(
                 current_user,
                 session=session,
@@ -1027,11 +1031,7 @@ class KamAiChatService:
                 f"- [{index}] {item.account_name}: {item.chunk.title} ({item.chunk.source_type})"
                 for index, item in enumerate(sources[:8], start=1)
             )
-            closing = (
-                "Internal vector search found matching KAM records, so OpenAI was not needed for this response."
-                if reason == "internal_vector_search"
-                else "OpenAI synthesis was not available for this response, so this is a source-ranked summary for review."
-            )
+            closing = "OpenAI synthesis was not available for this response, so this is a source-ranked summary for review."
             answer = (
                 f"I found {len(sources)} authorized source record(s) across {len(accounts)} account(s) for '{query}'.\n\n"
                 f"Top evidence:\n{source_lines}\n\n"
@@ -1218,6 +1218,8 @@ class KamAiChatService:
             return "user_requested_external_search"
         if any(re.search(pattern, normalized) for pattern in PUBLIC_PROFILE_LOOKUP_PATTERNS):
             return "public_profile_lookup"
+        if any(re.search(pattern, normalized) for pattern in GENERAL_PUBLIC_LOOKUP_PATTERNS):
+            return "public_context_lookup"
         if any(re.search(pattern, normalized) for pattern in PUBLIC_CONTEXT_LOOKUP_PATTERNS):
             return "industry_or_market_context"
         return "not_requested"
