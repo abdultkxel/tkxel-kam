@@ -38,8 +38,14 @@ Implemented:
 - Admin reindex/status endpoints for the KAM AI source index.
 - GPT-like frontend panel with session sidebar, new chat action, source scopes, scrollable responses, and bottom composer.
 - Topbar search is now the KAM AI input; its text stays synchronized with the KAM AI composer and opens the KAM AI panel through the embedded `KAM AI` button.
+- Clicking `KAM AI` with an empty topbar search opens the KAM AI panel without sending a message.
+- Submitting from the topbar creates a fresh KAM AI chat and sends the query automatically, matching the expected ChatGPT-style handoff instead of only pre-filling the drawer composer.
 - RBAC-aware account/module/sensitive-source filtering.
-- OpenAI response path with deterministic source-ranked fallback when OpenAI is not configured or fails.
+- Internal vector/source-ranked response path is used first when reliable authorized KAM records match the query.
+- OpenAI is used only as a fallback when internal vector search does not return reliable evidence, and those answers are marked as non-source-backed fallback guidance.
+- User-explicit external search requests bypass internal-first behavior and use OpenAI external search. Trigger phrases include OpenAI, ChatGPT, GPT, LLM, AI search, web search, internet/online/public search, Google search wording, and outside-KAM wording.
+- Public company profile and URL lookup questions also use OpenAI web search when internal evidence is missing or unsuitable, including LinkedIn URL, official website, company URL, domain, homepage, and public/social profile requests.
+- OpenAI external search citations are displayed separately from internal KAM source citations.
 - Forecast, prediction, chart, graph, and next-six-month prompts now use the shared forecasting service and persist a `forecast_chart` payload on the assistant message for reload-safe chart rendering.
 - Assistant responses render in a structured human-friendly style: markdown headings become styled headings, bold markers become bold text, and raw list markers are replaced with clean visual bullets.
 - AI gateway run logging and audit logging for session/message activity.
@@ -68,5 +74,12 @@ Coverage added:
 - Archive behavior.
 - OpenAI synthesis mocked to avoid external calls in tests.
 - Topbar KAM AI input and KAM AI composer synchronization.
+- Empty topbar `KAM AI` click opens the panel without sending a message.
+- Topbar KAM AI submit creates a new session and auto-sends the query.
+- Internal-first KAM AI behavior with OpenAI fallback only when no reliable internal match is available.
+- Explicit external-search KAM AI requests bypass internal results and call OpenAI with web-search tooling.
+- Public profile lookup prompts such as LinkedIn URL requests route to the OpenAI web-search path.
+- KAM AI UI renders OpenAI web sources separately from internal KAM sources.
+- Live KAM AI loader while a query is running.
 - Forecast query chart metadata persistence.
 - Forecast chart rendering and markdown-marker cleanup in KAM AI responses.

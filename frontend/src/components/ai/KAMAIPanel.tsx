@@ -65,10 +65,17 @@ interface ForecastChartPayload {
   disclaimer?: string
 }
 
+interface ExternalAiSource {
+  title?: string | null
+  url?: string | null
+}
+
 export function KAMAIPanel() {
   const open = useUIStore(state => state.aiOpen)
   const prefill = useUIStore(state => state.aiPrefill)
+  const aiAutoSubmitRequest = useUIStore(state => state.aiAutoSubmitRequest)
   const setAIPrefill = useUIStore(state => state.setAIPrefill)
+  const clearAIAutoSubmitRequest = useUIStore(state => state.clearAIAutoSubmitRequest)
   const activeAccountId = useUIStore(state => state.activeAccountId)
   const closeAI = useUIStore(state => state.closeAI)
   const { token } = useAuth()
@@ -79,10 +86,12 @@ export function KAMAIPanel() {
   const [sending, setSending] = useState(false)
   const [error, setError] = useState('')
   const messagesEndRef = useRef<HTMLDivElement | null>(null)
+  const handledAutoSubmitRef = useRef<number | null>(null)
   const input = prefill
 
   useEffect(() => {
     if (!open || !token) return
+    if (aiAutoSubmitRequest) return
     void loadSessions()
   }, [open, token])
 
@@ -91,6 +100,14 @@ export function KAMAIPanel() {
       messagesEndRef.current.scrollIntoView({ behavior: 'smooth', block: 'end' })
     }
   }, [activeSession?.messages.length, sending])
+
+  useEffect(() => {
+    if (!open || !token || loadingSessions || !aiAutoSubmitRequest) return
+    if (handledAutoSubmitRef.current === aiAutoSubmitRequest.id) return
+    handledAutoSubmitRef.current = aiAutoSubmitRequest.id
+    clearAIAutoSubmitRequest(aiAutoSubmitRequest.id)
+    void submitFreshChat(aiAutoSubmitRequest.query, aiAutoSubmitRequest.accountId)
+  }, [aiAutoSubmitRequest, clearAIAutoSubmitRequest, loadingSessions, open, token])
 
   const activeMessages = activeSession?.messages ?? []
   const selectedScopeSet = useMemo(() => new Set(scopes), [scopes])
@@ -106,7 +123,7 @@ export function KAMAIPanel() {
         const detail = await getKamAiChatSession(token, page.items[0].id)
         setActiveSession(detail)
         setScopes(detail.scope_json.length ? detail.scope_json : DEFAULT_SCOPES)
-      } else {
+      } else if (!aiAutoSubmitRequest) {
         const detail = await createKamAiChatSession(token, { title: 'New KAM AI chat', account_id: activeAccountId === 'amd-001' ? undefined : activeAccountId, scopes: DEFAULT_SCOPES })
         setActiveSession(detail)
         setSessions([detail])
@@ -123,7 +140,7 @@ export function KAMAIPanel() {
     setSending(false)
     setError('')
     try {
-      const detail = await createKamAiChatSession(token, { title: 'New KAM AI chat', account_id: activeAccountId === 'amd-001' ? undefined : activeAccountId, scopes })
+      const detail = await createKamAiChatSession(token, { title: 'New KAM AI chat', account_id: accountIdForPayload(), scopes })
       setActiveSession(detail)
       setSessions(current => [detail, ...current])
       setAIPrefill('')
@@ -168,52 +185,82 @@ export function KAMAIPanel() {
     setAIPrefill('')
     try {
       if (!session) {
-        session = await createKamAiChatSession(token, { title: 'New KAM AI chat', scopes })
+        session = await createKamAiChatSession(token, { title: 'New KAM AI chat', account_id: accountIdForPayload(), scopes })
         setActiveSession(session)
       }
-      const optimistic: KamAiChatSessionDetail = {
-        ...session,
-        messages: [
-          ...session.messages,
-          {
-            id: `pending-user-${Date.now()}`,
-            session_id: session.id,
-            role: 'user',
-            content,
-            status: 'complete',
-            token_usage_json: {},
-            metadata_json: {},
-            sources: [],
-            created_at: new Date().toISOString(),
-          },
-          {
-            id: `pending-assistant-${Date.now()}`,
-            session_id: session.id,
-            role: 'assistant',
-            content: 'Thinking across authorized source records...',
-            status: 'running',
-            token_usage_json: {},
-            metadata_json: {},
-            sources: [],
-            created_at: new Date().toISOString(),
-          },
-        ],
-      }
-      setActiveSession(optimistic)
-      const detail = await sendKamAiChatMessage(token, session.id, {
-        content,
-        scopes,
-        document_search: scopes.includes('documents'),
-        limit: 12,
-      })
-      setActiveSession(detail)
-      setSessions(current => [detail, ...current.filter(item => item.id !== detail.id)])
+      await sendMessageToSession(session, content)
     } catch (err) {
       setAIPrefill(content)
       setError(err instanceof Error ? err.message : 'KAM AI could not answer this message')
     } finally {
       setSending(false)
     }
+  }
+
+  async function submitFreshChat(content: string, requestAccountId?: string) {
+    if (!token) return
+    const trimmed = content.trim()
+    if (!trimmed) return
+    setSending(true)
+    setError('')
+    setAIPrefill(trimmed)
+    try {
+      const detail = await createKamAiChatSession(token, { title: 'New KAM AI chat', account_id: accountIdForPayload(requestAccountId), scopes })
+      setActiveSession(detail)
+      setSessions(current => [detail, ...current.filter(item => item.id !== detail.id)])
+      await sendMessageToSession(detail, trimmed)
+    } catch (err) {
+      setAIPrefill(trimmed)
+      setError(err instanceof Error ? err.message : 'KAM AI could not answer this message')
+    } finally {
+      setSending(false)
+    }
+  }
+
+  async function sendMessageToSession(session: KamAiChatSessionDetail, content: string) {
+    if (!token) return
+    setAIPrefill('')
+    const optimistic: KamAiChatSessionDetail = {
+      ...session,
+      messages: [
+        ...session.messages,
+        {
+          id: `pending-user-${Date.now()}`,
+          session_id: session.id,
+          role: 'user',
+          content,
+          status: 'complete',
+          token_usage_json: {},
+          metadata_json: {},
+          sources: [],
+          created_at: new Date().toISOString(),
+        },
+        {
+          id: `pending-assistant-${Date.now()}`,
+          session_id: session.id,
+          role: 'assistant',
+          content: 'Thinking across authorized source records...',
+          status: 'running',
+          token_usage_json: {},
+          metadata_json: {},
+          sources: [],
+          created_at: new Date().toISOString(),
+        },
+      ],
+    }
+    setActiveSession(optimistic)
+    const detail = await sendKamAiChatMessage(token, session.id, {
+      content,
+      scopes,
+      document_search: scopes.includes('documents'),
+      limit: 12,
+    })
+    setActiveSession(detail)
+    setSessions(current => [detail, ...current.filter(item => item.id !== detail.id)])
+  }
+
+  function accountIdForPayload(accountId = activeAccountId) {
+    return accountId === 'amd-001' ? undefined : accountId
   }
 
   function toggleScope(scope: string) {
@@ -371,15 +418,16 @@ function ChatMessage({ message }: { message: KamAiChatMessage }) {
   const recommended = Array.isArray(metadata.recommended_actions) ? metadata.recommended_actions.map(String) : []
   const missing = Array.isArray(metadata.missing_evidence) ? metadata.missing_evidence.map(String) : []
   const forecastChart = forecastChartFromMetadata(metadata)
+  const externalSources = externalSourcesFromMetadata(metadata)
   return (
     <article className={cn('flex', isUser ? 'justify-end' : 'justify-start')}>
-      <div className={cn('max-w-[92%] rounded-2xl border px-4 py-3 shadow-sm', isUser ? 'border-brand-blue bg-brand-blue text-white' : 'border-surface-border bg-white text-ink')}>
+      <div className={cn('max-w-full break-words rounded-2xl border px-4 py-3 shadow-sm sm:max-w-[92%]', isUser ? 'border-brand-blue bg-brand-blue text-white' : 'border-surface-border bg-white text-ink')}>
         <div className="mb-2 flex items-center gap-2 text-xs font-semibold">
           {isUser ? <MessageSquare className="h-3.5 w-3.5" /> : <Sparkles className="h-3.5 w-3.5 text-brand-blue" />}
           <span>{isUser ? 'You' : 'KAM AI'}</span>
           {!isUser && message.status === 'running' ? <Loader2 className="h-3.5 w-3.5 animate-spin text-brand-blue" /> : null}
         </div>
-        <MessageContent content={message.content} />
+        {!isUser && message.status === 'running' ? <ThinkingLoader /> : <MessageContent content={message.content} />}
         {!isUser && forecastChart ? <ForecastChartCard chart={forecastChart} /> : null}
         {!isUser && message.status === 'failed' && message.error_message ? <p className="mt-2 rounded-md bg-rag-red/10 p-2 text-xs text-rag-red">{message.error_message}</p> : null}
         {!isUser ? (
@@ -391,6 +439,7 @@ function ChatMessage({ message }: { message: KamAiChatMessage }) {
         ) : null}
         {!isUser && recommended.length ? <MessageList title="Recommended actions" items={recommended} /> : null}
         {!isUser && missing.length ? <MessageList title="Missing evidence" items={missing} muted /> : null}
+        {!isUser && externalSources.length ? <ExternalSourceList sources={externalSources} /> : null}
         {!isUser && message.sources.length ? <SourceList sources={message.sources} /> : null}
       </div>
     </article>
@@ -536,6 +585,48 @@ function forecastChartFromMetadata(metadata: Record<string, unknown>): ForecastC
   return Array.isArray(chart.points) ? chart : null
 }
 
+function externalSourcesFromMetadata(metadata: Record<string, unknown>): ExternalAiSource[] {
+  const fromSearch = Array.isArray(metadata.openai_external_sources) ? metadata.openai_external_sources : []
+  const fromCitations = Array.isArray(metadata.openai_url_citations) ? metadata.openai_url_citations : []
+  const seen = new Set<string>()
+  return [...fromSearch, ...fromCitations]
+    .filter((item): item is Record<string, unknown> => Boolean(item) && typeof item === 'object')
+    .map(item => ({ title: String(item.title || item.url || 'External source'), url: item.url ? String(item.url) : null }))
+    .filter(item => {
+      const key = item.url || item.title || ''
+      if (!key || seen.has(key)) return false
+      seen.add(key)
+      return true
+    })
+    .slice(0, 8)
+}
+
+function ExternalSourceList({ sources }: { sources: ExternalAiSource[] }) {
+  return (
+    <details className="mt-3 rounded-md border border-blue-tint-40 bg-blue-tint-20 p-3">
+      <summary className="cursor-pointer text-xs font-bold uppercase tracking-wider text-brand-blue">OpenAI web sources ({sources.length})</summary>
+      <div className="mt-3 grid gap-2">
+        {sources.map(source => (
+          <article key={`${source.title}-${source.url}`} className="rounded-md border border-surface-border bg-white p-3">
+            <div className="flex items-start justify-between gap-3">
+              <div className="min-w-0">
+                <p className="text-[11px] font-bold uppercase tracking-wider text-brand-blue">External web result</p>
+                <h4 className="mt-1 break-words text-sm font-semibold text-ink">{stripLooseMarkdown(source.title || source.url || 'External source')}</h4>
+                {source.url ? <p className="mt-1 break-all text-xs leading-5 text-ink-secondary">{source.url}</p> : null}
+              </div>
+              {source.url ? (
+                <a href={source.url} target="_blank" rel="noreferrer" className="tk-icon-button shrink-0 bg-white" title="Open external source">
+                  <ExternalLink className="h-4 w-4" />
+                </a>
+              ) : <FileText className="h-4 w-4 shrink-0 text-ink-tertiary" />}
+            </div>
+          </article>
+        ))}
+      </div>
+    </details>
+  )
+}
+
 function SourceList({ sources }: { sources: KamAiChatMessage['sources'] }) {
   return (
     <details className="mt-3 rounded-md border border-surface-border bg-surface-secondary p-3">
@@ -567,12 +658,30 @@ function ThinkingMessage() {
   return (
     <article className="flex justify-start">
       <div className="rounded-2xl border border-surface-border bg-white px-4 py-3 shadow-sm">
-        <div className="flex items-center gap-2 text-sm font-medium text-ink-secondary">
-          <Loader2 className="h-4 w-4 animate-spin text-brand-blue" />
-          Searching authorized sources and preparing an answer...
-        </div>
+        <ThinkingLoader />
       </div>
     </article>
+  )
+}
+
+function ThinkingLoader() {
+  return (
+    <div className="grid gap-2 text-sm text-ink-secondary">
+      <div className="flex items-center gap-2 font-medium">
+        <Loader2 className="h-4 w-4 animate-spin text-brand-blue" />
+        <span>Searching requested sources and preparing an answer</span>
+        <span className="flex items-center gap-1" aria-hidden="true">
+          {[0, 1, 2].map(index => (
+            <span
+              key={index}
+              className="h-1.5 w-1.5 animate-bounce rounded-full bg-brand-blue"
+              style={{ animationDelay: `${index * 140}ms` }}
+            />
+          ))}
+        </span>
+      </div>
+      <p className="text-xs leading-5 text-ink-tertiary">KAM AI checks authorized records first unless you explicitly ask for OpenAI, LLM, AI, web, Google, or outside-KAM search.</p>
+    </div>
   )
 }
 

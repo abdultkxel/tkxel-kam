@@ -10,7 +10,12 @@ export function AISearchBar({ compact = false }: { compact?: boolean }) {
 
   function submit(event: FormEvent) {
     event.preventDefault()
-    openAI(query.trim())
+    const content = query.trim()
+    if (!content) {
+      openAI()
+      return
+    }
+    openAI(content, undefined, true)
   }
 
   return (
