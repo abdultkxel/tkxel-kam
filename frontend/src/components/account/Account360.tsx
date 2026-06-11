@@ -41,7 +41,7 @@ import { emit } from '@/utils/emitTimelineEvent'
 import { emitTimelineEvent } from '@/utils/emitTimelineEvent'
 import { formatCompactCurrency, formatCurrency, formatDate } from '@/utils/formatters'
 
-const tabs = ['Overview', 'Engagements', 'Stakeholders', 'Planning', 'Growth', 'Renewal', 'Retention', 'KYC', 'Health', 'Stage', 'Opportunities', 'Education', 'Escalation', 'Governance', 'Notes', 'Timeline', 'Documents']
+const tabs = ['Overview', 'Engagements', 'Stakeholders', 'Planning', 'Growth', 'Renewal', 'Retention', 'KYC', 'Health', 'Stage', 'Opportunities', 'Education', 'Escalation', 'Governance', 'Notes', 'Timeline']
 
 export function Account360({ account, overview }: { account: Account; overview?: AccountOverviewView }) {
   const { token } = useAuth()
@@ -129,7 +129,7 @@ export function Account360({ account, overview }: { account: Account; overview?:
       label: 'Commercial value',
       value: formatCurrency(summaryCards.commercialValue),
       detail: `${summaryCards.currency} account value from source-backed profile`,
-      tab: 'Documents',
+      tab: 'KYC',
     },
     {
       icon: ArrowRight,
@@ -632,7 +632,7 @@ export function Account360({ account, overview }: { account: Account; overview?:
             onArchived={() => setSelectedOpportunityId('')}
           />
         </Tabs.Content>
-        {['Education', 'Escalation', 'Governance', 'Notes', 'Documents'].map(tab => (
+        {['Education', 'Escalation', 'Governance', 'Notes'].map(tab => (
           <Tabs.Content key={tab} value={tab}>
             <AccountWorkspacePanel account={account} tab={tab} />
           </Tabs.Content>

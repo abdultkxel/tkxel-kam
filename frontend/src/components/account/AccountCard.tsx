@@ -1,5 +1,5 @@
 import * as Tooltip from '@radix-ui/react-tooltip'
-import { ExternalLink, Flag, PenLine } from 'lucide-react'
+import { ExternalLink, PenLine } from 'lucide-react'
 import { CSSProperties } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { RAGBadge } from '@/components/ui/RAGBadge'
@@ -39,10 +39,9 @@ export function AccountCard({ account, className, style }: { account: Account; c
       <article style={style} className={cn('group relative tk-card p-5 transition-[border-color,box-shadow] hover:border-brand-blue/40 hover:shadow-panel', className)}>
         <div className="absolute right-3 top-3 flex items-center gap-1 opacity-100 transition-opacity duration-150 md:opacity-0 md:group-hover:opacity-100 md:group-focus-within:opacity-100">
           <GhostAction label="View account" icon={ExternalLink} onClick={() => navigate(`/accounts/${account.id}`)} />
-          <GhostAction label="Add note" icon={PenLine} />
-          <GhostAction label="Flag for attention" icon={Flag} />
+          <GhostAction label="Add note" icon={PenLine} onClick={() => navigate(`/accounts/${account.id}?tab=notes&addNote=1`)} />
         </div>
-        <div className="pr-28">
+        <div className="pr-20">
           <p className="text-[10px] font-extrabold uppercase tracking-widest text-brand-blue">{account.segment}</p>
           <Link to={`/accounts/${account.id}`} className="mt-1 flex min-h-[44px] items-center rounded-md text-base font-semibold text-ink hover:text-brand-blue">
             {account.name}

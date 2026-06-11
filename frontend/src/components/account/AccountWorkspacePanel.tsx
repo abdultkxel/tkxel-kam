@@ -1,8 +1,8 @@
 import * as Dialog from '@radix-ui/react-dialog'
-import { ArrowRight, BookOpen, CalendarClock, CheckCircle2, FileText, GraduationCap, Loader2, PenLine, Plus, Send, ShieldAlert, X } from 'lucide-react'
+import { ArrowRight, BookOpen, CalendarClock, CheckCircle2, FileText, GraduationCap, Loader2, PenLine, Pencil, Plus, Send, ShieldAlert, Trash2, X } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import { FormEvent, useEffect, useState } from 'react'
-import { Link } from 'react-router-dom'
+import { Link, useSearchParams } from 'react-router-dom'
 import { toast } from 'sonner'
 import { AddGovernanceEventDialog } from '@/components/governance/AddGovernanceEventDialog'
 import { CompleteGovernanceEventDialog } from '@/components/governance/CompleteGovernanceEventDialog'
@@ -406,6 +406,7 @@ type AccountNote = {
 }
 
 function NotesPanel({ account, plans }: { account: Account; plans: RetentionPlan[] }) {
+  const [searchParams, setSearchParams] = useSearchParams()
   const [notes, setNotes] = useState<AccountNote[]>(() => [
     ...plans.map(plan => ({
       id: `plan-${plan.id}`,
@@ -415,26 +416,65 @@ function NotesPanel({ account, plans }: { account: Account; plans: RetentionPlan
     })),
   ])
   const [open, setOpen] = useState(false)
+  const [editingId, setEditingId] = useState('')
   const [title, setTitle] = useState('')
   const [body, setBody] = useState('')
+
+  useEffect(() => {
+    if (searchParams.get('addNote') !== '1') return
+    setEditingId('')
+    setTitle('')
+    setBody('')
+    setOpen(true)
+    const next = new URLSearchParams(searchParams)
+    next.delete('addNote')
+    setSearchParams(next, { replace: true })
+  }, [searchParams, setSearchParams])
 
   function submit(event: FormEvent) {
     event.preventDefault()
     const cleanBody = body.trim()
     if (!cleanBody) return
-    setNotes(current => [
-      {
-        id: `note-${Date.now()}`,
-        title: title.trim() || 'Account note',
-        body: cleanBody,
-        createdAt: new Date().toISOString(),
-      },
-      ...current,
-    ])
+    if (editingId) {
+      setNotes(current => current.map(note => (note.id === editingId ? { ...note, title: title.trim() || 'Account note', body: cleanBody } : note)))
+      toast.success('Note updated')
+    } else {
+      setNotes(current => [
+        {
+          id: `note-${Date.now()}`,
+          title: title.trim() || 'Account note',
+          body: cleanBody,
+          createdAt: new Date().toISOString(),
+        },
+        ...current,
+      ])
+      toast.success('Note added')
+    }
     setTitle('')
     setBody('')
+    setEditingId('')
     setOpen(false)
-    toast.success('Note added')
+  }
+
+  function startEdit(note: AccountNote) {
+    setEditingId(note.id)
+    setTitle(note.title)
+    setBody(note.body)
+    setOpen(true)
+  }
+
+  function removeNote(note: AccountNote) {
+    if (!window.confirm(`Delete "${note.title}"?`)) return
+    setNotes(current => current.filter(item => item.id !== note.id))
+    toast.success('Note deleted')
+  }
+
+  function handleOpenChange(nextOpen: boolean) {
+    setOpen(nextOpen)
+    if (nextOpen) return
+    setEditingId('')
+    setTitle('')
+    setBody('')
   }
 
   return (
@@ -457,7 +497,8 @@ function NotesPanel({ account, plans }: { account: Account; plans: RetentionPlan
           </div>
           <AddAccountNoteDialog
             open={open}
-            onOpenChange={setOpen}
+            onOpenChange={handleOpenChange}
+            editing={Boolean(editingId)}
             title={title}
             body={body}
             onTitleChange={setTitle}
@@ -467,17 +508,25 @@ function NotesPanel({ account, plans }: { account: Account; plans: RetentionPlan
         </div>
       </header>
       <div className="grid gap-5 p-5 xl:grid-cols-[minmax(0,1fr)_280px]">
-        <div className="grid gap-3">
+        <div className="grid gap-2">
           {notes.length ? notes.map(note => (
-            <article key={note.id} className="rounded-lg border border-surface-border bg-white p-4 transition-colors hover:border-brand-blue/40">
-              <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
-                <div className="min-w-0">
+            <article key={note.id} className="rounded-md border border-surface-border bg-white px-4 py-3 transition-colors hover:border-brand-blue/40">
+              <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+                <div className="min-w-0 flex-1">
                   <h4 className="text-sm font-semibold text-ink">{note.title}</h4>
-                  <p className="mt-1 max-w-3xl text-sm leading-6 text-ink-secondary">{note.body}</p>
+                  <p className="mt-1 max-w-3xl text-sm leading-5 text-ink-secondary">{note.body}</p>
+                  <p className="mt-2 text-xs font-medium text-ink-tertiary">Added {formatDate(note.createdAt)}</p>
                 </div>
-                <StatusBadge tone="blue" label="Note" />
+                <div className="flex shrink-0 items-center gap-2">
+                  <StatusBadge tone="blue" label="Note" />
+                  <button type="button" className="tk-icon-button h-9 w-9 bg-white" aria-label={`Edit ${note.title}`} onClick={() => startEdit(note)}>
+                    <Pencil className="h-4 w-4" />
+                  </button>
+                  <button type="button" className="tk-icon-button h-9 w-9 bg-white text-rag-red hover:border-rag-red/40 hover:bg-rag-red/10" aria-label={`Delete ${note.title}`} onClick={() => removeNote(note)}>
+                    <Trash2 className="h-4 w-4" />
+                  </button>
+                </div>
               </div>
-              <p className="mt-3 text-xs font-medium text-ink-tertiary">Added {formatDate(note.createdAt)}</p>
             </article>
           )) : (
             <EmptyWorkspaceState icon={BookOpen} title="No notes yet" body="Add a note to capture account planning context." />
@@ -492,6 +541,7 @@ function NotesPanel({ account, plans }: { account: Account; plans: RetentionPlan
 function AddAccountNoteDialog({
   open,
   onOpenChange,
+  editing,
   title,
   body,
   onTitleChange,
@@ -500,6 +550,7 @@ function AddAccountNoteDialog({
 }: {
   open: boolean
   onOpenChange: (open: boolean) => void
+  editing: boolean
   title: string
   body: string
   onTitleChange: (value: string) => void
@@ -520,7 +571,7 @@ function AddAccountNoteDialog({
           <div className="flex items-start justify-between gap-4 border-b border-surface-border pb-4">
             <div>
               <p className="text-[10px] font-extrabold uppercase tracking-widest text-brand-blue">Account notes</p>
-              <Dialog.Title className="font-display text-2xl font-bold text-ink">Add note</Dialog.Title>
+              <Dialog.Title className="font-display text-2xl font-bold text-ink">{editing ? 'Edit note' : 'Add note'}</Dialog.Title>
               <Dialog.Description className="mt-1 text-sm text-ink-secondary">Capture a planning note, decision, or client context update.</Dialog.Description>
             </div>
             <Dialog.Close className="tk-icon-button" aria-label="Close note dialog">
@@ -539,8 +590,8 @@ function AddAccountNoteDialog({
             <div className="flex justify-end gap-2 border-t border-surface-border pt-4">
               <Dialog.Close type="button" className="tk-button-secondary">Cancel</Dialog.Close>
               <button type="submit" className="tk-button-primary">
-                <Plus className="h-4 w-4" />
-                Save note
+                {editing ? <Pencil className="h-4 w-4" /> : <Plus className="h-4 w-4" />}
+                {editing ? 'Save changes' : 'Save note'}
               </button>
             </div>
           </form>
