@@ -7,10 +7,14 @@ import { Playbook } from '@/pages/Playbook'
 import { Tasks } from '@/pages/Tasks'
 import { useAccountStore } from '@/stores/accountStore'
 
+const mockedAuth = vi.hoisted(() => ({
+  user: { id: 'usr-admin', name: 'Admin User', role: 'super_admin', email: 'admin@example.com', avatarInitials: 'AU' },
+}))
+
 vi.mock('@/contexts/AuthContext', () => ({
   useAuth: () => ({
     token: 'test-token',
-    user: { id: 'usr-admin', name: 'Admin User', role: 'admin', email: 'admin@example.com', avatarInitials: 'AU' },
+    user: mockedAuth.user,
   }),
 }))
 
@@ -101,6 +105,7 @@ function jsonResponse(body: unknown, status = 200) {
 
 describe('playbooks, tasks, and calendar UI', () => {
   beforeEach(() => {
+    mockedAuth.user = { id: 'usr-admin', name: 'Admin User', role: 'super_admin', email: 'admin@example.com', avatarInitials: 'AU' }
     useAccountStore.setState({ accounts: [account] as any })
   })
 
@@ -124,6 +129,19 @@ describe('playbooks, tasks, and calendar UI', () => {
 
     await userEvent.click(screen.getAllByRole('button', { name: /execute/i })[0])
     await waitFor(() => expect(fetchMock.mock.calls.some(call => String(call[0]).includes('/api/playbooks/tpl-1/execute') && call[1]?.method === 'POST')).toBe(true))
+  })
+
+  it('shows only the playbook manual to non-super-admin users', async () => {
+    mockedAuth.user = { id: 'usr-admin', name: 'Admin User', role: 'admin', email: 'admin@example.com', avatarInitials: 'AU' }
+    const fetchMock = vi.fn(async () => jsonResponse({}))
+    vi.stubGlobal('fetch', fetchMock)
+
+    render(<Playbook />, { wrapper: MemoryRouter })
+
+    expect(screen.getByText('TKXEL KEY ACCOUNT MANAGEMENT (KAM) PLAYBOOK')).toBeInTheDocument()
+    expect(screen.queryByText('Template catalog')).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /operations/i })).not.toBeInTheDocument()
+    expect(fetchMock).not.toHaveBeenCalled()
   })
 
   it('loads tasks, sends filters, and posts note evidence', async () => {

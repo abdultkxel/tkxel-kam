@@ -157,7 +157,8 @@ export function Playbook() {
   const [weakMetric, setWeakMetric] = useState<string>(signals[0]?.reasonCodes?.[0] ?? '')
   const [form, setForm] = useState<PlaybookTemplatePayload>(blankTemplate)
   const [editingId, setEditingId] = useState('')
-  const canConfigure = ['super_admin', 'admin', 'kam_head'].includes(user.role)
+  const isSuperAdmin = user.role === 'super_admin'
+  const canConfigure = isSuperAdmin
   const readOnly = user.role === 'leadership_viewer'
   const selectedTemplate = useMemo(() => templates.find(template => template.id === selectedTemplateId) ?? templates[0], [selectedTemplateId, templates])
   const activeTemplates = templates.filter(template => template.is_active)
@@ -168,7 +169,7 @@ export function Playbook() {
   }, [accounts, selectedAccountId])
 
   useEffect(() => {
-    if (!token) return
+    if (!token || !isSuperAdmin) return
     let cancelled = false
     setLoading(true)
     setError('')
@@ -191,17 +192,17 @@ export function Playbook() {
     return () => {
       cancelled = true
     }
-  }, [activeState, ownerRuleFilter, page, search, selectedTemplateId, sort, token])
+  }, [activeState, isSuperAdmin, ownerRuleFilter, page, search, selectedTemplateId, sort, token])
 
   useEffect(() => {
-    if (!token) return
+    if (!token || !isSuperAdmin) return
     listRuntimeCustomFields(token, 'playbooks_tasks_calendar')
       .then(setCustomFields)
       .catch(() => setCustomFields([]))
-  }, [token])
+  }, [isSuperAdmin, token])
 
   useEffect(() => {
-    if (!token) return
+    if (!token || !isSuperAdmin) return
     let cancelled = false
     setRecommendationLoading(true)
     const params = new URLSearchParams()
@@ -221,7 +222,7 @@ export function Playbook() {
     return () => {
       cancelled = true
     }
-  }, [selectedAccountId, signalType, signals, token, weakMetric])
+  }, [isSuperAdmin, selectedAccountId, signalType, signals, token, weakMetric])
 
   async function refreshTemplates() {
     setPage(1)
@@ -311,7 +312,11 @@ export function Playbook() {
   }
 
   if (mode === 'manual') {
-    return <ManualPlaybook onOperations={() => setMode('operations')} />
+    return <ManualPlaybook onOperations={isSuperAdmin ? () => setMode('operations') : undefined} />
+  }
+
+  if (!isSuperAdmin) {
+    return <ManualPlaybook />
   }
 
   return (
@@ -620,7 +625,7 @@ function TemplateForm({ form, setForm, customFields, customValues, customErrors,
   )
 }
 
-function ManualPlaybook({ onOperations }: { onOperations: () => void }) {
+function ManualPlaybook({ onOperations }: { onOperations?: () => void }) {
   const [activeSection, setActiveSection] = useState(manualSections[0]?.id ?? '')
   function scrollToSection(id: string) {
     const target = document.getElementById(id)
@@ -635,7 +640,7 @@ function ManualPlaybook({ onOperations }: { onOperations: () => void }) {
         eyebrow="Customer success playbook"
         title="TKXEL KEY ACCOUNT MANAGEMENT (KAM) PLAYBOOK"
         description="A structured operating manual for account managers, leadership, and partner teams running the Tkxel KAM motion."
-        actions={<button className="tk-button-primary" onClick={onOperations}><Play className="h-4 w-4" />Operations</button>}
+        actions={onOperations ? <button className="tk-button-primary" onClick={onOperations}><Play className="h-4 w-4" />Operations</button> : undefined}
       />
       <div className="grid gap-4 xl:grid-cols-[280px_minmax(0,1fr)]">
         <aside className="tk-card h-fit p-3 xl:sticky xl:top-20">

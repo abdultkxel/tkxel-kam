@@ -680,7 +680,7 @@ function ThinkingLoader() {
           ))}
         </span>
       </div>
-      <p className="text-xs leading-5 text-ink-tertiary">KAM AI checks authorized records first unless you explicitly ask for OpenAI, LLM, AI, web, Google, or outside-KAM search.</p>
+      <p className="text-xs leading-5 text-ink-tertiary">KAM AI checks authorized records first, then combines OpenAI web search when you ask for public, industry, market, web, Google, or outside-KAM context.</p>
     </div>
   )
 }
