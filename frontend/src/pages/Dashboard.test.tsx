@@ -297,7 +297,7 @@ function portfolioDashboard() {
         data_scope: 'portfolio',
         primary_route: '/accounts',
         value: null,
-        items: [{ owner_id: 'usr-am', owner: 'Account Manager', accounts: 2, status: 'accounts', route: '/accounts?primary_am=usr-am' }],
+        items: [{ owner_id: 'usr-am', owner: 'Account Manager', accounts: 2, status: 'accounts', route: '/accounts?am_id=usr-am' }],
         metadata: {},
         error: null,
       },
@@ -620,7 +620,7 @@ describe('Dashboard', () => {
     expect(screen.getByRole('link', { name: /open opps 8/i })).toHaveAttribute('href', '/opportunities?openOnly=true')
     expect(screen.getByRole('link', { name: /total value \$640/i })).toHaveAttribute('href', '/opportunities?openOnly=true')
     expect(screen.getByRole('link', { name: /stalled 1 >90 days no move/i })).toHaveAttribute('href', '/opportunities?stalled=true')
-    expect(screen.getByRole('link', { name: /account manager 2 accounts/i })).toHaveAttribute('href', '/accounts?primary_am=usr-am')
+    expect(screen.getByRole('link', { name: /account manager 2 accounts/i })).toHaveAttribute('href', '/accounts?am_id=usr-am')
   })
 
   it('requests the next dashboard page from the portfolio table pager', async () => {

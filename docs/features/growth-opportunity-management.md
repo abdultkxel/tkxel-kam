@@ -511,6 +511,7 @@ The goal is to make opportunities complete without taking ownership of adjacent 
 - Frontend:
   - Replaced the local-only opportunity path with an API service and async Zustand store.
   - Updated Opportunities with API-backed board/list filters, totals, create flow, detail dialog, stage movement, decisions, action items, and archive.
+  - Refined the Opportunities filter surface into a modern search-and-chip control bar with stage chips, quick status toggles, compact advanced filters, removable active chips, and integrated board/list switching.
   - Added target-to, service-line, source-context, pagination, engagement selection, restore, archive confirmation, expandable history, and inline side-panel error handling.
   - Updated board/card components for API-confirmed drag movement, win/loss reason capture, source context, and detail entry.
   - Loaded opportunity data in the app shell so Dashboard, Account 360, Analytics, AI search, and handover consumers use normalized API-backed opportunity records.
@@ -519,6 +520,7 @@ The goal is to make opportunities complete without taking ownership of adjacent 
 - Test coverage:
   - Added backend API coverage for create/list/stage/decision/action/archive/restore/type lifecycle.
   - Added frontend opportunity service mapping and create/update payload coverage.
+  - Added frontend coverage for the modern Opportunities filter controls and URL-backed query parameters.
 
 ## Handoff Notes
 

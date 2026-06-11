@@ -114,7 +114,7 @@ describe('Accounts', () => {
     })
   })
 
-  it('renders account cards and sends search, filters, sorting, and pagination to the API', async () => {
+  it('renders account cards and sends search, filters, sorting, and pagination to the API without segment filtering', async () => {
     const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
       const url = new URL(String(input))
       if (url.pathname.endsWith('/api/onboarding/drafts')) return jsonResponse(draftPage())
@@ -136,14 +136,14 @@ describe('Accounts', () => {
     expect(await screen.findByText('Cafe Zupas')).toBeInTheDocument()
     expect(screen.queryByText('Matched accounts')).not.toBeInTheDocument()
     expect(screen.queryByText('Page ARR')).not.toBeInTheDocument()
+    expect(screen.queryByText('Segments')).not.toBeInTheDocument()
     expect(screen.getByText('account.manager.user@tkxel.com')).toBeInTheDocument()
     expect(screen.getAllByText('$1.3M').length).toBeGreaterThan(0)
 
     await userEvent.type(screen.getByPlaceholderText(/account name, am, or email/i), 'Cafe')
     await userEvent.selectOptions(screen.getByLabelText(/stage/i), 'Onboarding')
-    await userEvent.selectOptions(screen.getByLabelText(/risk/i), 'critical')
+    await userEvent.click(screen.getByRole('button', { name: /^critical$/i }))
     await userEvent.selectOptions(screen.getByLabelText(/sort/i), 'commercial_value')
-    await userEvent.click(screen.getByRole('button', { name: /enterprise/i }))
     await userEvent.click(screen.getByRole('button', { name: /next/i }))
 
     await waitFor(() => expect(fetchMock.mock.calls.some(call => {
@@ -153,11 +153,36 @@ describe('Accounts', () => {
         url.includes('search=Cafe') &&
         url.includes('lifecycle_status=Onboarding') &&
         url.includes('risk_status=critical') &&
-        url.includes('segment=Enterprise') &&
         url.includes('sort=commercial_value') &&
-        url.includes('page=2')
+        url.includes('page=2') &&
+        !url.includes('segment=')
       )
     })).toBe(true))
+  })
+
+  it('ignores legacy segment query params after the segment filter removal', async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = new URL(String(input))
+      if (url.pathname.endsWith('/api/onboarding/drafts')) return jsonResponse(draftPage())
+      return jsonResponse(paginated(1, 12))
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    render(
+      <MemoryRouter initialEntries={['/accounts?segment=Enterprise']}>
+        <Routes>
+          <Route path="/accounts" element={<Accounts />} />
+        </Routes>
+      </MemoryRouter>,
+    )
+
+    expect(await screen.findByText('Cafe Zupas')).toBeInTheDocument()
+
+    await waitFor(() => expect(fetchMock.mock.calls.some(call => {
+      const url = new URL(String(call[0]), 'http://localhost')
+      return url.pathname.endsWith('/api/accounts') && !url.searchParams.has('segment')
+    })).toBe(true))
+    expect(fetchMock.mock.calls.every(call => !String(call[0]).includes('segment='))).toBe(true)
   })
 
   it('uses server-side sorting when sortable table headers are clicked', async () => {
@@ -191,6 +216,44 @@ describe('Accounts', () => {
         url.includes('direction=asc') &&
         url.includes('page=1')
       )
+    })).toBe(true))
+  })
+
+  it('preserves AM workload query aliases when requesting accounts', async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = new URL(String(input))
+      if (url.pathname.endsWith('/api/onboarding/account-managers')) {
+        return jsonResponse([
+          {
+            id: 'usr-am',
+            email: 'account.manager.user@tkxel.com',
+            full_name: 'Account Manager KAM',
+            role: 'account_manager',
+            title: 'Account Manager',
+            is_active: true,
+          },
+        ])
+      }
+      if (url.pathname.endsWith('/api/onboarding/drafts')) return jsonResponse(draftPage())
+      return jsonResponse(paginated(1, 12))
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    render(
+      <MemoryRouter initialEntries={['/accounts?am_id=usr-am']}>
+        <Routes>
+          <Route path="/accounts" element={<Accounts />} />
+        </Routes>
+      </MemoryRouter>,
+    )
+
+    expect(await screen.findByText('Cafe Zupas')).toBeInTheDocument()
+    expect(await screen.findByText('AM workload: Account Manager KAM')).toBeInTheDocument()
+    expect(screen.getByRole('combobox', { name: /^account manager$/i })).toHaveValue('usr-am')
+
+    await waitFor(() => expect(fetchMock.mock.calls.some(call => {
+      const url = new URL(String(call[0]), 'http://localhost')
+      return url.pathname.endsWith('/api/accounts') && url.searchParams.get('am_id') === 'usr-am' && !url.searchParams.has('primary_am')
     })).toBe(true))
   })
 

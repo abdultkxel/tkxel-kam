@@ -858,6 +858,21 @@ class SourceLinkRead(BaseModel):
     title: str | None = None
     url: str
 
+    @model_validator(mode="before")
+    @classmethod
+    def normalize_legacy_source_link(cls, value: Any) -> Any:
+        if not isinstance(value, dict):
+            return value
+        normalized = dict(value)
+        if not normalized.get("title") and normalized.get("label"):
+            normalized["title"] = normalized["label"]
+        if not normalized.get("url"):
+            for key in ("route", "source_route", "link_url", "file_url"):
+                if normalized.get(key):
+                    normalized["url"] = normalized[key]
+                    break
+        return normalized
+
 
 class SourceLinkRequest(BaseModel):
     title: str | None = None

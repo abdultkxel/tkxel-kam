@@ -82,7 +82,7 @@ export function EngagementsPanel({ account }: { account: Account }) {
         render: engagement => {
           const status = getRenewalStatus(engagement)
           return (
-            <div className={cn('min-w-[220px]', isUrgentRenewalStatus(status) && 'rounded-md border-l-4 border-brand-orange bg-brand-orange/10 py-2 pl-3 pr-2')}>
+            <div className={cn('min-w-[220px]', isUrgentRenewalStatus(status) && 'rounded-md bg-brand-orange/10 px-3 py-2 ring-1 ring-brand-orange/20')}>
               <p className="font-semibold text-ink">{engagement.name}</p>
               <div className="mt-2 flex flex-wrap gap-1.5">
                 <Badge tone={statusTone(engagement.status)}>{titleize(engagement.status)}</Badge>

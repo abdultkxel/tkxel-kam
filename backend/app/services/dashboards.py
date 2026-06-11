@@ -807,7 +807,7 @@ class DashboardsService:
                     "owner_id": row.user_id,
                     "owner": row.user_name,
                     "account_ids": set(),
-                    "route": f"/accounts?primary_am={row.user_id}" if row.user_id else "/accounts",
+                    "route": f"/accounts?am_id={row.user_id}" if row.user_id else "/accounts",
                 },
             )
             entry["account_ids"].add(row.account_id)
