@@ -31,7 +31,6 @@ type EngagementFormField =
   | 'healthStatus'
   | 'renewalRisk'
   | 'resourceDependencyNotes'
-  | 'risksText'
   | 'sourceLinksText'
 
 interface EngagementFormState {
@@ -51,7 +50,6 @@ interface EngagementFormState {
   healthStatus: EngagementHealthStatus
   renewalRisk: EngagementRenewalRisk
   resourceDependencyNotes: string
-  risksText: string
   sourceLinksText: string
 }
 
@@ -211,16 +209,11 @@ export function EngagementFormDialog({ account, engagement, open, onOpenChange, 
                     <SelectField label="Renewal risk" field="renewalRisk" value={form.renewalRisk} options={renewalRisks} error={fieldErrors.renewalRisk} onChange={updateField} />
                   </section>
 
-                  <section className="grid gap-4 rounded-lg border border-surface-border bg-white p-4 md:grid-cols-2">
+                  <section className="grid gap-4 rounded-lg border border-surface-border bg-white p-4">
                     <label className="block md:col-span-2">
                       <span className="tk-label">Resource dependency notes</span>
                       <textarea className={fieldClass(fieldErrors.resourceDependencyNotes, 'min-h-[96px] resize-y')} value={form.resourceDependencyNotes} onChange={event => updateField('resourceDependencyNotes', event.target.value)} aria-invalid={Boolean(fieldErrors.resourceDependencyNotes)} />
                       <FieldError id="engagement-resource-notes-error" message={fieldErrors.resourceDependencyNotes} />
-                    </label>
-                    <label className="block">
-                      <span className="tk-label">Risks</span>
-                      <textarea className={fieldClass(fieldErrors.risksText, 'min-h-[120px] resize-y')} value={form.risksText} onChange={event => updateField('risksText', event.target.value)} placeholder={'Notice window is close\nNamed backup coverage incomplete'} aria-invalid={Boolean(fieldErrors.risksText)} />
-                      <FieldError id="engagement-risks-error" message={fieldErrors.risksText} />
                     </label>
                     <label className="block">
                       <span className="tk-label">Source links</span>
@@ -344,7 +337,6 @@ function initialForm(account: Pick<Account, 'ownerId' | 'ownerName'>, engagement
     healthStatus: engagement?.healthStatus ?? 'unknown',
     renewalRisk: engagement?.renewalRisk ?? 'unknown',
     resourceDependencyNotes: engagement?.resourceDependencyNotes ?? engagement?.resourceDependency ?? '',
-    risksText: engagement?.risks.join('\n') ?? '',
     sourceLinksText: linksToText(engagement?.sourceLinks ?? []),
   }
 }
@@ -389,7 +381,6 @@ function buildPayload(form: EngagementFormState): EngagementCreatePayload | Enga
     healthStatus: form.healthStatus,
     renewalRisk: form.renewalRisk,
     resourceDependencyNotes: optionalText(form.resourceDependencyNotes),
-    risks: splitLines(form.risksText),
     sourceLinks: parseSourceLinks(form.sourceLinksText).links,
   }
 }
@@ -482,6 +473,5 @@ const fieldAliases: Record<string, string> = {
   renewal_risk: 'renewalRisk',
   resource_dependency: 'resourceDependencyNotes',
   resource_dependency_notes: 'resourceDependencyNotes',
-  risks: 'risksText',
   source_links: 'sourceLinksText',
 }

@@ -257,46 +257,33 @@ export function Accounts() {
 
       <section className="tk-card mb-4 overflow-hidden">
         <div className="border-b border-surface-border p-4">
-          <div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
-            <label className="relative min-w-0 flex-1">
-              <span className="sr-only">Search accounts</span>
-              <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-ink-tertiary" />
-              <input className="tk-input pl-10" value={search} onChange={event => setFilter('q', event.target.value)} placeholder="Search account name, AM, or email" />
+          <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-[minmax(280px,1fr)_minmax(150px,180px)_minmax(120px,150px)_minmax(180px,220px)] xl:items-end 2xl:grid-cols-[minmax(320px,1fr)_minmax(160px,190px)_minmax(130px,160px)_minmax(190px,230px)_minmax(190px,auto)]">
+            <label className="min-w-0 space-y-1">
+              <span className="text-xs font-semibold uppercase tracking-wider text-ink-secondary">Search</span>
+              <span className="relative block">
+                <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-ink-tertiary" />
+                <input className="tk-input pl-10" value={search} onChange={event => setFilter('q', event.target.value)} placeholder="Search account name, AM, or email" />
+              </span>
             </label>
-            <div className="flex flex-wrap items-center gap-2">
-              <SelectField label="Sort">
-                <select className="tk-input min-w-[170px]" value={sort} onChange={event => setFilter('sort', event.target.value)}>
-                  <option value="name">Name</option>
-                  <option value="lifecycle_status">Lifecycle</option>
-                  <option value="risk_status">Risk</option>
-                  <option value="owner_name">Account manager</option>
-                  <option value="segment">Segment</option>
-                  <option value="commercial_value">Commercial value</option>
-                  <option value="health">Health</option>
-                  <option value="next_governance_at">Next governance</option>
-                  <option value="updated_at">Updated</option>
-                </select>
-              </SelectField>
-              <SelectField label="Order">
-                <select className="tk-input min-w-[120px]" value={direction} onChange={event => setFilter('direction', event.target.value)}>
-                  <option value="asc">Asc</option>
-                  <option value="desc">Desc</option>
-                </select>
-              </SelectField>
-              <div className="inline-flex rounded-md border border-surface-border bg-surface-secondary p-1">
-                <button className={cn('inline-flex min-h-[38px] items-center gap-2 rounded px-3 text-sm font-semibold transition-colors', view === 'cards' ? 'bg-white text-brand-blue shadow-sm' : 'text-ink-secondary hover:text-ink')} onClick={() => setView('cards')} aria-label="Card view" aria-pressed={view === 'cards'}>
-                  <LayoutGrid className="h-4 w-4" />
-                  Cards
-                </button>
-                <button className={cn('inline-flex min-h-[38px] items-center gap-2 rounded px-3 text-sm font-semibold transition-colors', view === 'table' ? 'bg-white text-brand-blue shadow-sm' : 'text-ink-secondary hover:text-ink')} onClick={() => setView('table')} aria-label="Table view" aria-pressed={view === 'table'}>
-                  <Table2 className="h-4 w-4" />
-                  Table
-                </button>
-              </div>
-            </div>
-          </div>
-
-          <div className="mt-4 grid gap-3 md:grid-cols-2 lg:grid-cols-[minmax(180px,0.8fr)_minmax(220px,1fr)]">
+            <SelectField label="Sort">
+              <select className="tk-input" value={sort} onChange={event => setFilter('sort', event.target.value)}>
+                <option value="name">Name</option>
+                <option value="lifecycle_status">Lifecycle</option>
+                <option value="risk_status">Risk</option>
+                <option value="owner_name">Account manager</option>
+                <option value="segment">Segment</option>
+                <option value="commercial_value">Commercial value</option>
+                <option value="health">Health</option>
+                <option value="next_governance_at">Next governance</option>
+                <option value="updated_at">Updated</option>
+              </select>
+            </SelectField>
+            <SelectField label="Order">
+              <select className="tk-input" value={direction} onChange={event => setFilter('direction', event.target.value)}>
+                <option value="asc">Asc</option>
+                <option value="desc">Desc</option>
+              </select>
+            </SelectField>
             <SelectField label="Stage">
               <select className="tk-input" value={stage} onChange={event => setFilter('stage', event.target.value)}>
                 <option value="">All stages</option>
@@ -313,15 +300,31 @@ export function Accounts() {
                 <option>Archived</option>
               </select>
             </SelectField>
-            {privileged ? (
+            <div className="flex min-w-0 flex-col gap-1 md:col-span-2 xl:col-span-1 xl:col-start-4 xl:items-end 2xl:col-start-auto">
+              <span className="text-xs font-semibold uppercase tracking-wider text-ink-secondary xl:text-right">View</span>
+              <div className="grid min-h-[44px] w-full min-w-0 grid-cols-1 gap-1 rounded-md border border-surface-border bg-surface-secondary p-1 min-[380px]:grid-cols-2 sm:w-fit sm:min-w-[190px]">
+                <button className={cn('inline-flex min-h-[36px] items-center justify-center gap-2 rounded px-3 text-sm font-semibold whitespace-nowrap transition-colors', view === 'cards' ? 'bg-white text-brand-blue shadow-sm' : 'text-ink-secondary hover:text-ink')} onClick={() => setView('cards')} aria-label="Card view" aria-pressed={view === 'cards'}>
+                  <LayoutGrid className="h-4 w-4 shrink-0" />
+                  Cards
+                </button>
+                <button className={cn('inline-flex min-h-[36px] items-center justify-center gap-2 rounded px-3 text-sm font-semibold whitespace-nowrap transition-colors', view === 'table' ? 'bg-white text-brand-blue shadow-sm' : 'text-ink-secondary hover:text-ink')} onClick={() => setView('table')} aria-label="Table view" aria-pressed={view === 'table'}>
+                  <Table2 className="h-4 w-4 shrink-0" />
+                  Table
+                </button>
+              </div>
+            </div>
+          </div>
+
+          {privileged ? (
+            <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-[minmax(220px,0.5fr)]">
               <SelectField label="Account manager">
                 <select className="tk-input" value={activeAm} onChange={event => setAccountManagerFilter(event.target.value)}>
                   <option value="">All account managers</option>
                   {accountManagerOptions.map(manager => <option key={manager.id} value={manager.id}>{manager.name}</option>)}
                 </select>
               </SelectField>
-            ) : null}
-          </div>
+            </div>
+          ) : null}
 
           <div className="mt-4 flex flex-wrap items-center gap-2">
             <span className="text-xs font-semibold uppercase tracking-wider text-ink-secondary">Risk</span>

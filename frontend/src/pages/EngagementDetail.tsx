@@ -1,3 +1,4 @@
+import * as Dialog from '@radix-ui/react-dialog'
 import * as Tabs from '@radix-ui/react-tabs'
 import {
   AlertTriangle,
@@ -10,11 +11,14 @@ import {
   FileText,
   History,
   Link2,
+  Loader2,
   Pencil,
+  Plus,
   ShieldCheck,
   TrendingUp,
+  X,
 } from 'lucide-react'
-import type { ReactNode } from 'react'
+import type { FormEvent, ReactNode } from 'react'
 import { useState } from 'react'
 import { Link, Navigate, useNavigate, useParams } from 'react-router-dom'
 import { toast } from 'sonner'
@@ -23,7 +27,7 @@ import { ConfirmDialog } from '@/components/admin/ConfirmDialog'
 import { EmptyState } from '@/components/ui/EmptyState'
 import { PageHeader } from '@/components/ui/PageHeader'
 import { Skeleton } from '@/components/ui/Skeleton'
-import { useArchiveEngagement, useEngagement, useEngagementTimeline } from '@/hooks/useEngagements'
+import { useArchiveEngagement, useEngagement, useEngagementTimeline, useUpdateEngagement } from '@/hooks/useEngagements'
 import type { TimelineEntry } from '@/types/timeline'
 import type { EngagementHealthStatus, EngagementRecord, EngagementRenewalRisk, EngagementRenewalStatus, EngagementStatus } from '@/types/v3'
 import { cn } from '@/utils/cn'
@@ -38,11 +42,13 @@ export function EngagementDetail() {
   const navigate = useNavigate()
   const { accountId, engagementId } = useParams()
   const [formOpen, setFormOpen] = useState(false)
+  const [riskOpen, setRiskOpen] = useState(false)
   const [archiveOpen, setArchiveOpen] = useState(false)
   const [activeTab, setActiveTab] = useState<DetailTab>('Profile')
   const { data: engagement, isLoading, error, refetch } = useEngagement(engagementId)
   const { events, isLoading: timelineLoading, error: timelineError, refetch: refetchTimeline } = useEngagementTimeline(engagementId, { page: 1, page_size: 50 })
   const { archiveEngagement, isLoading: archiving } = useArchiveEngagement()
+  const { updateEngagement, isLoading: savingRisk } = useUpdateEngagement()
 
   if (!engagementId) return <Navigate to={accountId ? `/accounts/${accountId}?tab=engagements` : '/accounts'} replace />
 
@@ -90,6 +96,16 @@ export function EngagementDetail() {
     } catch (error) {
       toast.error(error instanceof Error ? error.message : 'Engagement could not be archived')
     }
+  }
+
+  async function addRisks(risks: string[]) {
+    const existingRisks = engagement?.risks ?? []
+    const nextRisks = [...existingRisks]
+    risks.forEach(risk => {
+      if (!nextRisks.some(item => item.toLowerCase() === risk.toLowerCase())) nextRisks.push(risk)
+    })
+    await updateEngagement(currentEngagementId, { risks: nextRisks })
+    await Promise.allSettled([refetch(), refetchTimeline()])
   }
 
   return (
@@ -169,7 +185,7 @@ export function EngagementDetail() {
         </Tabs.Content>
 
         <Tabs.Content value="Risks">
-          <RisksTab engagement={engagement} onEdit={() => setFormOpen(true)} />
+          <RisksTab engagement={engagement} onAddRisk={() => setRiskOpen(true)} />
         </Tabs.Content>
 
         <Tabs.Content value="Timeline">
@@ -183,6 +199,14 @@ export function EngagementDetail() {
         open={formOpen}
         onOpenChange={setFormOpen}
         onSaved={() => Promise.allSettled([refetch(), refetchTimeline()])}
+      />
+      <AddEngagementRiskDialog
+        open={riskOpen}
+        onOpenChange={setRiskOpen}
+        engagementName={engagement.name}
+        existingRisks={engagement.risks}
+        isSaving={savingRisk}
+        onSubmit={addRisks}
       />
       <ConfirmDialog
         open={archiveOpen}
@@ -281,7 +305,7 @@ function DeliveryHealthTab({ engagement, healthStatus }: { engagement: Engagemen
   )
 }
 
-function RisksTab({ engagement, onEdit }: { engagement: EngagementRecord; onEdit: () => void }) {
+function RisksTab({ engagement, onAddRisk }: { engagement: EngagementRecord; onAddRisk: () => void }) {
   return (
     <section className="tk-card overflow-hidden">
       <SectionHeader
@@ -289,9 +313,9 @@ function RisksTab({ engagement, onEdit }: { engagement: EngagementRecord; onEdit
         title="Risks"
         eyebrow="Risk register"
         actions={
-          <button className="tk-button-secondary" onClick={onEdit}>
-            <Pencil className="h-4 w-4" />
-            Edit Engagement
+          <button className="tk-button-primary" onClick={onAddRisk}>
+            <Plus className="h-4 w-4" />
+            Add risk
           </button>
         }
       />
@@ -312,6 +336,122 @@ function RisksTab({ engagement, onEdit }: { engagement: EngagementRecord; onEdit
         )}
       </div>
     </section>
+  )
+}
+
+function AddEngagementRiskDialog({
+  open,
+  onOpenChange,
+  engagementName,
+  existingRisks,
+  isSaving,
+  onSubmit,
+}: {
+  open: boolean
+  onOpenChange: (open: boolean) => void
+  engagementName: string
+  existingRisks: string[]
+  isSaving: boolean
+  onSubmit: (risks: string[]) => Promise<void>
+}) {
+  const [riskText, setRiskText] = useState('')
+  const [error, setError] = useState('')
+
+  function close(nextOpen: boolean) {
+    if (isSaving) return
+    onOpenChange(nextOpen)
+    if (!nextOpen) {
+      setRiskText('')
+      setError('')
+    }
+  }
+
+  async function submit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    const risks = splitRiskLines(riskText)
+    const duplicateRisks = risks.filter(risk => existingRisks.some(item => item.toLowerCase() === risk.toLowerCase()))
+    const newRisks = risks.filter(risk => !existingRisks.some(item => item.toLowerCase() === risk.toLowerCase()))
+
+    if (!risks.length) {
+      setError('Add at least one risk.')
+      return
+    }
+    if (!newRisks.length) {
+      setError(duplicateRisks.length === 1 ? 'That risk is already on this engagement.' : 'Those risks are already on this engagement.')
+      return
+    }
+
+    setError('')
+    try {
+      await onSubmit(newRisks)
+      toast.success(newRisks.length === 1 ? 'Risk added' : `${newRisks.length} risks added`)
+      setRiskText('')
+      onOpenChange(false)
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Risk could not be saved'
+      setError(message)
+      toast.error(message)
+    }
+  }
+
+  return (
+    <Dialog.Root open={open} onOpenChange={close}>
+      <Dialog.Portal>
+        <Dialog.Overlay className="fixed inset-0 z-40 bg-ink/40" />
+        <Dialog.Content className="fixed left-1/2 top-1/2 z-50 max-h-[92vh] w-[min(560px,calc(100vw-2rem))] -translate-x-1/2 -translate-y-1/2 overflow-y-auto rounded-xl border border-surface-border bg-white p-5 shadow-panel">
+          <div className="flex items-start justify-between gap-4 border-b border-surface-border pb-4">
+            <div className="min-w-0">
+              <p className="text-[10px] font-extrabold uppercase tracking-widest text-brand-blue">Risk register</p>
+              <Dialog.Title className="font-display text-2xl font-bold text-ink">Add engagement risk</Dialog.Title>
+              <Dialog.Description className="mt-1 text-sm leading-6 text-ink-secondary">
+                Add one or more risks for {engagementName}. Each line is saved as a separate risk on this engagement.
+              </Dialog.Description>
+            </div>
+            <Dialog.Close className="tk-icon-button shrink-0" aria-label="Close risk form" disabled={isSaving}>
+              <X className="h-5 w-5" />
+            </Dialog.Close>
+          </div>
+
+          <form onSubmit={submit} className="mt-5 space-y-4" noValidate>
+            {existingRisks.length ? (
+              <div className="rounded-lg border border-surface-border bg-surface-secondary p-3">
+                <p className="text-xs font-semibold uppercase tracking-wider text-ink-secondary">Existing risks</p>
+                <div className="mt-2 flex flex-wrap gap-2">
+                  {existingRisks.map((risk, index) => (
+                    <span key={`${risk}-${index}`} className="rounded-full border border-brand-orange/20 bg-white px-2.5 py-1 text-xs font-semibold text-brand-orange">
+                      {risk}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            ) : null}
+
+            <label className="block">
+              <span className="tk-label">Risk details <span className="text-rag-red">*</span></span>
+              <textarea
+                className={cn('tk-input mt-2 min-h-[150px] resize-y', error && 'border-rag-red focus:border-rag-red focus:ring-rag-red/20')}
+                value={riskText}
+                onChange={event => {
+                  setRiskText(event.target.value)
+                  setError('')
+                }}
+                placeholder={'KYC has not been completed yet\nNamed backup coverage is incomplete'}
+                aria-invalid={Boolean(error)}
+              />
+              {error ? <p className="mt-2 text-xs font-medium text-rag-red">{error}</p> : <p className="mt-2 text-xs text-ink-secondary">Use one line per risk.</p>}
+            </label>
+
+            <div className="flex justify-end gap-2 border-t border-surface-border pt-4">
+              <button type="button" className="tk-button-secondary" onClick={() => close(false)} disabled={isSaving}>Cancel</button>
+              <button type="submit" className="tk-button-primary" disabled={isSaving}>
+                {isSaving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />}
+                {isSaving ? 'Saving...' : 'Add risk'}
+              </button>
+            </div>
+          </form>
+        </Dialog.Content>
+      </Dialog.Portal>
+    </Dialog.Root>
   )
 }
 
@@ -607,6 +747,13 @@ function daysUntil(value?: string | null) {
   const targetDay = Date.UTC(target.getFullYear(), target.getMonth(), target.getDate())
   const todayDay = Date.UTC(today.getFullYear(), today.getMonth(), today.getDate())
   return Math.round((targetDay - todayDay) / (24 * 60 * 60 * 1000))
+}
+
+function splitRiskLines(value: string) {
+  return value
+    .split(/\n/)
+    .map(item => item.trim())
+    .filter(Boolean)
 }
 
 function formatTimelineValue(value: Record<string, unknown>) {
