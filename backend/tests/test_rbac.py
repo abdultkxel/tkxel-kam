@@ -9,11 +9,12 @@ from sqlalchemy.pool import StaticPool
 
 from app.database import Base, get_db
 from app.main import app
-from app.models import User
-from app.rbac import ACTIONS, DEFAULT_ROLES, MODULES
+from app.models import Permission, Role, RolePermission, User
+from app.rbac import DEFAULT_ROLES
+from app.rbac_catalog import PERMISSIONS
 from app.services.seed import seed_default_data
 
-VISIBLE_BASE_ROLE_SLUGS = {"admin", "kam_head", "account_manager", "delivery_lead", "leadership_viewer"}
+VISIBLE_BASE_ROLE_SLUGS = {role.slug for role in DEFAULT_ROLES if role.slug != "super_admin"}
 
 
 @pytest.fixture()
@@ -73,7 +74,30 @@ def test_seed_creates_required_prd_roles_and_permissions(client: TestClient) -> 
     assert expected_roles == VISIBLE_BASE_ROLE_SLUGS
     assert listed_roles == VISIBLE_BASE_ROLE_SLUGS
     assert "super_admin" not in listed_roles
-    assert len(permissions_response.json()) == len(MODULES) * len(ACTIONS)
+    permissions = permissions_response.json()
+    expected_permission_keys = {permission.key for permission in PERMISSIONS}
+    assert len(permissions) == len(expected_permission_keys)
+    assert {permission["key"] for permission in permissions} == expected_permission_keys
+    accounts_view = next(permission for permission in permissions if permission["module"] == "accounts" and permission["action"] == "view_assigned")
+    assert accounts_view["section_name"] == "Accounts"
+    assert accounts_view["action_label"] == "View assigned accounts"
+    assert accounts_view["risk_level"] == "low"
+
+
+def test_seed_removes_non_catalog_permissions_and_grants(db_session: Session) -> None:
+    role = db_session.scalar(select(Role).where(Role.slug == "account_manager"))
+    assert role is not None
+    stale_permission = Permission(module="account_overview", action="view", description="Old generic permission")
+    db_session.add(stale_permission)
+    db_session.flush()
+    stale_permission_id = stale_permission.id
+    db_session.add(RolePermission(role_id=role.id, permission_id=stale_permission.id, allowed=True))
+    db_session.commit()
+
+    seed_default_data(db_session)
+
+    assert db_session.scalar(select(Permission).where(Permission.module == "account_overview", Permission.action == "view")) is None
+    assert db_session.scalar(select(RolePermission).where(RolePermission.permission_id == stale_permission_id)) is None
 
 
 def test_seed_creates_manageable_user_for_each_default_role_and_hides_super_admin(client: TestClient) -> None:
@@ -107,9 +131,9 @@ def test_admin_and_kam_head_have_all_permissions_while_account_manager_requires_
     account_manager_response = client.get("/api/admin/roles/account_manager", headers=headers)
     assert account_manager_response.status_code == 200
     account_manager_role = account_manager_response.json()
-    assert not permission_is_allowed(account_manager_role, "kyc", "approve")
-    assert permission_is_allowed(account_manager_role, "account_onboarding_workspace", "create")
-    assert permission_is_allowed(account_manager_role, "kyc", "create")
+    assert not permission_is_allowed(account_manager_role, "kyc", "approve_draft")
+    assert permission_is_allowed(account_manager_role, "onboarding", "create_draft")
+    assert permission_is_allowed(account_manager_role, "kyc", "run_assistant")
 
 
 def test_super_admin_user_and_role_are_protected_from_admin_management(client: TestClient, db_session: Session) -> None:
@@ -221,11 +245,24 @@ def test_role_permissions_can_be_updated(client: TestClient) -> None:
     response = client.put(
         "/api/admin/roles/account_manager/permissions",
         headers=headers,
-        json={"permissions": [{"module": "admin_audit_security_rbac", "action": "configure", "allowed": True}]},
+        json={"permissions": [{"module": "access_admin", "action": "manage_roles", "allowed": True}]},
     )
 
     assert response.status_code == 200
-    assert permission_is_allowed(response.json(), "admin_audit_security_rbac", "configure")
+    assert permission_is_allowed(response.json(), "access_admin", "manage_roles")
+
+
+def test_capabilities_endpoint_returns_permission_keys_and_booleans(client: TestClient) -> None:
+    headers = auth_headers(client)
+
+    response = client.get("/api/users/me/capabilities", headers=headers)
+
+    assert response.status_code == 200
+    body = response.json()
+    assert "access_admin:manage_roles" in body["permission_keys"]
+    assert body["can_access_admin"] is True
+    assert body["can_view_portfolio"] is True
+    assert body["can_approve_kyc"] is True
 
 
 def test_user_list_supports_search_status_role_and_pagination(client: TestClient) -> None:
@@ -279,10 +316,10 @@ def test_super_admin_can_create_update_and_delete_custom_roles(client: TestClien
     permission_response = client.put(
         "/api/admin/roles/regional_director/permissions",
         headers=headers,
-        json={"permissions": [{"module": "account_overview", "action": "view", "allowed": True}]},
+        json={"permissions": [{"module": "accounts", "action": "view_assigned", "allowed": True}]},
     )
     assert permission_response.status_code == 200
-    assert permission_is_allowed(permission_response.json(), "account_overview", "view")
+    assert permission_is_allowed(permission_response.json(), "accounts", "view_assigned")
 
     update_response = client.patch(
         "/api/admin/roles/regional_director",
@@ -332,13 +369,13 @@ def test_field_builder_crud_filters_pagination_validation_and_docs(client: TestC
 
     modules_response = client.get("/api/admin/custom-fields/modules", headers=headers)
     assert modules_response.status_code == 200
-    assert any(module["slug"] == "account_overview" for module in modules_response.json())
+    assert any(module["slug"] == "accounts" for module in modules_response.json())
 
     invalid_response = client.post(
         "/api/admin/custom-fields",
         headers=headers,
         json={
-            "module": "account_overview",
+            "module": "accounts",
             "field_key": "customer_tier",
             "label": "Customer Tier",
             "field_type": "single_select",
@@ -353,7 +390,7 @@ def test_field_builder_crud_filters_pagination_validation_and_docs(client: TestC
         "/api/admin/custom-fields",
         headers=headers,
         json={
-            "module": "account_overview",
+            "module": "accounts",
             "field_key": "customer_tier",
             "label": "Customer Tier",
             "description": "Tier configured by account leadership.",
@@ -376,7 +413,7 @@ def test_field_builder_crud_filters_pagination_validation_and_docs(client: TestC
         "/api/admin/custom-fields",
         headers=headers,
         json={
-            "module": "account_overview",
+            "module": "accounts",
             "field_key": "customer_tier",
             "label": "Customer Tier",
             "field_type": "single_select",
@@ -390,7 +427,7 @@ def test_field_builder_crud_filters_pagination_validation_and_docs(client: TestC
         headers=headers,
         params={
             "search": "tier",
-            "module": "account_overview",
+            "module": "accounts",
             "field_type": "single_select",
             "status": "active",
             "sort": "label",

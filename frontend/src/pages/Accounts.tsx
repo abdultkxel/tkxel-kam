@@ -11,6 +11,7 @@ import { Skeleton } from '@/components/ui/Skeleton'
 import { Column, SortableTable } from '@/components/ui/SortableTable'
 import { useAuth } from '@/contexts/AuthContext'
 import { users } from '@/data/mock'
+import { useCapabilities } from '@/hooks/useCapabilities'
 import { useRole } from '@/hooks/useRole'
 import { listAccounts, listOnboardingAccountManagers, listOnboardingDrafts, type OnboardingAccountManager } from '@/services/accountWorkspace'
 import { useAccountStore } from '@/stores/accountStore'
@@ -55,6 +56,7 @@ export function Accounts() {
   const [params, setParams] = useSearchParams()
   const navigate = useNavigate()
   const user = useRole()
+  const { capabilities } = useCapabilities()
   const { token } = useAuth()
   const accounts = useAccountStore(state => state.accounts)
   const setAccounts = useAccountStore(state => state.setAccounts)
@@ -72,8 +74,8 @@ export function Accounts() {
   const sort: AccountSortOption = accountSortOptions.includes(requestedSort as AccountSortOption) ? requestedSort as AccountSortOption : 'name'
   const direction: SortDirection = params.get('direction') === 'desc' ? 'desc' : 'asc'
   const page = Number(params.get('page') ?? '1')
-  const privileged = user.role === 'leadership' || user.role === 'kam_head' || user.role === 'admin' || user.role === 'super_admin'
-  const canSeeDraftAccounts = user.role === 'kam_head' || user.role === 'admin' || user.role === 'super_admin'
+  const privileged = capabilities.can_view_portfolio || capabilities.can_update_portfolio_accounts || capabilities.can_assign_account_owners
+  const canSeeDraftAccounts = capabilities.can_approve_onboarding || capabilities.permission_keys.includes('onboarding:view_all')
   const tableSort = { column: apiSortToTableColumn[sort] ?? 'name', direction }
   const activeManagerName = accountManagers.find(manager => manager.id === activeAm)?.name ?? accounts.find(account => account.ownerId === activeAm)?.ownerName ?? activeAm
   const accountManagerOptions = activeAm && !accountManagers.some(manager => manager.id === activeAm)
@@ -141,7 +143,7 @@ export function Accounts() {
   }
 
   function changeOwner(ownerId: string) {
-    const owner = users.find(item => item.id === ownerId)
+    const owner = accountManagers.find(item => item.id === ownerId) ?? users.find(item => item.id === ownerId)
     if (!owner) return
     assignOwner(selectedIds, owner.id, owner.name)
     selectedIds.forEach(accountId => {
@@ -418,7 +420,7 @@ export function Accounts() {
               <UserRound className="h-4 w-4 text-brand-blue" />
               <select className="tk-input min-w-[180px]" defaultValue="" onChange={event => event.target.value && changeOwner(event.target.value)}>
                 <option value="">Change AM</option>
-                {users.filter(item => item.role === 'am').map(owner => <option key={owner.id} value={owner.id}>{owner.name}</option>)}
+                {accountManagers.map(owner => <option key={owner.id} value={owner.id}>{owner.name}</option>)}
               </select>
             </label>
             <label className="inline-flex items-center gap-2">

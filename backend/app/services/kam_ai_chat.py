@@ -51,7 +51,7 @@ from app.schemas import (
     KamAiIndexStatusRead,
     KamAiReindexResponse,
 )
-from app.services.account_access import AccountAccessService, GLOBAL_VIEW_ROLES
+from app.services.account_access import AccountAccessService
 from app.services.audit import AuditService
 from app.services.kyc_document_extraction import estimate_tokens
 from app.services.kyc_embeddings import LocalHashEmbeddingClient, OpenAiEmbeddingClient, cosine_similarity
@@ -1135,7 +1135,7 @@ class KamAiChatService:
     def _accounts_for_scope(self, current_user: User, account_id: str | None) -> list[Account]:
         if account_id:
             return [self._require_account_view(account_id, current_user)]
-        if current_user.role in GLOBAL_VIEW_ROLES:
+        if self.access.can_view_portfolio(current_user):
             return list(self.db.scalars(select(Account).where(Account.archived_at.is_(None)).order_by(Account.name).limit(100)))
         account_ids = self.accounts.list_account_ids_for_user(current_user.id)
         if not account_ids:
@@ -1156,9 +1156,8 @@ class KamAiChatService:
         except HTTPException:
             return False
 
-    @staticmethod
-    def _can_view_sensitive(current_user: User) -> bool:
-        return current_user.role in {"super_admin", "admin", "kam_head", "account_manager"}
+    def _can_view_sensitive(self, current_user: User) -> bool:
+        return self.access.can_view_sensitive_sources(current_user)
 
     @staticmethod
     def _chunk_restricted(chunk: KamAiSourceChunk) -> bool:

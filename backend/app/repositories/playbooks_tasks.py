@@ -17,6 +17,10 @@ from app.models import (
 )
 
 
+OPEN_TASK_STATUSES = ("open", "todo")
+CANCELLED_TASK_STATUSES = ("cancelled", "skipped")
+
+
 class PlaybooksTasksRepository:
     def __init__(self, db: Session) -> None:
         self.db = db
@@ -306,7 +310,13 @@ class PlaybooksTasksRepository:
         if my_items and current_user_id:
             conditions.append(Task.owner_id == current_user_id)
         if status_filter:
-            conditions.append(Task.status == status_filter)
+            normalized_status = status_filter.strip()
+            if normalized_status == "open":
+                conditions.append(Task.status.in_(OPEN_TASK_STATUSES))
+            elif normalized_status == "cancelled":
+                conditions.append(Task.status.in_(CANCELLED_TASK_STATUSES))
+            else:
+                conditions.append(Task.status == normalized_status)
         if priority:
             conditions.append(Task.priority == priority)
         if source_type:

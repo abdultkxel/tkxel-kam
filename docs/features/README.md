@@ -33,6 +33,8 @@ docs/features/_feature-template.md
 - [Notification Workflow Revamp](notification-workflow-revamp.md)
 - [Relationships Planning Growth And Retention](relationships-planning-growth-retention.md)
 - [Role-Based Dashboards](role-based-dashboards.md)
+- [RBAC Hardcoded Role Audit](rbac-hardcoded-role-audit.md)
+- [RBAC Permission Model Redesign](rbac-permission-model-redesign.md)
 - [KAM AI Six-Month Forecast](kam-ai-six-month-forecast.md)
 - [KAM AI Chat Sessions And Vector Search](kam-ai-chat-sessions-vector-search.md)
 - [UI Design Quality Tooling](ui-design-quality-tooling.md)

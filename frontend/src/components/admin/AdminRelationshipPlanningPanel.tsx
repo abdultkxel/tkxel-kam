@@ -41,6 +41,7 @@ const emptyRule = {
 const emptyStage = { slug: '', name: '', displayOrder: '10', isTerminal: false, requiresOutcomeReason: false }
 const emptyAdjacency = { sourceServiceId: '', targetServiceId: '', relevanceScore: '75', rationale: '' }
 const emptyTransition = { fromStage: '', toStage: '', requiresReason: false }
+const servicePageSizeOptions = [10, 25, 50]
 
 export function AdminRelationshipPlanningPanel() {
   const { token } = useAuth()
@@ -60,14 +61,24 @@ export function AdminRelationshipPlanningPanel() {
   const [stageForm, setStageForm] = useState(emptyStage)
   const [adjacencyForm, setAdjacencyForm] = useState(emptyAdjacency)
   const [transitionForm, setTransitionForm] = useState(emptyTransition)
+  const [servicePage, setServicePage] = useState(1)
+  const [servicePageSize, setServicePageSize] = useState(10)
 
   const activeServices = useMemo(() => services.filter(item => item.isActive), [services])
   const activeStages = useMemo(() => stages.filter(item => item.isActive), [stages])
+  const servicePages = Math.max(1, Math.ceil(services.length / servicePageSize))
+  const serviceStartIndex = services.length ? (servicePage - 1) * servicePageSize : 0
+  const serviceEndIndex = services.length ? Math.min(serviceStartIndex + servicePageSize, services.length) : 0
+  const pagedServices = useMemo(() => services.slice(serviceStartIndex, serviceEndIndex), [serviceEndIndex, serviceStartIndex, services])
 
   useEffect(() => {
     if (!token) return
     void loadAll()
   }, [token])
+
+  useEffect(() => {
+    setServicePage(current => Math.min(Math.max(1, servicePages), current))
+  }, [servicePages])
 
   async function loadAll() {
     if (!token) return
@@ -290,82 +301,122 @@ export function AdminRelationshipPlanningPanel() {
 
   return (
     <div className="space-y-4">
-      <section className="grid gap-4 xl:grid-cols-2">
-        <ConfigCard icon={BriefcaseBusiness} eyebrow="Service catalog" title="Services and adjacency">
-          <form onSubmit={submitService} className="grid gap-3 border-b border-surface-border bg-surface-tertiary p-4 md:grid-cols-[minmax(160px,1fr)_minmax(160px,1fr)_160px_180px_auto]">
-            <TextInput label="Name" value={serviceForm.name} error={fieldErrors['service.name']} onChange={value => updateService('name', value)} />
-            <TextInput label="Slug" value={serviceForm.slug} error={fieldErrors['service.slug']} onChange={value => updateService('slug', value)} />
-            <TextInput label="Category" value={serviceForm.category} error={fieldErrors['service.category']} onChange={value => updateService('category', value)} />
-            <TextInput label="Tags" value={serviceForm.tags} error={fieldErrors['service.tags']} onChange={value => updateService('tags', value)} />
-            <SubmitButton saving={saving} label="Add" />
-          </form>
-          <div className="overflow-x-auto">
-            <table className="w-full min-w-[760px] text-left text-sm">
-              <thead className="border-b border-surface-border bg-surface-secondary text-xs font-semibold uppercase tracking-wider text-ink-secondary">
-                <tr><th className="px-4 py-3">Service</th><th className="px-4 py-3">Category</th><th className="px-4 py-3">Tags</th><th className="px-4 py-3">Usage</th><th className="px-4 py-3">Status</th></tr>
-              </thead>
-              <tbody>
-                {services.map(item => (
-                  <tr key={item.id} className="border-b border-surface-border last:border-b-0">
-                    <td className="px-4 py-3"><span className="font-semibold text-ink">{item.name}</span><span className="block text-xs text-ink-secondary">{item.slug}</span></td>
-                    <td className="px-4 py-3 text-ink-secondary">{item.category || 'Uncategorized'}</td>
-                    <td className="px-4 py-3 text-ink-secondary">{item.tags.join(', ') || 'None'}</td>
-                    <td className="px-4 py-3 text-ink-secondary">{item.inUseCount}</td>
-                    <td className="px-4 py-3"><StatusButton active={item.isActive} onClick={() => toggleService(item)} /></td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-            {!services.length ? <EmptyState icon={BriefcaseBusiness} heading="No services configured" body="Add the first service catalog item." className="py-8" /> : null}
+      <ConfigCard icon={BriefcaseBusiness} eyebrow="Service catalog" title="Services">
+        <form onSubmit={submitService} className="grid grid-cols-[repeat(auto-fit,minmax(180px,1fr))] gap-3 border-b border-surface-border bg-surface-tertiary p-4">
+          <TextInput label="Name" value={serviceForm.name} error={fieldErrors['service.name']} onChange={value => updateService('name', value)} />
+          <TextInput label="Slug" value={serviceForm.slug} error={fieldErrors['service.slug']} onChange={value => updateService('slug', value)} />
+          <TextInput label="Category" value={serviceForm.category} error={fieldErrors['service.category']} onChange={value => updateService('category', value)} />
+          <TextInput label="Tags" value={serviceForm.tags} error={fieldErrors['service.tags']} onChange={value => updateService('tags', value)} />
+          <SubmitButton saving={saving} label="Add" />
+        </form>
+        <div className="divide-y divide-surface-border">
+          <div className="hidden bg-surface-secondary px-4 py-3 text-xs font-semibold uppercase tracking-wider text-ink-secondary xl:grid xl:grid-cols-[minmax(180px,1.2fr)_minmax(120px,0.7fr)_minmax(180px,1fr)_80px_96px] xl:gap-4">
+            <span>Service</span>
+            <span>Category</span>
+            <span>Tags</span>
+            <span>Usage</span>
+            <span>Status</span>
           </div>
-          <form onSubmit={submitAdjacency} className="grid gap-3 border-t border-surface-border p-4 md:grid-cols-[minmax(160px,1fr)_minmax(160px,1fr)_120px_minmax(180px,1fr)_auto]">
-            <SelectInput label="Source" value={adjacencyForm.sourceServiceId} error={fieldErrors['adjacency.sourceServiceId']} options={activeServices.map(item => ({ value: item.id, label: item.name }))} onChange={value => updateAdjacency('sourceServiceId', value)} />
-            <SelectInput label="Target" value={adjacencyForm.targetServiceId} error={fieldErrors['adjacency.targetServiceId']} options={activeServices.map(item => ({ value: item.id, label: item.name }))} onChange={value => updateAdjacency('targetServiceId', value)} />
-            <TextInput label="Score" type="number" value={adjacencyForm.relevanceScore} error={fieldErrors['adjacency.relevanceScore']} onChange={value => updateAdjacency('relevanceScore', value)} />
-            <TextInput label="Rationale" value={adjacencyForm.rationale} error={fieldErrors['adjacency.rationale']} onChange={value => updateAdjacency('rationale', value)} />
-            <SubmitButton saving={saving} label="Link" />
-          </form>
-        </ConfigCard>
-
-        <ConfigCard icon={Users} eyebrow="Stakeholder coverage" title="Roles and gap rules">
-          <form onSubmit={submitRole} className="grid gap-3 border-b border-surface-border bg-surface-tertiary p-4 md:grid-cols-[minmax(160px,1fr)_minmax(160px,1fr)_110px_auto]">
-            <TextInput label="Name" value={roleForm.name} error={fieldErrors['role.name']} onChange={value => updateRole('name', value)} />
-            <TextInput label="Slug" value={roleForm.slug} error={fieldErrors['role.slug']} onChange={value => updateRole('slug', value)} />
-            <TextInput label="Order" type="number" value={roleForm.displayOrder} error={fieldErrors['role.displayOrder']} onChange={value => updateRole('displayOrder', value)} />
-            <SubmitButton saving={saving} label="Add" />
-          </form>
-          <div className="grid gap-2 p-4 sm:grid-cols-2">
-            {roles.map(item => (
-              <div key={item.id} className="flex items-center justify-between gap-3 rounded-lg border border-surface-border p-3">
-                <span><span className="block text-sm font-semibold text-ink">{item.name}</span><span className="block text-xs text-ink-secondary">{item.slug} · {item.inUseCount} linked</span></span>
-                <StatusButton active={item.isActive} onClick={() => toggleRole(item)} />
-              </div>
-            ))}
-          </div>
-          <form onSubmit={submitRule} className="grid gap-3 border-t border-surface-border p-4">
-            <div className="grid gap-3 md:grid-cols-[minmax(160px,1fr)_minmax(160px,1fr)_150px_110px]">
-              <TextInput label="Title" value={ruleForm.title} error={fieldErrors['rule.title']} onChange={value => updateRule('title', value)} />
-              <TextInput label="Rule key" value={ruleForm.ruleKey} error={fieldErrors['rule.ruleKey']} onChange={value => updateRule('ruleKey', value)} />
-              <SelectInput label="Severity" value={ruleForm.severity} error={fieldErrors['rule.severity']} options={[{ value: 'info', label: 'Info' }, { value: 'warning', label: 'Warning' }, { value: 'critical', label: 'Critical' }]} onChange={value => updateRule('severity', value)} />
-              <TextInput label="Order" type="number" value={ruleForm.displayOrder} error={fieldErrors['rule.displayOrder']} onChange={value => updateRule('displayOrder', value)} />
+          {pagedServices.map(item => (
+            <div key={item.id} className="grid gap-3 px-4 py-3 xl:grid-cols-[minmax(180px,1.2fr)_minmax(120px,0.7fr)_minmax(180px,1fr)_80px_96px] xl:items-center xl:gap-4">
+              <span className="min-w-0">
+                <span className="block font-semibold text-ink">{item.name}</span>
+                <span className="block break-words text-xs text-ink-secondary">{item.slug}</span>
+              </span>
+              <MetaField label="Category">{item.category || 'Uncategorized'}</MetaField>
+              <MetaField label="Tags">{item.tags.join(', ') || 'None'}</MetaField>
+              <MetaField label="Usage">{item.inUseCount}</MetaField>
+              <span className="flex xl:justify-start"><StatusButton active={item.isActive} onClick={() => toggleService(item)} /></span>
             </div>
-            <TextInput label="Description" value={ruleForm.description} error={fieldErrors['rule.description']} onChange={value => updateRule('description', value)} />
-            <TextArea label="Condition JSON" value={ruleForm.conditionJson} error={fieldErrors['rule.conditionJson']} onChange={value => updateRule('conditionJson', value)} />
-            <SubmitButton saving={saving} label="Add rule" />
-          </form>
-          <div className="grid gap-2 border-t border-surface-border p-4">
-            {gapRules.map(item => (
-              <div key={item.id} className="flex flex-col gap-2 rounded-lg border border-surface-border p-3 sm:flex-row sm:items-center sm:justify-between">
-                <span><span className="block text-sm font-semibold text-ink">{item.title}</span><span className="block text-xs text-ink-secondary">{item.ruleKey} · {item.severity}</span></span>
-                <StatusButton active={item.isActive} onClick={() => toggleRule(item)} />
+          ))}
+          {!services.length ? <EmptyState icon={BriefcaseBusiness} heading="No services configured" body="Add the first service catalog item." className="py-8" /> : null}
+        </div>
+        {services.length ? (
+          <ListPagination
+            label="services"
+            page={servicePage}
+            pages={servicePages}
+            pageSize={servicePageSize}
+            pageSizeLabel="Services per page"
+            pageSizeOptions={servicePageSizeOptions}
+            start={serviceStartIndex + 1}
+            end={serviceEndIndex}
+            total={services.length}
+            onPageSizeChange={value => {
+              setServicePageSize(value)
+              setServicePage(1)
+            }}
+            onPrevious={() => setServicePage(current => Math.max(1, current - 1))}
+            onNext={() => setServicePage(current => Math.min(servicePages, current + 1))}
+          />
+        ) : null}
+      </ConfigCard>
+
+      <ConfigCard icon={ArrowRight} eyebrow="Service adjacency" title="Service adjacencies">
+        <form onSubmit={submitAdjacency} className="grid grid-cols-[repeat(auto-fit,minmax(180px,1fr))] gap-3 border-b border-surface-border bg-surface-tertiary p-4">
+          <SelectInput label="Source" value={adjacencyForm.sourceServiceId} error={fieldErrors['adjacency.sourceServiceId']} options={activeServices.map(item => ({ value: item.id, label: item.name }))} onChange={value => updateAdjacency('sourceServiceId', value)} />
+          <SelectInput label="Target" value={adjacencyForm.targetServiceId} error={fieldErrors['adjacency.targetServiceId']} options={activeServices.map(item => ({ value: item.id, label: item.name }))} onChange={value => updateAdjacency('targetServiceId', value)} />
+          <TextInput label="Score" type="number" value={adjacencyForm.relevanceScore} error={fieldErrors['adjacency.relevanceScore']} onChange={value => updateAdjacency('relevanceScore', value)} />
+          <TextInput label="Rationale" value={adjacencyForm.rationale} error={fieldErrors['adjacency.rationale']} onChange={value => updateAdjacency('rationale', value)} />
+          <SubmitButton saving={saving} label="Link" />
+        </form>
+        <div className="grid grid-cols-[repeat(auto-fit,minmax(220px,1fr))] gap-3 p-4">
+          {adjacencies.map(item => (
+            <div key={item.id} className="rounded-lg border border-surface-border p-3">
+              <div className="flex flex-wrap items-center gap-2 text-sm font-semibold text-ink">
+                <span>{item.sourceServiceName}</span>
+                <ArrowRight className="h-4 w-4 text-brand-blue" />
+                <span>{item.targetServiceName}</span>
               </div>
-            ))}
+              <p className="mt-2 text-sm leading-6 text-ink-secondary">{item.rationale}</p>
+              <div className="mt-3 flex flex-wrap gap-2">
+                <Badge label={`Score ${item.relevanceScore}`} />
+                {!item.isActive ? <Badge label="Inactive" /> : null}
+              </div>
+            </div>
+          ))}
+          {!adjacencies.length ? <EmptyState icon={ArrowRight} heading="No adjacencies configured" body="No service pairs have been linked yet." className="py-8" /> : null}
+        </div>
+      </ConfigCard>
+
+      <ConfigCard icon={Users} eyebrow="Stakeholder coverage" title="Roles and gap rules">
+        <form onSubmit={submitRole} className="grid grid-cols-[repeat(auto-fit,minmax(160px,1fr))] gap-3 border-b border-surface-border bg-surface-tertiary p-4">
+          <TextInput label="Name" value={roleForm.name} error={fieldErrors['role.name']} onChange={value => updateRole('name', value)} />
+          <TextInput label="Slug" value={roleForm.slug} error={fieldErrors['role.slug']} onChange={value => updateRole('slug', value)} />
+          <TextInput label="Order" type="number" value={roleForm.displayOrder} error={fieldErrors['role.displayOrder']} onChange={value => updateRole('displayOrder', value)} />
+          <SubmitButton saving={saving} label="Add" />
+        </form>
+        <div className="grid grid-cols-[repeat(auto-fit,minmax(220px,1fr))] gap-2 p-4">
+          {roles.map(item => (
+            <div key={item.id} className="flex items-center justify-between gap-3 rounded-lg border border-surface-border p-3">
+              <span className="min-w-0"><span className="block text-sm font-semibold text-ink">{item.name}</span><span className="block break-words text-xs text-ink-secondary">{item.slug} · {item.inUseCount} linked</span></span>
+              <StatusButton active={item.isActive} onClick={() => toggleRole(item)} />
+            </div>
+          ))}
+        </div>
+        <form onSubmit={submitRule} className="grid gap-3 border-t border-surface-border p-4">
+          <div className="grid grid-cols-[repeat(auto-fit,minmax(160px,1fr))] gap-3">
+            <TextInput label="Title" value={ruleForm.title} error={fieldErrors['rule.title']} onChange={value => updateRule('title', value)} />
+            <TextInput label="Rule key" value={ruleForm.ruleKey} error={fieldErrors['rule.ruleKey']} onChange={value => updateRule('ruleKey', value)} />
+            <SelectInput label="Severity" value={ruleForm.severity} error={fieldErrors['rule.severity']} options={[{ value: 'info', label: 'Info' }, { value: 'warning', label: 'Warning' }, { value: 'critical', label: 'Critical' }]} onChange={value => updateRule('severity', value)} />
+            <TextInput label="Order" type="number" value={ruleForm.displayOrder} error={fieldErrors['rule.displayOrder']} onChange={value => updateRule('displayOrder', value)} />
           </div>
-        </ConfigCard>
-      </section>
+          <TextInput label="Description" value={ruleForm.description} error={fieldErrors['rule.description']} onChange={value => updateRule('description', value)} />
+          <TextArea label="Condition JSON" value={ruleForm.conditionJson} error={fieldErrors['rule.conditionJson']} onChange={value => updateRule('conditionJson', value)} />
+          <SubmitButton saving={saving} label="Add rule" />
+        </form>
+        <div className="grid gap-2 border-t border-surface-border p-4">
+          {gapRules.map(item => (
+            <div key={item.id} className="flex flex-col gap-2 rounded-lg border border-surface-border p-3 sm:flex-row sm:items-center sm:justify-between">
+              <span className="min-w-0"><span className="block text-sm font-semibold text-ink">{item.title}</span><span className="block break-words text-xs text-ink-secondary">{item.ruleKey} · {item.severity}</span></span>
+              <StatusButton active={item.isActive} onClick={() => toggleRule(item)} />
+            </div>
+          ))}
+        </div>
+      </ConfigCard>
 
       <ConfigCard icon={GitBranch} eyebrow="Opportunity workflow" title="Stages and transitions">
-        <form onSubmit={submitStage} className="grid gap-3 border-b border-surface-border bg-surface-tertiary p-4 md:grid-cols-[minmax(160px,1fr)_minmax(160px,1fr)_110px_160px_170px_auto]">
+        <form onSubmit={submitStage} className="grid grid-cols-[repeat(auto-fit,minmax(160px,1fr))] gap-3 border-b border-surface-border bg-surface-tertiary p-4">
           <TextInput label="Name" value={stageForm.name} error={fieldErrors['stage.name']} onChange={value => updateStage('name', value)} />
           <TextInput label="Slug" value={stageForm.slug} error={fieldErrors['stage.slug']} onChange={value => updateStage('slug', value)} />
           <TextInput label="Order" type="number" value={stageForm.displayOrder} error={fieldErrors['stage.displayOrder']} onChange={value => updateStage('displayOrder', value)} />
@@ -373,7 +424,7 @@ export function AdminRelationshipPlanningPanel() {
           <CheckInput label="Outcome reason" checked={stageForm.requiresOutcomeReason} onChange={value => updateStage('requiresOutcomeReason', value)} />
           <SubmitButton saving={saving} label="Add" />
         </form>
-        <div className="grid gap-3 p-4 md:grid-cols-2 xl:grid-cols-4">
+        <div className="grid grid-cols-[repeat(auto-fit,minmax(200px,1fr))] gap-3 p-4">
           {stages.map(item => (
             <div key={item.id} className="rounded-lg border border-surface-border p-3">
               <div className="flex items-start justify-between gap-3">
@@ -387,13 +438,13 @@ export function AdminRelationshipPlanningPanel() {
             </div>
           ))}
         </div>
-        <form onSubmit={submitTransition} className="grid gap-3 border-t border-surface-border p-4 md:grid-cols-[minmax(160px,1fr)_minmax(160px,1fr)_170px_auto]">
+        <form onSubmit={submitTransition} className="grid grid-cols-[repeat(auto-fit,minmax(160px,1fr))] gap-3 border-t border-surface-border p-4">
           <SelectInput label="From" value={transitionForm.fromStage} error={fieldErrors['transition.fromStage']} options={activeStages.map(item => ({ value: item.name, label: item.name }))} onChange={value => updateTransition('fromStage', value)} />
           <SelectInput label="To" value={transitionForm.toStage} error={fieldErrors['transition.toStage']} options={activeStages.map(item => ({ value: item.name, label: item.name }))} onChange={value => updateTransition('toStage', value)} />
           <CheckInput label="Reason required" checked={transitionForm.requiresReason} onChange={value => updateTransition('requiresReason', value)} />
           <SubmitButton saving={saving} label="Link" />
         </form>
-        <div className="grid gap-2 border-t border-surface-border p-4 md:grid-cols-2 xl:grid-cols-3">
+        <div className="grid grid-cols-[repeat(auto-fit,minmax(220px,1fr))] gap-2 border-t border-surface-border p-4">
           {transitions.map(item => (
             <div key={item.id} className="flex items-center justify-between gap-3 rounded-lg border border-surface-border p-3">
               <span className="flex items-center gap-2 text-sm font-semibold text-ink">{item.fromStage}<ArrowRight className="h-4 w-4 text-brand-blue" />{item.toStage}</span>
@@ -438,7 +489,7 @@ export function AdminRelationshipPlanningPanel() {
 
 function ConfigCard({ icon: Icon, eyebrow, title, children }: { icon: LucideIcon; eyebrow: string; title: string; children: ReactNode }) {
   return (
-    <section className="tk-card overflow-hidden">
+    <section className="tk-card overflow-hidden" aria-label={title}>
       <div className="flex items-center gap-3 border-b border-surface-border p-5">
         <span className="flex h-10 w-10 items-center justify-center rounded-lg bg-blue-tint-20 text-brand-blue"><Icon className="h-5 w-5" /></span>
         <div>
@@ -453,9 +504,9 @@ function ConfigCard({ icon: Icon, eyebrow, title, children }: { icon: LucideIcon
 
 function TextInput({ label, value, error, onChange, type = 'text' }: { label: string; value: string; error?: string; onChange: (value: string) => void; type?: string }) {
   return (
-    <label className="grid gap-1">
+    <label className="grid min-w-0 gap-1">
       <span className="tk-label text-xs">{label}</span>
-      <input type={type} className="tk-input" value={value} aria-invalid={Boolean(error)} onChange={event => onChange(event.target.value)} />
+      <input type={type} className="tk-input min-w-0" value={value} aria-invalid={Boolean(error)} onChange={event => onChange(event.target.value)} />
       <FieldError id={`${label.toLowerCase().replace(/\s+/g, '-')}-error`} message={error} />
     </label>
   )
@@ -463,9 +514,9 @@ function TextInput({ label, value, error, onChange, type = 'text' }: { label: st
 
 function TextArea({ label, value, error, onChange }: { label: string; value: string; error?: string; onChange: (value: string) => void }) {
   return (
-    <label className="grid gap-1">
+    <label className="grid min-w-0 gap-1">
       <span className="tk-label text-xs">{label}</span>
-      <textarea className="tk-input min-h-[120px] font-mono text-xs" value={value} aria-invalid={Boolean(error)} onChange={event => onChange(event.target.value)} />
+      <textarea className="tk-input min-h-[120px] min-w-0 font-mono text-xs" value={value} aria-invalid={Boolean(error)} onChange={event => onChange(event.target.value)} />
       <FieldError id={`${label.toLowerCase().replace(/\s+/g, '-')}-error`} message={error} />
     </label>
   )
@@ -473,9 +524,9 @@ function TextArea({ label, value, error, onChange }: { label: string; value: str
 
 function SelectInput({ label, value, error, options, onChange }: { label: string; value: string; error?: string; options: { value: string; label: string }[]; onChange: (value: string) => void }) {
   return (
-    <label className="grid gap-1">
+    <label className="grid min-w-0 gap-1">
       <span className="tk-label text-xs">{label}</span>
-      <select className="tk-input" value={value} aria-invalid={Boolean(error)} onChange={event => onChange(event.target.value)}>
+      <select className="tk-input min-w-0" value={value} aria-invalid={Boolean(error)} onChange={event => onChange(event.target.value)}>
         <option value="">Select</option>
         {options.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}
       </select>
@@ -495,7 +546,7 @@ function CheckInput({ label, checked, onChange }: { label: string; checked: bool
 
 function SubmitButton({ saving, label }: { saving: boolean; label: string }) {
   return (
-    <button type="submit" className="tk-button-primary self-end" disabled={saving}>
+    <button type="submit" className="tk-button-primary w-full justify-center self-end" disabled={saving}>
       {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />}
       {label}
     </button>
@@ -512,6 +563,65 @@ function StatusButton({ active, onClick }: { active: boolean; onClick: () => voi
 
 function Badge({ label }: { label: string }) {
   return <span className="rounded-full bg-blue-tint-20 px-2.5 py-1 text-[11px] font-semibold uppercase tracking-wider text-brand-blue">{label}</span>
+}
+
+function MetaField({ label, children }: { label: string; children: ReactNode }) {
+  return (
+    <span className="min-w-0 text-sm text-ink-secondary">
+      <span className="mb-1 block text-[10px] font-semibold uppercase tracking-wider text-ink-secondary xl:hidden">{label}</span>
+      <span className="block break-words">{children}</span>
+    </span>
+  )
+}
+
+function ListPagination({
+  label,
+  page,
+  pages,
+  pageSize,
+  pageSizeLabel,
+  pageSizeOptions,
+  start,
+  end,
+  total,
+  onPageSizeChange,
+  onPrevious,
+  onNext,
+}: {
+  label: string
+  page: number
+  pages: number
+  pageSize: number
+  pageSizeLabel: string
+  pageSizeOptions: number[]
+  start: number
+  end: number
+  total: number
+  onPageSizeChange: (value: number) => void
+  onPrevious: () => void
+  onNext: () => void
+}) {
+  return (
+    <div className="flex flex-col gap-3 border-t border-surface-border bg-white px-4 py-3 text-sm text-ink-secondary sm:flex-row sm:items-center sm:justify-between">
+      <span>
+        Showing {start}-{end} of {total} {label}
+      </span>
+      <div className="flex flex-wrap items-center gap-2">
+        <select className="tk-input min-h-[38px] w-[150px] py-1.5 text-sm" value={pageSize} onChange={event => onPageSizeChange(Number(event.target.value))} aria-label={pageSizeLabel}>
+          {pageSizeOptions.map(option => <option key={option} value={option}>{option} per page</option>)}
+        </select>
+        <button type="button" className="tk-button-secondary min-h-[38px] px-3 py-1.5" onClick={onPrevious} disabled={page <= 1}>
+          Previous
+        </button>
+        <span className="min-w-[72px] text-center text-xs font-semibold uppercase tracking-wider text-ink-secondary">
+          {page} / {pages}
+        </span>
+        <button type="button" className="tk-button-secondary min-h-[38px] px-3 py-1.5" onClick={onNext} disabled={!pages || page >= pages}>
+          Next
+        </button>
+      </div>
+    </div>
+  )
 }
 
 function splitList(value: string) {

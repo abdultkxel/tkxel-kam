@@ -2,7 +2,7 @@ import { Check, Search } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
 import { users } from '@/data/mock'
 import { useAuth } from '@/contexts/AuthContext'
-import { useRole } from '@/hooks/useRole'
+import { useCapabilities } from '@/hooks/useCapabilities'
 import { TimelineFilterState } from '@/hooks/useTimelineFilters'
 import { useTimelineStore } from '@/stores/timelineStore'
 import { FilterBar } from '@/components/ui/FilterBar'
@@ -26,8 +26,8 @@ export function TimelineFilters({
   const [serverEventTypes, setServerEventTypes] = useState(fallbackEventTypes)
   const allEventTypes = serverEventTypes.length ? serverEventTypes : fallbackEventTypes
   const eventTypes = useMemo(() => allEventTypes.filter(item => item.active), [allEventTypes])
-  const user = useRole()
-  const canSeeSensitive = user.role === 'leadership' || user.role === 'admin' || user.role === 'super_admin'
+  const { capabilities } = useCapabilities()
+  const canSeeSensitive = capabilities.can_view_sensitive_sources || capabilities.can_moderate_timeline
   const eventTypeValue = useMemo(() => filters.eventTypes[0] ?? '', [filters.eventTypes])
   const moduleValue = useMemo(() => filters.modules[0] ?? '', [filters.modules])
 

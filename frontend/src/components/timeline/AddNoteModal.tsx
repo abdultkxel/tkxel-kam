@@ -2,24 +2,27 @@ import * as Dialog from '@radix-ui/react-dialog'
 import * as Select from '@radix-ui/react-select'
 import * as Switch from '@radix-ui/react-switch'
 import { format } from 'date-fns'
-import { Calendar, Check, ChevronDown, Loader2, Lock, Paperclip, X } from 'lucide-react'
+import { AlertCircle, Calendar, Check, ChevronDown, FileText, Loader2, Lock, Paperclip, Plus, Settings2, Tag, X } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
 import { DayPicker } from 'react-day-picker'
 import { useForm } from 'react-hook-form'
+import { Link } from 'react-router-dom'
 import { toast } from 'sonner'
 import { MentionTextarea } from '@/components/collaboration/MentionTextarea'
 import { useAuth } from '@/contexts/AuthContext'
+import { useCapabilities } from '@/hooks/useCapabilities'
 import { useRole } from '@/hooks/useRole'
 import { useAccountStore } from '@/stores/accountStore'
 import { useNotificationStore } from '@/stores/notificationStore'
 import { useTimelineStore } from '@/stores/timelineStore'
 import { createTimelineNote, getTimelineEventTypes } from '@/services/timeline'
-import { TimelineEntry, SensitivityLevel, TimelineEventType } from '@/types/timeline'
+import { TimelineEntry, SensitivityLevel, TimelineEventTypeConfig } from '@/types/timeline'
 import { cn } from '@/utils/cn'
 import { extractMentionIds } from '@/utils/mentions'
 
 interface FormValues {
-  eventType: TimelineEventType
+  eventType: string
+  title: string
   description: string
   attachmentUrl: string
   sensitive: boolean
@@ -39,14 +42,15 @@ export function AddNoteModal({ accountId, open: controlledOpen, onOpenChange, on
   const [backendError, setBackendError] = useState('')
   const { token } = useAuth()
   const user = useRole()
+  const { capabilities } = useCapabilities()
   const accountName = useAccountStore(state => state.accounts.find(account => account.id === accountId)?.name ?? 'Account')
   const addNotification = useNotificationStore(state => state.addNotification)
   const fallbackEventTypes = useTimelineStore(state => state.eventTypes)
-  const [serverEventTypes, setServerEventTypes] = useState(fallbackEventTypes)
-  const allEventTypes = serverEventTypes.length ? serverEventTypes : fallbackEventTypes
+  const [serverEventTypes, setServerEventTypes] = useState<TimelineEventTypeConfig[] | null>(null)
+  const allEventTypes = serverEventTypes ?? fallbackEventTypes
   const eventTypes = useMemo(() => allEventTypes.filter(item => item.active), [allEventTypes])
   const open = controlledOpen ?? internalOpen
-  const leadership = user.role === 'leadership' || user.role === 'leadership_viewer' || user.role === 'kam_head' || user.role === 'admin' || user.role === 'super_admin'
+  const canCreateSensitive = capabilities.can_view_sensitive_sources || capabilities.can_moderate_timeline
   const {
     register,
     handleSubmit,
@@ -56,7 +60,8 @@ export function AddNoteModal({ accountId, open: controlledOpen, onOpenChange, on
     formState: { errors, isSubmitting },
   } = useForm<FormValues>({
     defaultValues: {
-      eventType: 'manual_note',
+      eventType: '',
+      title: '',
       description: '',
       attachmentUrl: '',
       sensitive: false,
@@ -66,9 +71,14 @@ export function AddNoteModal({ accountId, open: controlledOpen, onOpenChange, on
   })
 
   const selectedEventType = watch('eventType')
+  const title = watch('title') ?? ''
   const description = watch('description') ?? ''
   const sensitive = watch('sensitive')
   const selectedConfig = useMemo(() => eventTypes.find(item => item.eventType === selectedEventType), [eventTypes, selectedEventType])
+  const hasEventTypes = eventTypes.length > 0
+  const titleField = register('title', {
+    maxLength: { value: 220, message: 'Keep titles under 220 characters' },
+  })
   const descriptionField = register('description', {
     required: 'Description is required',
     minLength: { value: 3, message: 'Use at least 3 characters' },
@@ -88,6 +98,13 @@ export function AddNoteModal({ accountId, open: controlledOpen, onOpenChange, on
     }
   }, [fallbackEventTypes, open, reset, token])
 
+  useEffect(() => {
+    if (!open || !eventTypes.length) return
+    if (!eventTypes.some(item => item.eventType === selectedEventType)) {
+      setValue('eventType', eventTypes[0].eventType, { shouldValidate: true })
+    }
+  }, [eventTypes, open, selectedEventType, setValue])
+
   function setOpen(next: boolean) {
     if (onOpenChange) onOpenChange(next)
     else setInternalOpen(next)
@@ -98,20 +115,24 @@ export function AddNoteModal({ accountId, open: controlledOpen, onOpenChange, on
       setBackendError('You must be logged in to add a timeline event.')
       return
     }
+    if (!selectedConfig) {
+      setBackendError('Choose an active timeline event type before saving.')
+      return
+    }
     const mentions = extractMentionIds(values.description)
     setBackendError('')
     try {
       const entry = await createTimelineNote(token, accountId, {
-        event_type: values.eventType,
-        title: selectedConfig?.name ?? 'Manual note',
+        event_type: selectedConfig.eventType,
+        title: values.title.trim() || selectedConfig.name,
         description: values.description,
         event_at: selectedDate.toISOString(),
         owner_id: user.id,
         tags: ['manual'],
         mentions,
         attachments: values.attachmentUrl ? [{ name: 'Attachment', url: values.attachmentUrl }] : [],
-        is_sensitive: leadership ? values.sensitive : false,
-        sensitivity_level: leadership && values.sensitive ? values.sensitivityLevel : undefined,
+        is_sensitive: canCreateSensitive ? values.sensitive : false,
+        sensitivity_level: canCreateSensitive && values.sensitive ? values.sensitivityLevel : undefined,
       })
       mentions.forEach(mentionedUserId => {
         addNotification({
@@ -138,127 +159,216 @@ export function AddNoteModal({ accountId, open: controlledOpen, onOpenChange, on
     <Dialog.Root open={open} onOpenChange={setOpen}>
       {controlledOpen === undefined ? (
         <Dialog.Trigger asChild>
-          <button className="tk-button-primary">Add event</button>
+          <button className="tk-button-primary">
+            <Plus className="h-4 w-4" />
+            Add event
+          </button>
         </Dialog.Trigger>
       ) : null}
       <Dialog.Portal>
         <Dialog.Overlay className="fixed inset-0 z-40 bg-ink/40" />
-        <Dialog.Content className="fixed left-1/2 top-1/2 z-50 max-h-[92vh] w-[min(96vw,760px)] -translate-x-1/2 -translate-y-1/2 overflow-y-auto rounded-xl border border-surface-border bg-white p-6 shadow-panel">
-          <div className="mb-5 flex items-start justify-between gap-4">
-            <div>
-              <p className="text-[10px] font-extrabold uppercase tracking-widest text-brand-blue">Manual timeline event</p>
-              <Dialog.Title className="font-display text-2xl font-bold text-ink">Add timeline event</Dialog.Title>
-              <Dialog.Description className="mt-1 text-sm text-ink-secondary">Manual entries are logged as traceable timeline events.</Dialog.Description>
+        <Dialog.Content className="fixed left-1/2 top-1/2 z-50 flex max-h-[calc(100vh-2rem)] w-[min(1120px,calc(100vw-2rem))] -translate-x-1/2 -translate-y-1/2 flex-col overflow-hidden rounded-lg border border-surface-border bg-white shadow-panel">
+          <div className="flex items-start justify-between gap-4 border-b border-surface-border bg-white p-5">
+            <div className="flex items-start gap-3">
+              <span className="mt-1 flex h-10 w-10 shrink-0 items-center justify-center rounded-md bg-blue-tint-20 text-brand-blue">
+                <FileText className="h-5 w-5" />
+              </span>
+              <div>
+                <p className="text-[10px] font-extrabold uppercase tracking-widest text-brand-blue">Manual timeline event</p>
+                <Dialog.Title className="font-display text-2xl font-bold text-ink">Add timeline event</Dialog.Title>
+                <Dialog.Description className="mt-1 text-sm text-ink-secondary">
+                  Log a dated account update for {accountName}.
+                </Dialog.Description>
+              </div>
             </div>
             <Dialog.Close className="tk-icon-button" aria-label="Close">
               <X className="h-5 w-5" />
             </Dialog.Close>
           </div>
 
-          <form onSubmit={handleSubmit(onSubmit)} className="grid gap-5 lg:grid-cols-[1fr_280px]">
-            <div className="space-y-4">
-              {backendError ? <p className="rounded-md border border-rag-red/20 bg-rag-red/10 p-3 text-sm font-medium text-rag-red">{backendError}</p> : null}
-              <div className="space-y-1">
-                <label className={cn('tk-label flex items-center gap-1', errors.eventType ? 'text-rag-red' : '')}>
-                  Event type <span className="text-rag-amber">*</span>
-                </label>
-                <Select.Root value={watch('eventType')} onValueChange={value => setValue('eventType', value as TimelineEventType, { shouldValidate: true })}>
-                  <Select.Trigger className={cn('tk-input flex items-center justify-between', errors.eventType ? 'border-rag-red focus:ring-rag-red/30' : '')}>
-                    <Select.Value />
-                    <Select.Icon>
-                      <ChevronDown className="h-4 w-4" />
-                    </Select.Icon>
-                  </Select.Trigger>
-                  <Select.Portal>
-                    <Select.Content className="z-[70] overflow-hidden rounded-md border border-surface-border bg-white shadow-panel">
-                      <Select.Viewport className="p-1">
-                        {eventTypes.map(item => (
-                          <Select.Item key={item.id} value={item.eventType} className="flex min-h-[44px] cursor-pointer items-center gap-2 rounded-md px-3 py-2 text-sm outline-none data-[highlighted]:bg-surface-tertiary">
-                            <Select.ItemText>{item.name}</Select.ItemText>
-                          </Select.Item>
-                        ))}
-                      </Select.Viewport>
-                    </Select.Content>
-                  </Select.Portal>
-                </Select.Root>
-              </div>
+          <form onSubmit={handleSubmit(onSubmit)} className="flex min-h-0 flex-1 flex-col" noValidate>
+            <div className="grid min-h-0 flex-1 lg:grid-cols-[minmax(0,1fr)_360px]">
+              <div className="space-y-4 p-5">
+                {backendError ? (
+                  <p className="rounded-md border border-rag-red/20 bg-rag-red/10 p-3 text-sm font-medium text-rag-red">
+                    {backendError}
+                  </p>
+                ) : null}
 
-              <div className="space-y-1">
-                <label className={cn('tk-label flex items-center gap-1', errors.description ? 'text-rag-red' : '')}>
-                  Description <span className="text-rag-amber">*</span>
-                </label>
-                <MentionTextarea
-                  name={descriptionField.name}
-                  inputRef={descriptionField.ref}
-                  onBlur={descriptionField.onBlur}
-                  value={description}
-                  onChange={value => setValue('description', value, { shouldValidate: true, shouldDirty: true })}
-                  className={cn('min-h-[150px]', errors.description ? 'border-rag-red focus:ring-rag-red/30' : '')}
-                  placeholder="Write the note"
-                />
-                <div className="flex items-center justify-between gap-3">
-                  {errors.description ? <p className="text-xs text-rag-red">{errors.description.message}</p> : <span />}
-                  <p className="text-xs text-ink-secondary">{description.length}/2000</p>
-                </div>
-              </div>
-
-              <div className="space-y-1">
-                <label className="tk-label flex items-center gap-2">
-                  <Paperclip className="h-4 w-4 text-ink-secondary" />
-                  Attachment URL
-                </label>
-                <input {...register('attachmentUrl')} className="tk-input" placeholder="https://..." />
-              </div>
-
-              {leadership ? (
-                <div className="rounded-lg border border-surface-border p-4">
-                  <div className="flex items-center justify-between gap-4">
-                    <div className="flex items-center gap-2">
-                      <Lock className="h-4 w-4 text-brand-blue-dark" />
-                      <div>
-                        <p className="text-sm font-semibold text-ink">Restrict visibility</p>
-                        <p className="text-xs text-ink-secondary">Sensitive notes are filtered at the data layer.</p>
+                {!hasEventTypes ? (
+                  <div className="rounded-lg border border-dashed border-surface-border bg-surface-tertiary p-4">
+                    <div className="flex gap-3">
+                      <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-md bg-white text-brand-blue">
+                        <AlertCircle className="h-5 w-5" />
+                      </span>
+                      <div className="space-y-3">
+                        <div>
+                          <p className="text-sm font-semibold text-ink">No active timeline types</p>
+                          <p className="mt-1 text-sm leading-5 text-ink-secondary">
+                            Create a timeline type in Admin before adding account events.
+                          </p>
+                        </div>
+                        <Link to="/admin?section=timeline" className="tk-button-secondary w-fit">
+                          <Settings2 className="h-4 w-4" />
+                          Open Timeline settings
+                        </Link>
                       </div>
                     </div>
-                    <Switch.Root
-                      checked={sensitive}
-                      onCheckedChange={value => setValue('sensitive', value)}
-                      className="relative h-6 w-11 rounded-full bg-surface-border data-[state=checked]:bg-brand-blue"
-                    >
-                      <Switch.Thumb className="block h-5 w-5 translate-x-0.5 rounded-full bg-white transition-transform data-[state=checked]:translate-x-5" />
-                    </Switch.Root>
                   </div>
-                  {sensitive ? (
-                    <select {...register('sensitivityLevel')} className="tk-input mt-3">
-                      <option value="commercial">Commercial</option>
-                      <option value="executive">Executive</option>
-                      <option value="legal">Legal</option>
-                      <option value="escalation">Escalation</option>
-                    </select>
-                  ) : null}
+                ) : null}
+
+                <div className="grid gap-4 md:grid-cols-[minmax(0,1fr)_240px]">
+                  <label className="space-y-1">
+                    <span className={cn('tk-label', errors.title ? 'text-rag-red' : '')}>Event title</span>
+                    <input
+                      name={titleField.name}
+                      ref={titleField.ref}
+                      onBlur={titleField.onBlur}
+                      value={title}
+                      onChange={titleField.onChange}
+                      className={cn('tk-input', errors.title ? 'border-rag-red focus:ring-rag-red/30' : '')}
+                      placeholder={selectedConfig?.name ?? 'Short summary'}
+                      aria-invalid={Boolean(errors.title)}
+                    />
+                    {errors.title ? <p className="text-xs text-rag-red">{errors.title.message}</p> : null}
+                  </label>
+
+                  <div className="space-y-1">
+                    <label className={cn('tk-label flex items-center gap-1', errors.eventType ? 'text-rag-red' : '')}>
+                      Event type <span className="text-rag-amber">*</span>
+                    </label>
+                    <Select.Root value={watch('eventType')} onValueChange={value => setValue('eventType', value, { shouldValidate: true })} disabled={!hasEventTypes}>
+                      <Select.Trigger aria-label="Event type" className={cn('tk-input flex items-center justify-between', errors.eventType ? 'border-rag-red focus:ring-rag-red/30' : '', !hasEventTypes ? 'cursor-not-allowed bg-surface-tertiary text-ink-tertiary' : '')}>
+                        <Select.Value placeholder="Choose type" />
+                        <Select.Icon>
+                          <ChevronDown className="h-4 w-4" />
+                        </Select.Icon>
+                      </Select.Trigger>
+                      <Select.Portal>
+                        <Select.Content className="z-[70] max-h-[320px] overflow-hidden rounded-md border border-surface-border bg-white shadow-panel">
+                          <Select.Viewport className="p-1">
+                            {eventTypes.map(item => (
+                              <Select.Item key={item.id} value={item.eventType} className="flex min-h-[44px] cursor-pointer items-center gap-3 rounded-md px-3 py-2 text-sm outline-none data-[highlighted]:bg-surface-tertiary">
+                                <span className="h-2.5 w-2.5 rounded-full bg-brand-blue" />
+                                <Select.ItemText>{item.name}</Select.ItemText>
+                                <span className="ml-auto rounded-md bg-surface-tertiary px-2 py-1 text-[11px] font-semibold uppercase tracking-wider text-ink-secondary">
+                                  {item.module}
+                                </span>
+                              </Select.Item>
+                            ))}
+                          </Select.Viewport>
+                        </Select.Content>
+                      </Select.Portal>
+                    </Select.Root>
+                  </div>
                 </div>
-              ) : null}
+
+                <div className="space-y-1">
+                  <label className={cn('tk-label flex items-center gap-1', errors.description ? 'text-rag-red' : '')}>
+                    Description <span className="text-rag-amber">*</span>
+                  </label>
+                  <MentionTextarea
+                    name={descriptionField.name}
+                    inputRef={descriptionField.ref}
+                    onBlur={descriptionField.onBlur}
+                    value={description}
+                    onChange={value => setValue('description', value, { shouldValidate: true, shouldDirty: true })}
+                    className={cn('min-h-[190px]', errors.description ? 'border-rag-red focus:ring-rag-red/30' : '')}
+                    placeholder="Write the account update"
+                    aria-invalid={Boolean(errors.description)}
+                  />
+                  <div className="flex items-center justify-between gap-3">
+                    {errors.description ? <p className="text-xs text-rag-red">{errors.description.message}</p> : <span />}
+                    <p className="text-xs text-ink-secondary">{description.length}/2000</p>
+                  </div>
+                </div>
+
+                <label className="space-y-1">
+                  <span className="tk-label flex items-center gap-2">
+                    <Paperclip className="h-4 w-4 text-ink-secondary" />
+                    Attachment URL
+                  </span>
+                  <input {...register('attachmentUrl')} className="tk-input" placeholder="https://..." />
+                </label>
+
+                <div className="rounded-lg border border-surface-border bg-surface-tertiary p-4">
+                  <div className="mb-3 flex items-center gap-2 text-sm font-semibold text-ink">
+                    <Tag className="h-4 w-4 text-brand-blue" />
+                    Event details
+                  </div>
+                  <dl className="grid gap-3 text-sm sm:grid-cols-3">
+                    <div>
+                      <dt className="text-xs font-semibold uppercase tracking-wider text-ink-secondary">Type</dt>
+                      <dd className="mt-1 font-medium text-ink">{selectedConfig?.name ?? 'Not configured'}</dd>
+                    </div>
+                    <div>
+                      <dt className="text-xs font-semibold uppercase tracking-wider text-ink-secondary">Module</dt>
+                      <dd className="mt-1 font-medium text-ink">{selectedConfig?.module ?? 'No active type'}</dd>
+                    </div>
+                    <div>
+                      <dt className="text-xs font-semibold uppercase tracking-wider text-ink-secondary">Visibility</dt>
+                      <dd className="mt-1 font-medium text-ink">{selectedConfig?.defaultVisibility ?? 'Public'}</dd>
+                    </div>
+                  </dl>
+                </div>
+
+                {canCreateSensitive ? (
+                  <div className="rounded-lg border border-surface-border p-4">
+                    <div className="flex items-center justify-between gap-4">
+                      <div className="flex items-center gap-2">
+                        <Lock className="h-4 w-4 text-brand-blue-dark" />
+                        <div>
+                          <p className="text-sm font-semibold text-ink">Restrict visibility</p>
+                          <p className="text-xs text-ink-secondary">For sensitive account context.</p>
+                        </div>
+                      </div>
+                      <Switch.Root
+                        checked={sensitive}
+                        onCheckedChange={value => setValue('sensitive', value)}
+                        className="relative h-6 w-11 rounded-full bg-surface-border data-[state=checked]:bg-brand-blue"
+                      >
+                        <Switch.Thumb className="block h-5 w-5 translate-x-0.5 rounded-full bg-white transition-transform data-[state=checked]:translate-x-5" />
+                      </Switch.Root>
+                    </div>
+                    {sensitive ? (
+                      <select {...register('sensitivityLevel')} className="tk-input mt-3">
+                        <option value="commercial">Commercial</option>
+                        <option value="executive">Executive</option>
+                        <option value="legal">Legal</option>
+                        <option value="escalation">Escalation</option>
+                      </select>
+                    ) : null}
+                  </div>
+                ) : null}
+              </div>
+
+              <aside className="border-t border-surface-border bg-surface-tertiary p-5 lg:border-l lg:border-t-0">
+                <div className="rounded-lg border border-surface-border bg-white p-4">
+                  <div className="mb-3 flex items-center gap-2 text-sm font-semibold text-ink">
+                    <Calendar className="h-4 w-4 text-brand-blue" />
+                    Event date
+                  </div>
+                  <div className="overflow-hidden">
+                    <DayPicker
+                      mode="single"
+                      selected={selectedDate}
+                      onSelect={date => date && setSelectedDate(date)}
+                      className="m-0 max-w-full text-sm [--rdp-cell-size:34px]"
+                    />
+                  </div>
+                  <p className="mt-3 rounded-md bg-surface-tertiary px-3 py-2 text-sm font-semibold text-ink">{format(selectedDate, 'MMM d, yyyy')}</p>
+                </div>
+              </aside>
             </div>
 
-            <div className="space-y-3">
-              <div className="rounded-lg border border-surface-border p-3">
-                <div className="mb-2 flex items-center gap-2 text-sm font-semibold text-ink">
-                  <Calendar className="h-4 w-4 text-brand-blue" />
-                  Date
-                </div>
-                <DayPicker mode="single" selected={selectedDate} onSelect={date => date && setSelectedDate(date)} />
-                <p className="mt-2 text-xs font-semibold text-ink-secondary">{format(selectedDate, 'MMM d, yyyy')}</p>
-              </div>
-
-              <div className="flex justify-end gap-2">
-                <Dialog.Close type="button" className="tk-button-secondary">
-                  Cancel
-                </Dialog.Close>
-                <button type="submit" className="tk-button-primary" disabled={isSubmitting}>
-                  {isSubmitting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Check className="h-4 w-4" />}
-                  {isSubmitting ? 'Saving...' : 'Save note'}
-                </button>
-              </div>
+            <div className="flex justify-end gap-2 border-t border-surface-border bg-white p-4">
+              <Dialog.Close type="button" className="tk-button-secondary" disabled={isSubmitting}>
+                Cancel
+              </Dialog.Close>
+              <button type="submit" className="tk-button-primary" disabled={isSubmitting || !selectedConfig}>
+                {isSubmitting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Check className="h-4 w-4" />}
+                {isSubmitting ? 'Saving...' : 'Save event'}
+              </button>
             </div>
           </form>
         </Dialog.Content>

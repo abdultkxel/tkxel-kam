@@ -18,7 +18,15 @@ export interface Permission {
   id: string
   module: string
   action: string
+  key: string
+  section_name?: string | null
+  section_purpose?: string | null
+  action_label?: string | null
   description?: string | null
+  risk_level: 'low' | 'medium' | 'high' | 'critical' | string
+  dependencies: string[]
+  tags: string[]
+  display_order: number
 }
 
 export interface RolePermission {

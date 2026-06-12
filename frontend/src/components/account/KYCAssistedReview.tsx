@@ -17,6 +17,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import { toast } from 'sonner'
 import { DocumentExtractionReviewPanel, DocumentReviewSource } from '@/components/account/DocumentExtractionReviewPanel'
 import { useAuth } from '@/contexts/AuthContext'
+import { useCapabilities } from '@/hooks/useCapabilities'
 import { ApiError } from '@/services/api'
 import { createAccountAttachmentPreviewUrl, listAccountAttachments } from '@/services/accountWorkspace'
 import {
@@ -48,6 +49,7 @@ type ActionState = 'initial' | 'refresh' | 'create' | 'save' | 'approve' | 'reje
 
 export function KYCAssistedReview({ account }: { account: Account }) {
   const { token, user } = useAuth()
+  const { capabilities } = useCapabilities()
   const [drafts, setDrafts] = useState<KycPage<KycDraft> | null>(null)
   const [snapshots, setSnapshots] = useState<KycPage<KycSnapshot> | null>(null)
   const [freshness, setFreshness] = useState<KycFreshness | null>(null)
@@ -88,7 +90,9 @@ export function KYCAssistedReview({ account }: { account: Account }) {
   const groupedFields = useMemo(() => groupFields(activeDraft), [activeDraft])
   const lowConfidenceFields = useMemo(() => activeDraft?.fields.filter(field => !field.missing && field.confidence < 70) ?? [], [activeDraft])
   const canEditDraft = activeDraft?.status === 'ready_for_review'
-  const isSuperAdmin = user?.role === 'super_admin'
+  const canApproveKyc = capabilities.can_approve_kyc
+  const canReviewSources = capabilities.can_view_sensitive_sources || capabilities.permission_keys.includes('kyc:review_sources')
+  const canDebugKyc = capabilities.permission_keys.includes('kyc:debug_runs')
   const completion = activeDraft?.completeness ?? freshness?.completeness ?? 0
   const confidence = activeDraft?.confidence ?? freshness?.confidence ?? 0
   const sourceCoverage = activeDraft?.source_coverage ?? freshness?.source_coverage ?? 0
@@ -475,11 +479,11 @@ export function KYCAssistedReview({ account }: { account: Account }) {
                 {loading === 'save' ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
                 Save edits
               </button>
-              <button type="button" className="tk-button-secondary bg-white" onClick={() => setRejectModalOpen(true)} disabled={!canEditDraft || Boolean(loading)}>
+              <button type="button" className="tk-button-secondary bg-white" onClick={() => setRejectModalOpen(true)} disabled={!canEditDraft || !canApproveKyc || Boolean(loading)}>
                 {loading === 'reject' ? <Loader2 className="h-4 w-4 animate-spin" /> : <XCircle className="h-4 w-4" />}
                 Reject
               </button>
-              <button type="button" className="tk-button-primary" onClick={approveDraft} disabled={!canEditDraft || Boolean(loading)}>
+              <button type="button" className="tk-button-primary" onClick={approveDraft} disabled={!canEditDraft || !canApproveKyc || Boolean(loading)}>
                 {loading === 'approve' ? <Loader2 className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4" />}
                 Approve KYC
               </button>
@@ -495,7 +499,7 @@ export function KYCAssistedReview({ account }: { account: Account }) {
         </div>
       </section>
 
-      {isSuperAdmin ? (
+      {canReviewSources ? (
       <section className="tk-card p-5">
         <div>
           <p className="text-[10px] font-extrabold uppercase tracking-widest text-brand-blue">Editable KYC prompt</p>
@@ -553,7 +557,7 @@ export function KYCAssistedReview({ account }: { account: Account }) {
       </section>
       ) : null}
 
-      {isSuperAdmin && (latestRun || activeDraft) ? (
+      {canDebugKyc && (latestRun || activeDraft) ? (
         <details className="tk-card overflow-hidden">
           <summary className="flex cursor-pointer list-none items-center justify-between gap-3 border-b border-surface-border bg-surface-secondary p-4">
             <div>
@@ -639,7 +643,7 @@ export function KYCAssistedReview({ account }: { account: Account }) {
         </details>
       ) : null}
 
-      {isSuperAdmin && activeDraft ? (
+      {canReviewSources && activeDraft ? (
         <DocumentExtractionReviewPanel
           title="Runtime source and KYC extraction review"
           eyebrow="KYC source review"

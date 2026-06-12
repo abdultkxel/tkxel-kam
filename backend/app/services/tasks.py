@@ -26,7 +26,7 @@ from app.schemas import (
     UnifiedCalendarItemRead,
     UnifiedCalendarPageRead,
 )
-from app.services.account_access import AccountAccessService, GLOBAL_EDIT_ROLES, GLOBAL_VIEW_ROLES
+from app.services.account_access import AccountAccessService
 from app.services.audit import AuditService
 from app.services.notifications import NotificationsService
 from app.services.timeline import TimelineService
@@ -189,7 +189,7 @@ class TaskService:
         page_size: int = 25,
     ) -> TaskPageRead:
         self.access.require_module_permission(current_user, TASKS_MODULE, "view")
-        account_ids = None if current_user.role in GLOBAL_VIEW_ROLES else self.accounts.list_account_ids_for_user(current_user.id)
+        account_ids = None if self.access.can_view_portfolio(current_user) else self.accounts.list_account_ids_for_user(current_user.id)
         items, total = self.repository.list_tasks(
             account_id=account_id,
             account_ids=account_ids,
@@ -336,7 +336,7 @@ class TaskService:
         page_size: int = 100,
     ) -> UnifiedCalendarPageRead:
         self.access.require_module_permission(current_user, TASKS_MODULE, "view")
-        account_ids = None if current_user.role in GLOBAL_VIEW_ROLES else self.accounts.list_account_ids_for_user(current_user.id)
+        account_ids = None if self.access.can_view_portfolio(current_user) else self.accounts.list_account_ids_for_user(current_user.id)
         tasks, _ = self.repository.list_tasks(
             account_id=account_id,
             account_ids=account_ids,
@@ -663,7 +663,7 @@ class TaskService:
 
     def _require_task_update(self, current_user: User, account: Account, task: Task) -> None:
         self.access.require_module_permission(current_user, TASKS_MODULE, "update")
-        if current_user.role in GLOBAL_EDIT_ROLES:
+        if self.access.has_any_permission(current_user, {"tasks:update_portfolio", "tasks:delete"}):
             return
         if task.owner_id == current_user.id:
             return

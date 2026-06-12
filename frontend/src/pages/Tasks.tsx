@@ -7,6 +7,7 @@ import { RuntimeCustomFields, customValuesForSubmit, requiredCustomFieldErrors }
 import { EmptyState } from '@/components/ui/EmptyState'
 import { PageHeader } from '@/components/ui/PageHeader'
 import { useAuth } from '@/contexts/AuthContext'
+import { useCapabilities } from '@/hooks/useCapabilities'
 import { useRole } from '@/hooks/useRole'
 import { listRuntimeCustomFields, RuntimeCustomField } from '@/services/contentGovernance'
 import { addTaskEvidence, createTask, listTasks, PlaybookTask, TaskPriority, TaskStatus, updateTask } from '@/services/playbooksTasks'
@@ -29,6 +30,7 @@ export function Tasks() {
   const [searchParams] = useSearchParams()
   const { token } = useAuth()
   const user = useRole()
+  const { capabilities } = useCapabilities()
   const accounts = useAccountStore(state => state.accounts)
   const [tasks, setTasks] = useState<PlaybookTask[]>([])
   const [customFields, setCustomFields] = useState<RuntimeCustomField[]>([])
@@ -46,7 +48,7 @@ export function Tasks() {
   const [viewMode, setViewMode] = useState<TaskViewMode>(() => viewModeParam(searchParams.get('view')))
   const [page, setPage] = useState(1)
   const [total, setTotal] = useState(0)
-  const readOnly = user.role === 'leadership_viewer'
+  const readOnly = !capabilities.can_manage_tasks_portfolio && !capabilities.permission_keys.includes('tasks:update_own')
   const pageSize = 10
 
   useEffect(() => {
@@ -79,7 +81,7 @@ export function Tasks() {
     listTasks(token, params)
       .then(response => {
         if (cancelled) return
-        setTasks(response.items)
+        setTasks(response.items.map(normalizeTaskForWorkspace))
         setTotal(response.total)
       })
       .catch(err => {
@@ -120,7 +122,7 @@ export function Tasks() {
   }
 
   function upsertTask(task: PlaybookTask) {
-    setTasks(items => items.map(item => (item.id === task.id ? task : item)))
+    setTasks(items => items.map(item => (item.id === task.id ? normalizeTaskForWorkspace(task) : item)))
   }
 
   async function changeStatus(task: PlaybookTask, nextStatus: TaskStatus, patch: Partial<PlaybookTask> = {}) {
@@ -149,7 +151,7 @@ export function Tasks() {
               <Filter className="h-4 w-4" />
               Clear filters
             </button>
-            <CreateTaskDialog token={token} accounts={accounts} currentUserId={user.id} readOnly={readOnly} customFields={customFields} onCreated={task => setTasks(items => [task, ...items])} />
+            <CreateTaskDialog token={token} accounts={accounts} currentUserId={user.id} readOnly={readOnly} customFields={customFields} onCreated={task => setTasks(items => [normalizeTaskForWorkspace(task), ...items])} />
           </>
         }
       />
@@ -603,6 +605,7 @@ function CreateTaskDialog({ token, accounts, currentUserId, readOnly, customFiel
               <label className="space-y-1">
                 <span className="tk-label text-xs">Priority</span>
                 <select className="tk-input" value={form.priority} onChange={event => setForm(current => ({ ...current, priority: event.target.value as TaskPriority }))}>
+                  <option value="critical">Critical</option>
                   <option value="urgent">Urgent</option>
                   <option value="high">High</option>
                   <option value="medium">Medium</option>
@@ -688,6 +691,16 @@ function positivePage(value: string | null): number {
   return Math.max(1, Number(value ?? '1') || 1)
 }
 
+function normalizeTaskForWorkspace(task: PlaybookTask): PlaybookTask {
+  return { ...task, status: normalizeTaskStatus(task.status) }
+}
+
+function normalizeTaskStatus(status: TaskStatus): TaskStatus {
+  if (status === 'todo') return 'open'
+  if (status === 'skipped') return 'cancelled'
+  return status
+}
+
 function statusClass(status: TaskStatus) {
   if (status === 'done') return 'border-rag-green/20 bg-rag-green/10 text-rag-green'
   if (status === 'in_progress') return 'border-blue-tint-20 bg-blue-tint-20 text-brand-blue'
@@ -697,6 +710,7 @@ function statusClass(status: TaskStatus) {
 }
 
 function priorityClass(priority: TaskPriority) {
+  if (priority === 'critical') return 'border-rag-red/20 bg-rag-red/10 text-rag-red'
   if (priority === 'urgent' || priority === 'high') return 'border-brand-orange/20 bg-brand-orange/10 text-brand-orange'
   if (priority === 'medium') return 'border-blue-tint-20 bg-blue-tint-20 text-brand-blue'
   return 'border-surface-border bg-surface-tertiary text-ink-secondary'

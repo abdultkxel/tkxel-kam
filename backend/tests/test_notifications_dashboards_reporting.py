@@ -317,6 +317,16 @@ def test_role_based_dashboard_profiles_and_reduced_direct_endpoints(client: Test
                 priority="critical",
                 created_by_id=owner["id"],
             ),
+            Task(
+                account_id=account.id,
+                title="Legacy todo follow-up",
+                owner_id=owner["id"],
+                owner_name=owner["full_name"],
+                due_at=now + timedelta(days=3),
+                status="todo",
+                priority="medium",
+                created_by_id=owner["id"],
+            ),
             Signal(
                 account_id=account.id,
                 signal_type="weak_metric",
@@ -381,6 +391,7 @@ def test_role_based_dashboard_profiles_and_reduced_direct_endpoints(client: Test
     assert "governance_calendar" in am_keys
     summary = next(item for item in am_dashboard.json()["widgets"] if item["key"] == "summary")
     assert [tile["label"] for tile in summary["metadata"]["tiles"]] == ["My Accounts", "At risk", "Critical tasks", "Open tasks"]
+    assert summary["value"]["open_tasks"] == 3
     assert summary["metadata"]["tiles"][1]["route"] == "/accounts?risk=at_risk"
     assert summary["metadata"]["tiles"][0]["route"] == "/accounts"
     critical_tasks = next(item for item in am_dashboard.json()["widgets"] if item["key"] == "critical_tasks")
@@ -389,10 +400,10 @@ def test_role_based_dashboard_profiles_and_reduced_direct_endpoints(client: Test
     assert "Critical relationship signal" not in critical_task_titles
     assert critical_tasks["metadata"]["source_counts"]["critical_tasks"] >= 1
     tasks = next(item for item in am_dashboard.json()["widgets"] if item["key"] == "tasks")
-    assert tasks["value"]["open"] == 1
+    assert tasks["value"]["open"] == 2
     assert tasks["value"]["in_progress"] == 1
     assert tasks["value"]["overdue"] == 1
-    assert tasks["value"]["due_this_week"] == 1
+    assert tasks["value"]["due_this_week"] == 2
     opportunities = next(item for item in am_dashboard.json()["widgets"] if item["key"] == "opportunities")
     assert opportunities["title"] == "Opportunities & pipeline"
     assert opportunities["metadata"]["masked"] is False
@@ -436,13 +447,12 @@ def test_role_based_dashboard_profiles_and_reduced_direct_endpoints(client: Test
     assert "Critical risk status" in high_risk_account["risk_reason"]
     assert "below the critical threshold of 60" in high_risk_account["risk_reason"]
 
-    reduced = client.get("/api/dashboards/leadership", headers=kam_headers)
-    assert reduced.status_code == 200
-    assert reduced.json()["dashboard"] == "kam_head_portfolio"
-    assert reduced.json()["metadata"]["requested_dashboard"] == "leadership"
-    assert reduced.json()["metadata"]["reduced_scope"] is True
-    reduced_keys = {item["key"] for item in reduced.json()["widgets"]}
-    assert removed_dashboard_widgets.isdisjoint(reduced_keys)
+    leadership_direct = client.get("/api/dashboards/leadership", headers=kam_headers)
+    assert leadership_direct.status_code == 200
+    assert leadership_direct.json()["dashboard"] == "leadership"
+    assert leadership_direct.json()["role_group"] == "leadership"
+    direct_keys = {item["key"] for item in leadership_direct.json()["widgets"]}
+    assert removed_dashboard_widgets.isdisjoint(direct_keys)
 
     leader = seeded_user(client, admin_headers, "leadership_viewer")
     leader_headers = auth_headers(client, leader["email"], "User@12345")

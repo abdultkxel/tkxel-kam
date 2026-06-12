@@ -1,6 +1,7 @@
 import { BriefcaseBusiness, Building2, ChevronLeft, Home, ListChecks, PlaySquare, Settings } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import { NavLink } from 'react-router-dom'
+import { useCapabilities } from '@/hooks/useCapabilities'
 import { useRole } from '@/hooks/useRole'
 import { useUIStore } from '@/stores/uiStore'
 import { TkxelLogo } from '@/components/ui/TkxelLogo'
@@ -17,6 +18,7 @@ export const sidebarLinks: { to: string; label: string; icon: LucideIcon; privil
 
 export function Sidebar() {
   const user = useRole()
+  const { capabilities } = useCapabilities()
   const collapsed = useUIStore(state => state.sidebarCollapsed)
   const toggleSidebar = useUIStore(state => state.toggleSidebar)
 
@@ -32,7 +34,7 @@ export function Sidebar() {
       </div>
 
       <nav className="relative z-10 flex-1 space-y-1 px-3 py-4">
-        {sidebarLinks.filter(link => !link.privileged || user.role === 'leadership' || user.role === 'admin' || user.role === 'super_admin').map(link => (
+        {sidebarLinks.filter(link => !link.privileged || capabilities.can_access_admin).map(link => (
           <NavLink
             key={link.to}
             to={link.to}

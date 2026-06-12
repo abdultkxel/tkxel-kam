@@ -9,7 +9,7 @@ from sqlalchemy.pool import StaticPool
 
 from app.database import Base, get_db
 from app.main import app
-from app.models import Account, AccountOwner, AuditLog, CustomFieldDefinition, Engagement, TimelineEntry, User
+from app.models import Account, AccountOwner, AuditLog, CustomFieldDefinition, Engagement, Task, TimelineEntry, User
 from app.services.seed import seed_default_data
 
 
@@ -287,29 +287,57 @@ def test_playbooks_tasks_authorization_and_validation(client: TestClient, db_ses
     assert bad_link.status_code == 422 or bad_link.status_code == 400
 
 
-def test_only_super_admin_can_operate_playbooks(client: TestClient, db_session: Session) -> None:
+def test_open_task_filter_includes_legacy_todo_tasks(client: TestClient, db_session: Session) -> None:
+    headers = auth_headers(client)
+    owner = seeded_user(db_session, "account_manager")
+    db_session.add(
+        Task(
+            account_id="account-playbook",
+            title="Legacy todo dashboard task",
+            owner_id=owner.id,
+            owner_name=owner.full_name,
+            due_at=datetime.now(timezone.utc) + timedelta(days=1),
+            status="todo",
+            priority="critical",
+            created_by_id=owner.id,
+        )
+    )
+    db_session.commit()
+
+    response = client.get("/api/tasks", headers=headers, params={"status": "open", "search": "Legacy todo", "page": 1, "page_size": 10})
+
+    assert response.status_code == 200
+    assert response.json()["total"] == 1
+    assert response.json()["items"][0]["title"] == "Legacy todo dashboard task"
+    assert response.json()["items"][0]["status"] == "todo"
+
+
+def test_playbook_operations_follow_granular_permissions(client: TestClient, db_session: Session) -> None:
     super_admin_headers = auth_headers(client)
     admin_headers = auth_headers(client, "admin.user@tkxel.com", "User@12345")
     kam_head_headers = auth_headers(client, "kam.head.user@tkxel.com", "User@12345")
+    owner_headers = auth_headers(client, "account.manager.user@tkxel.com", "User@12345")
+    viewer_headers = auth_headers(client, "leadership.viewer.user@tkxel.com", "User@12345")
     owner = seeded_user(db_session, "account_manager")
 
     admin_create = client.post("/api/admin/playbook-templates", headers=admin_headers, json={**template_payload(owner.id), "custom_field_values": {}})
-    assert admin_create.status_code == 403
-    assert "Only Super Admin" in admin_create.json()["detail"]
+    assert admin_create.status_code == 201
 
     kam_head_create = client.post("/api/admin/playbook-templates", headers=kam_head_headers, json={**template_payload(owner.id), "name": "KAM Head blocked", "custom_field_values": {}})
-    assert kam_head_create.status_code == 403
+    assert kam_head_create.status_code == 201
 
-    created = client.post("/api/admin/playbook-templates", headers=super_admin_headers, json={**template_payload(owner.id), "custom_field_values": {}})
+    viewer_create = client.post("/api/admin/playbook-templates", headers=viewer_headers, json={**template_payload(owner.id), "name": "Viewer cannot configure", "custom_field_values": {}})
+    assert viewer_create.status_code == 403
+
+    created = client.post("/api/admin/playbook-templates", headers=super_admin_headers, json={**template_payload(owner.id), "name": "Super Admin Capability Template", "custom_field_values": {}})
     assert created.status_code == 201
     template_id = created.json()["id"]
 
-    admin_update = client.patch(f"/api/admin/playbook-templates/{template_id}", headers=admin_headers, json={"objective": "Admin cannot update"})
-    assert admin_update.status_code == 403
+    admin_update = client.patch(f"/api/admin/playbook-templates/{template_id}", headers=admin_headers, json={"objective": "Admin can update by capability"})
+    assert admin_update.status_code == 200
 
-    admin_execute = client.post(f"/api/playbooks/{template_id}/execute", headers=admin_headers, json={"account_id": "account-playbook", "confirmed": True})
-    assert admin_execute.status_code == 403
-    assert "Only Super Admin" in admin_execute.json()["detail"]
+    viewer_execute = client.post(f"/api/playbooks/{template_id}/execute", headers=viewer_headers, json={"account_id": "account-playbook", "confirmed": True})
+    assert viewer_execute.status_code == 403
 
-    super_execute = client.post(f"/api/playbooks/{template_id}/execute", headers=super_admin_headers, json={"account_id": "account-playbook", "confirmed": True})
-    assert super_execute.status_code == 201
+    owner_execute = client.post(f"/api/playbooks/{template_id}/execute", headers=owner_headers, json={"account_id": "account-playbook", "confirmed": True})
+    assert owner_execute.status_code == 201

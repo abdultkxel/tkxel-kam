@@ -59,7 +59,6 @@ from app.models import (
     StakeholderRoleConfig,
     Task,
     TimelineEntry,
-    TimelineEventTypeConfig,
     TimelineRetentionPolicy,
     User,
     utc_now,
@@ -75,6 +74,17 @@ from app.services.rbac import RbacService
 from app.services.users import initials_for_name, normalize_email
 
 DEFAULT_ROLE_USER_EMAIL_DOMAIN = "tkxel.com"
+DEFAULT_ROLE_USER_NAMES = {
+    "admin": "Admin User",
+    "kam_head": "KAM Head User",
+    "account_manager": "Account Manager KAM",
+    "ops_lead": "Ops Lead",
+    "delivery_lead": "Delivery Lead User",
+    "delivery_stakeholder": "Delivery Stakeholder",
+    "content_specialist": "Content Specialist",
+    "commercial_stakeholder": "Commercial Stakeholder",
+    "leadership_viewer": "Leadership Viewer",
+}
 FORECAST_DEMO_ACCOUNT_ID = "forecast-demo-account"
 FORECAST_DEMO_ACCOUNT_OWNER_ID = "forecast-demo-account-owner"
 FORECAST_DEMO_ENGAGEMENT_ID = "forecast-demo-active-sow"
@@ -484,7 +494,7 @@ def _demo_kyc_fields(spec: dict[str, Any], source_document_id: str, source_route
         "engagement_models": "Dedicated delivery pod with weekly delivery review and monthly steering committee.",
         "obligations": "Track sprint commitments, release quality, governance actions, and renewal readiness.",
         "past_engagements": "Seeded data represents the first active engagement for this account.",
-        "renewal_cycle": "Renewal readiness starts 60 days before SOW end date with KAM Head review.",
+        "renewal_cycle": "Renewal readiness starts 60 days before SOW end date with portfolio approval review.",
         "payment_behaviour": "Demo sensitive field: payment behavior should be visible only to authorized roles.",
         "gross_margins": "Demo sensitive field: margin details are placeholders for RBAC testing.",
         "billing_models": "Monthly delivery pod billing with milestone/governance reporting.",
@@ -934,7 +944,7 @@ def _seed_growth_and_retention(
     recommendation.title = "Review renewal risk"
     recommendation.rationale = str(spec["risk_note"])
     recommendation.severity = "high" if spec["risk"] == "critical" else "medium"
-    recommendation.recommended_action = "Schedule KAM Head review and align next governance checkpoint."
+    recommendation.recommended_action = "Schedule portfolio approval review and align next governance checkpoint."
     recommendation.source_context = "demo_project_seed"
     recommendation.status = "recommended"
 
@@ -1426,7 +1436,7 @@ def seed_default_role_users(db: Session) -> list[User]:
             seeded_users.append(existing_user)
             continue
 
-        full_name = role.name.replace(" / ", " ").replace("/", " ")
+        full_name = DEFAULT_ROLE_USER_NAMES.get(role.slug, role.name.replace(" / ", " ").replace("/", " "))
         user = User(
             email=email,
             primary_google_calendar_id=email,
@@ -1641,61 +1651,7 @@ def seed_relationship_planning_reference_data(db: Session) -> None:
 
 
 def seed_timeline_reference_data(db: Session, actor: User) -> None:
-    event_type_specs = (
-        ("account_setup", "Account setup", "account", "manual", "brand-blue", False),
-        ("kyc_update", "KYC update", "account", "kyc", "brand-blue", False),
-        ("score_change", "Score change", "health", "scoring", "brand-orange", False),
-        ("calculator_change", "Calculator change", "health", "scoring", "brand-orange", False),
-        ("stage_change", "Stage change", "account", "stage", "brand-blue-dark", False),
-        ("opportunity_event", "Opportunity event", "growth", "opportunity", "brand-blue", False),
-        ("retention_event", "Retention event", "retention", "manual", "brand-blue", False),
-        ("client_education", "Client education", "content", "education", "rag-green", False),
-        ("escalation_event", "Escalation event", "risk", "escalation", "brand-orange", True),
-        ("governance_event", "Governance event", "governance", "governance", "brand-blue-dark", True),
-        ("approval_event", "Approval event", "governance", "approval", "rag-green", True),
-        ("executive_event", "Executive event", "governance", "executive", "brand-blue-dark", True),
-        ("ai_event", "AI event", "ai", "ai", "surface-border", False),
-        ("manual_note", "Manual note", "manual", "manual", "surface-border", False),
-        ("engagement_created", "Engagement created", "engagement", "engagements", "brand-blue", False),
-        ("engagement_updated", "Engagement updated", "engagement", "engagements", "brand-blue", False),
-        ("sow_terms_updated", "SOW terms updated", "engagement", "engagements", "brand-blue", False),
-        ("renewal_dates_updated", "Renewal dates updated", "retention", "engagements", "brand-orange", True),
-        ("engagement_health_changed", "Engagement health changed", "health", "engagements", "brand-orange", True),
-        ("engagement_delivery_status_changed", "Delivery status changed", "engagement", "engagements", "brand-orange", True),
-        ("engagement_archived", "Engagement archived", "engagement", "engagements", "brand-blue-dark", True),
-        ("delivery_delay", "Delivery delay", "risk", "engagements", "brand-orange", True),
-        ("high_severity_client_risk", "High-severity client risk", "risk", "escalation", "brand-orange", True),
-    )
-    for index, (slug, name, category, module, color_token, is_critical) in enumerate(event_type_specs, start=1):
-        existing = db.scalar(select(TimelineEventTypeConfig).where(TimelineEventTypeConfig.slug == slug))
-        critical_rule = {"software_services_default": True} if is_critical else {}
-        if existing:
-            existing.name = name
-            existing.category = category
-            existing.module = module
-            existing.color_token = color_token
-            existing.display_order = index
-            existing.is_active = True
-            existing.is_critical = is_critical
-            existing.critical_rule_json = critical_rule
-            continue
-        db.add(
-            TimelineEventTypeConfig(
-                slug=slug,
-                name=name,
-                category=category,
-                module=module,
-                color_token=color_token,
-                display_order=index,
-                default_visibility="public",
-                is_active=True,
-                is_critical=is_critical,
-                critical_rule_json=critical_rule,
-                created_by_id=actor.id,
-                updated_by_id=actor.id,
-            )
-        )
-
+    # Timeline event types intentionally start empty so admins can create their own taxonomy.
     policy = db.scalar(select(TimelineRetentionPolicy).where(TimelineRetentionPolicy.name == "Default timeline archive"))
     next_run_at = utc_now() + timedelta(days=1)
     if policy is None:

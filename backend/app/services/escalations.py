@@ -22,7 +22,7 @@ from app.schemas import (
     EscalationUpdateRead,
     EscalationUpdateRequest,
 )
-from app.services.account_access import AccountAccessService, GLOBAL_EDIT_ROLES, GLOBAL_VIEW_ROLES
+from app.services.account_access import AccountAccessService
 from app.services.audit import AuditService
 from app.services.custom_fields import CustomFieldService
 from app.services.in_app_notifications import InAppNotificationService
@@ -71,7 +71,7 @@ class EscalationService:
         page_size: int = 10,
     ) -> EscalationPageRead:
         self.access.require_module_permission(current_user, "escalation_management", "view")
-        account_ids = None if current_user.role in GLOBAL_VIEW_ROLES else self.accounts.list_account_ids_for_user(current_user.id)
+        account_ids = None if self.access.can_view_portfolio(current_user) else self.accounts.list_account_ids_for_user(current_user.id)
         items, total = self.repository.list_escalations(
             account_id=account_id,
             account_ids=account_ids,
@@ -362,20 +362,19 @@ class EscalationService:
         account = self.accounts.get_by_id(escalation.account_id)
         if account is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Account was not found")
-        if user.role not in GLOBAL_EDIT_ROLES and not self.access.can_update_account(user, account) and escalation.owner_id != user.id:
+        if not self.access.can_update_portfolio_accounts(user) and not self.access.can_update_account(user, account) and escalation.owner_id != user.id:
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="You cannot update this escalation")
 
     def _can_view_escalation(self, user: User, escalation: Escalation) -> bool:
-        if user.role in GLOBAL_VIEW_ROLES:
+        if self.access.can_view_portfolio(user):
             return True
         if escalation.owner_id == user.id:
             return True
         account = self.accounts.get_by_id(escalation.account_id)
         return bool(account and self.access.can_view_account(user, account))
 
-    @staticmethod
-    def _can_override_closure(user: User, override_reason: str | None) -> bool:
-        return bool(override_reason and user.role in GLOBAL_EDIT_ROLES | {"kam_head"})
+    def _can_override_closure(self, user: User, override_reason: str | None) -> bool:
+        return bool(override_reason and self.access.has_any_permission(user, {"escalations:override"}))
 
     @staticmethod
     def default_sla_due_at(severity: str) -> datetime:

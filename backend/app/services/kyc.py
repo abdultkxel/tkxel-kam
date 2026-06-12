@@ -37,7 +37,7 @@ from app.schemas import (
     KycWebResearchCreateRequest,
     KycWorkstreamRead,
 )
-from app.services.account_access import AccountAccessService, GLOBAL_EDIT_ROLES
+from app.services.account_access import AccountAccessService
 from app.services.audit import AuditService
 from app.services.in_app_notifications import InAppNotificationService
 from app.services.kyc_debug_logging import log_kyc_verbose
@@ -1006,7 +1006,7 @@ class KycService:
         return run
 
     def _kyc_approvers(self) -> list[User]:
-        return self.in_app_notifications.users_by_roles(["kam_head", "admin", "super_admin"])
+        return self.in_app_notifications.users_with_any_permission({"kyc:approve_draft"})
 
     def _notify_kyc_draft_created(self, account: Account, draft: KycDraft, current_user: User, *, queued: bool) -> None:
         status_text = "queued for AI processing" if queued else "ready for review"
@@ -1028,7 +1028,7 @@ class KycService:
             self._kyc_approvers(),
             trigger="kyc_review_required",
             title=f"KYC review required: {account.name}",
-            body=f"A KYC draft for {account.name} is ready for KAM Head review.",
+            body=f"A KYC draft for {account.name} is ready for approval review.",
             account=account,
             source_record_type="kyc_draft",
             source_record_id=draft.id,
@@ -1103,9 +1103,10 @@ class KycService:
 
     def _require_account_approve(self, account_id: str, current_user: User) -> Account:
         account = self._account_or_404(account_id)
-        self.access.require_module_permission(current_user, "kyc", "approve")
-        if current_user.role != "kam_head":
-            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Only KAM Head can approve or reject KYC drafts")
+        if not self.access.has_any_permission(current_user, {"kyc:approve_draft"}):
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="You do not have permission to approve or reject KYC drafts")
+        if not self.access.can_view_account(current_user, account):
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="You do not have access to this account")
         return account
 
     def _account_or_404(self, account_id: str) -> Account:
@@ -3266,6 +3267,4 @@ class KycService:
         }
 
     def _can_view_sensitive(self, current_user: User) -> bool:
-        if current_user.role in {*GLOBAL_EDIT_ROLES, "account_manager", "am"}:
-            return True
-        return RbacRepository(self.accounts.db).role_has_permission(current_user.role, "kyc", "export")
+        return self.access.can_view_sensitive_sources(current_user) or RbacRepository(self.accounts.db).role_has_permission(current_user.role, "kyc", "export")

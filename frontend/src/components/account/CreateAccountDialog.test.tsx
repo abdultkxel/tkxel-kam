@@ -5,8 +5,34 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { CreateAccountDialog } from '@/components/account/CreateAccountDialog'
 import { toast } from 'sonner'
 
+const mockedAuth = vi.hoisted(() => ({
+  user: {
+    id: 'usr-admin',
+    name: 'Admin User',
+    email: 'admin@example.com',
+    role: 'super_admin',
+    avatarInitials: 'AU',
+  },
+  capabilities: {
+    permission_keys: ['onboarding:create_draft', 'onboarding:assign_owner', 'source_documents:upload'],
+    can_access_admin: true,
+    can_view_portfolio: true,
+    can_update_assigned_accounts: true,
+    can_update_portfolio_accounts: true,
+    can_assign_account_owners: true,
+    can_approve_onboarding: true,
+    can_view_sensitive_sources: true,
+    can_manage_sensitive_sources: true,
+    can_approve_kyc: true,
+    can_moderate_timeline: true,
+    can_export_reports: true,
+    can_configure_playbooks: true,
+    can_manage_tasks_portfolio: true,
+  },
+}))
+
 vi.mock('@/contexts/AuthContext', () => ({
-  useAuth: () => ({ token: 'test-token' }),
+  useAuth: () => ({ token: 'test-token', user: mockedAuth.user, capabilities: mockedAuth.capabilities }),
 }))
 
 vi.mock('sonner', () => ({

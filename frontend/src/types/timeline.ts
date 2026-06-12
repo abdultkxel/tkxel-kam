@@ -35,6 +35,7 @@ export type TimelineEventType =
   | 'engagement_health_changed'
   | 'engagement_delivery_status_changed'
   | 'engagement_archived'
+  | (string & {})
 
 export type TimelineModule =
   | 'kyc'
@@ -105,17 +106,20 @@ export interface TimelineEventTypeConfig {
   retentionMonths?: number
 }
 
-export function canViewTimelineEntry(entry: TimelineEntry, role: UserRole, userId?: string): boolean {
+export function canViewTimelineEntry(entry: TimelineEntry, role: UserRole, userId?: string, canViewSensitive = false, canModerate = false): boolean {
   if (!entry.isSensitive) return true
+  if (canModerate) return true
   if ((role === 'am' || role === 'account_manager') && entry.eventType === 'manual_note' && entry.performedBy === userId) return true
+  const legacySensitive = role === 'leadership' || role === 'leadership_viewer' || role === 'kam_head' || role === 'admin' || role === 'super_admin'
+  const legacyModerate = role === 'admin' || role === 'super_admin'
 
   switch (entry.sensitivityLevel) {
     case 'escalation':
     case 'commercial':
-      return role === 'leadership' || role === 'leadership_viewer' || role === 'kam_head' || role === 'admin' || role === 'super_admin'
+      return canViewSensitive || legacySensitive
     case 'executive':
     case 'legal':
-      return role === 'admin' || role === 'super_admin'
+      return canModerate || legacyModerate
     default:
       return false
   }

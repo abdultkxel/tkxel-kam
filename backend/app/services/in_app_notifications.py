@@ -9,12 +9,9 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.models import Account, AccountOwner, User
-from app.services.notifications import NotificationsService
+from app.services.notifications import ADMIN_NOTIFICATION_PERMISSIONS, NotificationsService
 
 logger = logging.getLogger(__name__)
-
-
-ADMIN_ROLES = ("super_admin", "admin", "kam_head")
 
 
 class InAppNotificationService:
@@ -113,8 +110,11 @@ class InAppNotificationService:
             return []
         return list(self.db.scalars(select(User).where(User.role.in_(role_list), User.is_active.is_(True)).order_by(User.full_name, User.email)))
 
+    def users_with_any_permission(self, permission_keys: set[str]) -> list[User]:
+        return self.notifications.active_users_with_any_permission(permission_keys)
+
     def admins(self) -> list[User]:
-        return self.users_by_roles(ADMIN_ROLES)
+        return self.users_with_any_permission(ADMIN_NOTIFICATION_PERMISSIONS)
 
     def users_by_emails(self, emails: Iterable[str | None]) -> list[User]:
         normalized = [str(email).strip().lower() for email in emails if str(email or "").strip()]

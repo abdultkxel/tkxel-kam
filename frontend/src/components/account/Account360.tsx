@@ -20,6 +20,7 @@ import { TimelineFeed } from '@/components/timeline/TimelineFeed'
 import { HandoverSummary } from '@/components/timeline/HandoverSummary'
 import { AddOpportunityDialog, OpportunityDetailDialog, type OwnerOption } from '@/pages/Opportunities'
 import { useAuth } from '@/contexts/AuthContext'
+import { useCapabilities } from '@/hooks/useCapabilities'
 import { useRole } from '@/hooks/useRole'
 import { recalculateAccountScore, ScoreRead } from '@/services/scoringSignalsTasks'
 import { useAccountStore } from '@/stores/accountStore'
@@ -35,7 +36,7 @@ import { emit } from '@/utils/emitTimelineEvent'
 import { emitTimelineEvent } from '@/utils/emitTimelineEvent'
 import { formatCompactCurrency, formatCurrency, formatDate } from '@/utils/formatters'
 
-export const accountDetailTabs = ['Overview', 'Engagement', 'Stakeholders', 'KYC', 'Health', 'Stage', 'Opportunities', 'Governance', 'Education', 'Timeline', 'Notes'] as const
+export const accountDetailTabs = ['Overview', 'Engagement', 'Stakeholders', 'KYC', 'Health', 'Stage', 'Opportunities', 'Governance', 'Education', 'Timeline', 'Notes', 'Documents'] as const
 
 type AccountDetailTab = typeof accountDetailTabs[number]
 type StageWorkspaceTab = 'Growth' | 'Retention'
@@ -64,6 +65,7 @@ export function resolveStageWorkspaceTab(value?: string | null): StageWorkspaceT
 export function Account360({ account }: { account: Account }) {
   const { token } = useAuth()
   const user = useRole()
+  const { capabilities } = useCapabilities()
   const [searchParams, setSearchParams] = useSearchParams()
   const [handoverOpen, setHandoverOpen] = useState(false)
   const [savingHealth, setSavingHealth] = useState(false)
@@ -84,9 +86,9 @@ export function Account360({ account }: { account: Account }) {
     () =>
       entries
         .filter(entry => entry.accountId === account.id)
-        .filter(entry => canViewTimelineEntry(entry, user.role, user.id))
+        .filter(entry => canViewTimelineEntry(entry, user.role, user.id, capabilities.can_view_sensitive_sources, capabilities.can_moderate_timeline))
         .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()),
-    [account.id, entries, user.id, user.role],
+    [account.id, capabilities.can_moderate_timeline, capabilities.can_view_sensitive_sources, entries, user.id, user.role],
   )
   const accountGovernance = useMemo(
     () =>
@@ -100,7 +102,7 @@ export function Account360({ account }: { account: Account }) {
     .filter(opportunity => opportunity.stage !== 'Won' && opportunity.stage !== 'Lost')
     .reduce((sum, opportunity) => sum + opportunity.estimatedValue, 0)
   const recentDecisions = visibleEntries.filter(entry => entry.eventType === 'approval_event' || entry.eventType === 'executive_event').length
-  const privileged = user.role === 'leadership' || user.role === 'admin' || user.role === 'super_admin'
+  const privileged = capabilities.can_view_portfolio || capabilities.can_update_portfolio_accounts || capabilities.can_view_sensitive_sources
   const accountAlerts = useMemo(
     () => alerts.filter(alert => alert.accountId === account.id && !alert.dismissedAt),
     [account.id, alerts],
@@ -500,7 +502,7 @@ export function Account360({ account }: { account: Account }) {
             onArchived={() => setSelectedOpportunityId('')}
           />
         </Tabs.Content>
-        {['Education', 'Governance', 'Notes'].map(tab => (
+        {['Education', 'Governance', 'Notes', 'Documents'].map(tab => (
           <Tabs.Content key={tab} value={tab}>
             <AccountWorkspacePanel account={account} tab={tab} />
           </Tabs.Content>

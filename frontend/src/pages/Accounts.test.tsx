@@ -15,6 +15,22 @@ vi.mock('@/contexts/AuthContext', () => ({
       role: 'super_admin',
       avatarInitials: 'KA',
     },
+    capabilities: {
+      permission_keys: ['accounts:view_portfolio', 'accounts:assign_owner', 'onboarding:view_all', 'onboarding:approve_draft'],
+      can_access_admin: true,
+      can_view_portfolio: true,
+      can_update_assigned_accounts: true,
+      can_update_portfolio_accounts: true,
+      can_assign_account_owners: true,
+      can_approve_onboarding: true,
+      can_view_sensitive_sources: true,
+      can_manage_sensitive_sources: true,
+      can_approve_kyc: true,
+      can_moderate_timeline: true,
+      can_export_reports: true,
+      can_configure_playbooks: true,
+      can_manage_tasks_portfolio: true,
+    },
   }),
 }))
 

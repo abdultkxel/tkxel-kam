@@ -95,6 +95,34 @@ class GovernanceRepository:
     def get_event_by_deduplication_key(self, key: str) -> GovernanceEvent | None:
         return self.db.scalar(select(GovernanceEvent).where(GovernanceEvent.deduplication_key == key))
 
+    def next_governance_event(self, *, account_id: str, governance_type: str, now: datetime) -> GovernanceEvent | None:
+        return self.db.scalar(
+            select(GovernanceEvent)
+            .where(
+                GovernanceEvent.account_id == account_id,
+                GovernanceEvent.governance_type == governance_type,
+                GovernanceEvent.review_required.is_(False),
+                GovernanceEvent.status.notin_(("completed", "cancelled", "review_required")),
+            )
+            .order_by(GovernanceEvent.scheduled_at, GovernanceEvent.created_at)
+            .limit(1)
+        )
+
+    def list_upcoming_governance_events(self, *, now: datetime, date_to: datetime) -> list[GovernanceEvent]:
+        return list(
+            self.db.scalars(
+                select(GovernanceEvent)
+                .where(
+                    GovernanceEvent.account_id.is_not(None),
+                    GovernanceEvent.review_required.is_(False),
+                    GovernanceEvent.status.notin_(("completed", "cancelled", "review_required")),
+                    GovernanceEvent.scheduled_at >= now,
+                    GovernanceEvent.scheduled_at <= date_to,
+                )
+                .order_by(GovernanceEvent.account_id, GovernanceEvent.governance_type, GovernanceEvent.scheduled_at)
+            )
+        )
+
     def save_event(self, event: GovernanceEvent) -> GovernanceEvent:
         self.db.add(event)
         self.db.flush()
@@ -232,6 +260,21 @@ class GovernanceRepository:
             .where(Task.source_type == source_type, Task.source_record_id == source_record_id)
             .order_by(Task.created_at.desc())
             .limit(1)
+        )
+
+    def list_governance_reminder_tasks_for_scope(self, *, account_id: str, governance_type: str) -> list[Task]:
+        return list(
+            self.db.scalars(
+                select(Task)
+                .join(GovernanceEvent, Task.source_record_id == GovernanceEvent.id)
+                .where(
+                    Task.source_type == "governance_event",
+                    GovernanceEvent.account_id == account_id,
+                    GovernanceEvent.governance_type == governance_type,
+                    Task.status.notin_(("done", "cancelled")),
+                )
+                .order_by(Task.due_at, Task.created_at)
+            )
         )
 
     def save_task(self, task: Task) -> Task:

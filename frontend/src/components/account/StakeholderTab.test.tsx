@@ -7,6 +7,11 @@ import type { Account } from '@/types/account'
 import type { Stakeholder } from '@/types/stakeholder'
 
 const mockRefetch = vi.hoisted(() => vi.fn(async () => null))
+const mockCapabilities = vi.hoisted(() => ({
+  permission_keys: ['stakeholders:update'],
+  can_update_assigned_accounts: true,
+  can_update_portfolio_accounts: false,
+}))
 
 const stakeholder = vi.hoisted<Stakeholder>(() => ({
   id: 'stakeholder-1',
@@ -35,6 +40,14 @@ const stakeholder = vi.hoisted<Stakeholder>(() => ({
 
 vi.mock('@/hooks/useRole', () => ({
   useRole: () => ({ role: 'account_manager' }),
+}))
+
+vi.mock('@/hooks/useCapabilities', () => ({
+  useCapabilities: () => ({
+    capabilities: mockCapabilities,
+    hasPermission: (permissionKey: string) => mockCapabilities.permission_keys.includes(permissionKey),
+    hasAnyPermission: (permissionKeys: string[]) => permissionKeys.some(permissionKey => mockCapabilities.permission_keys.includes(permissionKey)),
+  }),
 }))
 
 vi.mock('@/hooks/useEngagements', () => ({

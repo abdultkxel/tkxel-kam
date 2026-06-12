@@ -23,7 +23,7 @@ from app.schemas import (
     KamPerformancePageRead,
     KamPerformanceRead,
 )
-from app.services.account_access import AccountAccessService, GLOBAL_VIEW_ROLES
+from app.services.account_access import AccountAccessService
 from app.services.audit import AuditService
 from app.services.notifications import NotificationsService
 from app.services.timeline import TimelineService
@@ -186,7 +186,7 @@ class AnalyticsService:
         return self.repository.list_accounts(account_ids=self._account_scope(current_user), **filters)
 
     def _account_scope(self, current_user: User) -> list[str] | None:
-        return None if current_user.role in GLOBAL_VIEW_ROLES else self.repository.account_ids_for_user(current_user.id)
+        return None if self.access.can_view_portfolio(current_user) else self.repository.account_ids_for_user(current_user.id)
 
     def _ensure_change_alerts(self, current_user: User, account_ids: list[str] | None) -> None:
         accounts = self.repository.list_accounts(account_ids=account_ids, limit=500)

@@ -34,6 +34,11 @@ WORKSTREAM_QUERY_HINTS: dict[str, list[str]] = {
         "digital products",
         "customer segments",
         "technical landscape",
+        "account context",
+        "platform modernization",
+        "governance cadence",
+        "executive reporting",
+        "statement of work",
     ],
     "stakeholder_details": [
         "client stakeholders",

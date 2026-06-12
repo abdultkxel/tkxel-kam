@@ -27,7 +27,7 @@ from app.schemas import (
     SignalStatusUpdateRequest,
     TaskCreateRequest,
 )
-from app.services.account_access import AccountAccessService, GLOBAL_VIEW_ROLES
+from app.services.account_access import AccountAccessService
 from app.services.audit import AuditService
 from app.services.timeline import TimelineService
 from app.services.user_management import page_count
@@ -140,7 +140,7 @@ class SignalsService:
         page_size: int = 25,
     ) -> SignalPageRead:
         self.access.require_module_permission(current_user, SIGNALS_MODULE, "view")
-        account_ids = None if current_user.role in GLOBAL_VIEW_ROLES else self.accounts.list_account_ids_for_user(current_user.id)
+        account_ids = None if self.access.can_view_portfolio(current_user) else self.accounts.list_account_ids_for_user(current_user.id)
         items, total = self.repository.list_signals(
             account_id=account_id,
             account_ids=account_ids,
@@ -926,7 +926,7 @@ class SignalsService:
             account = self._get_account_or_404(account_id)
             self.access.require_account_view(current_user, account, module=SIGNALS_MODULE)
             return [account]
-        if current_user.role in GLOBAL_VIEW_ROLES:
+        if self.access.can_view_portfolio(current_user):
             return list(self.db.scalars(select(Account).where(Account.archived_at.is_(None)).order_by(Account.name)))
         account_ids = self.accounts.list_account_ids_for_user(current_user.id)
         if not account_ids:

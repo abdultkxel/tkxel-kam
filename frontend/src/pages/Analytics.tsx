@@ -5,7 +5,7 @@ import { useSearchParams } from 'react-router-dom'
 import { EmptyState } from '@/components/ui/EmptyState'
 import { PageHeader } from '@/components/ui/PageHeader'
 import { useAuth } from '@/contexts/AuthContext'
-import { useRole } from '@/hooks/useRole'
+import { useCapabilities } from '@/hooks/useCapabilities'
 import { AnalyticsPortfolio as AnalyticsPortfolioRead, getAccountChangeAlerts, getAnalyticsPortfolio, getKamPerformance, KamPerformance } from '@/services/analytics'
 import { formatCompactCurrency } from '@/utils/formatters'
 
@@ -126,7 +126,7 @@ function DashboardAnalytics({ portfolio, kamRows, alerts }: { portfolio: Analyti
 
 export function PortfolioAnalytics({ embedded = false }: { embedded?: boolean }) {
   const { token } = useAuth()
-  const user = useRole()
+  const { capabilities } = useCapabilities()
   const [params, setParams] = useSearchParams()
   const [portfolio, setPortfolio] = useState<AnalyticsPortfolioRead | null>(null)
   const [kamRows, setKamRows] = useState<KamPerformance[]>([])
@@ -179,7 +179,7 @@ export function PortfolioAnalytics({ embedded = false }: { embedded?: boolean })
     setParams(next, { replace: true })
   }
 
-  if (user.role === 'am' || user.role === 'account_manager') {
+  if (!capabilities.can_view_portfolio && !capabilities.permission_keys.includes('analytics:view_portfolio')) {
     const restricted = (
       <section className="tk-card">
         <EmptyState icon={Lock} heading="Analytics restricted" body="Portfolio analytics are available to leadership and admin users only." />

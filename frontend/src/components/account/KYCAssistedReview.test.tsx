@@ -24,19 +24,68 @@ import {
 } from '@/services/kyc'
 import { Account } from '@/types/account'
 import { KycAgentRun, KycDraft, KycFreshness, KycSnapshot } from '@/types/kyc'
+import type { UserCapabilities } from '@/services/capabilities'
 
-const authMock = vi.hoisted(() => ({
-  user: {
-    id: 'usr-super-admin',
-    name: 'Super Admin',
-    email: 'admin@tkxel.com',
-    role: 'super_admin',
-    avatarInitials: 'SA',
-  },
-}))
+const authMock = vi.hoisted(() => {
+  const emptyCapabilities = {
+    permission_keys: [],
+    can_access_admin: false,
+    can_view_portfolio: false,
+    can_update_assigned_accounts: false,
+    can_update_portfolio_accounts: false,
+    can_assign_account_owners: false,
+    can_approve_onboarding: false,
+    can_view_sensitive_sources: false,
+    can_manage_sensitive_sources: false,
+    can_approve_kyc: false,
+    can_moderate_timeline: false,
+    can_export_reports: false,
+    can_configure_playbooks: false,
+    can_manage_tasks_portfolio: false,
+  }
+  return {
+    user: {
+      id: 'usr-super-admin',
+      name: 'Super Admin',
+      email: 'admin@tkxel.com',
+      role: 'super_admin',
+      avatarInitials: 'SA',
+    },
+    capabilities: {
+      ...emptyCapabilities,
+      permission_keys: ['kyc:approve_draft', 'kyc:review_sources', 'kyc:debug_runs'],
+      can_approve_kyc: true,
+      can_view_sensitive_sources: true,
+    } as UserCapabilities,
+  }
+})
+
+const emptyTestCapabilities: UserCapabilities = {
+  permission_keys: [],
+  can_access_admin: false,
+  can_view_portfolio: false,
+  can_update_assigned_accounts: false,
+  can_update_portfolio_accounts: false,
+  can_assign_account_owners: false,
+  can_approve_onboarding: false,
+  can_view_sensitive_sources: false,
+  can_manage_sensitive_sources: false,
+  can_approve_kyc: false,
+  can_moderate_timeline: false,
+  can_export_reports: false,
+  can_configure_playbooks: false,
+  can_manage_tasks_portfolio: false,
+}
+
+const privilegedKycCapabilities: UserCapabilities = {
+  ...emptyTestCapabilities,
+  permission_keys: ['kyc:approve_draft', 'kyc:review_sources', 'kyc:debug_runs'],
+  can_approve_kyc: true,
+  can_view_sensitive_sources: true,
+}
 
 vi.mock('@/contexts/AuthContext', () => ({
-  useAuth: () => ({ token: 'test-token', user: authMock.user }),
+  useAuth: () => ({ token: 'test-token', user: authMock.user, capabilities: authMock.capabilities }),
 }))
 
 vi.mock('sonner', () => ({
@@ -289,6 +338,7 @@ describe('KYCAssistedReview', () => {
       role: 'super_admin',
       avatarInitials: 'SA',
     }
+    authMock.capabilities = privilegedKycCapabilities
     vi.mocked(listAccountAttachments).mockResolvedValue({
       items: [{
         id: 'doc-1',
@@ -463,6 +513,7 @@ describe('KYCAssistedReview', () => {
       role: 'account_manager',
       avatarInitials: 'AM',
     }
+    authMock.capabilities = emptyTestCapabilities
     vi.mocked(listKycAgentRuns).mockResolvedValue({ items: [agentRun()], total: 1, page: 1, page_size: 1, pages: 1 })
 
     render(<KYCAssistedReview account={account} />)

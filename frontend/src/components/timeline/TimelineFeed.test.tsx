@@ -1,5 +1,4 @@
 import { render, screen } from '@testing-library/react'
-import type { ReactNode } from 'react'
 import { MemoryRouter } from 'react-router-dom'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { TimelineFeed } from '@/components/timeline/TimelineFeed'
@@ -30,27 +29,6 @@ vi.mock('@/services/timeline', () => ({
   runTimelineAiSearch: vi.fn(),
 }))
 
-vi.mock('react-window', async () => {
-  const React = await import('react')
-  type ListProps = {
-    children: (props: { index: number; style: object; data: unknown }) => ReactNode
-    itemCount: number
-    itemData: unknown
-  }
-  const VariableSizeList = React.forwardRef<{ scrollToItem: () => void }, ListProps>(({ children, itemCount, itemData }, ref) => {
-    React.useImperativeHandle(ref, () => ({ scrollToItem: () => undefined }))
-    return (
-      <div>
-        {Array.from({ length: itemCount }).map((_, index) => (
-          <div key={index}>{children({ index, style: {}, data: itemData })}</div>
-        ))}
-      </div>
-    )
-  })
-  VariableSizeList.displayName = 'VariableSizeList'
-  return { VariableSizeList }
-})
-
 const timelineEntry: TimelineEntry = {
   id: 'tl-1',
   accountId: 'acct-1',
@@ -71,6 +49,7 @@ const timelineEntry: TimelineEntry = {
 
 describe('TimelineFeed', () => {
   beforeEach(() => {
+    vi.clearAllMocks()
     vi.mocked(getAccountTimeline).mockResolvedValue({
       items: [timelineEntry],
       total: 1,
@@ -101,5 +80,39 @@ describe('TimelineFeed', () => {
     expect(screen.queryByPlaceholderText(/Ask timeline questions/i)).not.toBeInTheDocument()
     expect(screen.queryByLabelText(/Search documents/i)).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: /Try in KAM AI/i })).not.toBeInTheDocument()
+  })
+
+  it('renders timeline cards in normal flow without fixed virtual row heights', async () => {
+    vi.mocked(getAccountTimeline).mockResolvedValue({
+      items: [
+        {
+          ...timelineEntry,
+          id: 'tl-2',
+          isSystemGenerated: true,
+          isImmutable: true,
+          beforeValue: { stage: 'discovery' },
+          afterValue: { stage: 'delivery' },
+        },
+        timelineEntry,
+      ],
+      total: 2,
+      page: 1,
+      page_size: 100,
+      pages: 1,
+    })
+
+    render(
+      <MemoryRouter initialEntries={['/accounts/acct-1?tab=timeline']}>
+        <TimelineFeed accountId="acct-1" />
+      </MemoryRouter>,
+    )
+
+    const list = await screen.findByRole('list', { name: /account timeline events/i })
+    const items = screen.getAllByRole('listitem')
+
+    expect(list).toHaveClass('space-y-3')
+    expect(items).toHaveLength(2)
+    expect(items[0].getAttribute('style') ?? '').not.toContain('height')
+    expect(screen.getByRole('button', { name: /what changed/i })).toBeInTheDocument()
   })
 })

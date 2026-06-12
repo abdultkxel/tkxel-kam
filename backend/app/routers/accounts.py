@@ -124,7 +124,7 @@ def list_account_custom_fields(
     _: AccountCreateAccess,
     service: Annotated[CustomFieldService, Depends(get_custom_field_service)],
 ) -> list[CustomFieldDefinitionRead]:
-    return service.list_active_definitions(["account_onboarding_workspace", "account_overview"])
+    return service.list_active_definitions(["account_onboarding_workspace", "account_overview", "onboarding", "accounts"])
 
 
 @router.post(

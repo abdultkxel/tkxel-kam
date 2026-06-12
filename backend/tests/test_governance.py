@@ -1,4 +1,5 @@
 from collections.abc import Generator
+from datetime import datetime, timedelta, timezone
 import io
 from urllib.error import HTTPError
 
@@ -10,7 +11,8 @@ from sqlalchemy.pool import StaticPool
 
 from app.database import Base, get_db
 from app.main import app
-from app.models import AuditLog, GovernanceEvent, IntegrationSyncLog, MeetingArtifact, Task, TimelineEntry, User
+from app.models import AuditLog, GovernanceEvent, IntegrationSyncLog, MeetingArtifact, NotificationRecord, Task, TimelineEntry, User
+from app.services.governance import GovernanceService
 from app.services.integrations import IntegrationService
 from app.services.seed import seed_default_data
 
@@ -154,8 +156,9 @@ def test_governance_event_create_list_calendar_and_validation(client: TestClient
     assert created["attendee_emails"] == ["client.lead@example.com", "sponsor@example.com"]
     reminder_task = db_session.query(Task).filter_by(source_type="governance_event", source_record_id=created["id"]).one()
     assert reminder_task.owner_id == owner_id
-    assert reminder_task.due_at.isoformat().startswith("2026-06-15T10:00:00")
-    assert reminder_task.title == "QBR: Governance Workspace"
+    assert reminder_task.due_at.isoformat().startswith("2026-06-10T10:00:00")
+    assert reminder_task.title == "Prepare for QBR: Governance Workspace"
+    assert reminder_task.description == "Prep is due 3 business days before this governance event. Agenda: Review roadmap alignment, delivery health, and expansion actions."
 
     duplicate_event = client.post("/api/governance-events", headers=headers, json=governance_payload(account_id, engagement_id, owner_id))
     assert duplicate_event.status_code == 409
@@ -383,8 +386,9 @@ def test_governance_update_cancel_and_sort_flow(client: TestClient, db_session: 
     assert db_event is not None
     assert db_event.deduplication_key == f"manual:{account_id}:SteerCo:2026-06-12T11:00:00+00:00"
     reminder_task = db_session.query(Task).filter_by(source_type="governance_event", source_record_id=first_id).one()
-    assert reminder_task.title == "SteerCo: Sortable Governance Workspace"
-    assert reminder_task.due_at.isoformat().startswith("2026-06-12T11:00:00")
+    assert reminder_task.title == "Prepare for SteerCo: Sortable Governance Workspace"
+    assert reminder_task.description == "Prep is due 3 business days before this governance event. Agenda: Updated SteerCo agenda for delivery governance."
+    assert reminder_task.due_at.isoformat().startswith("2026-06-09T11:00:00")
     assert reminder_task.status == "open"
 
     sorted_response = client.get(
@@ -402,6 +406,67 @@ def test_governance_update_cancel_and_sort_flow(client: TestClient, db_session: 
     db_session.refresh(reminder_task)
     assert reminder_task.status == "cancelled"
     assert reminder_task.skipped_reason == "Governance event was cancelled."
+
+
+def test_governance_prep_tasks_only_track_next_event_per_account_type(client: TestClient, db_session: Session) -> None:
+    headers = auth_headers(client)
+    account_id, engagement_id, owner_id = create_approved_account(client, headers, "Next Prep Governance Workspace")
+    first_at = datetime.now(timezone.utc) + timedelta(days=30)
+    second_at = datetime.now(timezone.utc) + timedelta(days=60)
+
+    first_response = client.post(
+        "/api/governance-events",
+        headers=headers,
+        json=governance_payload(account_id, engagement_id, owner_id, scheduled_at=first_at.isoformat()),
+    )
+    assert first_response.status_code == 201
+    first_id = first_response.json()["id"]
+
+    second_response = client.post(
+        "/api/governance-events",
+        headers=headers,
+        json=governance_payload(account_id, engagement_id, owner_id, scheduled_at=second_at.isoformat()),
+    )
+    assert second_response.status_code == 201
+    second_id = second_response.json()["id"]
+
+    open_tasks = db_session.query(Task).filter_by(account_id=account_id, source_type="governance_event", status="open").all()
+    assert len(open_tasks) == 1
+    assert open_tasks[0].source_record_id == first_id
+    assert open_tasks[0].due_at.date() == GovernanceService._governance_prep_due_at(first_at).date()
+
+    completed = client.post(f"/api/governance-events/{first_id}/complete", headers=headers, json={"notes": "First governance event completed."})
+    assert completed.status_code == 200
+    db_session.expire_all()
+
+    first_task = db_session.query(Task).filter_by(source_type="governance_event", source_record_id=first_id).one()
+    assert first_task.status == "done"
+    open_tasks = db_session.query(Task).filter_by(account_id=account_id, source_type="governance_event", status="open").all()
+    assert len(open_tasks) == 1
+    assert open_tasks[0].source_record_id == second_id
+    assert open_tasks[0].due_at.date() == GovernanceService._governance_prep_due_at(second_at).date()
+
+
+def test_governance_reminder_scheduler_queues_due_reminder_once(client: TestClient, db_session: Session) -> None:
+    headers = auth_headers(client)
+    account_id, engagement_id, owner_id = create_approved_account(client, headers, "Reminder Governance Workspace")
+    scheduled_at = datetime.now(timezone.utc) + timedelta(days=2)
+
+    create_response = client.post(
+        "/api/governance-events",
+        headers=headers,
+        json=governance_payload(account_id, engagement_id, owner_id, scheduled_at=scheduled_at.isoformat()),
+    )
+    assert create_response.status_code == 201
+    event_id = create_response.json()["id"]
+    assert db_session.query(NotificationRecord).filter_by(trigger="governance_reminder", source_record_id=event_id).count() == 0
+
+    processed = GovernanceService(db_session).run_due_governance_reminders(None, mode="manual")
+    assert processed == 1
+    assert db_session.query(NotificationRecord).filter_by(trigger="governance_reminder", source_record_id=event_id).count() == 1
+
+    GovernanceService(db_session).run_due_governance_reminders(None, mode="manual")
+    assert db_session.query(NotificationRecord).filter_by(trigger="governance_reminder", source_record_id=event_id).count() == 1
 
 
 def test_governance_delete_removes_event_and_cancels_linked_tasks(client: TestClient, db_session: Session) -> None:

@@ -1,5 +1,6 @@
 import { createContext, ReactNode, useCallback, useContext, useEffect, useMemo, useState } from 'react'
 import { apiRequest } from '@/services/api'
+import { emptyCapabilities, getCurrentUserCapabilities, UserCapabilities } from '@/services/capabilities'
 import type { User, UserRole } from '@/types/user'
 
 const AUTH_TOKEN_KEY = 'kam.auth.token'
@@ -31,6 +32,7 @@ interface ForgotPasswordResponse {
 
 interface AuthContextValue {
   user: User | null
+  capabilities: UserCapabilities
   token: string | null
   isAuthenticated: boolean
   isLoading: boolean
@@ -62,6 +64,7 @@ function mapApiUser(user: ApiUser): User {
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [token, setToken] = useState<string | null>(() => localStorage.getItem(AUTH_TOKEN_KEY))
   const [user, setUser] = useState<User | null>(null)
+  const [capabilities, setCapabilities] = useState<UserCapabilities>(emptyCapabilities)
   const [isLoading, setIsLoading] = useState(true)
 
   const persistToken = useCallback((nextToken: string | null) => {
@@ -74,17 +77,21 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const activeToken = localStorage.getItem(AUTH_TOKEN_KEY)
     if (!activeToken) {
       setUser(null)
+      setCapabilities(emptyCapabilities)
       setIsLoading(false)
       return
     }
 
     try {
       const profile = await apiRequest<ApiUser>('/api/auth/me', { token: activeToken })
+      const nextCapabilities = await loadCapabilities(activeToken)
       setUser(mapApiUser(profile))
+      setCapabilities(nextCapabilities)
       setToken(activeToken)
     } catch {
       persistToken(null)
       setUser(null)
+      setCapabilities(emptyCapabilities)
     } finally {
       setIsLoading(false)
     }
@@ -100,8 +107,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         method: 'POST',
         body: JSON.stringify({ email, password }),
       })
+      const nextCapabilities = await loadCapabilities(response.access_token)
       persistToken(response.access_token)
       setUser(mapApiUser(response.user))
+      setCapabilities(nextCapabilities)
     },
     [persistToken],
   )
@@ -112,8 +121,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         method: 'POST',
         body: JSON.stringify({ credential }),
       })
+      const nextCapabilities = await loadCapabilities(response.access_token)
       persistToken(response.access_token)
       setUser(mapApiUser(response.user))
+      setCapabilities(nextCapabilities)
     },
     [persistToken],
   )
@@ -127,6 +138,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     } finally {
       persistToken(null)
       setUser(null)
+      setCapabilities(emptyCapabilities)
     }
   }, [persistToken, token])
 
@@ -180,6 +192,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const value = useMemo<AuthContextValue>(
     () => ({
       user,
+      capabilities,
       token,
       isAuthenticated: Boolean(user && token),
       isLoading,
@@ -192,10 +205,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       changePassword,
       refreshProfile,
     }),
-    [changePassword, googleSignIn, isLoading, login, logout, refreshProfile, requestPasswordReset, resetPassword, token, updateProfile, user],
+    [capabilities, changePassword, googleSignIn, isLoading, login, logout, refreshProfile, requestPasswordReset, resetPassword, token, updateProfile, user],
   )
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>
+}
+
+async function loadCapabilities(token: string): Promise<UserCapabilities> {
+  try {
+    return await getCurrentUserCapabilities(token)
+  } catch {
+    return emptyCapabilities
+  }
 }
 
 export function useAuth() {

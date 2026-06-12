@@ -1001,7 +1001,11 @@ class IntegrationService:
                 trigger_config.is_active = True
                 trigger_config.mandatory = True
                 notifications.repository.save_trigger_config(trigger_config)
-            recipients = [user for user in self.users.list_users() if user.is_active and user.role in {"super_admin", "admin"}]
+            recipients = [
+                user
+                for user in self.users.list_users()
+                if user.is_active and self.access.has_any_permission(user, {"integrations:configure", "platform_ops:view_health", "access_admin:manage_users"})
+            ]
             for recipient in recipients:
                 notifications.queue_notification(
                     recipient=recipient,

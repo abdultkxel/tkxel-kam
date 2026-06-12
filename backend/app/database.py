@@ -17,6 +17,13 @@ SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False)
 
 _MISSING = object()
 _TABLE_BACKFILL_DEFAULTS: dict[str, dict[str, Any]] = {
+    "permissions": {
+        "risk_level": "medium",
+        "dependencies_json": [],
+        "tags_json": [],
+        "display_order": 0,
+        "is_deprecated": False,
+    },
     "engagements": {
         "status": "active",
         "service_lines": [],
@@ -776,6 +783,8 @@ _JSON_BACKFILL_COLUMNS = {
     "category_scores_json",
     "category_weights_json",
     "metadata_json",
+    "dependencies_json",
+    "tags_json",
 }
 _LEGACY_TABLE_BACKFILL_DEFAULTS: dict[str, dict[str, Any]] = {
     "engagements": {
@@ -1023,6 +1032,7 @@ def apply_additive_migrations() -> None:
         NotificationPreference,
         NotificationRecord,
         OnboardingDraft,
+        Permission,
         SlaRule,
         SlaEscalatedItem,
         DigestSchedule,
@@ -1045,6 +1055,7 @@ def apply_additive_migrations() -> None:
     migrate_missing_columns(
         [
             User.__table__,
+            Permission.__table__,
             Account.__table__,
             OnboardingDraft.__table__,
             SourceDocument.__table__,

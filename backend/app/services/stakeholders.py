@@ -22,7 +22,7 @@ from app.schemas import (
     StakeholderRead,
     StakeholderUpdateRequest,
 )
-from app.services.account_access import AccountAccessService, GLOBAL_EDIT_ROLES
+from app.services.account_access import AccountAccessService
 from app.services.audit import AuditService
 from app.services.stakeholder_gap_service import StakeholderGapService
 from app.services.stakeholder_config import StakeholderConfigService
@@ -412,7 +412,7 @@ class StakeholderService:
             current = self.repository.get(current.reports_to_stakeholder_id) if current.reports_to_stakeholder_id else None
 
     def _can_view_sensitive_fields(self, user: User, account: Account) -> bool:
-        if user.role in GLOBAL_EDIT_ROLES:
+        if self.access.can_update_portfolio_accounts(user):
             return True
         return self.rbac.role_has_permission(user.role, STAKEHOLDER_MODULE, "update") and self.access.can_update_account(user, account)
 

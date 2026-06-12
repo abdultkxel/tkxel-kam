@@ -46,7 +46,7 @@ from app.schemas import (
     OpportunityTypeUpdateRequest,
     OpportunityUpdateRequest,
 )
-from app.services.account_access import AccountAccessService, GLOBAL_VIEW_ROLES
+from app.services.account_access import AccountAccessService
 from app.services.audit import AuditService
 from app.services.in_app_notifications import InAppNotificationService
 from app.services.timeline import TimelineService
@@ -96,7 +96,7 @@ class OpportunityService:
         page_size: int = 25,
     ) -> OpportunityPageRead:
         self.access.require_module_permission(current_user, OPPORTUNITY_MODULE, "view")
-        account_ids = None if current_user.role in GLOBAL_VIEW_ROLES else self.accounts.list_account_ids_for_user(current_user.id)
+        account_ids = None if self.access.can_view_portfolio(current_user) else self.accounts.list_account_ids_for_user(current_user.id)
         if stage:
             self._ensure_active_stage(stage)
         items, total = self.repository.list_opportunities(

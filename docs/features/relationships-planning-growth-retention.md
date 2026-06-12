@@ -41,6 +41,7 @@ KAM users work from Account 360 tabs for stakeholders, planning, growth, renewal
 ## Frontend Plan
 
 - Pages/components: Account 360 planning, growth, renewal, and retention tabs; Admin planning configuration panel.
+- Admin Planning keeps the service catalog and service adjacency controls in separate stacked sections, with paginated service rows, so large catalogs do not overflow or create a long unbroken settings wall.
 - Stakeholder tab UI shows role, influence, relationship, sentiment, status, optional LinkedIn URL, coverage, activity fields, and LinkedIn links in the hierarchy; political risk is not exposed in the tab, form, or detail drawer.
 - Services: `frontend/src/services/relationshipsPlanning.ts`.
 - Form behavior: no HTML `required`; backend errors surface through field-level error components.
@@ -56,6 +57,7 @@ KAM users work from Account 360 tabs for stakeholders, planning, growth, renewal
 
 - Backend unit/API tests cover account plan persistence, service whitespace recommendations, recommendation conversion, renewal profiles, retention plans, admin configuration, authorization, validation, pagination, and OpenAPI availability.
 - Frontend tests cover admin/account UI service wiring where feasible.
+- Frontend Admin Planning coverage verifies the service catalog no longer renders as a horizontally overflowing table, adjacency settings render in their own section, service creation stays scoped to the service form, and larger service catalogs paginate.
 
 ## Linting And Quality
 

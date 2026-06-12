@@ -8,7 +8,7 @@ from app.repositories.accounts import AccountRepository
 from app.repositories.dashboards import DashboardRepository
 from app.repositories.rbac import RbacRepository
 from app.schemas import AiForecastResponse, DashboardRead, DashboardWidgetRead, TaskSummaryRefreshRead
-from app.services.account_access import AccountAccessService, GLOBAL_VIEW_ROLES
+from app.services.account_access import AccountAccessService
 from app.services.forecasting import ForecastingService
 
 
@@ -52,12 +52,13 @@ class DashboardsService:
     def refresh_task_summary(self, current_user: User) -> TaskSummaryRefreshRead:
         self.access.require_module_permission(current_user, "dashboards_reporting", "view")
         profile = self._profile_for_user(current_user)
-        if profile["dashboard"] not in {"am_home", "operations", "delivery"} and current_user.role not in ADMIN_ROLES:
+        if profile["dashboard"] not in {"am_home", "operations", "delivery"} and not self.access.can_view_portfolio(current_user):
             return TaskSummaryRefreshRead(widget=self._widget("ai_task_summary", "AI Task Summary", {"headline": "No refreshable work queue is available for this role.", "narrative": "This dashboard is read-only or portfolio-scoped.", "top_blockers": [], "recommended_focus": "Review the visible dashboard widgets.", "source_counts": {"tasks": 0, "signals": 0}, "refreshed_at": self.repository.now().isoformat()}, [], "authorized_scope", {"manual_refresh": False}, primary_route="/tasks"))
 
         account_ids = self._account_scope(current_user)
-        tasks = self.repository.list_open_tasks(account_ids=account_ids, owner_id=None if current_user.role in GLOBAL_VIEW_ROLES else current_user.id, limit=100)
-        signals = self.repository.list_open_signals(account_ids=account_ids, owner_id=None if current_user.role in GLOBAL_VIEW_ROLES else current_user.id, limit=100)
+        portfolio_scope = self.access.can_view_portfolio(current_user)
+        tasks = self.repository.list_open_tasks(account_ids=account_ids, owner_id=None if portfolio_scope else current_user.id, limit=100)
+        signals = self.repository.list_open_signals(account_ids=account_ids, owner_id=None if portfolio_scope else current_user.id, limit=100)
         return TaskSummaryRefreshRead(widget=self._task_summary_widget(tasks, signals, data_scope="assigned_accounts"))
 
     def kam_head_portfolio(
@@ -88,7 +89,7 @@ class DashboardsService:
             risk=risk,
             page=page,
             page_size=page_size,
-            include_admin=current_user.role in ADMIN_ROLES,
+            include_admin=self._can_view_admin_dashboard(current_user),
         )
 
     def leadership(self, current_user: User, *, search: str | None = None, segment: str | None = None, region: str | None = None, risk: str | None = None, account_id: str | None = None, page: int = 1, page_size: int = 10) -> DashboardRead:
@@ -101,7 +102,7 @@ class DashboardsService:
         profile = self._profile_for_user(current_user)
         dashboard = profile["dashboard"]
         if dashboard == "kam_head_portfolio":
-            return self._build_kam_head_portfolio(current_user, search=search, am_id=am_id, account_id=account_id, risk=risk, page=page, page_size=page_size, include_admin=current_user.role in ADMIN_ROLES)
+            return self._build_kam_head_portfolio(current_user, search=search, am_id=am_id, account_id=account_id, risk=risk, page=page, page_size=page_size, include_admin=profile["role_group"] == "admin")
         if dashboard == "am_home":
             return self._build_am_home(current_user, search=search, account_id=account_id, priority=None, page=page, page_size=page_size)
         if dashboard == "leadership":
@@ -129,9 +130,12 @@ class DashboardsService:
         return {"dashboard": "rbac_widgets", "display_name": "My Dashboard", "role_group": "rbac", "read_only": not self._can(user, "dashboards_reporting", "update")}
 
     def _can_access_requested_dashboard(self, user: User, requested_dashboard: str) -> bool:
-        if user.role in ADMIN_ROLES:
+        if self.access.can_view_portfolio(user):
             return True
         return self._profile_for_user(user)["dashboard"] == requested_dashboard
+
+    def _can_view_admin_dashboard(self, user: User) -> bool:
+        return self.access.has_any_permission(user, {"platform_ops:view_health", "access_admin:view_users", "audit:view_logs"})
 
     def _reduced_dashboard(self, current_user: User, requested_dashboard: str, *, search: str | None, risk: str | None, page: int, page_size: int) -> DashboardRead:
         dashboard = self._dashboard_for_current_user(current_user, search=search, risk=risk, account_id=None, am_id=None, page=page, page_size=page_size)
@@ -145,8 +149,8 @@ class DashboardsService:
             account_ids = [account_id] if account_ids is None or account_id in account_ids else []
         accounts = self.repository.list_accounts(account_ids=account_ids, search=search, limit=100)
         scoped_ids = [account.id for account in accounts]
-        owner_id = None if current_user.role in GLOBAL_VIEW_ROLES else current_user.id
-        if current_user.role in GLOBAL_VIEW_ROLES:
+        owner_id = None if self.access.can_view_portfolio(current_user) else current_user.id
+        if self.access.can_view_portfolio(current_user):
             tasks = self.repository.list_open_tasks(account_ids=scoped_ids, limit=100)
         else:
             tasks = self._dedupe_by_id(
@@ -298,16 +302,16 @@ class DashboardsService:
         if accounts:
             widgets.append(self._widget("accounts", "Authorized accounts", None, [self._account_item(account) for account in self._slice(accounts, page, page_size)], "rbac", {"page": page, "page_size": page_size, "total": len(accounts)}, primary_route="/accounts"))
         if self._can(current_user, "playbooks_tasks_calendar", "view"):
-            tasks = self.repository.list_open_tasks(account_ids=scoped_ids, owner_id=None if current_user.role in GLOBAL_VIEW_ROLES else current_user.id, limit=100)
+            tasks = self.repository.list_open_tasks(account_ids=scoped_ids, owner_id=None if self.access.can_view_portfolio(current_user) else current_user.id, limit=100)
             widgets.append(self._widget("tasks", "Tasks summary", None, [self._task_item(task, self.repository.now()) for task in self._slice(tasks, page, page_size)], "rbac", {"total": len(tasks)}, primary_route="/tasks"))
         if self._can(current_user, "signals_attention", "view"):
-            signals = self.repository.list_open_signals(account_ids=scoped_ids, owner_id=None if current_user.role in GLOBAL_VIEW_ROLES else current_user.id, limit=100)
+            signals = self.repository.list_open_signals(account_ids=scoped_ids, owner_id=None if self.access.can_view_portfolio(current_user) else current_user.id, limit=100)
             widgets.append(self._widget("signals", "Signals", None, [self._signal_item(signal) for signal in self._slice(signals, page, page_size)], "rbac", {"total": len(signals)}, primary_route="/tasks"))
         if self._can(current_user, "governance_reviews", "view"):
             governance = self.repository.list_governance_events(account_ids=scoped_ids, limit=100)
             widgets.append(self._governance_calendar_widget(governance, data_scope="rbac", read_only=True))
         if self._can(current_user, "opportunity_management", "view"):
-            opportunities = self.repository.list_open_opportunities(account_ids=scoped_ids, owner_id=None if current_user.role in GLOBAL_VIEW_ROLES else current_user.id, limit=100)
+            opportunities = self.repository.list_open_opportunities(account_ids=scoped_ids, owner_id=None if self.access.can_view_portfolio(current_user) else current_user.id, limit=100)
             mask_commercial = self._mask_commercial_values(current_user)
             widgets.append(self._pipeline_widget(opportunities, data_scope="rbac", masked=mask_commercial, page=page, page_size=page_size))
         if accounts and self._can(current_user, "engagement_sow_management", "view"):
@@ -316,7 +320,7 @@ class DashboardsService:
         return self._dashboard_read(current_user, "rbac_widgets", "My Dashboard", "rbac", "authorized_scope", widgets, read_only=not self._can(current_user, "dashboards_reporting", "update"), filters=["search", "risk", "account_id"])
 
     def _account_scope(self, user: User) -> list[str] | None:
-        if user.role in GLOBAL_VIEW_ROLES:
+        if self.access.can_view_portfolio(user):
             return None
         return self.repository.account_ids_for_user(user.id)
 
@@ -398,7 +402,7 @@ class DashboardsService:
 
     def _task_breakdown_value(self, tasks: list, accounts: list, current_user_id: str, now: datetime) -> dict[str, Any]:
         week_end = now + timedelta(days=7)
-        open_tasks = [task for task in tasks if task.status == "open"]
+        open_tasks = [task for task in tasks if task.status in {"open", "todo"}]
         in_progress = [task for task in tasks if task.status == "in_progress"]
         overdue = [task for task in tasks if self._is_before(task.due_at, now)]
         due_this_week = [task for task in tasks if not self._is_before(task.due_at, now) and not self._is_before(week_end, task.due_at)]

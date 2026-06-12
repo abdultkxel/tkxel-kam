@@ -3,15 +3,17 @@ import { X } from 'lucide-react'
 import { NavLink } from 'react-router-dom'
 import { sidebarLinks } from '@/components/layout/Sidebar'
 import { TkxelLogo } from '@/components/ui/TkxelLogo'
+import { useCapabilities } from '@/hooks/useCapabilities'
 import { useRole } from '@/hooks/useRole'
 import { useUIStore } from '@/stores/uiStore'
 import { cn } from '@/utils/cn'
 
 export function MobileNav() {
   const user = useRole()
+  const { capabilities } = useCapabilities()
   const open = useUIStore(state => state.mobileNavOpen)
   const setOpen = useUIStore(state => state.setMobileNavOpen)
-  const links = sidebarLinks.filter(link => !link.privileged || user.role === 'leadership' || user.role === 'admin' || user.role === 'super_admin')
+  const links = sidebarLinks.filter(link => !link.privileged || capabilities.can_access_admin)
 
   return (
     <Dialog.Root open={open} onOpenChange={setOpen}>

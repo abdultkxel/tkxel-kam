@@ -7,6 +7,7 @@ import { EmptyState } from '@/components/ui/EmptyState'
 import { PageHeader } from '@/components/ui/PageHeader'
 import { Skeleton } from '@/components/ui/Skeleton'
 import { useAuth } from '@/contexts/AuthContext'
+import { useCapabilities } from '@/hooks/useCapabilities'
 import { useRole } from '@/hooks/useRole'
 import {
   approveOnboardingDraft,
@@ -27,6 +28,7 @@ import { formatCompactCurrency, formatDate, formatRelative } from '@/utils/forma
 
 export function Onboarding() {
   const user = useRole()
+  const { capabilities } = useCapabilities()
   const { token } = useAuth()
   const [drafts, setDrafts] = useState<OnboardingDraftView[]>([])
   const [selectedId, setSelectedId] = useState('')
@@ -42,7 +44,7 @@ export function Onboarding() {
 
   const selected = drafts.find(draft => draft.id === selectedId) ?? drafts[0]
   const selectedDocs = useMemo(() => selected?.sourceDocuments ?? [], [selected])
-  const assignableManagers = assignableAccountManagers(accountManagers, user)
+  const assignableManagers = assignableAccountManagers(accountManagers, user, capabilities.can_assign_account_owners)
   const intakeManager = assignableManagers.find(manager => manager.id === selectedManagerId)
   const selectedOwnerId = selected?.accountDraft.ownerId && selected.accountDraft.ownerId !== 'pending-owner' ? selected.accountDraft.ownerId : ''
   const selectedOwnerMissing = selected?.status === 'ready_for_review' && !selectedOwnerId
@@ -78,7 +80,7 @@ export function Onboarding() {
       .then(managers => {
         if (!active) return
         setAccountManagers(managers)
-        setSelectedManagerId(current => current || defaultAccountManagerId(assignableAccountManagers(managers, user), user))
+        setSelectedManagerId(current => current || defaultAccountManagerId(assignableAccountManagers(managers, user, capabilities.can_assign_account_owners), user, capabilities.can_assign_account_owners))
       })
       .catch(() => {
         if (active) setAccountManagers([])
@@ -89,7 +91,7 @@ export function Onboarding() {
     return () => {
       active = false
     }
-  }, [token, user])
+  }, [capabilities.can_assign_account_owners, token, user])
 
   async function runDocumentExtraction() {
     if (!token) {
@@ -505,13 +507,13 @@ function formatFieldKey(value: string) {
     .replace(/\b\w/g, letter => letter.toUpperCase())
 }
 
-function defaultAccountManagerId(managers: OnboardingAccountManager[], currentUser: { id: string; email: string; role: string }) {
-  if (!['account_manager', 'am'].includes(currentUser.role)) return ''
+function defaultAccountManagerId(managers: OnboardingAccountManager[], currentUser: { id: string; email: string }, canAssignOwners: boolean) {
+  if (canAssignOwners) return ''
   const self = managers.find(manager => manager.id === currentUser.id || manager.email.toLowerCase() === currentUser.email.toLowerCase())
   return self?.id ?? ''
 }
 
-function assignableAccountManagers(managers: OnboardingAccountManager[], currentUser: { id: string; email: string; role: string }) {
-  if (!['account_manager', 'am'].includes(currentUser.role)) return managers
+function assignableAccountManagers(managers: OnboardingAccountManager[], currentUser: { id: string; email: string }, canAssignOwners: boolean) {
+  if (canAssignOwners) return managers
   return managers.filter(manager => manager.id === currentUser.id || manager.email.toLowerCase() === currentUser.email.toLowerCase())
 }

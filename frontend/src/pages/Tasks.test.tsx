@@ -69,6 +69,14 @@ const task = {
   updated_at: '2026-06-01T12:00:00Z',
 }
 
+const legacyTodoTask = {
+  ...task,
+  id: 'task-legacy-todo',
+  title: 'Legacy todo dashboard task',
+  status: 'todo',
+  priority: 'critical',
+}
+
 function jsonResponse(body: unknown, status = 200) {
   return new Response(JSON.stringify(body), {
     status,
@@ -155,6 +163,30 @@ describe('Tasks page backend work queue', () => {
       expect(String(taskRequest?.[0])).toContain('my_items=true')
       expect(String(taskRequest?.[0])).toContain('account_id=acct-1')
       expect(String(taskRequest?.[0])).toContain('due_to=')
+    })
+  })
+
+  it('renders legacy todo tasks as open work from dashboard open-task links', async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input)
+      if (url.includes('/api/custom-fields')) return jsonResponse([])
+      if (url.includes('/api/tasks')) return jsonResponse(page([legacyTodoTask]))
+      return jsonResponse(page([]))
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    render(
+      <MemoryRouter initialEntries={['/tasks?status=open']}>
+        <Tasks />
+      </MemoryRouter>,
+    )
+
+    expect(await screen.findByText('Legacy todo dashboard task')).toBeInTheDocument()
+    expect(screen.getByText('critical')).toBeInTheDocument()
+    expect(screen.getAllByText('1 task').length).toBeGreaterThan(0)
+    await waitFor(() => {
+      const taskRequest = fetchMock.mock.calls.find(call => String(call[0]).includes('/api/tasks'))
+      expect(String(taskRequest?.[0])).toContain('status=open')
     })
   })
 

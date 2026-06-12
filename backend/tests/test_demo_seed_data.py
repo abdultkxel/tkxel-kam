@@ -9,8 +9,6 @@ from app.database import Base
 from app.models import (
     Account,
     AccountPlan,
-    ContentItem,
-    CustomFieldDefinition,
     Engagement,
     GovernanceEvent,
     KycSnapshot,
@@ -20,7 +18,7 @@ from app.models import (
     Signal,
     Task,
 )
-from app.services.seed import seed_demo_data
+from app.services.seed import seed_demo_project_data
 
 
 @pytest.fixture()
@@ -38,25 +36,19 @@ def count_records(db_session: Session, model: type) -> int:
 
 
 def test_demo_seed_populates_major_modules_and_is_idempotent(db_session: Session) -> None:
-    first_summary = seed_demo_data(db_session)
-    second_summary = seed_demo_data(db_session)
+    first_summary = seed_demo_project_data(db_session)
+    second_summary = seed_demo_project_data(db_session)
 
     assert first_summary == second_summary
-    assert db_session.get(Account, "demo-acme-retail") is not None
-    assert count_records(db_session, Account) >= 3
-    assert count_records(db_session, Engagement) >= 3
-    assert count_records(db_session, KycSnapshot) >= 3
-    assert count_records(db_session, Opportunity) >= 3
-    assert count_records(db_session, AccountPlan) >= 3
-    assert count_records(db_session, ScoreSnapshot) >= 3
-    assert count_records(db_session, Signal) >= 3
-    assert count_records(db_session, Task) >= 3
-    assert count_records(db_session, GovernanceEvent) >= 3
-    assert count_records(db_session, NotificationRecord) >= 9
-    assert db_session.get(ContentItem, "demo-content-qbr") is not None
-    assert db_session.scalar(
-        select(CustomFieldDefinition).where(
-            CustomFieldDefinition.module == "account_overview",
-            CustomFieldDefinition.field_key == "demo_customer_tier",
-        )
-    )
+    assert first_summary["count"] == 4
+    assert db_session.get(Account, "demo-project-cafe-zupas") is not None
+    assert count_records(db_session, Account) >= 4
+    assert count_records(db_session, Engagement) >= 4
+    assert count_records(db_session, KycSnapshot) >= 4
+    assert count_records(db_session, Opportunity) >= 4
+    assert count_records(db_session, AccountPlan) >= 4
+    assert count_records(db_session, ScoreSnapshot) >= 4
+    assert count_records(db_session, Signal) >= 4
+    assert count_records(db_session, Task) >= 4
+    assert count_records(db_session, GovernanceEvent) >= 4
+    assert count_records(db_session, NotificationRecord) >= 16

@@ -28,7 +28,7 @@ from app.schemas import (
     ReportScheduleUpdateRequest,
     ReportUpdateRequest,
 )
-from app.services.account_access import AccountAccessService, GLOBAL_VIEW_ROLES
+from app.services.account_access import AccountAccessService
 from app.services.audit import AuditService
 from app.services.email_delivery import EmailDeliveryService
 from app.services.user_management import page_count
@@ -137,7 +137,7 @@ class ReportsService:
 
     def list_reports(self, current_user: User, *, search: str | None = None, data_source: str | None = None, page: int = 1, page_size: int = 25) -> ReportDefinitionPageRead:
         self.access.require_module_permission(current_user, "dashboards_reporting", "view")
-        include_all = current_user.role in {"super_admin", "admin", "kam_head"}
+        include_all = self.access.has_any_permission(current_user, {"reports:view_portfolio", "reports:configure_all"})
         items, total = self.repository.list_reports(owner_id=current_user.id, include_shared=True, include_all=include_all, search=search, data_source=data_source, page=page, page_size=page_size)
         return ReportDefinitionPageRead(items=[ReportDefinitionRead.model_validate(item) for item in items], total=total, page=page, page_size=page_size, pages=page_count(total, page_size))
 
@@ -405,7 +405,7 @@ class ReportsService:
         return row
 
     def _account_scope(self, user: User) -> list[str] | None:
-        if user.role in GLOBAL_VIEW_ROLES:
+        if self.access.can_view_portfolio(user):
             return None
         return self.dashboard_repository.account_ids_for_user(user.id)
 
@@ -414,7 +414,7 @@ class ReportsService:
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="You do not have access to this report")
 
     def _can_view_report(self, report: ReportDefinition, user: User) -> bool:
-        if user.role in {"super_admin", "admin", "kam_head"}:
+        if self.access.has_any_permission(user, {"reports:view_portfolio", "reports:configure_all"}):
             return True
         return report.visibility == "shared" or report.owner_id == user.id
 
@@ -435,17 +435,17 @@ class ReportsService:
         missing = [user_id for user_id in user_ids if user_id not in found]
         if missing:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="All recipients must be active users")
-        unauthorized = [user.full_name or user.email for user in users if not self.rbac.role_has_permission(user.role, "dashboards_reporting", "view") or not self._can_view_report(report, user)]
+        unauthorized = [user.full_name or user.email for user in users if not self.access.has_any_permission(user, {"reports:view_own", "reports:view_portfolio"}) or not self._can_view_report(report, user)]
         if unauthorized:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="All report recipients must be authorized to view the report")
         return [user.id for user in users]
 
     def _active_authorized_report_recipients(self, user_ids: list[str], report: ReportDefinition) -> list[User]:
         users = self.notifications.list_active_users_by_ids(user_ids)
-        return [user for user in users if self.rbac.role_has_permission(user.role, "dashboards_reporting", "view") and self._can_view_report(report, user)]
+        return [user for user in users if self.access.has_any_permission(user, {"reports:view_own", "reports:view_portfolio"}) and self._can_view_report(report, user)]
 
     def _can_configure_reports(self, user: User) -> bool:
-        return self.rbac.role_has_permission(user.role, "dashboards_reporting", "configure")
+        return self.access.has_any_permission(user, {"reports:configure_all"})
 
     @staticmethod
     def _next_run_at(cadence: str, from_time: datetime | None = None) -> datetime:

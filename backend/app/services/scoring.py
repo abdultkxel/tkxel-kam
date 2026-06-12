@@ -44,7 +44,7 @@ from app.schemas import (
     ScoringMetricVersionPageRead,
     ScoringMetricVersionRead,
 )
-from app.services.account_access import AccountAccessService, GLOBAL_VIEW_ROLES
+from app.services.account_access import AccountAccessService
 from app.services.audit import AuditService
 from app.services.timeline import TimelineService
 from app.services.user_management import page_count
@@ -395,7 +395,7 @@ class ScoringService:
                 snapshot = self._calculate_engagement_snapshot(account, engagement, current_user, job=job)
                 job.result_json = {"snapshot_id": snapshot.id, "overall": snapshot.overall, "rag_status": snapshot.rag_status}
             else:
-                if current_user.role not in GLOBAL_VIEW_ROLES:
+                if not self.access.can_view_portfolio(current_user):
                     raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Portfolio scoring jobs require portfolio access")
                 account_ids = list(self.db.scalars(select(Account.id).where(Account.archived_at.is_(None))))
                 completed = 0

@@ -1,4 +1,4 @@
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from urllib import error, request
 import json
 import logging
@@ -58,7 +58,7 @@ from app.schemas import (
     IntegrationSyncResponse,
     MessageResponse,
 )
-from app.services.account_access import AccountAccessService, GLOBAL_EDIT_ROLES, GLOBAL_VIEW_ROLES
+from app.services.account_access import AccountAccessService
 from app.services.audit import AuditService
 from app.services.custom_fields import CustomFieldService
 from app.services.email_domains import field_validation_error
@@ -70,6 +70,9 @@ from app.services.user_management import page_count
 logger = logging.getLogger(__name__)
 GOVERNANCE_REMINDER_TASK_SOURCE = "governance_event"
 GOVERNANCE_ACTION_TASK_SOURCE = "governance_action_item"
+GOVERNANCE_PREP_LEAD_BUSINESS_DAYS = 3
+GOVERNANCE_REMINDER_LOOKAHEAD_DAYS = 7
+TERMINAL_TASK_STATUSES = {"done", "cancelled"}
 
 
 class GovernanceService:
@@ -104,7 +107,7 @@ class GovernanceService:
         page_size: int = 10,
     ) -> GovernanceEventPageRead:
         self.access.require_module_permission(current_user, "governance_reviews", "view")
-        account_ids = None if current_user.role in GLOBAL_VIEW_ROLES else self.accounts.list_account_ids_for_user(current_user.id)
+        account_ids = None if self.access.can_view_portfolio(current_user) else self.accounts.list_account_ids_for_user(current_user.id)
         items, total = self.repository.list_events(
             account_id=account_id,
             account_ids=account_ids,
@@ -239,6 +242,8 @@ class GovernanceService:
             self._notify_governance_event(event, "governance_cancelled", "Governance cancelled", current_user)
         elif before.get("scheduled_at") != (event.scheduled_at.isoformat() if event.scheduled_at else None):
             self._notify_governance_event(event, "governance_rescheduled", "Governance rescheduled", current_user)
+        if before.get("account_id") and before.get("governance_type") and (before.get("account_id") != event.account_id or before.get("governance_type") != event.governance_type):
+            self._sync_next_governance_prep_task(str(before["account_id"]), str(before["governance_type"]), current_user)
         self.repository.commit()
         return self._event_read(event)
 
@@ -265,6 +270,8 @@ class GovernanceService:
         )
         self.repository.delete_event(event)
         self._update_next_governance(account)
+        if before.get("account_id") and before.get("governance_type"):
+            self._sync_next_governance_prep_task(str(before["account_id"]), str(before["governance_type"]), current_user)
         self.repository.commit()
         return MessageResponse(message="Governance event deleted successfully")
 
@@ -306,6 +313,8 @@ class GovernanceService:
         self._write_governance_timeline(event, current_user, "completed")
         self.audit.log(module="governance_reviews", action="complete", entity_type="governance_event", entity_id=event.id, actor=current_user, before_value=before, after_value=self._event_snapshot(event))
         self._update_next_governance(event.account)
+        if event.account_id:
+            self._sync_next_governance_prep_task(event.account_id, event.governance_type, current_user)
         self.repository.commit()
         return self._event_read(event)
 
@@ -469,6 +478,8 @@ class GovernanceService:
         )
         self.repository.save_recurrence_rule(rule)
         self._generate_recurrence_events(rule, current_user)
+        if rule.account_id:
+            self._sync_next_governance_prep_task(rule.account_id, rule.governance_type, current_user)
         self.audit.log(module="governance_reviews", action="create_recurrence_rule", entity_type="governance_recurrence_rule", entity_id=rule.id, actor=current_user)
         self.repository.commit()
         return GovernanceRecurrenceRuleRead.model_validate(rule)
@@ -485,6 +496,8 @@ class GovernanceService:
         rule.updated_by_id = current_user.id
         if rule.is_active:
             self._generate_recurrence_events(rule, current_user)
+        if rule.account_id:
+            self._sync_next_governance_prep_task(rule.account_id, rule.governance_type, current_user)
         self.audit.log(module="governance_reviews", action="update_recurrence_rule", entity_type="governance_recurrence_rule", entity_id=rule.id, actor=current_user)
         self.repository.commit()
         return GovernanceRecurrenceRuleRead.model_validate(rule)
@@ -566,13 +579,36 @@ class GovernanceService:
         items, total = self.repository.list_sync_logs(provider=provider, status=status_filter, page=page, page_size=page_size)
         return IntegrationSyncLogPageRead(items=[IntegrationSyncLogRead.model_validate(item) for item in items], total=total, page=page, page_size=page_size, pages=page_count(total, page_size))
 
+    def run_due_governance_reminders(self, current_user: User | None = None, *, mode: str = "scheduled") -> int:
+        now = datetime.now(timezone.utc)
+        date_to = now + timedelta(days=GOVERNANCE_REMINDER_LOOKAHEAD_DAYS)
+        processed_scopes: set[tuple[str, str]] = set()
+        reminders_processed = 0
+        for event in self.repository.list_upcoming_governance_events(now=now, date_to=date_to):
+            if not event.account_id:
+                continue
+            scope = (event.account_id, event.governance_type)
+            if scope in processed_scopes:
+                continue
+            processed_scopes.add(scope)
+            next_event = self.repository.next_governance_event(account_id=event.account_id, governance_type=event.governance_type, now=now)
+            if next_event is None or next_event.id != event.id:
+                continue
+            if self._governance_prep_due_at(event.scheduled_at) > now:
+                continue
+            self._sync_next_governance_prep_task(event.account_id, event.governance_type, current_user, now=now, send_due_reminder=True)
+            reminders_processed += 1
+        self.repository.commit()
+        logger.info("Governance reminder run completed mode=%s processed=%s", mode, reminders_processed)
+        return reminders_processed
+
     def _governance_recipients(self, event: GovernanceEvent) -> list[User]:
         return [
             self.in_app_notifications.active_user(event.owner_id),
             *self.in_app_notifications.users_by_emails(event.attendees or []),
         ]
 
-    def _notify_governance_event(self, event: GovernanceEvent, trigger: str, label: str, current_user: User) -> None:
+    def _notify_governance_event(self, event: GovernanceEvent, trigger: str, label: str, current_user: User | None, *, dedupe_scope: str | None = None) -> None:
         account = self.accounts.get_by_id(event.account_id) if event.account_id else None
         scheduled = event.scheduled_at.strftime("%Y-%m-%d %H:%M") if event.scheduled_at else "unscheduled"
         self.in_app_notifications.queue_many(
@@ -585,8 +621,17 @@ class GovernanceService:
             source_record_id=event.id,
             source_record_route=f"/accounts/{event.account_id}?tab=governance" if event.account_id else f"/governance?selected={event.id}",
             priority="medium",
-            dedupe_scope=f"{trigger}:{event.updated_at.isoformat() if event.updated_at else event.id}",
-            exclude_user_ids={current_user.id},
+            dedupe_scope=dedupe_scope or f"{trigger}:{event.updated_at.isoformat() if event.updated_at else event.id}",
+            exclude_user_ids={current_user.id} if current_user else set(),
+        )
+
+    def _notify_governance_reminder(self, event: GovernanceEvent, current_user: User | None = None) -> None:
+        self._notify_governance_event(
+            event,
+            "governance_reminder",
+            "Governance reminder",
+            current_user,
+            dedupe_scope=f"governance_reminder:{event.id}:{event.scheduled_at.isoformat() if event.scheduled_at else event.id}",
         )
 
     def _notify_governance_decision(self, event: GovernanceEvent, decision: GovernanceDecision, current_user: User) -> None:
@@ -619,7 +664,7 @@ class GovernanceService:
             dedupe_scope="assigned",
         )
 
-    def _sync_governance_reminder_task(self, event: GovernanceEvent, actor: User, reason: str = "Governance event was cancelled.") -> None:
+    def _sync_governance_reminder_task(self, event: GovernanceEvent, actor: User | None, reason: str = "Governance event was cancelled.") -> None:
         if not event.account_id or event.review_required:
             return
         task = self.repository.get_task_by_source(GOVERNANCE_REMINDER_TASK_SOURCE, event.id)
@@ -627,49 +672,72 @@ class GovernanceService:
             if task:
                 task.status = "cancelled"
                 task.skipped_reason = task.skipped_reason or reason
-                task.updated_by_id = actor.id
+                task.updated_by_id = actor.id if actor else None
+            self._sync_next_governance_prep_task(event.account_id, event.governance_type, actor)
             return
         if event.status == "completed":
             if task:
                 task.status = "done"
                 task.outcome = task.outcome or "Governance event completed."
                 task.completed_at = task.completed_at or datetime.now(timezone.utc)
-                task.completed_by_id = actor.id
-                task.updated_by_id = actor.id
+                task.completed_by_id = actor.id if actor else None
+                task.updated_by_id = actor.id if actor else None
+            self._sync_next_governance_prep_task(event.account_id, event.governance_type, actor)
             return
+        self._sync_next_governance_prep_task(event.account_id, event.governance_type, actor)
+
+    def _sync_next_governance_prep_task(self, account_id: str, governance_type: str, actor: User | None, *, now: datetime | None = None, send_due_reminder: bool = False) -> Task | None:
+        current_time = now or datetime.now(timezone.utc)
+        if current_time.tzinfo is None:
+            current_time = current_time.replace(tzinfo=timezone.utc)
+        self.repository.db.flush()
+        next_event = self.repository.next_governance_event(account_id=account_id, governance_type=governance_type, now=current_time)
+        active_tasks = self.repository.list_governance_reminder_tasks_for_scope(account_id=account_id, governance_type=governance_type)
+        for task in active_tasks:
+            if next_event is None or task.source_record_id != next_event.id:
+                task.status = "cancelled"
+                task.skipped_reason = task.skipped_reason or "Superseded by a newer governance prep task."
+                task.updated_by_id = actor.id if actor else None
+        if next_event is None:
+            return None
+        task = self.repository.get_task_by_source(GOVERNANCE_REMINDER_TASK_SOURCE, next_event.id)
+        due_at = self._governance_prep_due_at(next_event.scheduled_at)
         if task is None:
             task = Task(
-                account_id=event.account_id,
-                engagement_id=event.engagement_id,
+                account_id=next_event.account_id,
+                engagement_id=next_event.engagement_id,
                 source_type=GOVERNANCE_REMINDER_TASK_SOURCE,
-                source_record_id=event.id,
-                title=self._governance_task_title(event),
-                description=self._governance_task_description(event),
-                owner_id=event.owner_id,
-                owner_name=event.owner_name,
-                due_at=event.scheduled_at,
+                source_record_id=next_event.id,
+                title=self._governance_task_title(next_event),
+                description=self._governance_task_description(next_event),
+                owner_id=next_event.owner_id,
+                owner_name=next_event.owner_name,
+                due_at=due_at,
                 status="open",
                 priority="medium",
                 success_criteria=[],
                 requires_evidence=False,
-                created_by_id=actor.id,
-                updated_by_id=actor.id,
+                created_by_id=actor.id if actor else None,
+                updated_by_id=actor.id if actor else None,
             )
             self.repository.save_task(task)
-            return
-        task.account_id = event.account_id
-        task.engagement_id = event.engagement_id
-        task.title = self._governance_task_title(event)
-        task.description = self._governance_task_description(event)
-        task.owner_id = event.owner_id
-        task.owner_name = event.owner_name
-        task.due_at = event.scheduled_at
-        if task.status in {"done", "cancelled"}:
+        task.account_id = next_event.account_id
+        task.engagement_id = next_event.engagement_id
+        task.title = self._governance_task_title(next_event)
+        task.description = self._governance_task_description(next_event)
+        task.owner_id = next_event.owner_id
+        task.owner_name = next_event.owner_name
+        task.due_at = due_at
+        if task.status in TERMINAL_TASK_STATUSES:
             task.status = "open"
             task.completed_at = None
             task.completed_by_id = None
             task.skipped_reason = None
-        task.updated_by_id = actor.id
+            task.outcome = None
+        task.updated_by_id = actor.id if actor else None
+        if send_due_reminder and due_at <= current_time:
+            self._notify_governance_reminder(next_event, actor)
+        return task
 
     def _sync_governance_action_task(self, event: GovernanceEvent, action_item: GovernanceActionItem, actor: User) -> None:
         if not event.account_id:
@@ -746,12 +814,31 @@ class GovernanceService:
 
     @staticmethod
     def _governance_task_title(event: GovernanceEvent) -> str:
-        account_name = event.account.name if event.account else "Governance event"
-        return f"{event.governance_type}: {account_name}"[:220]
+        if event.account:
+            return f"Prepare for {event.governance_type}: {event.account.name}"[:220]
+        return f"Prepare for {event.governance_type} governance event"[:220]
 
     @staticmethod
     def _governance_task_description(event: GovernanceEvent) -> str:
-        return event.agenda or event.notes or "Governance event reminder."
+        lead_time = f"{GOVERNANCE_PREP_LEAD_BUSINESS_DAYS} business day{'s' if GOVERNANCE_PREP_LEAD_BUSINESS_DAYS != 1 else ''}"
+        context = f"Prep is due {lead_time} before this governance event."
+        if event.agenda:
+            return f"{context} Agenda: {event.agenda}"
+        if event.notes:
+            return f"{context} Notes: {event.notes}"
+        return context
+
+    @staticmethod
+    def _governance_prep_due_at(scheduled_at: datetime) -> datetime:
+        if scheduled_at.tzinfo is None:
+            scheduled_at = scheduled_at.replace(tzinfo=timezone.utc)
+        due_at = scheduled_at
+        business_days = 0
+        while business_days < GOVERNANCE_PREP_LEAD_BUSINESS_DAYS:
+            due_at -= timedelta(days=1)
+            if due_at.weekday() < 5:
+                business_days += 1
+        return due_at
 
     def _generate_recurrence_events(self, rule: GovernanceRecurrenceRule, actor: User) -> None:
         if not rule.account_id:
@@ -1143,7 +1230,7 @@ class GovernanceService:
 
     def _require_event_update(self, user: User, event: GovernanceEvent) -> None:
         self.access.require_module_permission(user, "governance_reviews", "update")
-        if user.role in GLOBAL_EDIT_ROLES or event.owner_id == user.id:
+        if self.access.can_update_portfolio_accounts(user) or event.owner_id == user.id:
             return
         account = self.accounts.get_by_id(event.account_id) if event.account_id else None
         if account and self.access.can_update_account(user, account):
@@ -1151,7 +1238,7 @@ class GovernanceService:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="You cannot update this governance event")
 
     def _can_view_event(self, user: User, event: GovernanceEvent) -> bool:
-        if user.role in GLOBAL_VIEW_ROLES:
+        if self.access.can_view_portfolio(user):
             return True
         if event.owner_id == user.id:
             return True
