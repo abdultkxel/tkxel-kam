@@ -1,15 +1,8 @@
 export type UserRole =
-  | 'am'
   | 'account_manager'
-  | 'leadership'
-  | 'leadership_viewer'
   | 'admin'
   | 'super_admin'
-  | 'ops_lead'
   | 'kam_head'
-  | 'content_specialist'
-  | 'commercial_stakeholder'
-  | 'delivery_lead'
   | 'delivery_stakeholder'
   | (string & {})
 
@@ -109,8 +102,8 @@ export interface TimelineEventTypeConfig {
 export function canViewTimelineEntry(entry: TimelineEntry, role: UserRole, userId?: string, canViewSensitive = false, canModerate = false): boolean {
   if (!entry.isSensitive) return true
   if (canModerate) return true
-  if ((role === 'am' || role === 'account_manager') && entry.eventType === 'manual_note' && entry.performedBy === userId) return true
-  const legacySensitive = role === 'leadership' || role === 'leadership_viewer' || role === 'kam_head' || role === 'admin' || role === 'super_admin'
+  if (role === 'account_manager' && entry.eventType === 'manual_note' && entry.performedBy === userId) return true
+  const legacySensitive = role === 'kam_head' || role === 'admin' || role === 'super_admin'
   const legacyModerate = role === 'admin' || role === 'super_admin'
 
   switch (entry.sensitivityLevel) {

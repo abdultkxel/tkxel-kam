@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from '@testing-library/react'
+import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
 import { AdminRolesPanel } from '@/components/admin/AdminRolesPanel'
@@ -118,7 +118,7 @@ describe('AdminRolesPanel', () => {
     render(<AdminRolesPanel />)
 
     expect(await screen.findByText('Regional Director')).toBeInTheDocument()
-    expect(screen.queryByText('Super Admin')).not.toBeInTheDocument()
+    expect(screen.getByText('Super Admin')).toBeInTheDocument()
     await userEvent.click(screen.getByRole('button', { name: /create role/i }))
     await userEvent.type(screen.getByLabelText(/slug/i), 'portfolio_viewer')
     await userEvent.type(screen.getByLabelText(/^name$/i), 'Portfolio Viewer')
@@ -141,7 +141,8 @@ describe('AdminRolesPanel', () => {
     render(<AdminRolesPanel />)
 
     expect(await screen.findByText('Regional Director')).toBeInTheDocument()
-    await userEvent.click(screen.getByRole('button', { name: /^delete$/i }))
+    const regionalDirectorRow = screen.getByText('Regional Director').closest('tr') as HTMLElement
+    await userEvent.click(within(regionalDirectorRow).getByRole('button', { name: /^delete$/i }))
     expect(screen.getByText(/this action cannot be undone/i)).toBeInTheDocument()
     await userEvent.click(screen.getAllByRole('button', { name: /^delete$/i }).at(-1) as HTMLElement)
 

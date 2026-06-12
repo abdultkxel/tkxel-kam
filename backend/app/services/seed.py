@@ -78,12 +78,7 @@ DEFAULT_ROLE_USER_NAMES = {
     "admin": "Admin User",
     "kam_head": "KAM Head User",
     "account_manager": "Account Manager KAM",
-    "ops_lead": "Ops Lead",
-    "delivery_lead": "Delivery Lead User",
     "delivery_stakeholder": "Delivery Stakeholder",
-    "content_specialist": "Content Specialist",
-    "commercial_stakeholder": "Commercial Stakeholder",
-    "leadership_viewer": "Leadership Viewer",
 }
 FORECAST_DEMO_ACCOUNT_ID = "forecast-demo-account"
 FORECAST_DEMO_ACCOUNT_OWNER_ID = "forecast-demo-account-owner"
@@ -208,8 +203,8 @@ def seed_demo_project_data(db: Session, *, now: datetime | None = None) -> dict[
     current = _aware(now or utc_now())
     account_manager = _seed_user_by_role(db, "account_manager")
     kam_head = _seed_user_by_role(db, "kam_head")
-    delivery_lead = _seed_user_by_role(db, "delivery_lead")
-    leadership = _seed_user_by_role(db, "leadership_viewer")
+    delivery_stakeholder = _seed_user_by_role(db, "delivery_stakeholder")
+    portfolio_reviewer = kam_head
     admin = _seed_user_by_role(db, "admin")
     account_repo = AccountRepository(db)
     opportunity_type = _seed_opportunity_type(db, actor)
@@ -257,7 +252,7 @@ def seed_demo_project_data(db: Session, *, now: datetime | None = None) -> dict[
         db.flush()
 
         _seed_account_owner(db, account, account_manager, actor, "primary_am", "Primary AM for demo project.")
-        _seed_account_owner(db, account, delivery_lead, actor, "delivery_lead", "Delivery Lead assigned for demo delivery governance.")
+        _seed_account_owner(db, account, delivery_stakeholder, actor, "delivery_lead", "Delivery stakeholder assigned for demo delivery governance.")
 
         engagement = _get_or_create(db, Engagement, engagement_id)
         engagement.account_id = account.id
@@ -266,8 +261,8 @@ def seed_demo_project_data(db: Session, *, now: datetime | None = None) -> dict[
         engagement.status = "active"
         engagement.owner_id = account_manager.id
         engagement.owner_name = account_manager.full_name
-        engagement.ops_lead_id = delivery_lead.id
-        engagement.ops_lead_name = delivery_lead.full_name
+        engagement.ops_lead_id = delivery_stakeholder.id
+        engagement.ops_lead_name = delivery_stakeholder.full_name
         engagement.service_lines = list(spec["service_lines"])
         engagement.source_links = [{"title": "Demo SOW", "url": source_route}]
         engagement.value = float(spec["value"])
@@ -302,11 +297,11 @@ def seed_demo_project_data(db: Session, *, now: datetime | None = None) -> dict[
         _seed_health_and_scores(db, spec, account, engagement, actor, current)
         _seed_signal(db, spec, account, engagement, account_manager, current)
         _seed_growth_and_retention(db, spec, account, engagement, account_manager, actor, opportunity_type, services, current)
-        _seed_governance(db, spec, account, engagement, account_manager, delivery_lead, actor, current)
-        _seed_escalation(db, spec, account, engagement, delivery_lead, actor, current)
-        _seed_tasks(db, spec, account, engagement, account_manager, delivery_lead, actor, current)
+        _seed_governance(db, spec, account, engagement, account_manager, delivery_stakeholder, actor, current)
+        _seed_escalation(db, spec, account, engagement, delivery_stakeholder, actor, current)
+        _seed_tasks(db, spec, account, engagement, account_manager, delivery_stakeholder, actor, current)
         _seed_timeline(db, spec, account, engagement, actor, current)
-        _seed_notifications(db, spec, account, engagement, kyc_draft, snapshot, account_manager, kam_head, delivery_lead, leadership, admin, current)
+        _seed_notifications(db, spec, account, engagement, kyc_draft, snapshot, account_manager, kam_head, delivery_stakeholder, portfolio_reviewer, admin, current)
         results.append({"account_id": account.id, "account_name": account.name, "engagement_id": engagement.id})
 
     db.commit()
@@ -1132,7 +1127,8 @@ def seed_base_data(db: Session) -> User:
     RbacService(db).seed_defaults()
     super_admin = seed_super_admin(db)
     seed_allowed_email_domains(db, super_admin)
-    seed_default_role_users(db)
+    if get_settings().seed_default_role_users:
+        seed_default_role_users(db)
     seed_notifications_dashboards_reporting(db, super_admin)
     return super_admin
 
@@ -1401,8 +1397,14 @@ def seed_super_admin(db: Session) -> User:
     email = normalize_email(settings.super_admin_email)
     existing_user = db.scalar(select(User).where(User.email == email))
     if existing_user:
+        changed = False
         if not existing_user.primary_google_calendar_id:
             existing_user.primary_google_calendar_id = existing_user.email
+            changed = True
+        if existing_user.role != "super_admin":
+            existing_user.role = "super_admin"
+            changed = True
+        if changed:
             db.commit()
         return existing_user
 

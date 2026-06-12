@@ -47,7 +47,7 @@ DEFAULT_ROLES: tuple[DefaultRole, ...] = (
     DefaultRole(
         slug="super_admin",
         name="Super Admin",
-        description="Hidden platform owner with every seeded catalog permission. Seed exactly one setup user.",
+        description="Protected break-glass administrator seeded from environment configuration with all catalog permissions.",
         permission_rules=_permission_rules_for(DEFAULT_ROLE_GRANTS["super_admin"]),
     ),
     DefaultRole(
@@ -69,40 +69,10 @@ DEFAULT_ROLES: tuple[DefaultRole, ...] = (
         permission_rules=_permission_rules_for(DEFAULT_ROLE_GRANTS["account_manager"]),
     ),
     DefaultRole(
-        slug="ops_lead",
-        name="Ops Lead",
-        description="Operational delivery owner retained for existing data and mapped to delivery/task/governance capabilities.",
-        permission_rules=_permission_rules_for(DEFAULT_ROLE_GRANTS["ops_lead"]),
-    ),
-    DefaultRole(
-        slug="delivery_lead",
-        name="Delivery Lead",
-        description="Delivery lead for engagement health, escalations, governance, and delivery tasks.",
-        permission_rules=_permission_rules_for(DEFAULT_ROLE_GRANTS["delivery_lead"]),
-    ),
-    DefaultRole(
         slug="delivery_stakeholder",
         name="Delivery Stakeholder",
         description="Legacy delivery stakeholder persona mapped to delivery/task/governance capabilities.",
         permission_rules=_permission_rules_for(DEFAULT_ROLE_GRANTS["delivery_stakeholder"]),
-    ),
-    DefaultRole(
-        slug="content_specialist",
-        name="Content Specialist",
-        description="Client education content operator retained for existing users and narrow content workflows.",
-        permission_rules=_permission_rules_for(DEFAULT_ROLE_GRANTS["content_specialist"]),
-    ),
-    DefaultRole(
-        slug="commercial_stakeholder",
-        name="Commercial Stakeholder",
-        description="Commercial collaborator with narrow account, opportunity, report, and dashboard visibility.",
-        permission_rules=_permission_rules_for(DEFAULT_ROLE_GRANTS["commercial_stakeholder"]),
-    ),
-    DefaultRole(
-        slug="leadership_viewer",
-        name="Leadership / Executive",
-        description="Strategic visibility consumer for portfolio, risk, retention, growth, and decisions.",
-        permission_rules=_permission_rules_for(DEFAULT_ROLE_GRANTS["leadership_viewer"]),
     ),
 )
 

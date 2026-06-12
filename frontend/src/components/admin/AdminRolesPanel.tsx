@@ -109,8 +109,8 @@ const PRESETS = [
     ],
   },
   {
-    key: 'delivery_lead',
-    label: 'Delivery Lead',
+    key: 'delivery_stakeholder',
+    label: 'Delivery Stakeholder',
     description: 'Delivery health, governance, escalation, and portfolio task operations.',
     permissions: [
       'accounts:view_assigned',
@@ -143,37 +143,6 @@ const PRESETS = [
       'reports:view_own',
       'analytics:view_assigned',
       'ai:view',
-    ],
-  },
-  {
-    key: 'leadership_viewer',
-    label: 'Leadership Viewer',
-    description: 'Portfolio read access, dashboards, reports, analytics, and exports.',
-    permissions: [
-      'accounts:view_portfolio',
-      'accounts:view_health_rollup',
-      'engagements:view',
-      'stakeholders:view',
-      'account_plans:view',
-      'opportunities:view',
-      'retention:view',
-      'scoring:view_scores',
-      'csat:view',
-      'signals:view',
-      'tasks:view_portfolio',
-      'escalations:view',
-      'governance:view',
-      'timeline:view',
-      'timeline:view_sensitive',
-      'handover:view',
-      'dashboards:view_portfolio',
-      'reports:view_portfolio',
-      'reports:export',
-      'analytics:view_portfolio',
-      'analytics:export',
-      'ai:view',
-      'ai:search',
-      'ai:export',
     ],
   },
   {
@@ -283,7 +252,7 @@ export function AdminRolesPanel() {
         page: nextPage,
         page_size: pageSize,
       })
-      setRoles(response.items.filter(role => role.slug !== 'super_admin'))
+      setRoles(response.items)
       setTotal(response.total)
       setPages(response.pages)
     } catch (err) {

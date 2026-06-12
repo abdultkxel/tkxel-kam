@@ -1,15 +1,8 @@
 export type UserRole =
-  | 'am'
   | 'account_manager'
-  | 'leadership'
-  | 'leadership_viewer'
   | 'admin'
   | 'super_admin'
-  | 'ops_lead'
   | 'kam_head'
-  | 'content_specialist'
-  | 'commercial_stakeholder'
-  | 'delivery_lead'
   | 'delivery_stakeholder'
   | (string & {})
 
