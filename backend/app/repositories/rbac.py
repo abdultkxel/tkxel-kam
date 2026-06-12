@@ -147,6 +147,12 @@ class RbacRepository:
             removed += 1
         return removed
 
+    def delete_system_roles_not_in(self, allowed_slugs: set[str]) -> int:
+        roles = list(self.db.scalars(select(Role).where(Role.is_system.is_(True), ~Role.slug.in_(allowed_slugs))))
+        for role in roles:
+            self.db.delete(role)
+        return len(roles)
+
     def _role_has_exact_permission(self, role_slug: str, key: str) -> bool:
         module, action = key.split(":", 1)
         return bool(

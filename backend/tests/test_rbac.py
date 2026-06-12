@@ -14,7 +14,7 @@ from app.rbac import DEFAULT_ROLES
 from app.rbac_catalog import PERMISSIONS
 from app.services.seed import seed_default_data
 
-VISIBLE_BASE_ROLE_SLUGS = {role.slug for role in DEFAULT_ROLES if role.slug != "super_admin"}
+VISIBLE_BASE_ROLE_SLUGS = {role.slug for role in DEFAULT_ROLES}
 
 
 @pytest.fixture()
@@ -100,7 +100,7 @@ def test_seed_removes_non_catalog_permissions_and_grants(db_session: Session) ->
     assert db_session.scalar(select(RolePermission).where(RolePermission.permission_id == stale_permission_id)) is None
 
 
-def test_seed_creates_manageable_user_for_each_default_role_and_hides_super_admin(client: TestClient) -> None:
+def test_seed_creates_manageable_users_for_required_roles_and_bootstrap_admin(client: TestClient) -> None:
     headers = auth_headers(client)
 
     response = client.get("/api/admin/users", headers=headers)
@@ -108,13 +108,13 @@ def test_seed_creates_manageable_user_for_each_default_role_and_hides_super_admi
     assert response.status_code == 200
     body = response.json()
     users = body["items"]
-    expected_roles = {role.slug for role in DEFAULT_ROLES if role.slug != "super_admin"}
-    assert body["total"] == len(expected_roles)
+    expected_roles = {role.slug for role in DEFAULT_ROLES}
+    assert body["total"] == len(expected_roles) + 1
     listed_roles = {user["role"] for user in users}
     assert expected_roles == VISIBLE_BASE_ROLE_SLUGS
     assert listed_roles == VISIBLE_BASE_ROLE_SLUGS
     assert all(user["role"] != "super_admin" for user in users)
-    assert all(not user["email"].startswith("admin@") for user in users)
+    assert any(user["email"] == "admin@tkxel.com" and user["role"] == "admin" for user in users)
 
 
 def test_admin_and_kam_head_have_all_permissions_while_account_manager_requires_approval(client: TestClient) -> None:
@@ -136,12 +136,15 @@ def test_admin_and_kam_head_have_all_permissions_while_account_manager_requires_
     assert permission_is_allowed(account_manager_role, "kyc", "run_assistant")
 
 
-def test_super_admin_user_and_role_are_protected_from_admin_management(client: TestClient, db_session: Session) -> None:
+def test_retired_super_admin_role_is_not_manageable(client: TestClient, db_session: Session) -> None:
     headers = auth_headers(client)
     super_admin = db_session.scalar(select(User).where(User.role == "super_admin"))
-    assert super_admin is not None
+    assert super_admin is None
 
-    read_response = client.get(f"/api/admin/users/{super_admin.id}", headers=headers)
+    role_response = client.get("/api/admin/roles/super_admin", headers=headers)
+    assert role_response.status_code == 404
+
+    read_response = client.get("/api/admin/users/not-a-real-user", headers=headers)
     assert read_response.status_code == 404
 
     create_response = client.post(
@@ -175,7 +178,7 @@ def test_super_admin_user_and_role_are_protected_from_admin_management(client: T
     assert update_response.status_code == 400
 
 
-def test_super_admin_can_create_update_and_delete_managed_users(client: TestClient) -> None:
+def test_admin_can_create_update_and_delete_managed_users(client: TestClient) -> None:
     headers = auth_headers(client)
 
     create_response = client.post(
@@ -200,10 +203,10 @@ def test_super_admin_can_create_update_and_delete_managed_users(client: TestClie
     update_response = client.patch(
         f"/api/admin/users/{created_user['id']}",
         headers=headers,
-        json={"role": "leadership_viewer", "is_active": False},
+        json={"role": "delivery_stakeholder", "is_active": False},
     )
     assert update_response.status_code == 200
-    assert update_response.json()["role"] == "leadership_viewer"
+    assert update_response.json()["role"] == "delivery_stakeholder"
     assert update_response.json()["is_active"] is False
 
     list_response = client.get("/api/admin/users", headers=headers)

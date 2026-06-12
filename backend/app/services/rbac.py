@@ -22,6 +22,8 @@ class RbacService:
     def seed_defaults(self) -> dict[str, int]:
         permissions_by_key = self._seed_permissions()
         permissions_removed = self.repository.delete_permissions_not_in(set(PERMISSION_BY_KEY))
+        default_role_slugs = {role.slug for role in DEFAULT_ROLES}
+        roles_removed = self.repository.delete_system_roles_not_in(default_role_slugs)
         roles_seeded = 0
 
         for default_role in DEFAULT_ROLES:
@@ -38,7 +40,12 @@ class RbacService:
             roles_seeded += 1
 
         self.repository.commit()
-        return {"roles": roles_seeded, "permissions": len(permissions_by_key), "permissions_removed": permissions_removed}
+        return {
+            "roles": roles_seeded,
+            "permissions": len(permissions_by_key),
+            "permissions_removed": permissions_removed,
+            "roles_removed": roles_removed,
+        }
 
     def list_roles(
         self,

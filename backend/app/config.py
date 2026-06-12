@@ -24,6 +24,7 @@ class Settings:
         self.super_admin_full_name = os.getenv("SUPER_ADMIN_FULL_NAME", "KAM Super Admin")
         self.super_admin_title = os.getenv("SUPER_ADMIN_TITLE", "Platform Owner")
         self.seed_user_password = os.getenv("SEED_USER_PASSWORD", "User@12345")
+        self.seed_default_role_users = os.getenv("SEED_DEFAULT_ROLE_USERS", "true").lower() == "true"
         self.cors_origins = [
             origin.strip()
             for origin in os.getenv("BACKEND_CORS_ORIGINS", "http://127.0.0.1:5173,http://localhost:5173").split(",")
