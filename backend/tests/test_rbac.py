@@ -69,11 +69,10 @@ def test_seed_creates_required_prd_roles_and_permissions(client: TestClient) -> 
 
     assert roles_response.status_code == 200
     assert permissions_response.status_code == 200
-    expected_roles = {role.slug for role in DEFAULT_ROLES if role.slug != "super_admin"}
+    expected_roles = {role.slug for role in DEFAULT_ROLES}
     listed_roles = {role["slug"] for role in roles_response.json()["items"]}
     assert expected_roles == VISIBLE_BASE_ROLE_SLUGS
     assert listed_roles == VISIBLE_BASE_ROLE_SLUGS
-    assert "super_admin" not in listed_roles
     permissions = permissions_response.json()
     expected_permission_keys = {permission.key for permission in PERMISSIONS}
     assert len(permissions) == len(expected_permission_keys)
@@ -100,7 +99,7 @@ def test_seed_removes_non_catalog_permissions_and_grants(db_session: Session) ->
     assert db_session.scalar(select(RolePermission).where(RolePermission.permission_id == stale_permission_id)) is None
 
 
-def test_seed_creates_manageable_users_for_required_roles_and_bootstrap_admin(client: TestClient) -> None:
+def test_seed_creates_visible_users_for_required_roles_and_break_glass_admin(client: TestClient) -> None:
     headers = auth_headers(client)
 
     response = client.get("/api/admin/users", headers=headers)
@@ -109,12 +108,11 @@ def test_seed_creates_manageable_users_for_required_roles_and_bootstrap_admin(cl
     body = response.json()
     users = body["items"]
     expected_roles = {role.slug for role in DEFAULT_ROLES}
-    assert body["total"] == len(expected_roles) + 1
+    assert body["total"] == len(expected_roles)
     listed_roles = {user["role"] for user in users}
     assert expected_roles == VISIBLE_BASE_ROLE_SLUGS
     assert listed_roles == VISIBLE_BASE_ROLE_SLUGS
-    assert all(user["role"] != "super_admin" for user in users)
-    assert any(user["email"] == "admin@tkxel.com" and user["role"] == "admin" for user in users)
+    assert any(user["email"] == "admin@tkxel.com" and user["role"] == "super_admin" for user in users)
 
 
 def test_admin_and_kam_head_have_all_permissions_while_account_manager_requires_approval(client: TestClient) -> None:
@@ -123,7 +121,7 @@ def test_admin_and_kam_head_have_all_permissions_while_account_manager_requires_
     assert permissions_response.status_code == 200
     total_permissions = len(permissions_response.json())
 
-    for role_slug in ("admin", "kam_head"):
+    for role_slug in ("super_admin", "admin", "kam_head"):
         role_response = client.get(f"/api/admin/roles/{role_slug}", headers=headers)
         assert role_response.status_code == 200
         assert sum(1 for grant in role_response.json()["permissions"] if grant["allowed"]) == total_permissions
@@ -136,16 +134,17 @@ def test_admin_and_kam_head_have_all_permissions_while_account_manager_requires_
     assert permission_is_allowed(account_manager_role, "kyc", "run_assistant")
 
 
-def test_retired_super_admin_role_is_not_manageable(client: TestClient, db_session: Session) -> None:
+def test_break_glass_super_admin_is_visible_but_protected(client: TestClient, db_session: Session) -> None:
     headers = auth_headers(client)
     super_admin = db_session.scalar(select(User).where(User.role == "super_admin"))
-    assert super_admin is None
+    assert super_admin is not None
 
     role_response = client.get("/api/admin/roles/super_admin", headers=headers)
-    assert role_response.status_code == 404
+    assert role_response.status_code == 200
 
-    read_response = client.get("/api/admin/users/not-a-real-user", headers=headers)
-    assert read_response.status_code == 404
+    read_response = client.get(f"/api/admin/users/{super_admin.id}", headers=headers)
+    assert read_response.status_code == 200
+    assert read_response.json()["role"] == "super_admin"
 
     create_response = client.post(
         "/api/admin/users",
@@ -158,6 +157,20 @@ def test_retired_super_admin_role_is_not_manageable(client: TestClient, db_sessi
         },
     )
     assert create_response.status_code == 400
+
+    downgrade_response = client.patch(
+        f"/api/admin/users/{super_admin.id}",
+        headers=headers,
+        json={"role": "admin"},
+    )
+    assert downgrade_response.status_code == 400
+
+    deactivate_response = client.patch(
+        f"/api/admin/users/{super_admin.id}",
+        headers=headers,
+        json={"is_active": False},
+    )
+    assert deactivate_response.status_code == 400
 
     normal_user_response = client.post(
         "/api/admin/users",
@@ -176,6 +189,10 @@ def test_retired_super_admin_role_is_not_manageable(client: TestClient, db_sessi
         json={"role": "super_admin"},
     )
     assert update_response.status_code == 400
+
+    admin_headers = auth_headers(client, "admin.user@tkxel.com", "User@12345")
+    delete_response = client.delete(f"/api/admin/users/{super_admin.id}", headers=admin_headers)
+    assert delete_response.status_code == 400
 
 
 def test_admin_can_create_update_and_delete_managed_users(client: TestClient) -> None:

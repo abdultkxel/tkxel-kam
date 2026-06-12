@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from '@testing-library/react'
+import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
 import { AdminUsersPanel } from '@/components/admin/AdminUsersPanel'
@@ -113,8 +113,9 @@ describe('AdminUsersPanel', () => {
     render(<AdminUsersPanel />)
 
     expect(await screen.findByText('Managed User')).toBeInTheDocument()
-    expect(screen.queryByText('Root Admin')).not.toBeInTheDocument()
+    expect(screen.getByText('Root Admin')).toBeInTheDocument()
     await userEvent.click(screen.getByRole('button', { name: /create user/i }))
+    expect(screen.getByRole('option', { name: /super admin.*protected/i })).toBeDisabled()
     await userEvent.type(screen.getByLabelText(/email/i), 'bad-email')
     await userEvent.type(screen.getByLabelText(/password/i), 'User@12345')
     await userEvent.type(screen.getByLabelText(/full name/i), 'A')
@@ -184,7 +185,8 @@ describe('AdminUsersPanel', () => {
     render(<AdminUsersPanel />)
 
     expect(await screen.findByText('Managed User')).toBeInTheDocument()
-    await userEvent.click(screen.getByRole('button', { name: /edit/i }))
+    const managedUserRow = screen.getByText('Managed User').closest('tr') as HTMLElement
+    await userEvent.click(within(managedUserRow).getByRole('button', { name: /edit/i }))
     const emailInput = screen.getByLabelText(/email/i)
     expect(emailInput).toBeEnabled()
     await userEvent.clear(emailInput)

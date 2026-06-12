@@ -73,7 +73,7 @@ class UserRepository:
 
     @staticmethod
     def _manageable_user_conditions(search: str | None, status_filter: str, role: str | None) -> list:
-        conditions = [User.role != "super_admin"]
+        conditions = []
         if search and search.strip():
             term = f"%{search.strip()}%"
             conditions.append(or_(User.email.ilike(term), User.full_name.ilike(term)))

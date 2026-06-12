@@ -45,6 +45,12 @@ def _permission_rules_for(keys: set[str]) -> tuple[tuple[str, tuple[str, ...]], 
 
 DEFAULT_ROLES: tuple[DefaultRole, ...] = (
     DefaultRole(
+        slug="super_admin",
+        name="Super Admin",
+        description="Protected break-glass administrator seeded from environment configuration with all catalog permissions.",
+        permission_rules=_permission_rules_for(DEFAULT_ROLE_GRANTS["super_admin"]),
+    ),
+    DefaultRole(
         slug="admin",
         name="Admin",
         description="Visible platform administrator with all catalog permissions.",

@@ -1,7 +1,9 @@
 import argparse
 
+from sqlalchemy import MetaData, inspect, text
+
+from app.database import engine
 from app.database import SessionLocal, init_db
-from app.database import Base, engine
 from app.services.seed import clear_forecast_demo_data, seed_base_data, seed_demo_project_data, seed_forecast_demo_data
 
 
@@ -17,10 +19,26 @@ def seed() -> None:
         print(f"Seeded base roles, permissions, allowed domains, and users. Super admin: {user.email}")
 
 
+def _drop_all_tables() -> None:
+    if engine.dialect.name == "sqlite":
+        inspector = inspect(engine)
+        with engine.begin() as connection:
+            connection.execute(text("PRAGMA foreign_keys=OFF"))
+            for table_name in inspector.get_table_names():
+                escaped = table_name.replace('"', '""')
+                connection.execute(text(f'DROP TABLE IF EXISTS "{escaped}"'))
+            connection.execute(text("PRAGMA foreign_keys=ON"))
+        return
+
+    metadata = MetaData()
+    metadata.reflect(bind=engine)
+    metadata.drop_all(bind=engine)
+
+
 def reset_db() -> None:
     from app import models  # noqa: F401
 
-    Base.metadata.drop_all(bind=engine)
+    _drop_all_tables()
     init_db()
     with SessionLocal() as db:
         user = seed_base_data(db)

@@ -35,6 +35,7 @@ const emptyForm: UserFormState = {
 }
 
 function roleLabel(role: Role) {
+  if (role.slug === 'super_admin') return `${role.name} (${role.slug}) - protected`
   return `${role.name} (${role.slug})`
 }
 
@@ -95,9 +96,8 @@ export function AdminUsersPanel() {
     if (!token) return
     try {
       const nextRoles = await listRoles(token, { page: 1, page_size: 100 })
-      const manageableRoles = nextRoles.items.filter(role => role.slug !== 'super_admin')
-      setRoles(manageableRoles)
-      setForm(current => ({ ...current, role: current.role || manageableRoles[0]?.slug || 'account_manager' }))
+      setRoles(nextRoles.items)
+      setForm(current => ({ ...current, role: current.role || nextRoles.items.find(role => role.slug !== 'super_admin')?.slug || 'account_manager' }))
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Unable to load roles')
     }
@@ -115,7 +115,7 @@ export function AdminUsersPanel() {
         page: nextPage,
         page_size: pageSize,
       })
-      setUsers(response.items.filter(user => user.role !== 'super_admin'))
+      setUsers(response.items)
       setTotal(response.total)
       setPages(response.pages)
     } catch (err) {
@@ -324,10 +324,12 @@ export function AdminUsersPanel() {
                       <Edit3 className="h-4 w-4" />
                       Edit
                     </button>
-                    <button type="button" className="tk-button-secondary text-rag-red" onClick={() => setDeleteTarget(user)}>
-                      <Trash2 className="h-4 w-4" />
-                      Delete
-                    </button>
+                    {user.role !== 'super_admin' ? (
+                      <button type="button" className="tk-button-secondary text-rag-red" onClick={() => setDeleteTarget(user)}>
+                        <Trash2 className="h-4 w-4" />
+                        Delete
+                      </button>
+                    ) : null}
                   </div>
                 </td>
               </tr>
@@ -465,9 +467,20 @@ function UserFormDialog({ open, title, form, roles, fieldErrors, formError, isEd
             </label>
             <label className="block">
               <span className="tk-label">Role</span>
-              <select className={fieldClass(fieldErrors.role)} value={form.role} onChange={event => onFieldChange('role', event.target.value)} aria-invalid={Boolean(fieldErrors.role)}>
-                {roles.map(role => <option key={role.slug} value={role.slug}>{roleLabel(role)}</option>)}
+              <select
+                className={fieldClass(fieldErrors.role)}
+                value={form.role}
+                onChange={event => onFieldChange('role', event.target.value)}
+                aria-invalid={Boolean(fieldErrors.role)}
+                disabled={form.role === 'super_admin'}
+              >
+                {roles.map(role => (
+                  <option key={role.slug} value={role.slug} disabled={role.slug === 'super_admin' && form.role !== 'super_admin'}>
+                    {roleLabel(role)}
+                  </option>
+                ))}
               </select>
+              {form.role === 'super_admin' ? <p className="mt-1 text-xs text-ink-secondary">Seeded break-glass role; it cannot be reassigned here.</p> : null}
               <FieldError id="admin-user-role-error" message={fieldErrors.role} />
             </label>
             <label className="block">
@@ -491,7 +504,13 @@ function UserFormDialog({ open, title, form, roles, fieldErrors, formError, isEd
               <FieldError id="admin-user-primary-calendar-error" message={fieldErrors.primaryGoogleCalendarId} />
             </label>
             <label className="flex min-h-[44px] items-center gap-2 pt-6 text-sm font-semibold text-ink">
-              <input type="checkbox" checked={form.isActive} onChange={event => onFieldChange('isActive', event.target.checked)} className="h-4 w-4 rounded border-surface-border text-brand-blue" />
+              <input
+                type="checkbox"
+                checked={form.isActive}
+                onChange={event => onFieldChange('isActive', event.target.checked)}
+                className="h-4 w-4 rounded border-surface-border text-brand-blue disabled:cursor-not-allowed disabled:opacity-60"
+                disabled={form.role === 'super_admin'}
+              />
               Active
             </label>
             {formError ? <p className="rounded-md border border-rag-red/20 bg-rag-red/10 px-3 py-2 text-sm font-medium text-rag-red md:col-span-2">{formError}</p> : null}

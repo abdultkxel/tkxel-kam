@@ -876,6 +876,7 @@ LEADERSHIP_VIEWER_ACCESS = _keys(
 
 
 DEFAULT_ROLE_GRANTS: dict[str, set[str]] = {
+    "super_admin": ADMIN_FULL_ACCESS,
     "admin": ADMIN_FULL_ACCESS,
     "kam_head": ADMIN_FULL_ACCESS,
     "account_manager": ACCOUNT_MANAGER_ACCESS,

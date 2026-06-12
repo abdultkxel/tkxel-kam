@@ -115,15 +115,9 @@ class RbacRepository:
         return role_permission
 
     def role_has_permission(self, role_slug: str, module: str, action: str) -> bool:
-        if role_slug == "super_admin":
-            return True
-
         return any(self._role_has_exact_permission(role_slug, candidate) for candidate in permission_key_candidates(module, action))
 
     def list_role_permission_keys(self, role_slug: str) -> set[str]:
-        if role_slug == "super_admin":
-            return {permission_key(permission.module, permission.action) for permission in self.db.scalars(select(Permission))}
-
         conditions = [Role.slug == role_slug, RolePermission.allowed.is_(True)]
         return {
             permission_key(module, action)
@@ -181,7 +175,7 @@ class RbacRepository:
 
     @staticmethod
     def _manageable_role_conditions(search: str | None, role_type: str) -> list:
-        conditions = [Role.slug != "super_admin"]
+        conditions = []
         if search and search.strip():
             term = f"%{search.strip()}%"
             conditions.append(or_(Role.slug.ilike(term), Role.name.ilike(term), Role.description.ilike(term)))

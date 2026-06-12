@@ -12,7 +12,7 @@ from app.services.account_access import AccountAccessService
 from app.services.forecasting import ForecastingService
 
 
-ADMIN_ROLES = {"admin"}
+ADMIN_ROLES = {"super_admin", "admin"}
 KAM_HEAD_ROLES = {"kam_head"}
 AM_ROLES = {"account_manager"}
 LEADERSHIP_ROLES: set[str] = set()

@@ -1,6 +1,7 @@
 export type UserRole =
   | 'account_manager'
   | 'admin'
+  | 'super_admin'
   | 'kam_head'
   | 'delivery_stakeholder'
   | (string & {})

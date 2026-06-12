@@ -123,6 +123,7 @@ export function Admin() {
       detail: 'Configured event taxonomy',
       icon: ShieldCheck,
       tone: 'blue' as const,
+      section: 'timeline',
     },
     {
       label: 'Integrations',
@@ -130,6 +131,7 @@ export function Admin() {
       detail: 'Connected adapters',
       icon: PlugZap,
       tone: connectedIntegrations ? 'green' as const : 'orange' as const,
+      section: 'integrations',
     },
     {
       label: 'Alert rules',
@@ -137,6 +139,7 @@ export function Admin() {
       detail: 'Risk rules enabled',
       icon: SlidersHorizontal,
       tone: 'orange' as const,
+      section: 'alerts',
     },
     {
       label: 'Email triggers',
@@ -144,6 +147,7 @@ export function Admin() {
       detail: 'Notifications with email',
       icon: BellRing,
       tone: 'dark' as const,
+      section: 'settings',
     },
   ]
 
@@ -268,7 +272,7 @@ export function Admin() {
           </>
         )}
       />
-      <AdminStatusStrip items={statusItems} />
+      <AdminStatusStrip items={statusItems} onSelect={chooseSection} />
       <section className="sticky top-20 z-20 mb-4 rounded-lg border border-surface-border bg-white p-2 shadow-card">
         <div className="mb-2 flex items-center justify-between gap-3 px-2">
           <p className="text-[10px] font-extrabold uppercase tracking-widest text-brand-blue">Admin sections</p>
@@ -453,12 +457,24 @@ export function Admin() {
   )
 }
 
-function AdminStatusStrip({ items }: { items: { label: string; value: string; detail: string; icon: LucideIcon; tone: keyof typeof statusToneClass }[] }) {
+function AdminStatusStrip({
+  items,
+  onSelect,
+}: {
+  items: { label: string; value: string; detail: string; icon: LucideIcon; tone: keyof typeof statusToneClass; section: string }[]
+  onSelect: (section: string) => void
+}) {
   return (
     <section className="tk-card mb-4 overflow-hidden">
       <div className="grid divide-y divide-surface-border md:grid-cols-2 md:divide-x md:divide-y-0 xl:grid-cols-4">
         {items.map(item => (
-          <div key={item.label} className="flex min-h-[96px] items-center gap-3 p-4">
+          <button
+            key={item.label}
+            type="button"
+            onClick={() => onSelect(item.section)}
+            className="group flex min-h-[96px] w-full items-center gap-3 p-4 text-left transition-colors hover:bg-surface-tertiary focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-brand-blue"
+            aria-label={`Open ${item.label} details`}
+          >
             <span className={cn('flex h-11 w-11 shrink-0 items-center justify-center rounded-lg', statusToneClass[item.tone])}>
               <item.icon className="h-5 w-5" />
             </span>
@@ -467,7 +483,8 @@ function AdminStatusStrip({ items }: { items: { label: string; value: string; de
               <span className="mt-1 block font-display text-2xl font-bold leading-none text-ink">{item.value}</span>
               <span className="mt-1 block truncate text-xs text-ink-secondary">{item.detail}</span>
             </span>
-          </div>
+            <ArrowRight className="ml-auto h-4 w-4 shrink-0 text-ink-tertiary opacity-0 transition-opacity group-hover:opacity-100 group-focus-visible:opacity-100" />
+          </button>
         ))}
       </div>
     </section>

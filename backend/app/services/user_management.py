@@ -42,12 +42,12 @@ class UserManagementService:
 
     def get_user(self, user_id: str) -> User:
         user = self.users.get_by_id(user_id)
-        if user is None or user.role == PROTECTED_SUPER_ADMIN_ROLE:
+        if user is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User was not found")
         return user
 
     def create_user(self, payload: UserCreateRequest, actor: User | None = None) -> User:
-        self._ensure_manageable_role(payload.role)
+        self._ensure_assignable_role(payload.role)
         self._ensure_role_exists(payload.role)
         email = normalize_email(payload.email)
         self.domain_policy.require_allowed_email_for_user_form(email)
@@ -84,8 +84,10 @@ class UserManagementService:
         updates = payload.model_dump(exclude_unset=True)
         before_role = user.role
         before_active = user.is_active
+        self._ensure_protected_super_admin_update(user, updates)
         if "role" in updates and updates["role"] is not None:
-            self._ensure_manageable_role(updates["role"])
+            if updates["role"] != before_role:
+                self._ensure_assignable_role(updates["role"])
             self._ensure_role_exists(updates["role"])
         self._validate_email_update(user, updates)
 
@@ -101,6 +103,8 @@ class UserManagementService:
         user = self.get_user(user_id)
         if user.id == current_user.id:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="You cannot delete your own account")
+        if user.role == PROTECTED_SUPER_ADMIN_ROLE:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Super Admin is a protected break-glass account and cannot be deleted from Admin user management")
 
         self._notify_admin_access_change(user, current_user, "admin_access_changed", f"User deactivated: {user.full_name}", f"{user.full_name} was deactivated from Admin user management.")
         self.users.delete_user(user)
@@ -125,9 +129,18 @@ class UserManagementService:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Role '{slug}' does not exist")
 
     @staticmethod
-    def _ensure_manageable_role(slug: str) -> None:
+    def _ensure_assignable_role(slug: str) -> None:
         if slug == PROTECTED_SUPER_ADMIN_ROLE:
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Super Admin is a protected setup role and cannot be managed from Admin user management")
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Super Admin is a protected break-glass role and can only be seeded from environment configuration")
+
+    @staticmethod
+    def _ensure_protected_super_admin_update(user: User, updates: dict) -> None:
+        if user.role != PROTECTED_SUPER_ADMIN_ROLE:
+            return
+        if "role" in updates and updates["role"] != PROTECTED_SUPER_ADMIN_ROLE:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Super Admin cannot be downgraded from Admin user management")
+        if updates.get("is_active") is False:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Super Admin cannot be deactivated from Admin user management")
 
     def _validate_email_update(self, user: User, updates: dict) -> None:
         target_email = user.email

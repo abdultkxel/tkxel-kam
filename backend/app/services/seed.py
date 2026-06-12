@@ -1401,8 +1401,8 @@ def seed_super_admin(db: Session) -> User:
         if not existing_user.primary_google_calendar_id:
             existing_user.primary_google_calendar_id = existing_user.email
             changed = True
-        if existing_user.role != "admin":
-            existing_user.role = "admin"
+        if existing_user.role != "super_admin":
+            existing_user.role = "super_admin"
             changed = True
         if changed:
             db.commit()
@@ -1413,7 +1413,7 @@ def seed_super_admin(db: Session) -> User:
         primary_google_calendar_id=email,
         hashed_password=hash_password(settings.super_admin_password),
         full_name=settings.super_admin_full_name,
-        role="admin",
+        role="super_admin",
         title=settings.super_admin_title,
         avatar_initials=initials_for_name(settings.super_admin_full_name),
         is_active=True,
@@ -1428,6 +1428,8 @@ def seed_default_role_users(db: Session) -> list[User]:
     settings = get_settings()
     seeded_users: list[User] = []
     for role in DEFAULT_ROLES:
+        if role.slug == "super_admin":
+            continue
         email = normalize_email(f"{role.slug.replace('_', '.')}.user@{DEFAULT_ROLE_USER_EMAIL_DOMAIN}")
         existing_user = db.scalar(select(User).where(User.email == email))
         if existing_user:

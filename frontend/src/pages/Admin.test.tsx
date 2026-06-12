@@ -61,6 +61,13 @@ describe('Admin', () => {
     vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input)
       if (url.includes('/api/admin/settings/allowed-email-domains')) return jsonResponse({ domains: ['tkxel.com'], domains_input: 'tkxel.com', duplicates_removed: false })
+      if (url.includes('/api/admin/settings/security-alert-email')) return jsonResponse({ administration_email: 'admin@tkxel.com' })
+      if (url.includes('/api/admin/integrations/sync-logs')) return jsonResponse(paginated([]))
+      if (url.includes('/api/admin/integrations/imported-items')) return jsonResponse(paginated([]))
+      if (url.endsWith('/api/admin/integrations')) return jsonResponse([])
+      if (url.includes('/api/admin/notification-defaults')) return jsonResponse({ items: [] })
+      if (url.includes('/api/admin/notification-scheduler/runs')) return jsonResponse(paginated([]))
+      if (url.includes('/api/admin/sla-rules')) return jsonResponse(paginated([]))
       if (url.endsWith('/api/admin/timeline-event-types') && init?.method === 'POST') return jsonResponse(createdTimelineType)
       if (url.includes('/api/admin/timeline-event-types')) return jsonResponse(paginated([]))
       if (url.includes('/api/admin/users')) return jsonResponse(paginated([]))
@@ -85,6 +92,29 @@ describe('Admin', () => {
     expect(await screen.findByText('Roles Management')).toBeInTheDocument()
     expect(screen.queryByText('Users Management')).not.toBeInTheDocument()
     expect(screen.getByRole('tab', { name: /^roles$/i })).toHaveAttribute('aria-selected', 'true')
+  })
+
+  it('opens detail sections from the admin status tiles', async () => {
+    stubAdminFetch()
+    const user = userEvent.setup()
+
+    render(
+      <MemoryRouter>
+        <Admin />
+      </MemoryRouter>,
+    )
+
+    await user.click(await screen.findByRole('button', { name: /open integrations details/i }))
+    expect(await screen.findByText(/external integrations/i)).toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', { name: /open alert rules details/i }))
+    expect(await screen.findByRole('heading', { name: /^Alert Rules$/i })).toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', { name: /open timeline types details/i }))
+    expect(await screen.findByText('Account timeline')).toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', { name: /open email triggers details/i }))
+    expect(await screen.findByText(/allowed email domains/i)).toBeInTheDocument()
   })
 
   it('explains timeline controls, shows an empty type editor, and links to the account timeline tab', async () => {
