@@ -1,18 +1,12 @@
-from itertools import product
-
 from fastapi import HTTPException, status
 from sqlalchemy.orm import Session
 
 from app.models import Permission, Role, User
-from app.rbac import ACTIONS, DEFAULT_ROLES, MODULES, default_permission_keys_for, permission_key
+from app.rbac import DEFAULT_ROLES, default_permission_keys_for, permission_key
+from app.rbac_catalog import PERMISSION_BY_KEY, PERMISSIONS
 from app.repositories.rbac import RbacRepository
 from app.schemas import MessageResponse, RoleCreateRequest, RolePageRead, RolePermissionsUpdateRequest, RoleUpdateRequest
 from app.services.user_management import page_count
-
-
-def permission_description(module_name: str, action: str) -> str:
-    return f"Allows {action.replace('_', ' ')} access for {module_name}."
-
 
 def role_not_found(slug: str) -> HTTPException:
     return HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Role '{slug}' was not found")
@@ -27,10 +21,10 @@ class RbacService:
 
     def seed_defaults(self) -> dict[str, int]:
         permissions_by_key = self._seed_permissions()
+        permissions_removed = self.repository.delete_permissions_not_in(set(PERMISSION_BY_KEY))
         roles_seeded = 0
 
         for default_role in DEFAULT_ROLES:
-            existing_role = self.repository.get_role_by_slug(default_role.slug)
             role = self.repository.upsert_role(
                 slug=default_role.slug,
                 name=default_role.name,
@@ -39,12 +33,12 @@ class RbacService:
             )
             allowed_keys = default_permission_keys_for(default_role)
             for key in allowed_keys:
-                if existing_role is None or not self._role_has_permission_row(role, key):
+                if not self._role_has_permission_row(role, key):
                     self.repository.set_role_permission(role, permissions_by_key[key], True)
             roles_seeded += 1
 
         self.repository.commit()
-        return {"roles": roles_seeded, "permissions": len(permissions_by_key)}
+        return {"roles": roles_seeded, "permissions": len(permissions_by_key), "permissions_removed": permissions_removed}
 
     def list_roles(
         self,
@@ -122,15 +116,26 @@ class RbacService:
 
     def _seed_permissions(self) -> dict[str, Permission]:
         permissions_by_key: dict[str, Permission] = {}
-        for (module, module_name), action in product(MODULES, ACTIONS):
-            permission = self.repository.upsert_permission(module, action, permission_description(module_name, action))
-            permissions_by_key[permission_key(module, action)] = permission
+        for definition in PERMISSIONS:
+            permission = self.repository.upsert_permission(
+                definition.module,
+                definition.action,
+                definition.description,
+                section_name=definition.section_name,
+                section_purpose=definition.section_purpose,
+                action_label=definition.action_label,
+                risk_level=definition.risk_level,
+                dependencies=definition.dependencies,
+                tags=definition.tags,
+                display_order=definition.display_order,
+            )
+            permissions_by_key[definition.key] = permission
         return permissions_by_key
 
     @staticmethod
     def _role_has_permission_row(role: Role, key: str) -> bool:
         return any(
-            item.permission is not None and permission_key(item.permission.module, item.permission.action) == key
+            item.allowed and item.permission is not None and permission_key(item.permission.module, item.permission.action) == key
             for item in role.permissions
         )
 

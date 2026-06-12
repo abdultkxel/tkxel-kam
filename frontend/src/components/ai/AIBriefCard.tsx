@@ -3,6 +3,7 @@ import { ChevronDown, Loader2, PencilLine, Sparkles, ThumbsDown, ThumbsUp } from
 import { useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { toast } from 'sonner'
+import { useCapabilities } from '@/hooks/useCapabilities'
 import { generateAISummary } from '@/services/aiSummary'
 import { useAISummaryStore } from '@/stores/aiSummaryStore'
 import { Account } from '@/types/account'
@@ -43,7 +44,6 @@ export function AIBriefCard({
   entries,
   opportunities,
   governance,
-  role,
   userId,
   userName,
   type = 'account_brief',
@@ -64,7 +64,8 @@ export function AIBriefCard({
   const setFeedback = useAISummaryStore(state => state.setFeedback)
   const markEdited = useAISummaryStore(state => state.markEdited)
   const summary = useMemo(() => summaries.find(item => item.accountId === account.id && item.type === type), [account.id, summaries, type])
-  const privileged = role === 'leadership' || role === 'admin' || role === 'super_admin'
+  const { capabilities } = useCapabilities()
+  const privileged = capabilities.can_view_portfolio || capabilities.permission_keys.includes('ai:export')
 
   async function buildSummary(force = false) {
     if (!force && isFresh(summary)) return

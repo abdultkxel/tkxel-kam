@@ -44,7 +44,7 @@ from app.schemas import (
     TaskRead,
     TaskUpdateRequest,
 )
-from app.services.account_access import AccountAccessService, GLOBAL_EDIT_ROLES, GLOBAL_VIEW_ROLES
+from app.services.account_access import AccountAccessService
 from app.services.audit import AuditService
 from app.services.custom_fields import CustomFieldService
 from app.services.notifications import NotificationsService
@@ -169,7 +169,7 @@ class PlaybooksTasksService:
         if account_id:
             account = self._get_account_or_404(account_id)
             self.access.require_account_view(current_user, account, module=MODULE)
-        elif current_user.role not in GLOBAL_VIEW_ROLES:
+        elif not self.access.can_view_portfolio(current_user):
             LOGGER.info("Recommended playbooks requested without account context for non-global user", extra={"signal_id": signal_id, "actor_id": current_user.id})
         templates, _ = self.repository.list_templates(active_state="active", page=page, page_size=page_size)
         recommendations: list[RecommendedPlaybookRead] = []
@@ -290,7 +290,7 @@ class PlaybooksTasksService:
         self.access.require_module_permission(current_user, MODULE, "view")
         if account_id:
             self.access.require_account_view(current_user, self._get_account_or_404(account_id), module=MODULE)
-        account_ids = None if current_user.role in GLOBAL_VIEW_ROLES else self.accounts.list_account_ids_for_user(current_user.id)
+        account_ids = None if self.access.can_view_portfolio(current_user) else self.accounts.list_account_ids_for_user(current_user.id)
         items, total = self.repository.list_tasks(
             account_id=account_id,
             account_ids=account_ids,
@@ -464,7 +464,7 @@ class PlaybooksTasksService:
         self.access.require_module_permission(current_user, MODULE, "view")
         if account_id:
             self.access.require_account_view(current_user, self._get_account_or_404(account_id), module=MODULE)
-        account_ids = None if current_user.role in GLOBAL_VIEW_ROLES else self.accounts.list_account_ids_for_user(current_user.id)
+        account_ids = None if self.access.can_view_portfolio(current_user) else self.accounts.list_account_ids_for_user(current_user.id)
         if account_id:
             account_ids = [account_id]
         items: list[CalendarItemRead] = []
@@ -495,17 +495,16 @@ class PlaybooksTasksService:
         return CalendarItemPageRead(items=items[start:start + page_size], total=total, page=page, page_size=page_size, pages=page_count(total, page_size))
 
     def _require_configure(self, user: User) -> None:
-        self._require_playbook_operation(user)
-        self.access.require_module_permission(user, MODULE, "configure")
+        if not self.access.has_any_permission(user, {"playbooks:configure_templates", "playbooks:delete_templates"}):
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="You do not have permission to configure playbooks")
 
-    @staticmethod
-    def _require_playbook_operation(user: User) -> None:
-        if user.role != "super_admin":
-            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Only Super Admin can operate playbooks. Other roles can view the playbook manual.")
+    def _require_playbook_operation(self, user: User) -> None:
+        if not self.access.has_any_permission(user, {"playbooks:execute", "playbooks:configure_templates", "playbooks:delete_templates"}):
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="You do not have permission to operate playbooks")
 
     def _require_account_work(self, user: User, account: Account, *, action: str) -> None:
         self.access.require_module_permission(user, MODULE, action)
-        if user.role in GLOBAL_EDIT_ROLES:
+        if self.access.has_any_permission(user, {"tasks:update_portfolio", "playbooks:execute"}):
             return
         if self.access.can_update_account(user, account):
             return
@@ -513,7 +512,7 @@ class PlaybooksTasksService:
 
     def _require_task_update(self, user: User, task: Task) -> None:
         self.access.require_module_permission(user, MODULE, "update")
-        if user.role in GLOBAL_EDIT_ROLES or task.owner_id == user.id:
+        if self.access.has_any_permission(user, {"tasks:update_portfolio"}) or task.owner_id == user.id:
             return
         account = self._get_account_or_404(task.account_id)
         if self.access.can_update_account(user, account):

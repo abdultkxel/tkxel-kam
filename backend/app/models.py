@@ -88,10 +88,30 @@ class Permission(Base):
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid4()))
     module: Mapped[str] = mapped_column(String(120), index=True, nullable=False)
     action: Mapped[str] = mapped_column(String(80), nullable=False)
+    section_name: Mapped[str | None] = mapped_column(String(160), nullable=True)
+    section_purpose: Mapped[str | None] = mapped_column(Text, nullable=True)
+    action_label: Mapped[str | None] = mapped_column(String(160), nullable=True)
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    risk_level: Mapped[str] = mapped_column(String(40), nullable=False, default="medium")
+    dependencies_json: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    tags_json: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    display_order: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    is_deprecated: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utc_now)
 
     roles: Mapped[list["RolePermission"]] = relationship(back_populates="permission", cascade="all, delete-orphan")
+
+    @property
+    def key(self) -> str:
+        return f"{self.module}:{self.action}"
+
+    @property
+    def dependencies(self) -> list[str]:
+        return list(self.dependencies_json or [])
+
+    @property
+    def tags(self) -> list[str]:
+        return list(self.tags_json or [])
 
 
 class RolePermission(Base):

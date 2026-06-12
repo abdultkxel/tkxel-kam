@@ -69,9 +69,6 @@ TIMELINE_MODULE = "account_timeline"
 HANDOVER_MODULE = "handover_summary"
 AI_MODULE = "ai_assistance_search"
 ADMIN_MODULE = "admin_audit_security_rbac"
-SENSITIVE_ROLES = {"super_admin", "admin", "kam_head", "leadership_viewer", "leadership"}
-LEGAL_SENSITIVE_ROLES = {"super_admin", "admin"}
-TIMELINE_MODERATOR_ROLES = {"super_admin", "admin", "kam_head"}
 DEFAULT_HANDOVER_SECTIONS = [
     "account",
     "engagements",
@@ -313,7 +310,7 @@ class TimelineService:
         self.access.require_account_view(current_user, account, module=TIMELINE_MODULE)
         if entry.is_immutable or entry.is_system_generated:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="System-generated timeline entries are immutable")
-        if entry.performed_by != current_user.id and current_user.role not in TIMELINE_MODERATOR_ROLES:
+        if entry.performed_by != current_user.id and not self.access.has_any_permission(current_user, {"timeline:moderate"}):
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Only the author or a timeline moderator can edit this entry")
         before = self._audit_event(entry)
         for field_name in ("title", "event_at", "tags", "mentions", "attachments"):
@@ -912,28 +909,25 @@ class TimelineService:
         if entry.is_sensitive and not self._can_view_entry_sensitive(entry, current_user):
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Timeline entry was not found")
 
-    @staticmethod
-    def _can_view_sensitive(user: User) -> bool:
-        return user.role in SENSITIVE_ROLES
+    def _can_view_sensitive(self, user: User) -> bool:
+        return self.access.has_any_permission(user, {"timeline:view_sensitive", "timeline:moderate"})
 
-    @staticmethod
-    def _can_view_restricted(user: User) -> bool:
-        return user.role in TIMELINE_MODERATOR_ROLES
+    def _can_view_restricted(self, user: User) -> bool:
+        return self.access.has_any_permission(user, {"timeline:moderate"})
 
-    @staticmethod
-    def _can_view_entry_sensitive(entry: TimelineEntry, user: User) -> bool:
+    def _can_view_entry_sensitive(self, entry: TimelineEntry, user: User) -> bool:
         if not entry.is_sensitive:
             return True
         if entry.sensitivity_level in {"legal", "executive"}:
-            return user.role in LEGAL_SENSITIVE_ROLES
+            return self.access.has_any_permission(user, {"timeline:moderate"})
         if entry.event_type == "manual_note" and entry.performed_by == user.id:
             return True
-        return user.role in SENSITIVE_ROLES
+        return self._can_view_sensitive(user)
 
     def _require_comment_mutation(self, comment: TimelineComment, current_user: User) -> None:
         if comment.author_id == current_user.id:
             return
-        if current_user.role in TIMELINE_MODERATOR_ROLES:
+        if self.access.has_any_permission(current_user, {"timeline:moderate"}):
             return
         if self.rbac.role_has_permission(current_user.role, TIMELINE_MODULE, "delete"):
             return

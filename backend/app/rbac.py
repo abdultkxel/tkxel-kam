@@ -1,34 +1,21 @@
 from dataclasses import dataclass
 
-MODULES: tuple[tuple[str, str], ...] = (
-    ("account_onboarding_workspace", "Account Onboarding and Workspace"),
-    ("engagement_sow_management", "Engagement/SOW Management and Engagement 360"),
-    ("account_overview", "Account Overview"),
-    ("kyc", "KYC and AI-Assisted KYC"),
-    ("stakeholder_relationship", "Stakeholder and Relationship Management"),
-    ("account_planning", "Account Planning, Whitespace, and Service Catalog"),
-    ("opportunity_management", "Growth and Opportunity Management"),
-    ("retention_stability", "Retention and Account Stability"),
-    ("scoring_engine", "Configurable Scoring and Metric Engine"),
-    ("signals_attention", "Rule-Based Signals and Attention Center"),
-    ("playbooks_tasks_calendar", "Playbooks, Activities, Tasks, and Calendar"),
-    ("client_education_content", "Client Education and Content"),
-    ("escalation_management", "Escalation Management"),
-    ("governance_reviews", "Governance and Reviews"),
-    ("account_timeline", "Account History and Timeline"),
-    ("handover_summary", "Handover Summary"),
-    ("notifications_digests", "Notifications, SLA Escalation, and Executive Digests"),
-    ("dashboards_reporting", "Dashboards and Reporting"),
-    ("ai_assistance_search", "AI Assistance, AI Search, and Semantic Search"),
-    ("integrations", "Approved Integrations"),
-    ("admin_audit_security_rbac", "Admin, Audit, Retention, Security, and RBAC"),
-    ("analytics_portfolio", "Analytics, Benchmarking, and Portfolio Intelligence"),
-    ("multi_owner_tenant_readiness", "Multi-owner and Multi-tenant Readiness"),
+from app.rbac_catalog import (
+    DEFAULT_ROLE_GRANTS,
+    PERMISSION_SECTIONS,
+    PERMISSIONS,
+    permission_key,
 )
 
-ACTIONS: tuple[str, ...] = ("view", "create", "update", "delete", "approve", "configure", "assign", "export")
-
+MODULES: tuple[tuple[str, str], ...] = PERMISSION_SECTIONS
+ACTIONS: tuple[str, ...] = tuple(dict.fromkeys(permission.action for permission in PERMISSIONS))
 ADMIN_MODULE = "admin_audit_security_rbac"
+FIELD_BUILDER_DOMAIN_MODULES: tuple[tuple[str, str], ...] = (
+    ("account_overview", "Account Overview"),
+    ("account_onboarding_workspace", "Account Onboarding Workspace"),
+    ("client_education_content", "Client Education Content"),
+    ("playbooks_tasks_calendar", "Playbooks, Activities, Tasks, and Calendar"),
+)
 
 
 @dataclass(frozen=True)
@@ -39,107 +26,85 @@ class DefaultRole:
     permission_rules: tuple[tuple[str, tuple[str, ...]], ...]
 
 
-ALL_MODULE_SLUGS = tuple(module for module, _ in MODULES)
+ALL_MODULE_SLUGS = tuple(dict.fromkeys([*(module for module, _ in MODULES), *(module for module, _ in FIELD_BUILDER_DOMAIN_MODULES)]))
 ALL_ACTIONS = ACTIONS
-OPERATIONAL_MODULES = tuple(module for module in ALL_MODULE_SLUGS if module not in {"admin_audit_security_rbac", "integrations", "multi_owner_tenant_readiness"})
-VIEW_ONLY_ACTIONS = ("view", "export")
-WORK_ACTIONS = ("view", "create", "update")
-LEADERSHIP_ACTIONS = ("view", "create", "update", "approve", "assign", "export")
-CONFIG_ACTIONS = ("view", "create", "update", "delete", "configure")
+OPERATIONAL_MODULES = tuple(module for module in ALL_MODULE_SLUGS if module not in {"access_admin", "audit", "change_control", "platform_ops", "integrations", "ai_admin"})
+VIEW_ONLY_ACTIONS = ("view", "view_assigned", "view_portfolio", "view_own", "view_summary", "view_scores", "export")
+WORK_ACTIONS = ("view", "view_assigned", "create", "update", "update_own")
+LEADERSHIP_ACTIONS = ("view", "view_portfolio", "view_all", "approve_draft", "assign_owner", "export")
+CONFIG_ACTIONS = ("view", "configure", "configure_rules", "configure_templates", "manage_roles")
+
+
+def _permission_rules_for(keys: set[str]) -> tuple[tuple[str, tuple[str, ...]], ...]:
+    actions_by_module: dict[str, list[str]] = {}
+    for permission in PERMISSIONS:
+        if permission.key in keys:
+            actions_by_module.setdefault(permission.module, []).append(permission.action)
+    return tuple((module, tuple(actions)) for module, actions in actions_by_module.items())
+
 
 DEFAULT_ROLES: tuple[DefaultRole, ...] = (
     DefaultRole(
         slug="super_admin",
         name="Super Admin",
-        description="Hidden platform owner with every seeded module permission. Seed exactly one setup user.",
-        permission_rules=tuple((module, ALL_ACTIONS) for module in ALL_MODULE_SLUGS),
+        description="Hidden platform owner with every seeded catalog permission. Seed exactly one setup user.",
+        permission_rules=_permission_rules_for(DEFAULT_ROLE_GRANTS["super_admin"]),
     ),
     DefaultRole(
         slug="admin",
         name="Admin",
-        description="Visible platform administrator with all permissions.",
-        permission_rules=tuple((module, ALL_ACTIONS) for module in ALL_MODULE_SLUGS),
+        description="Visible platform administrator with all catalog permissions.",
+        permission_rules=_permission_rules_for(DEFAULT_ROLE_GRANTS["admin"]),
     ),
     DefaultRole(
         slug="kam_head",
         name="KAM Head",
-        description="Portfolio governance owner with all permissions, including account/KYC approvals.",
-        permission_rules=tuple((module, ALL_ACTIONS) for module in ALL_MODULE_SLUGS),
+        description="Portfolio governance owner with all catalog permissions, including account/KYC approvals.",
+        permission_rules=_permission_rules_for(DEFAULT_ROLE_GRANTS["kam_head"]),
     ),
     DefaultRole(
         slug="account_manager",
         name="Account Manager",
-        description="Primary operational owner for assigned accounts. Account creation and KYC approval require KAM Head or higher approval.",
-        permission_rules=(
-            ("account_onboarding_workspace", WORK_ACTIONS),
-            ("engagement_sow_management", WORK_ACTIONS),
-            ("account_overview", WORK_ACTIONS),
-            ("kyc", WORK_ACTIONS),
-            ("stakeholder_relationship", WORK_ACTIONS),
-            ("account_planning", WORK_ACTIONS),
-            ("opportunity_management", WORK_ACTIONS),
-            ("retention_stability", ("view", "update")),
-            ("scoring_engine", ("view",)),
-            ("signals_attention", ("view", "update")),
-            ("playbooks_tasks_calendar", WORK_ACTIONS),
-            ("client_education_content", ("view", "create", "update")),
-            ("escalation_management", WORK_ACTIONS),
-            ("governance_reviews", WORK_ACTIONS),
-            ("integrations", ("view", "create")),
-            ("account_timeline", WORK_ACTIONS),
-            ("handover_summary", ("view", "create", "export")),
-            ("notifications_digests", ("view", "update")),
-            ("dashboards_reporting", VIEW_ONLY_ACTIONS),
-            ("ai_assistance_search", ("view", "create")),
-        ),
+        description="Primary operational owner for assigned accounts. Portfolio, approval, and sensitive administration actions require explicit grants.",
+        permission_rules=_permission_rules_for(DEFAULT_ROLE_GRANTS["account_manager"]),
+    ),
+    DefaultRole(
+        slug="ops_lead",
+        name="Ops Lead",
+        description="Operational delivery owner retained for existing data and mapped to delivery/task/governance capabilities.",
+        permission_rules=_permission_rules_for(DEFAULT_ROLE_GRANTS["ops_lead"]),
     ),
     DefaultRole(
         slug="delivery_lead",
         name="Delivery Lead",
         description="Delivery lead for engagement health, escalations, governance, and delivery tasks.",
-        permission_rules=(
-            ("engagement_sow_management", ("view", "update", "export")),
-            ("account_overview", ("view", "update")),
-            ("stakeholder_relationship", ("view",)),
-            ("retention_stability", ("view", "update")),
-            ("scoring_engine", ("view", "update")),
-            ("signals_attention", ("view", "update")),
-            ("playbooks_tasks_calendar", WORK_ACTIONS),
-            ("escalation_management", WORK_ACTIONS),
-            ("governance_reviews", WORK_ACTIONS),
-            ("account_timeline", ("view", "create")),
-            ("notifications_digests", ("view", "update")),
-            ("dashboards_reporting", VIEW_ONLY_ACTIONS),
-            ("ai_assistance_search", ("view",)),
-        ),
+        permission_rules=_permission_rules_for(DEFAULT_ROLE_GRANTS["delivery_lead"]),
+    ),
+    DefaultRole(
+        slug="delivery_stakeholder",
+        name="Delivery Stakeholder",
+        description="Legacy delivery stakeholder persona mapped to delivery/task/governance capabilities.",
+        permission_rules=_permission_rules_for(DEFAULT_ROLE_GRANTS["delivery_stakeholder"]),
+    ),
+    DefaultRole(
+        slug="content_specialist",
+        name="Content Specialist",
+        description="Client education content operator retained for existing users and narrow content workflows.",
+        permission_rules=_permission_rules_for(DEFAULT_ROLE_GRANTS["content_specialist"]),
+    ),
+    DefaultRole(
+        slug="commercial_stakeholder",
+        name="Commercial Stakeholder",
+        description="Commercial collaborator with narrow account, opportunity, report, and dashboard visibility.",
+        permission_rules=_permission_rules_for(DEFAULT_ROLE_GRANTS["commercial_stakeholder"]),
     ),
     DefaultRole(
         slug="leadership_viewer",
         name="Leadership / Executive",
         description="Strategic visibility consumer for portfolio, risk, retention, growth, and decisions.",
-        permission_rules=(
-            ("account_overview", VIEW_ONLY_ACTIONS),
-            ("engagement_sow_management", VIEW_ONLY_ACTIONS),
-            ("stakeholder_relationship", VIEW_ONLY_ACTIONS),
-            ("opportunity_management", VIEW_ONLY_ACTIONS),
-            ("retention_stability", VIEW_ONLY_ACTIONS),
-            ("scoring_engine", VIEW_ONLY_ACTIONS),
-            ("signals_attention", VIEW_ONLY_ACTIONS),
-            ("playbooks_tasks_calendar", VIEW_ONLY_ACTIONS),
-            ("escalation_management", VIEW_ONLY_ACTIONS),
-            ("governance_reviews", VIEW_ONLY_ACTIONS),
-            ("handover_summary", ("view", "create", "export")),
-            ("notifications_digests", ("view", "update")),
-            ("dashboards_reporting", VIEW_ONLY_ACTIONS),
-            ("analytics_portfolio", VIEW_ONLY_ACTIONS),
-            ("ai_assistance_search", ("view", "export")),
-        ),
+        permission_rules=_permission_rules_for(DEFAULT_ROLE_GRANTS["leadership_viewer"]),
     ),
 )
-
-
-def permission_key(module: str, action: str) -> str:
-    return f"{module}:{action}"
 
 
 def default_permission_keys_for(role: DefaultRole) -> set[str]:

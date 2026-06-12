@@ -16,8 +16,34 @@ vi.mock('sonner', () => ({
 }))
 
 const permissions = [
-  { id: 'perm-1', module: 'admin_audit_security_rbac', action: 'configure', description: null },
-  { id: 'perm-2', module: 'account_overview', action: 'view', description: null },
+  {
+    id: 'perm-1',
+    module: 'access_admin',
+    action: 'manage_roles',
+    key: 'access_admin:manage_roles',
+    section_name: 'Access Administration',
+    section_purpose: 'Controls users and roles.',
+    action_label: 'Manage roles',
+    description: 'Create, update, delete, or grant permissions to roles.',
+    risk_level: 'critical',
+    dependencies: ['access_admin:view_roles'],
+    tags: ['admin'],
+    display_order: 3604,
+  },
+  {
+    id: 'perm-2',
+    module: 'accounts',
+    action: 'view_assigned',
+    key: 'accounts:view_assigned',
+    section_name: 'Accounts',
+    section_purpose: 'Controls account visibility.',
+    action_label: 'View assigned accounts',
+    description: 'See assigned account records.',
+    risk_level: 'low',
+    dependencies: [],
+    tags: ['scope:assigned'],
+    display_order: 101,
+  },
 ]
 
 const roles = [
@@ -74,7 +100,7 @@ function setupFetch() {
         ...roles[1],
         slug: 'portfolio_viewer',
         name: 'Portfolio Viewer',
-        permissions: [{ permission: permissions[1], allowed: true }],
+        permissions: permissions.slice(0, 2).map(permission => ({ permission, allowed: true })),
       })
     }
     if (url.endsWith('/api/admin/roles/regional_director') && method === 'DELETE') {
@@ -96,15 +122,15 @@ describe('AdminRolesPanel', () => {
     await userEvent.click(screen.getByRole('button', { name: /create role/i }))
     await userEvent.type(screen.getByLabelText(/slug/i), 'portfolio_viewer')
     await userEvent.type(screen.getByLabelText(/^name$/i), 'Portfolio Viewer')
-    await userEvent.click(screen.getByRole('button', { name: /select all permissions/i }))
+    await userEvent.click(screen.getByRole('button', { name: /portfolio admin/i }))
     await userEvent.click(screen.getByRole('button', { name: /save role/i }))
 
     await waitFor(() => expect(fetchMock.mock.calls.some(call => String(call[0]).endsWith('/api/admin/roles/portfolio_viewer/permissions'))).toBe(true))
     const permissionCall = fetchMock.mock.calls.find(call => String(call[0]).endsWith('/api/admin/roles/portfolio_viewer/permissions'))
     expect(JSON.parse(String(permissionCall?.[1]?.body))).toEqual({
       permissions: [
-        { module: 'admin_audit_security_rbac', action: 'configure', allowed: true },
-        { module: 'account_overview', action: 'view', allowed: true },
+        { module: 'access_admin', action: 'manage_roles', allowed: true },
+        { module: 'accounts', action: 'view_assigned', allowed: true },
       ],
     })
     expect(toast.success).toHaveBeenCalledWith('Role created successfully')

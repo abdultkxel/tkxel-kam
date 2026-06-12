@@ -1,6 +1,5 @@
 import { CalendarDays, Plus } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
-import { VariableSizeList, ListChildComponentProps } from 'react-window'
 import { EmptyState } from '@/components/ui/EmptyState'
 import { Skeleton } from '@/components/ui/Skeleton'
 import { AddNoteModal } from '@/components/timeline/AddNoteModal'
@@ -10,21 +9,6 @@ import { useAuth } from '@/contexts/AuthContext'
 import { useTimelineFilters } from '@/hooks/useTimelineFilters'
 import { getAccountTimeline } from '@/services/timeline'
 import { TimelineEntry } from '@/types/timeline'
-
-interface ItemData {
-  entries: TimelineEntry[]
-  searchQuery: string
-  flashId: string
-}
-
-function Row({ index, style, data }: ListChildComponentProps<ItemData>) {
-  const entry = data.entries[index]
-  return (
-    <div style={{ ...style, paddingBottom: 12 }}>
-      <TimelineCard entry={entry} searchQuery={data.searchQuery} flash={data.flashId === entry.id} />
-    </div>
-  )
-}
 
 export function TimelineFeed({ accountId }: { accountId: string }) {
   const [isLoading, setIsLoading] = useState(true)
@@ -36,7 +20,7 @@ export function TimelineFeed({ accountId }: { accountId: string }) {
   const [sortDirection, setSortDirection] = useState<'newest' | 'oldest'>('newest')
   const [noteOpen, setNoteOpen] = useState(false)
   const [flashId, setFlashId] = useState('')
-  const listRef = useRef<VariableSizeList>(null)
+  const listRef = useRef<HTMLUListElement>(null)
   const { token } = useAuth()
   const { filters, setFilter, clearAll } = useTimelineFilters()
   const eventTypeFilter = filters.eventTypes[0] ?? ''
@@ -105,17 +89,11 @@ export function TimelineFeed({ accountId }: { accountId: string }) {
     }
   }
 
-  function sizeFor(index: number) {
-    const entry = entries[index]
-    if (entry && !entry.isSystemGenerated) return 380
-    return entry?.beforeValue || entry?.afterValue ? 260 : 190
-  }
-
   function handleAdded(entry: TimelineEntry) {
     setSortDirection('newest')
     setEntries(items => [entry, ...items.filter(item => item.id !== entry.id)])
     setFlashId(entry.id)
-    window.setTimeout(() => listRef.current?.scrollToItem(0, 'start'), 0)
+    window.setTimeout(() => listRef.current?.scrollIntoView?.({ block: 'start', behavior: 'smooth' }), 0)
     window.setTimeout(() => setFlashId(''), 1400)
   }
 
@@ -163,17 +141,13 @@ export function TimelineFeed({ accountId }: { accountId: string }) {
           action={{ label: 'Add event', onClick: () => setNoteOpen(true) }}
         />
       ) : (
-        <VariableSizeList
-          ref={listRef}
-          height={640}
-          width="100%"
-          itemCount={entries.length}
-          itemSize={sizeFor}
-          itemData={{ entries, searchQuery: filters.search, flashId }}
-          overscanCount={8}
-        >
-          {Row}
-        </VariableSizeList>
+        <ul ref={listRef} aria-label="Account timeline events" className="space-y-3">
+          {entries.map(entry => (
+            <li key={entry.id}>
+              <TimelineCard entry={entry} searchQuery={filters.search} flash={flashId === entry.id} />
+            </li>
+          ))}
+        </ul>
       )}
 
       {entries.length > 0 && page < pages ? (

@@ -4,6 +4,7 @@ import { FormEvent, forwardRef, useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { toast } from 'sonner'
 import { useAuth } from '@/contexts/AuthContext'
+import { useCapabilities } from '@/hooks/useCapabilities'
 import { useRole } from '@/hooks/useRole'
 import { ApiError } from '@/services/api'
 import {
@@ -23,6 +24,7 @@ type CreateAccountField = 'accountName' | 'projectName' | 'companyUrl' | 'linked
 export function CreateAccountDialog({ label = 'Create account' }: { label?: string }) {
   const { token } = useAuth()
   const currentUser = useRole()
+  const { capabilities } = useCapabilities()
   const navigate = useNavigate()
   const [open, setOpen] = useState(false)
   const [accountName, setAccountName] = useState('')
@@ -42,7 +44,7 @@ export function CreateAccountDialog({ label = 'Create account' }: { label?: stri
   const [uploadedExtraction, setUploadedExtraction] = useState<OnboardingUploadExtractionView | null>(null)
   const [extracting, setExtracting] = useState(false)
   const [creating, setCreating] = useState(false)
-  const assignableManagers = assignableAccountManagers(accountManagers, currentUser)
+  const assignableManagers = assignableAccountManagers(accountManagers, currentUser, capabilities.can_assign_account_owners)
   const selectedManager = assignableManagers.find(manager => manager.id === managerId)
   const refs = {
     accountName: useRef<HTMLInputElement>(null),
@@ -57,7 +59,7 @@ export function CreateAccountDialog({ label = 'Create account' }: { label?: stri
     setProjectName('')
     setCompanyUrl('')
     setLinkedinUrl('')
-    setManagerId(defaultAccountManagerId(assignableManagers, currentUser))
+    setManagerId(defaultAccountManagerId(assignableManagers, currentUser, capabilities.can_assign_account_owners))
     setErrors({})
     setCustomValues({})
     setCustomErrors({})
@@ -245,7 +247,7 @@ export function CreateAccountDialog({ label = 'Create account' }: { label?: stri
       .then(managers => {
         if (!active) return
         setAccountManagers(managers)
-        setManagerId(current => current || defaultAccountManagerId(assignableAccountManagers(managers, currentUser), currentUser))
+        setManagerId(current => current || defaultAccountManagerId(assignableAccountManagers(managers, currentUser, capabilities.can_assign_account_owners), currentUser, capabilities.can_assign_account_owners))
       })
       .catch(() => {
         if (!active) return
@@ -257,7 +259,7 @@ export function CreateAccountDialog({ label = 'Create account' }: { label?: stri
     return () => {
       active = false
     }
-  }, [currentUser, open, token])
+  }, [capabilities.can_assign_account_owners, currentUser, open, token])
 
   return (
     <Dialog.Root open={open} onOpenChange={handleOpenChange}>
@@ -619,14 +621,14 @@ function normalizeLinkedinUrl(value: string) {
   return normalizeCompanyUrl(value)
 }
 
-function defaultAccountManagerId(managers: OnboardingAccountManager[], currentUser: { id: string; email: string; role: string }) {
-  if (!['account_manager', 'am'].includes(currentUser.role)) return ''
+function defaultAccountManagerId(managers: OnboardingAccountManager[], currentUser: { id: string; email: string }, canAssignOwners: boolean) {
+  if (canAssignOwners) return ''
   const self = managers.find(manager => manager.id === currentUser.id || manager.email.toLowerCase() === currentUser.email.toLowerCase())
   return self?.id ?? ''
 }
 
-function assignableAccountManagers(managers: OnboardingAccountManager[], currentUser: { id: string; email: string; role: string }) {
-  if (!['account_manager', 'am'].includes(currentUser.role)) return managers
+function assignableAccountManagers(managers: OnboardingAccountManager[], currentUser: { id: string; email: string }, canAssignOwners: boolean) {
+  if (canAssignOwners) return managers
   return managers.filter(manager => manager.id === currentUser.id || manager.email.toLowerCase() === currentUser.email.toLowerCase())
 }
 

@@ -58,6 +58,7 @@ ACCOUNT_HEALTH_IMPACT_FIELDS = {"delivery_health", "health_status", "status"}
 class EngagementService:
     def __init__(self, db: Session) -> None:
         self.accounts = AccountRepository(db)
+        self.account_service = AccountService(db)
         self.engagements = EngagementRepository(db)
         self.access = AccountAccessService(self.accounts, RbacRepository(db))
         self.audit = AuditService(AuditRepository(db))
@@ -110,7 +111,7 @@ class EngagementService:
         account = self._get_account_or_404(account_id)
         self.access.require_account_update(current_user, account, module="engagement_sow_management")
         owner = self._get_active_user(payload.owner_id)
-        AccountService._ensure_owner_is_eligible(owner, "primary_am")
+        self.account_service._ensure_owner_is_eligible(owner, "primary_am")
         ops_lead = self._get_optional_ops_lead(payload.ops_lead_id)
         engagement = Engagement(
             account_id=account_id,
@@ -437,7 +438,7 @@ class EngagementService:
         if not user_id:
             return None
         user = self._get_active_user(user_id)
-        AccountService._ensure_owner_is_eligible(user, "ops_lead")
+        self.account_service._ensure_owner_is_eligible(user, "ops_lead")
         return user
 
     def _engagement_from_structured_charter(self, account: Account, document: SourceDocument, fields: dict, text: str, current_user: User) -> Engagement:
@@ -639,7 +640,7 @@ class EngagementService:
         updates.pop("notice_deadline", None)
         if "owner_id" in updates and updates["owner_id"]:
             owner = self._get_active_user(updates["owner_id"])
-            AccountService._ensure_owner_is_eligible(owner, "primary_am")
+            self.account_service._ensure_owner_is_eligible(owner, "primary_am")
             updates["owner_name"] = owner.full_name
         if "ops_lead_id" in updates:
             ops_lead = self._get_optional_ops_lead(updates["ops_lead_id"])

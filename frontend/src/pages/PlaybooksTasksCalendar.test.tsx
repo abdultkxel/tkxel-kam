@@ -7,14 +7,58 @@ import { Playbook } from '@/pages/Playbook'
 import { Tasks } from '@/pages/Tasks'
 import { useAccountStore } from '@/stores/accountStore'
 
-const mockedAuth = vi.hoisted(() => ({
-  user: { id: 'usr-admin', name: 'Admin User', role: 'super_admin', email: 'admin@example.com', avatarInitials: 'AU' },
-}))
+const mockedAuth = vi.hoisted(() => {
+  function fullCapabilities() {
+    return {
+      permission_keys: ['playbooks:configure_templates', 'playbooks:execute', 'tasks:update_own', 'tasks:update_portfolio'],
+      can_access_admin: true,
+      can_view_portfolio: true,
+      can_update_assigned_accounts: true,
+      can_update_portfolio_accounts: true,
+      can_assign_account_owners: true,
+      can_approve_onboarding: true,
+      can_view_sensitive_sources: true,
+      can_manage_sensitive_sources: true,
+      can_approve_kyc: true,
+      can_moderate_timeline: true,
+      can_export_reports: true,
+      can_configure_playbooks: true,
+      can_manage_tasks_portfolio: true,
+    }
+  }
+
+  function emptyCapabilities() {
+    return {
+      permission_keys: [],
+      can_access_admin: false,
+      can_view_portfolio: false,
+      can_update_assigned_accounts: false,
+      can_update_portfolio_accounts: false,
+      can_assign_account_owners: false,
+      can_approve_onboarding: false,
+      can_view_sensitive_sources: false,
+      can_manage_sensitive_sources: false,
+      can_approve_kyc: false,
+      can_moderate_timeline: false,
+      can_export_reports: false,
+      can_configure_playbooks: false,
+      can_manage_tasks_portfolio: false,
+    }
+  }
+
+  return {
+    user: { id: 'usr-admin', name: 'Admin User', role: 'super_admin', email: 'admin@example.com', avatarInitials: 'AU' },
+    capabilities: fullCapabilities(),
+    fullCapabilities,
+    emptyCapabilities,
+  }
+})
 
 vi.mock('@/contexts/AuthContext', () => ({
   useAuth: () => ({
     token: 'test-token',
     user: mockedAuth.user,
+    capabilities: mockedAuth.capabilities,
   }),
 }))
 
@@ -106,6 +150,7 @@ function jsonResponse(body: unknown, status = 200) {
 describe('playbooks, tasks, and calendar UI', () => {
   beforeEach(() => {
     mockedAuth.user = { id: 'usr-admin', name: 'Admin User', role: 'super_admin', email: 'admin@example.com', avatarInitials: 'AU' }
+    mockedAuth.capabilities = mockedAuth.fullCapabilities()
     useAccountStore.setState({ accounts: [account] as any })
   })
 
@@ -133,6 +178,7 @@ describe('playbooks, tasks, and calendar UI', () => {
 
   it('shows only the playbook manual to non-super-admin users', async () => {
     mockedAuth.user = { id: 'usr-admin', name: 'Admin User', role: 'admin', email: 'admin@example.com', avatarInitials: 'AU' }
+    mockedAuth.capabilities = mockedAuth.emptyCapabilities()
     const fetchMock = vi.fn(async () => jsonResponse({}))
     vi.stubGlobal('fetch', fetchMock)
 

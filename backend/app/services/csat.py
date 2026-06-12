@@ -13,7 +13,7 @@ from app.repositories.csat import CsatRepository
 from app.repositories.rbac import RbacRepository
 from app.repositories.timeline import TimelineRepository
 from app.schemas import CSAT_CATEGORY_KEYS, CsatScoreCreateRequest, CsatScorePageRead, CsatScoreRead, CsatScoreUpdateRequest, IntegrationItemMapRequest
-from app.services.account_access import AccountAccessService, GLOBAL_VIEW_ROLES
+from app.services.account_access import AccountAccessService
 from app.services.audit import AuditService
 from app.services.email_domains import field_validation_error
 from app.services.in_app_notifications import InAppNotificationService
@@ -62,7 +62,7 @@ class CsatService:
         if account_id:
             account = self._account_or_404(account_id)
             self.access.require_account_view(current_user, account, module=CSAT_MODULE)
-        elif current_user.role not in GLOBAL_VIEW_ROLES:
+        elif not self.access.can_view_portfolio(current_user):
             allowed = self.accounts.list_account_ids_for_user(current_user.id)
             if not allowed:
                 return CsatScorePageRead(items=[], total=0, page=page, page_size=page_size, pages=0)

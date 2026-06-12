@@ -14,7 +14,7 @@ from sqlalchemy.pool import StaticPool
 
 from app.database import Base, get_db
 from app.main import app
-from app.models import Account, AccountOwner, AiGatewayRun, AuditLog, CsatScore, CustomFieldDefinition, IntegrationImportedItem, IntegrationSyncRun, MeetingArtifact, NotificationRecord, ScoreSnapshot, TimelineEntry, User
+from app.models import Account, AccountOwner, AiGatewayRun, AuditLog, CsatScore, CustomFieldDefinition, IntegrationImportedItem, IntegrationSyncRun, MeetingArtifact, NotificationRecord, ScoreSnapshot, Task, TimelineEntry, TimelineEventTypeConfig, User
 from app.services.integrations import IntegrationService
 from app.services.seed import seed_default_data
 
@@ -84,6 +84,28 @@ def seeded_user(session: Session, role: str) -> User:
     user = session.scalar(select(User).where(User.role == role))
     assert user is not None
     return user
+
+
+def ensure_manual_note_event_type(session: Session) -> None:
+    if session.scalar(select(TimelineEventTypeConfig).where(TimelineEventTypeConfig.slug == "manual_note")) is not None:
+        return
+    admin = seeded_user(session, "admin")
+    session.add(
+        TimelineEventTypeConfig(
+            slug="manual_note",
+            name="Manual note",
+            category="manual",
+            module="manual",
+            color_token="surface-border",
+            display_order=1,
+            default_visibility="public",
+            is_active=True,
+            is_critical=False,
+            created_by_id=admin.id,
+            updated_by_id=admin.id,
+        )
+    )
+    session.commit()
 
 
 def seed_custom_field(session: Session, module: str, field_key: str, label: str, field_type: str = "text", options: list[str] | None = None) -> None:
@@ -354,6 +376,8 @@ def test_governance_recurrence_ai_brief_integrations_and_permissions(client: Tes
     )
     assert recurrence.status_code == 201
     rule_id = recurrence.json()["id"]
+    recurrence_tasks = db_session.query(Task).filter_by(account_id="account-cafe-zupas", source_type="governance_event", status="open").all()
+    assert len(recurrence_tasks) == 1
 
     events = client.get("/api/governance-events", headers=headers, params={"account_id": "account-cafe-zupas", "page": 1, "page_size": 10})
     assert events.status_code == 200
@@ -933,6 +957,7 @@ def test_personal_fireflies_resolve_reports_missing_key_bad_identifier_and_inacc
 
 def test_timeline_ai_search_writes_unified_ai_gateway_run(client: TestClient, db_session: Session) -> None:
     headers = auth_headers(client)
+    ensure_manual_note_event_type(db_session)
     note = client.post(
         "/api/accounts/account-cafe-zupas/timeline-notes",
         headers=headers,

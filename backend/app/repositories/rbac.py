@@ -2,6 +2,8 @@ from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session, selectinload
 
 from app.models import Permission, Role, RolePermission, User
+from app.permission_resolver import permission_key_candidates
+from app.rbac_catalog import permission_key
 
 
 class RbacRepository:
@@ -40,7 +42,16 @@ class RbacRepository:
         )
 
     def list_permissions(self) -> list[Permission]:
-        return list(self.db.scalars(select(Permission).order_by(Permission.module, Permission.action)))
+        return list(
+            self.db.scalars(
+                select(Permission).order_by(
+                    Permission.display_order,
+                    Permission.section_name,
+                    Permission.module,
+                    Permission.action,
+                )
+            )
+        )
 
     def get_permission(self, module: str, action: str) -> Permission | None:
         return self.db.scalar(select(Permission).where(Permission.module == module, Permission.action == action))
@@ -61,15 +72,35 @@ class RbacRepository:
         role.is_system = is_system
         return role
 
-    def upsert_permission(self, module: str, action: str, description: str | None = None) -> Permission:
+    def upsert_permission(
+        self,
+        module: str,
+        action: str,
+        description: str | None = None,
+        *,
+        section_name: str | None = None,
+        section_purpose: str | None = None,
+        action_label: str | None = None,
+        risk_level: str = "medium",
+        dependencies: tuple[str, ...] | list[str] = (),
+        tags: tuple[str, ...] | list[str] = (),
+        display_order: int = 0,
+    ) -> Permission:
         permission = self.get_permission(module, action)
         if permission is None:
-            permission = Permission(module=module, action=action, description=description)
+            permission = Permission(module=module, action=action)
             self.db.add(permission)
             self.db.flush()
-            return permission
 
         permission.description = description
+        permission.section_name = section_name
+        permission.section_purpose = section_purpose
+        permission.action_label = action_label
+        permission.risk_level = risk_level
+        permission.dependencies_json = list(dependencies)
+        permission.tags_json = list(tags)
+        permission.display_order = display_order
+        permission.is_deprecated = False
         return permission
 
     def set_role_permission(self, role: Role, permission: Permission, allowed: bool) -> RolePermission:
@@ -87,6 +118,37 @@ class RbacRepository:
         if role_slug == "super_admin":
             return True
 
+        return any(self._role_has_exact_permission(role_slug, candidate) for candidate in permission_key_candidates(module, action))
+
+    def list_role_permission_keys(self, role_slug: str) -> set[str]:
+        if role_slug == "super_admin":
+            return {permission_key(permission.module, permission.action) for permission in self.db.scalars(select(Permission))}
+
+        conditions = [Role.slug == role_slug, RolePermission.allowed.is_(True)]
+        return {
+            permission_key(module, action)
+            for module, action in self.db.execute(
+                select(Permission.module, Permission.action)
+                .join(RolePermission, RolePermission.permission_id == Permission.id)
+                .join(Role, Role.id == RolePermission.role_id)
+                .where(*conditions)
+            )
+        }
+
+    def delete_permissions_not_in(self, allowed_keys: set[str]) -> int:
+        permissions = list(self.db.scalars(select(Permission).options(selectinload(Permission.roles))))
+        removed = 0
+        for permission in permissions:
+            if permission_key(permission.module, permission.action) in allowed_keys:
+                continue
+            for grant in list(permission.roles):
+                self.db.delete(grant)
+            self.db.delete(permission)
+            removed += 1
+        return removed
+
+    def _role_has_exact_permission(self, role_slug: str, key: str) -> bool:
+        module, action = key.split(":", 1)
         return bool(
             self.db.scalar(
                 select(RolePermission.id)

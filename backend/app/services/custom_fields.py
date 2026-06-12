@@ -4,7 +4,7 @@ from fastapi import HTTPException, status
 from sqlalchemy.orm import Session
 
 from app.models import CustomFieldDefinition, CustomFieldValue, User
-from app.rbac import MODULES
+from app.rbac_catalog import PERMISSION_SECTIONS
 from app.repositories.accounts import AccountRepository
 from app.repositories.audit import AuditRepository
 from app.repositories.custom_fields import CustomFieldRepository
@@ -20,6 +20,16 @@ from app.services.account_access import AccountAccessService
 from app.services.user_management import page_count
 
 SELECT_FIELD_TYPES = {"single_select", "multi_select"}
+FIELD_BUILDER_DOMAIN_MODULES: tuple[tuple[str, str], ...] = (
+    ("account_overview", "Account Overview"),
+    ("account_onboarding_workspace", "Account Onboarding Workspace"),
+    ("client_education_content", "Client Education Content"),
+    ("playbooks_tasks_calendar", "Playbooks, Activities, Tasks, and Calendar"),
+)
+FIELD_BUILDER_MODULES: tuple[tuple[str, str], ...] = tuple(
+    (slug, name)
+    for slug, name in dict([*FIELD_BUILDER_DOMAIN_MODULES, *PERMISSION_SECTIONS]).items()
+)
 
 
 def field_not_found(definition_id: str) -> HTTPException:
@@ -47,7 +57,7 @@ class CustomFieldService:
         self.audit = AuditService(AuditRepository(db))
 
     def list_modules(self) -> list[CustomFieldModuleRead]:
-        return [CustomFieldModuleRead(slug=slug, name=name) for slug, name in MODULES]
+        return [CustomFieldModuleRead(slug=slug, name=name) for slug, name in FIELD_BUILDER_MODULES]
 
     def list_active_definitions(self, modules: list[str]) -> list[CustomFieldDefinition]:
         return self.repository.list_active_definitions(modules)

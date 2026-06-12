@@ -1,9 +1,9 @@
 import * as Switch from '@radix-ui/react-switch'
-import { BellRing, PlugZap, Plus, Save, ShieldCheck, SlidersHorizontal } from 'lucide-react'
+import { ArrowRight, BellRing, History, PlugZap, Plus, Save, ShieldCheck, SlidersHorizontal } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import { nanoid } from 'nanoid'
 import { FormEvent, useEffect, useState } from 'react'
-import { useSearchParams } from 'react-router-dom'
+import { Link, useSearchParams } from 'react-router-dom'
 import { toast } from 'sonner'
 import { AllowedEmailDomainsPanel } from '@/components/admin/AllowedEmailDomainsPanel'
 import { AdminContentPanel } from '@/components/admin/AdminContentPanel'
@@ -25,11 +25,12 @@ import { PageHeader } from '@/components/ui/PageHeader'
 import { useAuth } from '@/contexts/AuthContext'
 import { createTimelineEventType, getTimelineEventTypes, updateTimelineEventType } from '@/services/timeline'
 import { useAlertStore } from '@/stores/alertStore'
+import { useAccountStore } from '@/stores/accountStore'
 import { useIntegrationStore } from '@/stores/integrationStore'
 import { useNotificationStore } from '@/stores/notificationStore'
 import { useTimelineStore } from '@/stores/timelineStore'
 import { NotificationPreferenceMode, NotificationTrigger } from '@/types/notification'
-import { TimelineEventType, TimelineModule } from '@/types/timeline'
+import { TimelineEventType, TimelineModule, TimelineEventTypeConfig } from '@/types/timeline'
 import { cn } from '@/utils/cn'
 import { formatDate } from '@/utils/formatters'
 
@@ -93,9 +94,10 @@ const statusToneClass = {
 
 export function Admin() {
   const { token } = useAuth()
+  const accounts = useAccountStore(state => state.accounts)
   const fallbackConfigs = useTimelineStore(state => state.eventTypes)
-  const [serverConfigs, setServerConfigs] = useState(fallbackConfigs)
-  const configs = serverConfigs.length ? serverConfigs : fallbackConfigs
+  const [serverConfigs, setServerConfigs] = useState<TimelineEventTypeConfig[] | null>(null)
+  const configs = serverConfigs ?? fallbackConfigs
   const upsert = useTimelineStore(state => state.upsertEventType)
   const fallbackToggle = useTimelineStore(state => state.toggleEventType)
   const updateRetention = useTimelineStore(state => state.updateRetention)
@@ -108,6 +110,8 @@ export function Admin() {
   const [module, setModule] = useState<TimelineModule>('manual')
   const activeSection = searchParams.get('section') ?? ''
   const highlightedSection = activeSection && adminSectionIds.has(activeSection) ? activeSection : defaultAdminSection
+  const timelineAccount = accounts[0]
+  const accountTimelineRoute = timelineAccount ? `/accounts/${timelineAccount.id}?tab=timeline` : '/accounts'
   const activeTimelineTypes = configs.filter(config => config.active).length
   const connectedIntegrations = integrations.filter(config => config.status === 'connected').length
   const activeAlertRules = alertRules.filter(rule => rule.active).length
@@ -116,7 +120,7 @@ export function Admin() {
     {
       label: 'Timeline types',
       value: `${activeTimelineTypes}/${configs.length}`,
-      detail: 'Active event taxonomy',
+      detail: 'Configured event taxonomy',
       icon: ShieldCheck,
       tone: 'blue' as const,
     },
@@ -177,12 +181,12 @@ export function Admin() {
     if (token) {
       try {
         const created = await createTimelineEventType(token, {
-          slug: slugify(name),
+          slug: eventType,
           name,
           module,
           category: module,
         })
-        setServerConfigs(items => [created, ...items])
+        setServerConfigs(items => [created, ...(items ?? [])])
         setName('')
         toast.success('Timeline event type added')
         return
@@ -206,9 +210,9 @@ export function Admin() {
     toast.success('Timeline event type added')
   }
 
-  function updateConfigDraft(id: string, updates: Partial<(typeof configs)[number]>) {
-    setServerConfigs(items => items.map(item => (item.id === id ? { ...item, ...updates } : item)))
-    if (!serverConfigs.length) {
+  function updateConfigDraft(id: string, updates: Partial<TimelineEventTypeConfig>) {
+    setServerConfigs(items => (items ? items.map(item => (item.id === id ? { ...item, ...updates } : item)) : items))
+    if (serverConfigs === null) {
       const config = configs.find(item => item.id === id)
       if (config) upsert({ ...config, ...updates })
     }
@@ -223,7 +227,7 @@ export function Admin() {
     }
     try {
       const updated = await updateTimelineEventType(token, id, { is_active: !config.active })
-      setServerConfigs(items => items.map(item => (item.id === id ? updated : item)))
+      setServerConfigs(items => (items ?? configs).map(item => (item.id === id ? updated : item)))
       toast.success('Timeline event type updated')
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Timeline event type could not be updated')
@@ -238,7 +242,7 @@ export function Admin() {
     }
     try {
       const updated = await updateTimelineEventType(token, id, { name: config.name, module: config.module })
-      setServerConfigs(items => items.map(item => (item.id === id ? updated : item)))
+      setServerConfigs(items => (items ?? configs).map(item => (item.id === id ? updated : item)))
       toast.success('Timeline event type saved')
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Timeline event type could not be saved')
@@ -310,84 +314,104 @@ export function Admin() {
             </div>
           ) : null}
           {highlightedSection === 'timeline' ? (
-          <section id="timeline" className="tk-card scroll-mt-24 overflow-hidden">
-            <div className="border-b border-surface-border p-5">
-              <p className="text-[10px] font-extrabold uppercase tracking-widest text-brand-blue">FR-87 / FR-96</p>
-              <h2 className="text-base font-semibold text-ink">Timeline Event Types</h2>
-            </div>
-            <form onSubmit={submit} className="grid gap-3 border-b border-surface-border bg-surface-tertiary p-4 md:grid-cols-[minmax(220px,1fr)_180px_180px_auto]">
-              <input value={name} onChange={event => setName(event.target.value)} className="tk-input" placeholder="Event type name" />
-              <select value={eventType} onChange={event => setEventType(event.target.value as TimelineEventType)} className="tk-input">
-                {eventTypes.map(item => <option key={item}>{item}</option>)}
-              </select>
-              <select value={module} onChange={event => setModule(event.target.value as TimelineModule)} className="tk-input">
-                {modules.map(item => <option key={item}>{item}</option>)}
-              </select>
-              <button type="submit" className="tk-button-primary">
-                <Plus className="h-4 w-4" />
-                Add
-              </button>
-            </form>
-            <div className="overflow-x-auto">
-              <table className="w-full min-w-[980px] text-left text-sm">
-                <thead className="border-b border-surface-border bg-surface-tertiary text-xs font-semibold uppercase tracking-wider text-ink-secondary">
-                  <tr>
-                    <th className="px-4 py-3">Name</th>
-                    <th className="px-4 py-3">Module</th>
-                    <th className="px-4 py-3">Colour swatch</th>
-                    <th className="px-4 py-3">Active</th>
-                    <th className="px-4 py-3">Created date</th>
-                    <th className="px-4 py-3">Retention</th>
-                    <th className="px-4 py-3">Actions</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {configs.map(config => (
-                    <tr key={config.id} className="border-b border-surface-border last:border-b-0">
-                      <td className="px-4 py-3">
-                        <input className="tk-input" value={config.name} onChange={event => updateConfigDraft(config.id, { name: event.target.value })} />
-                      </td>
-                      <td className="px-4 py-3">
-                        <select className="tk-input" value={config.module} onChange={event => updateConfigDraft(config.id, { module: event.target.value as TimelineModule })}>
-                          {modules.map(item => <option key={item}>{item}</option>)}
-                        </select>
-                      </td>
-                      <td className="px-4 py-3">
-                        <span className={`inline-flex h-5 w-5 rounded-full border border-surface-border ${swatchClass[config.colorToken] ?? 'bg-brand-blue'}`} />
-                      </td>
-                      <td className="px-4 py-3">
-                        <Switch.Root checked={config.active} onCheckedChange={() => void toggleConfig(config.id)} className="relative min-h-[44px] w-11 rounded-full bg-transparent after:absolute after:left-0 after:top-1/2 after:h-6 after:w-11 after:-translate-y-1/2 after:rounded-full after:bg-surface-border data-[state=checked]:after:bg-brand-blue">
-                          <Switch.Thumb className="absolute left-0 top-1/2 z-10 block h-5 w-5 translate-x-0.5 -translate-y-1/2 rounded-full bg-white transition-transform data-[state=checked]:translate-x-5" />
-                        </Switch.Root>
-                      </td>
-                      <td className="px-4 py-3 text-ink-secondary">{formatDate(config.createdDate)}</td>
-                      <td className="px-4 py-3">
-                        <select
-                          className="tk-input min-w-[190px]"
-                          value={config.retentionPolicy === 'keep' ? 'keep' : `${config.retentionPolicy}:${config.retentionMonths ?? 36}`}
-                          onChange={event => {
-                            const [policy, months] = event.target.value.split(':')
-                            updateRetention(config.id, policy as 'keep' | 'archive' | 'delete', months ? Number(months) : undefined)
-                          }}
-                        >
-                          <option value="keep">Keep forever</option>
-                          <option value="archive:24">Archive after 24 months</option>
-                          <option value="archive:36">Archive after 36 months</option>
-                          <option value="delete:24">Delete after 24 months</option>
-                        </select>
-                      </td>
-                      <td className="px-4 py-3">
-                        <button type="button" className="tk-button-secondary" onClick={() => void saveConfig(config.id)}>
-                          <Save className="h-4 w-4" />
-                          Save
-                        </button>
-                      </td>
+            <section id="timeline" className="tk-card scroll-mt-24 overflow-hidden">
+              <div className="border-b border-surface-border p-5">
+	                <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+	                  <div className="max-w-3xl">
+	                    <h2 className="text-base font-semibold text-ink">Account timeline</h2>
+                    <p className="mt-2 text-sm leading-6 text-ink-secondary">
+                      Timeline is the account history layer: it records KYC updates, score changes, stage movement, opportunities, governance, escalations, manual notes, comments, source links, and retention state in chronological order.
+                    </p>
+                    <p className="mt-2 text-sm leading-6 text-ink-secondary">
+                      Account teams use the account Timeline tab to review the history and add manual events. Retention controls are managed from the Retention admin section.
+                    </p>
+                  </div>
+                  <Link to={accountTimelineRoute} className="tk-button-secondary w-fit">
+                    <History className="h-4 w-4" />
+                    Open account timeline
+                    <ArrowRight className="h-4 w-4" />
+                  </Link>
+                </div>
+              </div>
+              <form onSubmit={submit} className="grid gap-3 border-b border-surface-border bg-surface-tertiary p-4 md:grid-cols-[minmax(220px,1fr)_180px_180px_auto]">
+                <input value={name} onChange={event => setName(event.target.value)} className="tk-input" placeholder="Event type name" />
+                <select value={eventType} onChange={event => setEventType(event.target.value as TimelineEventType)} className="tk-input">
+                  {eventTypes.map(item => <option key={item}>{item}</option>)}
+                </select>
+                <select value={module} onChange={event => setModule(event.target.value as TimelineModule)} className="tk-input">
+                  {modules.map(item => <option key={item}>{item}</option>)}
+                </select>
+                <button type="submit" className="tk-button-primary">
+                  <Plus className="h-4 w-4" />
+                  Add
+                </button>
+              </form>
+              <div className="overflow-x-auto">
+                <table className="w-full min-w-[980px] text-left text-sm">
+                  <thead className="border-b border-surface-border bg-surface-tertiary text-xs font-semibold uppercase tracking-wider text-ink-secondary">
+                    <tr>
+                      <th className="px-4 py-3">Name</th>
+                      <th className="px-4 py-3">Module</th>
+                      <th className="px-4 py-3">Colour swatch</th>
+                      <th className="px-4 py-3">Active</th>
+                      <th className="px-4 py-3">Created date</th>
+                      <th className="px-4 py-3">Retention</th>
+                      <th className="px-4 py-3">Actions</th>
                     </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </section>
+                  </thead>
+                  <tbody>
+                    {configs.length ? configs.map(config => (
+                      <tr key={config.id} className="border-b border-surface-border last:border-b-0">
+                        <td className="px-4 py-3">
+                          <input className="tk-input" value={config.name} onChange={event => updateConfigDraft(config.id, { name: event.target.value })} />
+                        </td>
+                        <td className="px-4 py-3">
+                          <select className="tk-input" value={config.module} onChange={event => updateConfigDraft(config.id, { module: event.target.value as TimelineModule })}>
+                            {modules.map(item => <option key={item}>{item}</option>)}
+                          </select>
+                        </td>
+                        <td className="px-4 py-3">
+                          <span className={`inline-flex h-5 w-5 rounded-full border border-surface-border ${swatchClass[config.colorToken] ?? 'bg-brand-blue'}`} />
+                        </td>
+                        <td className="px-4 py-3">
+                          <Switch.Root checked={config.active} onCheckedChange={() => void toggleConfig(config.id)} className="relative min-h-[44px] w-11 rounded-full bg-transparent after:absolute after:left-0 after:top-1/2 after:h-6 after:w-11 after:-translate-y-1/2 after:rounded-full after:bg-surface-border data-[state=checked]:after:bg-brand-blue">
+                            <Switch.Thumb className="absolute left-0 top-1/2 z-10 block h-5 w-5 translate-x-0.5 -translate-y-1/2 rounded-full bg-white transition-transform data-[state=checked]:translate-x-5" />
+                          </Switch.Root>
+                        </td>
+                        <td className="px-4 py-3 text-ink-secondary">{formatDate(config.createdDate)}</td>
+                        <td className="px-4 py-3">
+                          <select
+                            className="tk-input min-w-[190px]"
+                            value={config.retentionPolicy === 'keep' ? 'keep' : `${config.retentionPolicy}:${config.retentionMonths ?? 36}`}
+                            onChange={event => {
+                              const [policy, months] = event.target.value.split(':')
+                              updateRetention(config.id, policy as 'keep' | 'archive' | 'delete', months ? Number(months) : undefined)
+                            }}
+                          >
+                            <option value="keep">Keep forever</option>
+                            <option value="archive:24">Archive after 24 months</option>
+                            <option value="archive:36">Archive after 36 months</option>
+                            <option value="delete:24">Delete after 24 months</option>
+                          </select>
+                        </td>
+                        <td className="px-4 py-3">
+                          <button type="button" className="tk-button-secondary" onClick={() => void saveConfig(config.id)}>
+                            <Save className="h-4 w-4" />
+                            Save
+                          </button>
+                        </td>
+                      </tr>
+                    )) : (
+                      <tr>
+                        <td className="px-4 py-6 text-sm font-medium text-ink-secondary" colSpan={7}>
+                          No timeline types configured yet.
+                        </td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </section>
           ) : null}
         </div>
 
@@ -427,11 +451,6 @@ export function Admin() {
       </div>
     </div>
   )
-}
-
-function slugify(value: string) {
-  const slug = value.toLowerCase().trim().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '')
-  return slug || `timeline_event_${Date.now()}`
 }
 
 function AdminStatusStrip({ items }: { items: { label: string; value: string; detail: string; icon: LucideIcon; tone: keyof typeof statusToneClass }[] }) {

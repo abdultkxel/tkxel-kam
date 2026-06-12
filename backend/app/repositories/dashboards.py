@@ -6,6 +6,9 @@ from sqlalchemy.orm import Session, selectinload
 from app.models import Account, AccountChangeAlert, AccountOwner, Engagement, Escalation, GovernanceEvent, IntegrationConnection, KycSnapshot, NotificationRecord, Opportunity, ScheduledWorkerRun, Signal, Task
 
 
+ACTIVE_TASK_STATUSES = ("open", "todo", "in_progress", "blocked")
+
+
 class DashboardRepository:
     def __init__(self, db: Session) -> None:
         self.db = db
@@ -41,7 +44,7 @@ class DashboardRepository:
         return list(
             self.db.scalars(
                 select(Task.account_id)
-                .where(Task.owner_id == user_id, Task.status.in_(["open", "in_progress", "blocked"]))
+                .where(Task.owner_id == user_id, Task.status.in_(ACTIVE_TASK_STATUSES))
                 .distinct()
             )
         )
@@ -69,7 +72,7 @@ class DashboardRepository:
         )
 
     def list_open_tasks(self, *, account_ids: list[str] | None = None, owner_id: str | None = None, limit: int = 100) -> list[Task]:
-        conditions = [Task.status.in_(["open", "in_progress", "blocked"])]
+        conditions = [Task.status.in_(ACTIVE_TASK_STATUSES)]
         if account_ids is not None:
             conditions.append(Task.account_id.in_(account_ids) if account_ids else False)
         if owner_id:

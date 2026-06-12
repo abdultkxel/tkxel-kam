@@ -5,7 +5,7 @@ import { RuntimeCustomFields, customValuesForSubmit, requiredCustomFieldErrors }
 import { EmptyState } from '@/components/ui/EmptyState'
 import { PageHeader } from '@/components/ui/PageHeader'
 import { useAuth } from '@/contexts/AuthContext'
-import { useRole } from '@/hooks/useRole'
+import { useCapabilities } from '@/hooks/useCapabilities'
 import { listRuntimeCustomFields, RuntimeCustomField } from '@/services/contentGovernance'
 import {
   createPlaybookTemplate,
@@ -131,7 +131,7 @@ const blankTemplate: PlaybookTemplatePayload = {
 
 export function Playbook() {
   const { token } = useAuth()
-  const user = useRole()
+  const { capabilities } = useCapabilities()
   const accounts = useAccountStore(state => state.accounts)
   const signals = useV3Store(state => state.signals)
   const [mode, setMode] = useState<'operations' | 'manual'>('operations')
@@ -157,9 +157,8 @@ export function Playbook() {
   const [weakMetric, setWeakMetric] = useState<string>(signals[0]?.reasonCodes?.[0] ?? '')
   const [form, setForm] = useState<PlaybookTemplatePayload>(blankTemplate)
   const [editingId, setEditingId] = useState('')
-  const isSuperAdmin = user.role === 'super_admin'
-  const canConfigure = isSuperAdmin
-  const readOnly = user.role === 'leadership_viewer'
+  const canConfigure = capabilities.can_configure_playbooks
+  const readOnly = !capabilities.can_manage_tasks_portfolio && !capabilities.permission_keys.includes('tasks:update_own') && !capabilities.permission_keys.includes('playbooks:execute')
   const selectedTemplate = useMemo(() => templates.find(template => template.id === selectedTemplateId) ?? templates[0], [selectedTemplateId, templates])
   const activeTemplates = templates.filter(template => template.is_active)
   const selectedAccount = accounts.find(account => account.id === selectedAccountId)
@@ -169,7 +168,7 @@ export function Playbook() {
   }, [accounts, selectedAccountId])
 
   useEffect(() => {
-    if (!token || !isSuperAdmin) return
+    if (!token || !canConfigure) return
     let cancelled = false
     setLoading(true)
     setError('')
@@ -192,17 +191,17 @@ export function Playbook() {
     return () => {
       cancelled = true
     }
-  }, [activeState, isSuperAdmin, ownerRuleFilter, page, search, selectedTemplateId, sort, token])
+  }, [activeState, canConfigure, ownerRuleFilter, page, search, selectedTemplateId, sort, token])
 
   useEffect(() => {
-    if (!token || !isSuperAdmin) return
+    if (!token || !canConfigure) return
     listRuntimeCustomFields(token, 'playbooks_tasks_calendar')
       .then(setCustomFields)
       .catch(() => setCustomFields([]))
-  }, [isSuperAdmin, token])
+  }, [canConfigure, token])
 
   useEffect(() => {
-    if (!token || !isSuperAdmin) return
+    if (!token || !canConfigure) return
     let cancelled = false
     setRecommendationLoading(true)
     const params = new URLSearchParams()
@@ -222,7 +221,7 @@ export function Playbook() {
     return () => {
       cancelled = true
     }
-  }, [isSuperAdmin, selectedAccountId, signalType, signals, token, weakMetric])
+  }, [canConfigure, selectedAccountId, signalType, signals, token, weakMetric])
 
   async function refreshTemplates() {
     setPage(1)
@@ -312,10 +311,10 @@ export function Playbook() {
   }
 
   if (mode === 'manual') {
-    return <ManualPlaybook onOperations={isSuperAdmin ? () => setMode('operations') : undefined} />
+    return <ManualPlaybook onOperations={canConfigure ? () => setMode('operations') : undefined} />
   }
 
-  if (!isSuperAdmin) {
+  if (!canConfigure) {
     return <ManualPlaybook />
   }
 

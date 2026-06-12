@@ -10,7 +10,7 @@ import { FilterBar } from '@/components/ui/FilterBar'
 import { Skeleton } from '@/components/ui/Skeleton'
 import { SortableTable } from '@/components/ui/SortableTable'
 import type { Column } from '@/components/ui/SortableTable'
-import { useRole } from '@/hooks/useRole'
+import { useCapabilities } from '@/hooks/useCapabilities'
 import {
   useArchiveStakeholder,
   useRecalculateStakeholderCoverageGaps,
@@ -36,7 +36,7 @@ const relationshipScore: Record<string, number> = { unknown: 0, weak: 1, develop
 const relationshipLabels = ['Unknown', 'Weak', 'Developing', 'Strong', 'Champion']
 
 export function StakeholderTab({ account }: { account: Account }) {
-  const user = useRole()
+  const { capabilities } = useCapabilities()
   const [search, setSearch] = useState('')
   const [role, setRole] = useState('')
   const [status, setStatus] = useState('')
@@ -45,7 +45,7 @@ export function StakeholderTab({ account }: { account: Account }) {
   const [editingStakeholder, setEditingStakeholder] = useState<Stakeholder | null>(null)
   const [selectedStakeholderId, setSelectedStakeholderId] = useState<string | null>(null)
   const [archiveTarget, setArchiveTarget] = useState<Stakeholder | null>(null)
-  const canManage = canManageStakeholders(user.role)
+  const canManage = capabilities.permission_keys.includes('stakeholders:update') || capabilities.permission_keys.includes('stakeholders:manage_relationships') || capabilities.can_update_assigned_accounts || capabilities.can_update_portfolio_accounts
 
   const filters = useMemo<StakeholderFilters>(
     () => ({
@@ -439,10 +439,6 @@ function averageRelationshipStrength(stakeholders: Stakeholder[]) {
   const average = stakeholders.reduce((sum, stakeholder) => sum + (relationshipScore[stakeholder.relationshipStrength] ?? 0), 0) / stakeholders.length
   const rounded = Math.round(average)
   return { label: relationshipLabels[rounded] ?? 'Unknown', detail: `${average.toFixed(1)} / 4` }
-}
-
-function canManageStakeholders(role: string) {
-  return ['admin', 'super_admin', 'kam_head', 'account_manager', 'am', 'kam'].includes(role)
 }
 
 function roleTone(role: string): BadgeTone {

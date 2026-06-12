@@ -32,7 +32,7 @@ from app.schemas import (
     SourceDocumentPageRead,
     SourceDocumentRead,
 )
-from app.services.account_access import AccountAccessService, GLOBAL_EDIT_ROLES
+from app.services.account_access import AccountAccessService
 from app.services.audit import AuditService
 from app.services.in_app_notifications import InAppNotificationService
 from app.services.kyc_document_extraction import KycDocumentExtractionService
@@ -78,8 +78,8 @@ class AccountService:
         page_size: int = 10,
     ) -> AccountPageRead:
         self.access.require_module_permission(current_user, "account_overview", "view")
-        if current_user.role in {"account_manager", "am"}:
-            primary_am = current_user.id
+        if not self.access.can_view_portfolio(current_user):
+            am_id = current_user.id
         kyc_configuration = self.kyc.get_configuration()
 
         accounts, total = self.accounts.list_accounts(
@@ -126,12 +126,12 @@ class AccountService:
         account = self._get_account_or_404(account_id)
         can_view = self.access.can_view_account(current_user, account)
         can_update = can_view and self.access.can_update_account(current_user, account)
-        can_assign = current_user.role in GLOBAL_EDIT_ROLES
+        can_assign = can_view and self.access.can_assign_account_owners(current_user)
         return AccountPermissionsRead(
             can_view=can_view,
             can_update=can_update,
-            can_delete=current_user.role in GLOBAL_EDIT_ROLES,
-            can_approve=current_user.role in GLOBAL_EDIT_ROLES,
+            can_delete=self.access.can_update_portfolio_accounts(current_user),
+            can_approve=self.access.can_approve_onboarding(current_user),
             can_assign=can_assign,
             can_manage_attachments=can_update,
             read_only=not can_update,
@@ -473,7 +473,7 @@ class AccountService:
         account = self._get_account_or_404(account_id)
         self.access.require_account_update(current_user, account)
         document = self._get_attachment_for_account(account_id, attachment_id)
-        if document.is_sensitive and current_user.role not in {*GLOBAL_EDIT_ROLES, "account_manager", "am"}:
+        if document.is_sensitive and not self.access.can_view_sensitive_sources(current_user):
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="You cannot extract sensitive source documents")
         extraction_service = KycDocumentExtractionService(self.accounts.db)
         extraction = extraction_service.extract_document(document, force=force)
@@ -495,7 +495,7 @@ class AccountService:
         account = self._get_account_or_404(account_id)
         self.access.require_account_view(current_user, account)
         document = self._get_attachment_for_account(account_id, attachment_id)
-        if document.is_sensitive and current_user.role not in {*GLOBAL_EDIT_ROLES, "account_manager", "am"}:
+        if document.is_sensitive and not self.access.can_view_sensitive_sources(current_user):
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="You cannot view extraction details for sensitive source documents")
         extraction = KycDocumentExtractionService(self.accounts.db).latest_extraction(attachment_id)
         if extraction is None:
@@ -506,7 +506,7 @@ class AccountService:
         account = self._get_account_or_404(account_id)
         self.access.require_account_view(current_user, account)
         document = self._get_attachment_for_account(account_id, attachment_id)
-        if document.is_sensitive and current_user.role not in {*GLOBAL_EDIT_ROLES, "account_manager", "am"}:
+        if document.is_sensitive and not self.access.can_view_sensitive_sources(current_user):
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="You cannot download sensitive source documents")
         path = self._stored_file_path(document)
         if path is None or not path.exists() or not path.is_file():
@@ -525,7 +525,7 @@ class AccountService:
         account = self._get_account_or_404(account_id)
         self.access.require_account_view(current_user, account)
         document = self._get_attachment_for_account(account_id, attachment_id)
-        if document.is_sensitive and current_user.role not in {*GLOBAL_EDIT_ROLES, "account_manager", "am"}:
+        if document.is_sensitive and not self.access.can_view_sensitive_sources(current_user):
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="You cannot view chunks for sensitive source documents")
         conditions = [SourceDocumentChunk.source_document_id == attachment_id]
         total = self.accounts.db.scalar(select(func.count(SourceDocumentChunk.id)).where(*conditions)) or 0
@@ -710,17 +710,16 @@ class AccountService:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Selected owner is inactive or unauthorized")
         return user
 
-    @staticmethod
-    def _ensure_owner_is_eligible(user: User, ownership_role: str) -> None:
-        role_map = {
-            "primary_am": {"account_manager", "am", "kam_head", "admin"},
-            "supporting_am": {"account_manager", "am", "kam_head", "admin"},
-            "ops_lead": {"ops_lead", "delivery_lead", "delivery_stakeholder", "admin", "kam_head"},
-            "leadership_sponsor": {"leadership_viewer", "leadership", "kam_head", "admin"},
+    def _ensure_owner_is_eligible(self, user: User, ownership_role: str) -> None:
+        if ownership_role in {"primary_am", "supporting_am"} and self.access.has_any_permission(user, {"accounts:update_profile_assigned"}) and self.access.has_any_permission(user, {"onboarding:create_draft"}):
+            return
+        permission_map = {
+            "ops_lead": {"engagements:update", "tasks:update_portfolio", "governance:update_event"},
+            "leadership_sponsor": {"accounts:view_portfolio", "dashboards:view_portfolio"},
         }
-        allowed = role_map.get(ownership_role, set())
-        if user.role not in allowed and user.role != "super_admin":
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Selected owner is not eligible for that ownership role")
+        if self.access.has_any_permission(user, permission_map.get(ownership_role, set())):
+            return
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Selected owner is not eligible for that ownership role")
 
     def _record_owner_history(self, account: Account, owner: AccountOwner, previous: AccountOwner | None, user: User, actor: User, rationale: str, source: str) -> None:
         self.accounts.add_owner_history(

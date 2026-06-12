@@ -1,4 +1,4 @@
-import { Archive, Loader2, Plus, RefreshCw } from 'lucide-react'
+import { Archive, Loader2, Pencil, Plus, RefreshCw, RotateCcw } from 'lucide-react'
 import { FormEvent, useEffect, useState } from 'react'
 import { toast } from 'sonner'
 import { FieldError } from '@/components/form/FieldError'
@@ -122,6 +122,20 @@ export function AdminOpportunityTypesPanel() {
     }
   }
 
+  async function reactivate(type: OpportunityTypeRecord) {
+    if (!token) return
+    setSaving(true)
+    try {
+      await updateOpportunityType(token, type.id, { isActive: true })
+      toast.success('Opportunity type reactivated')
+      await loadTypes()
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Opportunity type could not be reactivated')
+    } finally {
+      setSaving(false)
+    }
+  }
+
   return (
     <section className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_380px]">
       <div className="tk-card overflow-hidden">
@@ -145,7 +159,7 @@ export function AdminOpportunityTypesPanel() {
         <div className="divide-y divide-surface-border">
           {types.map(type => (
             <article key={type.id} className="grid gap-3 p-4 md:grid-cols-[minmax(0,1fr)_auto] md:items-center">
-              <button type="button" className="min-w-0 text-left" onClick={() => editType(type)}>
+              <button type="button" className="min-w-0 text-left" onClick={() => editType(type)} aria-label={`Select ${type.name}`}>
                 <h3 className="text-sm font-semibold text-ink">{type.name}</h3>
                 <p className="mt-1 text-xs text-ink-secondary">{type.slug} · {type.inUseCount} linked opportunities · order {type.displayOrder}</p>
                 {type.description ? <p className="mt-2 text-sm text-ink-secondary">{type.description}</p> : null}
@@ -154,11 +168,18 @@ export function AdminOpportunityTypesPanel() {
                 <span className={type.isActive ? 'rounded-full bg-rag-green/10 px-2.5 py-1 text-[11px] font-semibold uppercase tracking-wider text-rag-green' : 'rounded-full bg-surface-tertiary px-2.5 py-1 text-[11px] font-semibold uppercase tracking-wider text-ink-secondary'}>
                   {type.isActive ? 'Active' : 'Inactive'}
                 </span>
+                <button type="button" className="tk-icon-button text-brand-blue" onClick={() => editType(type)} aria-label={`Edit ${type.name}`} title="Edit type">
+                  <Pencil className="h-4 w-4" />
+                </button>
                 {type.isActive ? (
-                  <button type="button" className="tk-icon-button text-rag-red" onClick={() => deactivate(type)} aria-label={`Deactivate ${type.name}`} title="Deactivate type">
+                  <button type="button" className="tk-icon-button text-rag-red" onClick={() => deactivate(type)} disabled={saving} aria-label={`Deactivate ${type.name}`} title="Deactivate type">
                     <Archive className="h-4 w-4" />
                   </button>
-                ) : null}
+                ) : (
+                  <button type="button" className="tk-icon-button text-rag-green" onClick={() => reactivate(type)} disabled={saving} aria-label={`Reactivate ${type.name}`} title="Reactivate type">
+                    <RotateCcw className="h-4 w-4" />
+                  </button>
+                )}
               </div>
             </article>
           ))}

@@ -6,6 +6,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from fastapi import HTTPException, status
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.models import (
@@ -77,6 +78,8 @@ DEFAULT_SLA_RULES = (
     ("Stale KYC inactivity", "kyc", None, None, 43200, ["kyc_approval", "kyc_refresh"], "kam_head"),
     ("Formal escalation inactivity", "escalation", "critical", None, 240, ["escalation_update", "closure"], "kam_head"),
 )
+ADMIN_NOTIFICATION_PERMISSIONS = {"access_admin:view_users", "notifications:configure_triggers", "digests:configure"}
+PORTFOLIO_ESCALATION_RECIPIENT_PERMISSIONS = {"accounts:view_portfolio", "onboarding:approve_draft", "kyc:approve_draft", "escalations:update", "tasks:update_portfolio"}
 
 TERMINAL_TASK_STATUSES = {"done", "cancelled"}
 TERMINAL_SIGNAL_STATUSES = {"dismissed", "converted", "resolved"}
@@ -177,6 +180,15 @@ class NotificationsService:
                 )
             )
         self.repository.commit()
+
+    def active_users_with_any_permission(self, permission_keys: set[str]) -> list[User]:
+        if not permission_keys:
+            return []
+        users = list(self.db.scalars(select(User).where(User.is_active.is_(True)).order_by(User.full_name, User.email)))
+        return [user for user in users if self.access.has_any_permission(user, permission_keys)]
+
+    def first_active_user_with_any_permission(self, permission_keys: set[str]) -> User | None:
+        return next(iter(self.active_users_with_any_permission(permission_keys)), None)
 
     def list_trigger_configs(self, current_user: User) -> NotificationDefaultsRead:
         self.access.require_module_permission(current_user, "notifications_digests", "view")
@@ -925,8 +937,8 @@ class NotificationsService:
         if rule.recipient_policy == "account_owner" and candidate.get("owner_id"):
             return self.db.get(User, candidate["owner_id"])
         if rule.recipient_policy == "admin":
-            return self.repository.first_active_user_by_role(["admin", "super_admin"])
-        return self.repository.first_active_user_by_role(["kam_head", "admin", "super_admin"])
+            return self.first_active_user_with_any_permission(ADMIN_NOTIFICATION_PERMISSIONS)
+        return self.first_active_user_with_any_permission(PORTFOLIO_ESCALATION_RECIPIENT_PERMISSIONS | ADMIN_NOTIFICATION_PERMISSIONS)
 
     def _authorized_recipient_ids(self, user_ids: list[str]) -> list[str]:
         users = self.repository.list_active_users_by_ids(user_ids)
@@ -934,17 +946,17 @@ class NotificationsService:
         missing = [user_id for user_id in user_ids if user_id not in found]
         if missing:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="All recipients must be active users")
-        unauthorized = [user.full_name or user.email for user in users if not self.rbac.role_has_permission(user.role, "notifications_digests", "view")]
+        unauthorized = [user.full_name or user.email for user in users if not self.access.has_any_permission(user, {"notifications:view", "digests:view"})]
         if unauthorized:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="All digest recipients must be authorized to view notifications and digests")
         return [user.id for user in users]
 
     def _active_authorized_digest_recipients(self, user_ids: list[str]) -> list[User]:
         users = self.repository.list_active_users_by_ids(user_ids)
-        return [user for user in users if self.rbac.role_has_permission(user.role, "notifications_digests", "view")]
+        return [user for user in users if self.access.has_any_permission(user, {"notifications:view", "digests:view"})]
 
     def _can_configure_notifications(self, user: User) -> bool:
-        return self.rbac.role_has_permission(user.role, "notifications_digests", "configure")
+        return self.access.has_any_permission(user, {"notifications:configure_triggers", "digests:configure"})
 
     def _can_view_digest_run(self, run: DigestRun, user: User) -> bool:
         if self._can_configure_notifications(user):
@@ -952,13 +964,13 @@ class NotificationsService:
         return run.generated_by_id == user.id or user.id in (run.recipients_json or [])
 
     def _account_scope(self, user: User) -> list[str] | None:
-        if user.role in {"super_admin", "admin", "kam_head", "leadership", "leadership_viewer"}:
+        if self.access.can_view_portfolio(user):
             return None
         return self.dashboard_repository.account_ids_for_user(user.id)
 
     def _digest_content(self, sections: list[str], filters: dict[str, Any], actor: User | None) -> tuple[dict[str, Any], dict[str, Any]]:
         account_ids = None
-        if actor and actor.role not in {"super_admin", "admin", "kam_head", "leadership_viewer"}:
+        if actor and not self.access.can_view_portfolio(actor):
             account_ids = self.dashboard_repository.account_ids_for_user(actor.id)
         accounts = self.dashboard_repository.list_accounts(account_ids=account_ids, segment=filters.get("segment"), region=filters.get("region"), risk=filters.get("risk"), limit=50)
         signals = self.dashboard_repository.list_open_signals(account_ids=account_ids, limit=50)

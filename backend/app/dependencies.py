@@ -10,6 +10,7 @@ from app.models import User
 from app.repositories.users import UserRepository
 from app.security import decode_access_token
 from app.services.auth import AuthService
+from app.services.capabilities import CapabilityService
 from app.services.accounts import AccountService
 from app.services.account_planning import AccountPlanningService
 from app.services.admin_security import AdminSecurityService
@@ -83,6 +84,10 @@ def get_profile_service(db: Annotated[Session, Depends(get_db)]) -> ProfileServi
 
 def get_rbac_service(db: Annotated[Session, Depends(get_db)]) -> RbacService:
     return RbacService(db)
+
+
+def get_capability_service(db: Annotated[Session, Depends(get_db)]) -> CapabilityService:
+    return CapabilityService(db)
 
 
 def get_user_management_service(db: Annotated[Session, Depends(get_db)]) -> UserManagementService:

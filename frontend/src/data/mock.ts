@@ -277,10 +277,4 @@ export const timelineEntries: TimelineEntry[] = [
   },
 ]
 
-export const timelineEventTypes: TimelineEventTypeConfig[] = [
-  { id: 'cfg-1', name: 'KYC update', eventType: 'kyc_update', module: 'kyc', colorToken: 'brand-blue', active: true, defaultVisibility: 'public', createdDate: subDays(new Date(), 90).toISOString(), retentionPolicy: 'keep' },
-  { id: 'cfg-2', name: 'Health score update', eventType: 'score_change', module: 'scoring', colorToken: 'brand-orange', active: true, defaultVisibility: 'public', createdDate: subDays(new Date(), 90).toISOString(), retentionPolicy: 'keep' },
-  { id: 'cfg-3', name: 'Stage change', eventType: 'stage_change', module: 'stage', colorToken: 'brand-blue-dark', active: true, defaultVisibility: 'public', createdDate: subDays(new Date(), 90).toISOString(), retentionPolicy: 'archive', retentionMonths: 36 },
-  { id: 'cfg-4', name: 'Manual note', eventType: 'manual_note', module: 'manual', colorToken: 'surface-border', active: true, defaultVisibility: 'public', createdDate: subDays(new Date(), 90).toISOString(), retentionPolicy: 'keep' },
-  { id: 'cfg-5', name: 'Approval event', eventType: 'approval_event', module: 'approval', colorToken: 'rag-green', active: true, defaultVisibility: 'restricted', createdDate: subDays(new Date(), 90).toISOString(), retentionPolicy: 'keep' },
-]
+export const timelineEventTypes: TimelineEventTypeConfig[] = []

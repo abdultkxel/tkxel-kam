@@ -6,6 +6,7 @@ import { toast } from 'sonner'
 import { MentionText } from '@/components/collaboration/MentionText'
 import { MentionTextarea } from '@/components/collaboration/MentionTextarea'
 import { useAuth } from '@/contexts/AuthContext'
+import { useCapabilities } from '@/hooks/useCapabilities'
 import { useRole } from '@/hooks/useRole'
 import { useAccountStore } from '@/stores/accountStore'
 import { useIntegrationStore } from '@/stores/integrationStore'
@@ -52,13 +53,14 @@ export function TimelineCard({ entry, searchQuery, flash = false }: { entry: Tim
   const [editingText, setEditingText] = useState('')
   const user = useRole()
   const { token } = useAuth()
+  const { capabilities } = useCapabilities()
   const loggedSensitiveView = useRef(false)
   const addAccessAudit = useIntegrationStore(state => state.addAccessAudit)
   const accountName = useAccountStore(state => state.accounts.find(account => account.id === entry.accountId)?.name ?? 'Account')
   const addNotification = useNotificationStore(state => state.addNotification)
   const rows = diffRows(entry)
-  const canAnnotate = (user.role === 'admin' || user.role === 'super_admin') && entry.isImmutable
-  const canModerate = user.role === 'admin' || user.role === 'super_admin' || user.role === 'kam_head'
+  const canAnnotate = capabilities.can_moderate_timeline && entry.isImmutable
+  const canModerate = capabilities.can_moderate_timeline
 
   useEffect(() => {
     if (!commentsOpen || !token) return

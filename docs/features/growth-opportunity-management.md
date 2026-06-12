@@ -517,10 +517,12 @@ The goal is to make opportunities complete without taking ownership of adjacent 
   - Loaded opportunity data in the app shell so Dashboard, Account 360, Analytics, AI search, and handover consumers use normalized API-backed opportunity records.
   - Updated Account 360 Opportunities with account-prefilled create and detail dialog flows.
   - Added Admin > Opportunities for opportunity type taxonomy management.
+  - Refined Admin > Opportunities taxonomy rows with visible edit and reactivate actions so inactive soft-deactivated types can be restored without relying on hidden row-click behavior.
 - Test coverage:
   - Added backend API coverage for create/list/stage/decision/action/archive/restore/type lifecycle.
   - Added frontend opportunity service mapping and create/update payload coverage.
   - Added frontend coverage for the modern Opportunities filter controls and URL-backed query parameters.
+  - Added frontend coverage for Admin opportunity type edit and reactivation actions.
 
 ## Handoff Notes
 

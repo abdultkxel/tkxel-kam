@@ -46,6 +46,7 @@ from app.services.notifications import NotificationsService
 from app.services.reports import ReportsService
 from app.services.timeline import TimelineService
 from app.services.integrations import IntegrationService
+from app.services.governance import GovernanceService
 from app.services.kyc_worker import KycWorkerService
 
 logger = logging.getLogger(__name__)
@@ -110,12 +111,14 @@ async def notifications_reporting_worker_loop() -> None:
                 sla_result = NotificationsService(db).evaluate_sla(None, mode="scheduled")
                 digest_count = NotificationsService(db).run_due_digest_schedules()
                 report_count = ReportsService(db).run_due_schedules()
-                if sla_result.escalated_items or digest_count or report_count:
+                governance_reminders = GovernanceService(db).run_due_governance_reminders(None, mode="scheduled")
+                if sla_result.escalated_items or digest_count or report_count or governance_reminders:
                     logger.info(
-                        "Notifications/reporting worker completed sla=%s digest=%s report=%s",
+                        "Notifications/reporting worker completed sla=%s digest=%s report=%s governance_reminders=%s",
                         sla_result.escalated_items,
                         digest_count,
                         report_count,
+                        governance_reminders,
                     )
         except Exception:
             logger.exception("Notifications/reporting worker failed")

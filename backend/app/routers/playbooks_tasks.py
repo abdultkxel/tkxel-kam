@@ -47,12 +47,12 @@ def list_templates(
     return service.list_templates(current_user, search=search, active_state=active_state, signal_type=signal_type, weak_metric=weak_metric, owner_rule=owner_rule, sort=sort, direction=direction, page=page, page_size=page_size)
 
 
-@router.post("/admin/playbook-templates", response_model=PlaybookTemplateRead, status_code=status.HTTP_201_CREATED, summary="Create playbook template", description="Super Admin only. Creates a configurable playbook template with objectives, activities, owners, due-date rules, success criteria, skip rules, audit, and Field Builder values.")
+@router.post("/admin/playbook-templates", response_model=PlaybookTemplateRead, status_code=status.HTTP_201_CREATED, summary="Create playbook template", description="Requires playbooks:configure_templates. Creates a configurable playbook template with objectives, activities, owners, due-date rules, success criteria, skip rules, audit, and Field Builder values.")
 def create_template(payload: PlaybookTemplateCreateRequest, current_user: Annotated[User, Depends(get_current_user)], service: Annotated[PlaybooksTasksService, Depends(get_playbooks_tasks_service)]) -> PlaybookTemplateRead:
     return service.create_template(payload, current_user)
 
 
-@router.patch("/admin/playbook-templates/{template_id}", response_model=PlaybookTemplateRead, summary="Update playbook template", description="Super Admin only. Updates template configuration, versions material changes, and preserves historical execution snapshots.")
+@router.patch("/admin/playbook-templates/{template_id}", response_model=PlaybookTemplateRead, summary="Update playbook template", description="Requires playbooks:configure_templates. Updates template configuration, versions material changes, and preserves historical execution snapshots.")
 def update_template(template_id: str, payload: PlaybookTemplateUpdateRequest, current_user: Annotated[User, Depends(get_current_user)], service: Annotated[PlaybooksTasksService, Depends(get_playbooks_tasks_service)]) -> PlaybookTemplateRead:
     return service.update_template(template_id, payload, current_user)
 
@@ -72,7 +72,7 @@ def recommended_playbooks(
     return service.recommended_playbooks(signal_id, current_user, signal_type=signal_type, weak_metric=weak_metric, account_id=account_id, engagement_id=engagement_id, page=page, page_size=page_size)
 
 
-@router.post("/playbooks/{template_id}/execute", response_model=PlaybookExecutionRead, status_code=status.HTTP_201_CREATED, summary="Execute playbook", description="Super Admin only. Executes a confirmed active playbook template and creates account-specific tasks without silently changing health metrics.")
+@router.post("/playbooks/{template_id}/execute", response_model=PlaybookExecutionRead, status_code=status.HTTP_201_CREATED, summary="Execute playbook", description="Requires playbooks:execute and account work access. Executes a confirmed active playbook template and creates account-specific tasks without silently changing health metrics.")
 def execute_playbook(template_id: str, payload: PlaybookExecutionRequest, current_user: Annotated[User, Depends(get_current_user)], service: Annotated[PlaybooksTasksService, Depends(get_playbooks_tasks_service)]) -> PlaybookExecutionRead:
     return service.execute_playbook(template_id, payload, current_user)
 

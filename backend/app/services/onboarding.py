@@ -60,8 +60,7 @@ from app.services.timeline import TimelineService
 from app.services.user_management import page_count
 
 
-PRIMARY_ACCOUNT_MANAGER_ROLES = {"account_manager", "am"}
-ONBOARDING_GLOBAL_VIEW_ROLES = {"super_admin", "admin", "kam_head"}
+ACCOUNT_FIELD_MODULES = ["account_onboarding_workspace", "account_overview", "onboarding", "accounts"]
 
 
 class OnboardingService:
@@ -128,7 +127,7 @@ class OnboardingService:
 
     def list_account_manager_candidates(self, current_user: User) -> list[UserRead]:
         self.access.require_module_permission(current_user, "account_onboarding_workspace", "create")
-        return [UserRead.model_validate(user) for user in self.accounts.list_active_users_by_roles(PRIMARY_ACCOUNT_MANAGER_ROLES)]
+        return [UserRead.model_validate(user) for user in self.accounts.list_active_users() if self._is_primary_am_eligible(user)]
 
     def create_draft(self, payload: OnboardingDraftCreateRequest, current_user: User) -> OnboardingDraftRead:
         self.access.require_module_permission(current_user, "account_onboarding_workspace", "create")
@@ -164,7 +163,7 @@ class OnboardingService:
             created_by_name=current_user.full_name,
         )
         self.onboarding.add_draft(draft)
-        self.custom_fields.save_record_values(["account_onboarding_workspace", "account_overview"], draft.id, payload.custom_field_values, current_user)
+        self.custom_fields.save_record_values(ACCOUNT_FIELD_MODULES, draft.id, payload.custom_field_values, current_user)
         self._add_source_documents(draft, payload.source_documents, current_user)
         self._add_engagement_drafts(draft, payload.engagement_drafts)
         self.audit.log(
@@ -475,7 +474,7 @@ class OnboardingService:
         self.access.require_module_permission(current_user, "account_onboarding_workspace", "approve")
         self._ensure_open_draft(draft)
         self._ensure_not_duplicate(draft)
-        primary_owner = self._resolve_primary_owner_for_approval(draft, current_user)
+        primary_owner = self._resolve_primary_owner_for_approval(draft)
         self._apply_approval_defaults(draft, current_user)
         self._validate_approval(draft)
 
@@ -498,7 +497,7 @@ class OnboardingService:
             created_by_id=current_user.id,
         )
         self.accounts.save(account)
-        self.custom_fields.copy_record_values(["account_onboarding_workspace", "account_overview"], draft.id, account.id, current_user)
+        self.custom_fields.copy_record_values(ACCOUNT_FIELD_MODULES, draft.id, account.id, current_user)
         self._create_primary_owner(account, primary_owner, current_user)
         for document in draft.source_documents:
             document.account_id = account.id
@@ -649,7 +648,7 @@ class OnboardingService:
         account = self.accounts.get_by_id(account.id) or account
         before = self._account_import_audit_value(account)
         self._apply_csv_account_updates(account, linked_draft, current_user)
-        self.custom_fields.copy_record_values(["account_onboarding_workspace", "account_overview"], linked_draft.id, account.id, current_user)
+        self.custom_fields.copy_record_values(ACCOUNT_FIELD_MODULES, linked_draft.id, account.id, current_user)
         self.audit.log(
             module="account_onboarding_workspace",
             action="csv_account_overwrite",
@@ -770,7 +769,7 @@ class OnboardingService:
         account.source_citation = self._source_citation_for_draft(draft)
         if not draft.primary_owner_id and not draft.primary_owner_email:
             return
-        owner = self._resolve_primary_owner_for_approval(draft, current_user)
+        owner = self._resolve_primary_owner_for_approval(draft)
         previous = self.accounts.get_active_primary_owner(account.id)
         if previous and previous.user_id == owner.id:
             return
@@ -843,7 +842,7 @@ class OnboardingService:
         document = next((item for item in draft.source_documents if item.id == document_id), None)
         if document is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Onboarding source document was not found")
-        if document.is_sensitive and current_user.role not in {"admin", "super_admin", "kam_head", "account_manager", "am"}:
+        if document.is_sensitive and not self.access.can_view_sensitive_sources(current_user):
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="You cannot download sensitive source documents")
         path = self._stored_file_path(document)
         if path is None or not path.exists() or not path.is_file():
@@ -865,7 +864,7 @@ class OnboardingService:
         document = next((item for item in draft.source_documents if item.id == document_id), None)
         if document is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Onboarding source document was not found")
-        if document.is_sensitive and current_user.role not in {"admin", "super_admin", "kam_head", "account_manager", "am"}:
+        if document.is_sensitive and not self.access.can_view_sensitive_sources(current_user):
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="You cannot extract sensitive source documents")
 
         extraction_service = KycDocumentExtractionService(self.onboarding.db)
@@ -1753,7 +1752,7 @@ class OnboardingService:
             )
 
     def _draft_approvers(self, *, exclude_user_id: str | None = None) -> list[User]:
-        users = self.notifications.repository.list_active_users_by_roles(["kam_head", "admin", "super_admin"])
+        users = self.notifications.active_users_with_any_permission({"onboarding:approve_draft"})
         return self._unique_users(users, exclude_user_id=exclude_user_id)
 
     def _draft_owner_recipients(self, draft: OnboardingDraft, *, exclude_user_id: str | None = None) -> list[User]:
@@ -1831,7 +1830,7 @@ class OnboardingService:
             return current_user
         return None
 
-    def _resolve_primary_owner_for_approval(self, draft: OnboardingDraft, current_user: User) -> User:
+    def _resolve_primary_owner_for_approval(self, draft: OnboardingDraft) -> User:
         owner = self._resolve_owner_from_values(draft.primary_owner_id, draft.primary_owner_email)
         if owner is None:
             self._raise_owner_validation("Assign an account manager before approving this draft.")
@@ -1866,9 +1865,13 @@ class OnboardingService:
             self._raise_owner_validation("Selected owner must be an Account Manager.", field)
         return user
 
-    @staticmethod
-    def _is_primary_am_eligible(user: User) -> bool:
-        return user.role in PRIMARY_ACCOUNT_MANAGER_ROLES
+    def _is_primary_am_eligible(self, user: User) -> bool:
+        return (
+            self.access.has_any_permission(user, {"accounts:update_profile_assigned"})
+            and self.access.has_any_permission(user, {"onboarding:create_draft"})
+            and not self.access.can_view_portfolio(user)
+            and not self.access.can_assign_account_owners(user)
+        )
 
     @staticmethod
     def _raise_owner_validation(message: str, field: str = "primary_owner_id") -> None:
@@ -1877,14 +1880,13 @@ class OnboardingService:
             detail={"message": "Validation failed", "errors": [{"field": field, "message": message}]},
         )
 
-    @staticmethod
-    def _draft_visibility_filter(current_user: User) -> tuple[str | None, str | None]:
-        if current_user.role in ONBOARDING_GLOBAL_VIEW_ROLES:
+    def _draft_visibility_filter(self, current_user: User) -> tuple[str | None, str | None]:
+        if self.access.has_any_permission(current_user, {"onboarding:view_all"}):
             return None, None
         return current_user.id, current_user.email
 
     def _ensure_draft_visible(self, draft: OnboardingDraft, current_user: User) -> None:
-        if current_user.role in ONBOARDING_GLOBAL_VIEW_ROLES:
+        if self.access.has_any_permission(current_user, {"onboarding:view_all"}):
             return
         if draft.created_by_id == current_user.id:
             return
@@ -1896,16 +1898,16 @@ class OnboardingService:
 
     def _ensure_owner_selection_allowed(self, current_user: User, owner: User | None, draft: OnboardingDraft | None = None) -> None:
         if owner is None:
-            if self.access.rbac.role_has_permission(current_user.role, "account_onboarding_workspace", "assign") and current_user.role in ONBOARDING_GLOBAL_VIEW_ROLES:
+            if self.access.can_assign_account_owners(current_user):
                 return
             if draft is None:
                 return
-            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Only Admin or KAM Head can clear account manager assignment")
-        if self.access.rbac.role_has_permission(current_user.role, "account_onboarding_workspace", "assign") and current_user.role in ONBOARDING_GLOBAL_VIEW_ROLES:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="You do not have permission to clear account manager assignment")
+        if self.access.can_assign_account_owners(current_user):
             return
         if self._is_primary_am_eligible(current_user) and owner.id == current_user.id and (draft is None or draft.created_by_id == current_user.id):
             return
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Only Admin or KAM Head can assign onboarding drafts to other account managers")
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="You do not have permission to assign onboarding drafts to other account managers")
 
     def _add_source_documents(self, draft: OnboardingDraft, source_documents, current_user: User) -> None:
         for document_payload in source_documents:
@@ -2006,7 +2008,7 @@ class OnboardingService:
     def _create_engagement(self, account: Account, draft: OnboardingDraftEngagement, primary_owner: User, current_user: User) -> Engagement:
         owner = self._get_user_if_active(draft.owner_id) or primary_owner
         ops_lead = self._get_user_if_active(draft.ops_lead_id)
-        AccountService._ensure_owner_is_eligible(owner, "primary_am")
+        self.account_service._ensure_owner_is_eligible(owner, "primary_am")
         engagement = Engagement(
             account_id=account.id,
             name=draft.name,
@@ -2174,7 +2176,7 @@ class OnboardingService:
         return (
             f"<h3>{account.name} default KYC draft</h3>"
             "<p>This draft was automatically created when the source-backed onboarding account was approved. "
-            "It is not an approved KYC snapshot until KAM Head review and approval.</p>"
+            "It is not an approved KYC snapshot until capability-based review and approval.</p>"
             f"{''.join(document_sections)}"
         )
 

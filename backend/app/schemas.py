@@ -270,7 +270,32 @@ class PermissionRead(BaseModel):
     id: str
     module: str
     action: str
+    key: str
+    section_name: str | None = None
+    section_purpose: str | None = None
+    action_label: str | None = None
     description: str | None = None
+    risk_level: str = "medium"
+    dependencies: list[str] = Field(default_factory=list)
+    tags: list[str] = Field(default_factory=list)
+    display_order: int = 0
+
+
+class UserCapabilitiesRead(BaseModel):
+    permission_keys: list[str] = Field(default_factory=list, description="Effective permission keys for the current user's role.")
+    can_access_admin: bool = Field(description="User can open Admin and manage at least one access administration area.")
+    can_view_portfolio: bool = Field(description="User can view portfolio-wide account and operational data.")
+    can_update_assigned_accounts: bool = Field(description="User can update assigned account records.")
+    can_update_portfolio_accounts: bool = Field(description="User can update account records across the portfolio.")
+    can_assign_account_owners: bool = Field(description="User can assign account owners or onboarding draft owners.")
+    can_approve_onboarding: bool = Field(description="User can approve, reject, or link onboarding drafts.")
+    can_view_sensitive_sources: bool = Field(description="User can view sensitive account, source, KYC, or timeline data.")
+    can_manage_sensitive_sources: bool = Field(description="User can manage sensitive account or source classifications.")
+    can_approve_kyc: bool = Field(description="User can approve or reject KYC drafts.")
+    can_moderate_timeline: bool = Field(description="User can moderate immutable or sensitive timeline entries.")
+    can_export_reports: bool = Field(description="User can export reports, dashboards, analytics, or related operational outputs.")
+    can_configure_playbooks: bool = Field(description="User can configure playbook templates.")
+    can_manage_tasks_portfolio: bool = Field(description="User can update tasks beyond self-owned assigned work.")
 
 
 class RolePermissionRead(BaseModel):
@@ -512,8 +537,8 @@ class RoleUpdateRequest(BaseModel):
 
 
 class PermissionGrantRequest(BaseModel):
-    module: str = Field(..., description="Module slug from the PRD module catalog.")
-    action: str = Field(..., description="Permission action such as view, create, update, delete, approve, configure, assign, or export.")
+    module: str = Field(..., description="Permission section slug from the RBAC catalog, such as accounts, onboarding, kyc, reports, or access_admin.")
+    action: str = Field(..., description="Granular permission action slug within the section, such as view_assigned, approve_draft, configure_templates, or export.")
     allowed: bool = Field(default=True, description="Whether this role is allowed to perform the action.")
 
     @field_validator("module")
@@ -533,8 +558,8 @@ class RolePermissionsUpdateRequest(BaseModel):
             "examples": [
                 {
                     "permissions": [
-                        {"module": "account_overview", "action": "view", "allowed": True},
-                        {"module": "account_overview", "action": "update", "allowed": True},
+                        {"module": "accounts", "action": "view_assigned", "allowed": True},
+                        {"module": "onboarding", "action": "assign_owner", "allowed": True},
                     ]
                 }
             ]

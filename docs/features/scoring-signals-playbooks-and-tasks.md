@@ -16,6 +16,8 @@ This feature covers backend-backed task execution for playbooks, signals, govern
 - Kanban is the default view for the task listing page.
 - List view remains available through the Tasks page view toggle and can also be opened with `?view=list`.
 - Existing task search, filters, sorting, pagination, loading, empty, error, authorization, note/evidence, account-link, and status-update behavior remain API-backed.
+- Dashboard-to-task links tolerate legacy task records stored as `todo` by treating them as open work in backend filters and rendering them in the Open Kanban column.
+- The Tasks page accepts backend `critical` priority values so dashboard critical/open task links do not land on an apparently empty board when older or seeded records use that priority.
 
 ## Files
 
@@ -39,7 +41,8 @@ No backend API changes were required. Both Kanban and List views use the existin
 
 ## Test Notes
 
-- Frontend tests cover loading/error behavior, backend filter requests, default Kanban rendering, `view=list` routing, task status updates, and List-view evidence posting.
+- Frontend tests cover loading/error behavior, backend filter requests, dashboard open-task links with legacy `todo` records, default Kanban rendering, `view=list` routing, task status updates, and List-view evidence posting.
+- Backend tests cover legacy `todo` records returned by dashboard open-task filters.
 
 ## Remaining Notes
 

@@ -1,5 +1,5 @@
 import * as Dialog from '@radix-ui/react-dialog'
-import { ChevronLeft, ChevronRight, Edit3, Plus, RefreshCw, Search, ShieldCheck, Trash2, X } from 'lucide-react'
+import { AlertTriangle, ChevronLeft, ChevronRight, Edit3, Layers3, Plus, RefreshCw, Search, ShieldCheck, Trash2, WandSparkles, X } from 'lucide-react'
 import { FormEvent, useEffect, useMemo, useState } from 'react'
 import { toast } from 'sonner'
 import { ConfirmDialog } from '@/components/admin/ConfirmDialog'
@@ -35,12 +35,165 @@ const emptyForm: RoleFormState = {
 }
 
 function permissionKey(permission: Permission) {
-  return `${permission.module}:${permission.action}`
+  return permission.key || `${permission.module}:${permission.action}`
 }
 
 function formatSlug(value: string) {
   return value.replace(/_/g, ' ')
 }
+
+const PRESETS = [
+  { key: 'portfolio_admin', label: 'Portfolio Admin', description: 'Full catalog access for portfolio operators.', mode: 'all', permissions: [] },
+  { key: 'kam_head', label: 'KAM Head', description: 'Full governance, approval, reporting, and configuration access.', mode: 'all', permissions: [] },
+  {
+    key: 'account_manager',
+    label: 'Account Manager',
+    description: 'Assigned-account operations, onboarding draft work, KYC drafting, and task execution.',
+    permissions: [
+      'accounts:view_assigned',
+      'accounts:create',
+      'accounts:update_profile_assigned',
+      'accounts:view_health_rollup',
+      'accounts:view_sensitive_sources',
+      'account_ownership:view',
+      'account_ownership:assign_self',
+      'source_documents:view',
+      'source_documents:upload',
+      'source_documents:update_metadata',
+      'source_documents:run_extraction',
+      'source_documents:view_sensitive',
+      'onboarding:view_assigned',
+      'onboarding:create_draft',
+      'onboarding:update_draft',
+      'engagements:view',
+      'engagements:create',
+      'engagements:update',
+      'kyc:view_summary',
+      'kyc:run_assistant',
+      'kyc:edit_draft',
+      'kyc:view_sensitive',
+      'kyc:review_sources',
+      'stakeholders:view',
+      'stakeholders:create',
+      'stakeholders:update',
+      'stakeholders:manage_relationships',
+      'account_plans:view',
+      'account_plans:create',
+      'account_plans:update',
+      'service_catalog:view',
+      'whitespace:view',
+      'whitespace:update',
+      'opportunities:view',
+      'opportunities:create',
+      'opportunities:update',
+      'retention:view',
+      'retention:update_plan',
+      'signals:view',
+      'signals:triage',
+      'playbooks:view',
+      'playbooks:execute',
+      'tasks:view_assigned',
+      'tasks:create',
+      'tasks:update_own',
+      'tasks:add_evidence',
+      'timeline:view',
+      'timeline:create_entry',
+      'timeline:comment',
+      'dashboards:view_own',
+      'reports:view_own',
+      'reports:create',
+      'reports:update_own',
+      'analytics:view_assigned',
+      'ai:view',
+      'ai:search',
+    ],
+  },
+  {
+    key: 'delivery_lead',
+    label: 'Delivery Lead',
+    description: 'Delivery health, governance, escalation, and portfolio task operations.',
+    permissions: [
+      'accounts:view_assigned',
+      'accounts:update_profile_assigned',
+      'engagements:view',
+      'engagements:update',
+      'retention:view',
+      'retention:update_plan',
+      'scoring:view_scores',
+      'signals:view',
+      'signals:triage',
+      'playbooks:view',
+      'playbooks:execute',
+      'tasks:view_assigned',
+      'tasks:view_portfolio',
+      'tasks:create',
+      'tasks:update_own',
+      'tasks:update_portfolio',
+      'escalations:view',
+      'escalations:create',
+      'escalations:update',
+      'governance:view',
+      'governance:create_event',
+      'governance:update_event',
+      'timeline:view',
+      'timeline:create_entry',
+      'handover:view',
+      'handover:create',
+      'dashboards:view_own',
+      'reports:view_own',
+      'analytics:view_assigned',
+      'ai:view',
+    ],
+  },
+  {
+    key: 'leadership_viewer',
+    label: 'Leadership Viewer',
+    description: 'Portfolio read access, dashboards, reports, analytics, and exports.',
+    permissions: [
+      'accounts:view_portfolio',
+      'accounts:view_health_rollup',
+      'engagements:view',
+      'stakeholders:view',
+      'account_plans:view',
+      'opportunities:view',
+      'retention:view',
+      'scoring:view_scores',
+      'csat:view',
+      'signals:view',
+      'tasks:view_portfolio',
+      'escalations:view',
+      'governance:view',
+      'timeline:view',
+      'timeline:view_sensitive',
+      'handover:view',
+      'dashboards:view_portfolio',
+      'reports:view_portfolio',
+      'reports:export',
+      'analytics:view_portfolio',
+      'analytics:export',
+      'ai:view',
+      'ai:search',
+      'ai:export',
+    ],
+  },
+  {
+    key: 'integration_admin',
+    label: 'Integration Admin',
+    description: 'Integration, meeting capture, sync, and operational diagnostics access.',
+    permissions: [
+      'integrations:view',
+      'integrations:configure',
+      'integrations:run_sync',
+      'integrations:view_credentials',
+      'meeting_capture:view',
+      'meeting_capture:import',
+      'meeting_capture:review',
+      'platform_ops:view_health',
+      'audit:view_logs',
+    ],
+  },
+  { key: 'custom', label: 'Custom', description: 'Start from an empty grant set.', permissions: [] },
+] as const
 
 function formFromRole(role: Role, permissions: Permission[]): RoleFormState {
   const roleGrants = role.permissions.reduce<Record<string, boolean>>((index, grant) => {
@@ -80,9 +233,22 @@ export function AdminRolesPanel() {
   const [form, setForm] = useState<RoleFormState>(emptyForm)
 
   const groupedPermissions = useMemo(() => {
-    const groups = new Map<string, Permission[]>()
-    permissions.forEach(permission => groups.set(permission.module, [...(groups.get(permission.module) ?? []), permission]))
-    return Array.from(groups, ([module, modulePermissions]) => ({ module, permissions: modulePermissions }))
+    const groups = new Map<string, { module: string; sectionName: string; purpose: string; permissions: Permission[] }>()
+    permissions
+      .forEach(permission => {
+        const sectionName = permission.section_name || formatSlug(permission.module)
+        const current = groups.get(permission.module) ?? {
+          module: permission.module,
+          sectionName,
+          purpose: permission.section_purpose || '',
+          permissions: [],
+        }
+        groups.set(permission.module, {
+          ...current,
+          permissions: [...current.permissions, permission].sort((a, b) => a.display_order - b.display_order || a.action.localeCompare(b.action)),
+        })
+      })
+    return Array.from(groups.values()).sort((a, b) => (a.permissions[0]?.display_order ?? 0) - (b.permissions[0]?.display_order ?? 0))
   }, [permissions])
 
   useEffect(() => {
@@ -167,13 +333,33 @@ export function AdminRolesPanel() {
     }))
   }
 
-  function toggleAllPermissions(allowed: boolean) {
+  function applyPreset(presetKey: string) {
+    const preset = PRESETS.find(item => item.key === presetKey)
+    if (!preset) return
+    const selectedKeys = 'mode' in preset && preset.mode === 'all'
+      ? new Set(permissions.map(permissionKey))
+      : new Set(preset.permissions)
     setForm(current => ({
       ...current,
       permissions: permissions.reduce<Record<string, boolean>>((draft, permission) => {
-        draft[permissionKey(permission)] = allowed
+        const key = permissionKey(permission)
+        draft[key] = selectedKeys.has(key)
         return draft
       }, {}),
+    }))
+  }
+
+  function addMissingDependencies() {
+    const missing = missingDependencies(form.permissions, permissions)
+    setForm(current => ({
+      ...current,
+      permissions: {
+        ...current.permissions,
+        ...missing.reduce<Record<string, boolean>>((draft, key) => {
+          draft[key] = true
+          return draft
+        }, {}),
+      },
     }))
   }
 
@@ -304,7 +490,9 @@ export function AdminRolesPanel() {
                   <p className="text-xs text-ink-secondary">{role.slug}</p>
                 </td>
                 <td className="max-w-[360px] px-4 py-3 text-ink-secondary">{role.description || '-'}</td>
-                <td className="px-4 py-3 text-ink-secondary">{role.permissions.filter(grant => grant.allowed).length} grants</td>
+                <td className="px-4 py-3 text-ink-secondary">
+                  <RoleGrantSummary role={role} />
+                </td>
                 <td className="px-4 py-3">
                   <span className="inline-flex rounded-md bg-surface-tertiary px-2 py-1 text-xs font-bold uppercase tracking-wider text-ink-secondary">
                     {role.is_system ? 'System' : 'Custom'}
@@ -347,6 +535,7 @@ export function AdminRolesPanel() {
         open={dialogOpen}
         form={form}
         groupedPermissions={groupedPermissions}
+        permissions={permissions}
         fieldErrors={fieldErrors}
         formError={formError}
         isEditing={Boolean(editingRole)}
@@ -354,7 +543,8 @@ export function AdminRolesPanel() {
         onOpenChange={setDialogOpen}
         onFieldChange={updateField}
         onPermissionChange={togglePermission}
-        onToggleAllPermissions={toggleAllPermissions}
+        onPresetApply={applyPreset}
+        onAddMissingDependencies={addMissingDependencies}
         onSubmit={submitRole}
       />
       <ConfirmDialog
@@ -408,10 +598,23 @@ function PaginationBar({
   )
 }
 
+function RoleGrantSummary({ role }: { role: Role }) {
+  const allowed = role.permissions.filter(grant => grant.allowed)
+  const highRisk = allowed.filter(grant => grant.permission.risk_level === 'high' || grant.permission.risk_level === 'critical').length
+  const sections = new Set(allowed.map(grant => grant.permission.module)).size
+  return (
+    <div className="space-y-1">
+      <p>{allowed.length} grants</p>
+      <p className="text-xs text-ink-tertiary">{sections} sections · {highRisk} high risk</p>
+    </div>
+  )
+}
+
 interface RoleFormDialogProps {
   open: boolean
   form: RoleFormState
-  groupedPermissions: { module: string; permissions: Permission[] }[]
+  groupedPermissions: { module: string; sectionName: string; purpose: string; permissions: Permission[] }[]
+  permissions: Permission[]
   fieldErrors: FieldErrors
   formError: string
   isEditing: boolean
@@ -419,13 +622,16 @@ interface RoleFormDialogProps {
   onOpenChange: (open: boolean) => void
   onFieldChange: (field: keyof Omit<RoleFormState, 'permissions'>, value: string) => void
   onPermissionChange: (permission: Permission, allowed: boolean) => void
-  onToggleAllPermissions: (allowed: boolean) => void
+  onPresetApply: (presetKey: string) => void
+  onAddMissingDependencies: () => void
   onSubmit: (event: FormEvent<HTMLFormElement>) => void
 }
 
-function RoleFormDialog({ open, form, groupedPermissions, fieldErrors, formError, isEditing, isSaving, onOpenChange, onFieldChange, onPermissionChange, onToggleAllPermissions, onSubmit }: RoleFormDialogProps) {
+function RoleFormDialog({ open, form, groupedPermissions, permissions, fieldErrors, formError, isEditing, isSaving, onOpenChange, onFieldChange, onPermissionChange, onPresetApply, onAddMissingDependencies, onSubmit }: RoleFormDialogProps) {
   const allPermissions = groupedPermissions.flatMap(group => group.permissions)
-  const allPermissionsSelected = allPermissions.length > 0 && allPermissions.every(permission => form.permissions[permissionKey(permission)])
+  const selectedPermissions = allPermissions.filter(permission => form.permissions[permissionKey(permission)])
+  const dependencies = missingDependencies(form.permissions, permissions)
+  const grantSummary = summarizePermissions(selectedPermissions)
 
   return (
     <Dialog.Root open={open} onOpenChange={onOpenChange}>
@@ -437,7 +643,7 @@ function RoleFormDialog({ open, form, groupedPermissions, fieldErrors, formError
               <p className="text-[10px] font-extrabold uppercase tracking-widest text-brand-blue">Roles</p>
               <Dialog.Title className="font-display text-2xl font-bold text-ink">{isEditing ? 'Edit role' : 'Create role'}</Dialog.Title>
               <Dialog.Description className="mt-1 text-sm text-ink-secondary">
-                Manage role details and module-level permissions in one form.
+                Manage role details and service-specific permissions in one form.
               </Dialog.Description>
             </div>
             <Dialog.Close className="tk-icon-button" aria-label="Close role form">
@@ -466,27 +672,83 @@ function RoleFormDialog({ open, form, groupedPermissions, fieldErrors, formError
               <div className="flex flex-wrap items-center justify-between gap-3 border-b border-surface-border bg-surface-tertiary px-4 py-3">
                 <div className="flex items-center gap-2">
                   <ShieldCheck className="h-4 w-4 text-brand-blue" />
-                  <h3 className="text-sm font-bold text-ink">Permission settings</h3>
+                  <h3 className="text-sm font-bold text-ink">Permission catalog</h3>
                 </div>
-                <button type="button" className="tk-button-secondary min-h-[36px] px-3 py-1.5 text-xs" onClick={() => onToggleAllPermissions(!allPermissionsSelected)}>
-                  {allPermissionsSelected ? 'Clear all permissions' : 'Select all permissions'}
-                </button>
               </div>
+              <div className="grid gap-3 border-b border-surface-border p-4 lg:grid-cols-[180px_1fr]">
+                <div className="flex items-center gap-2 text-sm font-bold text-ink">
+                  <WandSparkles className="h-4 w-4 text-brand-blue" />
+                  Presets
+                </div>
+                <div className="grid gap-2 md:grid-cols-2 xl:grid-cols-3">
+                  {PRESETS.map(preset => (
+                    <button key={preset.key} type="button" className="rounded-md border border-surface-border bg-white p-3 text-left transition hover:border-brand-blue hover:bg-brand-blue/5" onClick={() => onPresetApply(preset.key)}>
+                      <span className="block text-xs font-bold uppercase tracking-wider text-ink">{preset.label}</span>
+                      <span className="mt-1 block text-xs leading-5 text-ink-secondary">{preset.description}</span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <div className="grid gap-3 border-b border-surface-border bg-white p-4 md:grid-cols-3">
+                <SummaryTile label="Selected" value={`${selectedPermissions.length}`} />
+                <SummaryTile label="High risk" value={`${(grantSummary.high ?? 0) + (grantSummary.critical ?? 0)}`} />
+                <SummaryTile label="Sections" value={`${new Set(selectedPermissions.map(permission => permission.module)).size}`} />
+              </div>
+              {dependencies.length ? (
+                <div className="border-b border-amber-200 bg-amber-50 p-4">
+                  <div className="flex flex-wrap items-center justify-between gap-3">
+                    <div className="flex min-w-0 items-start gap-2">
+                      <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-600" />
+                      <div>
+                        <p className="text-sm font-semibold text-amber-900">Missing dependencies</p>
+                        <p className="mt-1 text-xs text-amber-800">{dependencies.join(', ')}</p>
+                      </div>
+                    </div>
+                    <button type="button" className="tk-button-secondary min-h-[34px] px-3 py-1.5 text-xs" onClick={onAddMissingDependencies}>
+                      Add dependencies
+                    </button>
+                  </div>
+                </div>
+              ) : null}
               <div className="max-h-[420px] overflow-y-auto">
                 {groupedPermissions.map(group => (
-                  <div key={group.module} className="grid gap-3 border-b border-surface-border p-4 last:border-b-0 lg:grid-cols-[260px_1fr]">
-                    <p className="font-semibold capitalize text-ink">{formatSlug(group.module)}</p>
-                    <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
+                  <div key={group.module} className="grid gap-3 border-b border-surface-border p-4 last:border-b-0 xl:grid-cols-[280px_1fr]">
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <Layers3 className="h-4 w-4 text-brand-blue" />
+                        <p className="font-semibold text-ink">{group.sectionName}</p>
+                      </div>
+                      {group.purpose ? <p className="mt-2 text-xs leading-5 text-ink-secondary">{group.purpose}</p> : null}
+                    </div>
+                    <div className="grid gap-2 lg:grid-cols-2">
                       {group.permissions.map(permission => (
-                        <label key={permission.id} className="flex min-h-[44px] items-center gap-2 rounded-md border border-surface-border bg-white px-3 text-xs font-semibold uppercase tracking-wider text-ink-secondary">
-                          <input
-                            type="checkbox"
-                            checked={Boolean(form.permissions[permissionKey(permission)])}
-                            onChange={event => onPermissionChange(permission, event.target.checked)}
-                            aria-label={`${permission.module} ${permission.action}`}
-                            className="h-4 w-4 rounded border-surface-border text-brand-blue"
-                          />
-                          {permission.action}
+                        <label key={permission.id} className={cn('block rounded-md border bg-white p-3 text-sm transition', form.permissions[permissionKey(permission)] ? 'border-brand-blue bg-brand-blue/5' : 'border-surface-border')}>
+                          <span className="flex items-start gap-3">
+                            <input
+                              type="checkbox"
+                              checked={Boolean(form.permissions[permissionKey(permission)])}
+                              onChange={event => onPermissionChange(permission, event.target.checked)}
+                              aria-label={`${permission.section_name || permission.module} ${permission.action_label || permission.action}`}
+                              className="mt-0.5 h-4 w-4 rounded border-surface-border text-brand-blue"
+                            />
+                            <span className="min-w-0 flex-1">
+                              <span className="flex flex-wrap items-center gap-2">
+                                <span className="font-semibold text-ink">{permission.action_label || formatSlug(permission.action)}</span>
+                                <RiskBadge risk={permission.risk_level} />
+                              </span>
+                              {permission.description ? <span className="mt-1 block text-xs leading-5 text-ink-secondary">{permission.description}</span> : null}
+                              {permission.dependencies.length || permission.tags.length ? (
+                                <span className="mt-2 flex flex-wrap gap-1">
+                                  {permission.dependencies.map(dependency => (
+                                    <span key={dependency} className="rounded bg-amber-50 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-amber-700">{dependency}</span>
+                                  ))}
+                                  {permission.tags.map(tag => (
+                                    <span key={tag} className="rounded bg-surface-tertiary px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-ink-secondary">{tag}</span>
+                                  ))}
+                                </span>
+                              ) : null}
+                            </span>
+                          </span>
                         </label>
                       ))}
                     </div>
@@ -504,6 +766,44 @@ function RoleFormDialog({ open, form, groupedPermissions, fieldErrors, formError
       </Dialog.Portal>
     </Dialog.Root>
   )
+}
+
+function SummaryTile({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="rounded-md border border-surface-border bg-surface-tertiary px-3 py-2">
+      <p className="text-[10px] font-bold uppercase tracking-wider text-ink-secondary">{label}</p>
+      <p className="mt-1 text-lg font-bold text-ink">{value}</p>
+    </div>
+  )
+}
+
+function RiskBadge({ risk }: { risk: string }) {
+  const className = {
+    low: 'bg-emerald-50 text-emerald-700',
+    medium: 'bg-sky-50 text-sky-700',
+    high: 'bg-amber-50 text-amber-700',
+    critical: 'bg-rag-red/10 text-rag-red',
+  }[risk] ?? 'bg-surface-tertiary text-ink-secondary'
+  return <span className={cn('rounded px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider', className)}>{risk}</span>
+}
+
+function summarizePermissions(permissions: Permission[]) {
+  return permissions.reduce<Record<string, number>>((summary, permission) => {
+    summary[permission.risk_level] = (summary[permission.risk_level] ?? 0) + 1
+    return summary
+  }, {})
+}
+
+function missingDependencies(draft: Record<string, boolean>, permissions: Permission[]) {
+  const selected = new Set(Object.entries(draft).flatMap(([key, allowed]) => (allowed ? [key] : [])))
+  const missing = new Set<string>()
+  permissions.forEach(permission => {
+    if (!selected.has(permissionKey(permission))) return
+    permission.dependencies.forEach(dependency => {
+      if (!selected.has(dependency)) missing.add(dependency)
+    })
+  })
+  return Array.from(missing).sort()
 }
 
 function buildPermissionUpdates(role: Role, permissions: Permission[], draft: Record<string, boolean>, isEditing: boolean): RolePermissionGrant[] {

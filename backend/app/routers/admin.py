@@ -324,12 +324,12 @@ def delete_role(
 @router.get(
     "/permissions",
     response_model=list[PermissionRead],
-    summary="List module permissions",
+    summary="List RBAC permission catalog",
     description=(
-        "Step 6 of RBAC administration. Returns the PRD-derived permission catalog generated from platform modules "
-        "and supported actions."
+        "Step 6 of RBAC administration. Returns the service-specific permission catalog with section purpose, "
+        "action labels, descriptions, risk level, tags, dependencies, and display order."
     ),
-    response_description="List of module/action permissions.",
+    response_description="List of granular catalog permissions.",
     responses={
         401: {"description": "Missing, invalid, or expired bearer token."},
         403: {"description": "Authenticated user does not have Admin/RBAC configure permission."},
@@ -345,11 +345,11 @@ def list_permissions(_: AdminAccess, service: Annotated[RbacService, Depends(get
     summary="Update role permissions",
     description=(
         "Step 7 of RBAC administration. Upserts allow/deny grants for an existing role using module/action pairs "
-        "from the seeded PRD permission catalog."
+        "from the seeded RBAC catalog."
     ),
     response_description="Role with the updated permission grants.",
     responses={
-        400: {"description": "Permission module/action is not defined in the PRD catalog."},
+        400: {"description": "Permission module/action is not defined in the RBAC catalog."},
         401: {"description": "Missing, invalid, or expired bearer token."},
         403: {"description": "Authenticated user does not have Admin/RBAC configure permission."},
         404: {"description": "Role was not found."},
