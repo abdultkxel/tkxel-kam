@@ -16,6 +16,7 @@ from app.routers import (
     admin,
     admin_security,
     ai,
+    alerts,
     analytics,
     auth,
     content,
@@ -42,6 +43,7 @@ from app.routers import (
     users,
 )
 from app.services.seed import seed_base_data
+from app.services.alerts import AlertsService
 from app.services.notifications import NotificationsService
 from app.services.reports import ReportsService
 from app.services.timeline import TimelineService
@@ -59,12 +61,15 @@ async def lifespan(app: FastAPI):
         seed_base_data(db)
     retention_worker: asyncio.Task | None = None
     notifications_reporting_worker: asyncio.Task | None = None
+    alerts_worker: asyncio.Task | None = None
     integrations_worker: asyncio.Task | None = None
     kyc_worker: asyncio.Task | None = None
     if settings.timeline_retention_worker_enabled:
         retention_worker = asyncio.create_task(timeline_retention_worker_loop())
     if settings.notifications_reporting_worker_enabled:
         notifications_reporting_worker = asyncio.create_task(notifications_reporting_worker_loop())
+    if settings.alerts_worker_enabled:
+        alerts_worker = asyncio.create_task(alerts_worker_loop())
     if settings.integrations_worker_enabled:
         integrations_worker = asyncio.create_task(integrations_worker_loop())
     if settings.kyc_worker_enabled:
@@ -80,6 +85,10 @@ async def lifespan(app: FastAPI):
             notifications_reporting_worker.cancel()
             with contextlib.suppress(asyncio.CancelledError):
                 await notifications_reporting_worker
+        if alerts_worker:
+            alerts_worker.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await alerts_worker
         if integrations_worker:
             integrations_worker.cancel()
             with contextlib.suppress(asyncio.CancelledError):
@@ -123,6 +132,28 @@ async def notifications_reporting_worker_loop() -> None:
         except Exception:
             logger.exception("Notifications/reporting worker failed")
         await asyncio.sleep(settings.notifications_reporting_worker_interval_seconds)
+
+
+async def alerts_worker_loop() -> None:
+    await asyncio.sleep(settings.alerts_worker_initial_delay_seconds)
+    while True:
+        try:
+            with SessionLocal() as db:
+                result = AlertsService(db).run_scheduled_evaluation()
+                if result.created or result.updated or result.resolved or result.reactivated:
+                    logger.info(
+                        "Alerts worker completed evaluated=%s matched=%s created=%s updated=%s resolved=%s reactivated=%s notifications=%s",
+                        result.evaluated,
+                        result.matched,
+                        result.created,
+                        result.updated,
+                        result.resolved,
+                        result.reactivated,
+                        result.notifications_created,
+                    )
+        except Exception:
+            logger.exception("Alerts worker failed")
+        await asyncio.sleep(settings.alerts_worker_interval_seconds)
 
 
 async def integrations_worker_loop() -> None:
@@ -203,8 +234,8 @@ openapi_tags = [
         "description": "User-owned Fathom connection, meeting artifacts, summaries, action items, and governance completion inputs.",
     },
     {
-        "name": "Playbooks, Activities, Tasks, and Calendar",
-        "description": "Configurable playbooks, execution-generated activities, task/evidence management, and unified calendar projections.",
+        "name": "Playbooks and Tasks",
+        "description": "Configurable playbooks, execution outputs, task/evidence management, and schedule projections.",
     },
     {
         "name": "Stakeholder Relationships",
@@ -251,6 +282,10 @@ openapi_tags = [
         "description": "Notification preferences, notification center, SLA escalation, scheduled executive digests, and delivery logs.",
     },
     {
+        "name": "Alerts",
+        "description": "Backend-owned alerts, alert lifecycle actions, rule configuration, previews, and evaluation jobs.",
+    },
+    {
         "name": "Dashboards and Reporting",
         "description": "AM Home, KAM Head Portfolio, Leadership dashboards, report builder, report exports, and report schedules.",
     },
@@ -295,6 +330,7 @@ app.include_router(stakeholders.router)
 app.include_router(opportunities.router)
 app.include_router(account_planning.router)
 app.include_router(ai.router)
+app.include_router(alerts.router)
 app.include_router(analytics.router)
 app.include_router(service_catalog.router)
 app.include_router(retention.router)

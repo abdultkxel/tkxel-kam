@@ -156,7 +156,7 @@ function apiManagers() {
 const customFields = [
   {
     id: 'field-1',
-    module: 'account_overview',
+    module: 'accounts',
     field_key: 'customer_tier',
     label: 'Customer Tier',
     description: 'Tier from Admin Field Builder.',

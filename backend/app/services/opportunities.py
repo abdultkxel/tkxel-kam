@@ -16,6 +16,7 @@ from app.models import (
 )
 from app.repositories.accounts import AccountRepository
 from app.repositories.audit import AuditRepository
+from app.repositories.custom_fields import CustomFieldRepository
 from app.repositories.opportunities import OpportunityRepository
 from app.repositories.rbac import RbacRepository
 from app.repositories.timeline import TimelineRepository
@@ -48,11 +49,13 @@ from app.schemas import (
 )
 from app.services.account_access import AccountAccessService
 from app.services.audit import AuditService
+from app.services.custom_fields import CustomFieldService
 from app.services.in_app_notifications import InAppNotificationService
 from app.services.timeline import TimelineService
 from app.services.user_management import page_count
 
 OPPORTUNITY_MODULE = "opportunity_management"
+OPPORTUNITY_FIELD_MODULE = "opportunities"
 OPPORTUNITY_ACTION_TASK_SOURCE = "opportunity_action_item"
 
 
@@ -62,10 +65,12 @@ def field_error(field: str, message: str, status_code: int = status.HTTP_422_UNP
 
 class OpportunityService:
     def __init__(self, db: Session) -> None:
+        self.db = db
         self.repository = OpportunityRepository(db)
         self.accounts = AccountRepository(db)
         self.access = AccountAccessService(self.accounts, RbacRepository(db))
         self.audit = AuditService(AuditRepository(db))
+        self.custom_fields = CustomFieldService(db, CustomFieldRepository(db))
         self.timeline = TimelineService(TimelineRepository(db))
         self.in_app_notifications = InAppNotificationService(db)
 
@@ -164,7 +169,8 @@ class OpportunityService:
         engagement = self._validate_engagement(payload.engagement_id, payload.account_id)
         opportunity_type = self._get_active_type_or_404(payload.type_id)
         owner = self._get_active_user(payload.owner_id, "owner_id")
-        self._ensure_active_stage(payload.stage)
+        stage_definition = self._ensure_active_stage(payload.stage) if payload.stage else self._initial_stage_definition()
+        self.custom_fields.validate_record_values(OPPORTUNITY_FIELD_MODULE, payload.custom_field_values)
 
         opportunity = Opportunity(
             account_id=account.id,
@@ -177,7 +183,7 @@ class OpportunityService:
             service_line=payload.service_line,
             value=payload.value,
             currency=payload.currency,
-            stage=payload.stage,
+            stage=stage_definition.name,
             next_step=payload.next_step,
             target_date=payload.target_date,
             source_context=payload.source_context,
@@ -191,6 +197,7 @@ class OpportunityService:
             updated_by_name=current_user.full_name,
         )
         self.repository.save_opportunity(opportunity)
+        self.custom_fields.save_record_values(OPPORTUNITY_FIELD_MODULE, opportunity.id, payload.custom_field_values, current_user, audit_module=OPPORTUNITY_FIELD_MODULE)
         for action_payload in payload.action_items:
             action_item = self.repository.add_action_item(self._action_item_from_payload(opportunity, action_payload, current_user))
             if action_payload.create_task:
@@ -220,6 +227,7 @@ class OpportunityService:
         self.audit.log(module=OPPORTUNITY_MODULE, action="create", entity_type="opportunity", entity_id=opportunity.id, actor=current_user, after_value=self._opportunity_snapshot(opportunity))
         self._notify_opportunity_created(account, opportunity, current_user)
         self.repository.commit()
+        self._evaluate_alerts_for_account(account.id)
         return self._opportunity_read(opportunity)
 
     def update_opportunity(self, opportunity_id: str, payload: OpportunityUpdateRequest, current_user: User) -> OpportunityRead:
@@ -252,6 +260,7 @@ class OpportunityService:
         self.audit.log(module=OPPORTUNITY_MODULE, action="update", entity_type="opportunity", entity_id=opportunity.id, actor=current_user, before_value=before, after_value=self._opportunity_snapshot(opportunity))
         self._notify_opportunity_update(opportunity, current_user, before, self._opportunity_snapshot(opportunity))
         self.repository.commit()
+        self._evaluate_alerts_for_account(opportunity.account_id)
         return self._opportunity_read(opportunity)
 
     def archive_opportunity(self, opportunity_id: str, current_user: User, reason: str | None = None) -> MessageResponse:
@@ -310,6 +319,7 @@ class OpportunityService:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Archived opportunities must be restored before moving stages")
         history = self._transition_stage(opportunity, payload.stage, current_user, payload.reason, payload.outcome_reason)
         self.repository.commit()
+        self._evaluate_alerts_for_account(opportunity.account_id)
         return OpportunityStageTransitionRead(opportunity=self._opportunity_read(opportunity), history=self._stage_history_read(history))
 
     def list_stages(self, current_user: User) -> list[OpportunityStageDefinitionRead]:
@@ -339,6 +349,19 @@ class OpportunityService:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Opportunity stage was not found")
         before = self._stage_definition_snapshot(stage)
         updates = payload.model_dump(exclude_unset=True)
+        in_use_count = self.repository.count_opportunities_for_stage(stage.name)
+        if updates.get("is_active") is False and stage.is_active and in_use_count:
+            raise field_error(
+                "is_active",
+                f"Stage cannot be deactivated while {in_use_count} opportunity record(s) use it.",
+                status.HTTP_409_CONFLICT,
+            )
+        if "name" in updates and updates["name"] != stage.name and in_use_count:
+            raise field_error(
+                "name",
+                f"Stage cannot be renamed while {in_use_count} opportunity record(s) use it.",
+                status.HTTP_409_CONFLICT,
+            )
         if "slug" in updates and updates["slug"] != stage.slug and self.repository.get_stage_by_slug(updates["slug"]):
             raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="An opportunity stage with this slug already exists")
         if "name" in updates and updates["name"] != stage.name and self.repository.get_stage_by_name(updates["name"]):
@@ -761,6 +784,12 @@ class OpportunityService:
             raise field_error("stage", "Target stage is not valid.")
         return stage_definition
 
+    def _initial_stage_definition(self) -> OpportunityStageDefinition:
+        stages = self.repository.list_stage_definitions(active_only=True)
+        if not stages:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="No active opportunity stages are configured")
+        return stages[0]
+
     def _require_opportunity_view(self, current_user: User, opportunity: Opportunity) -> None:
         self.access.require_module_permission(current_user, OPPORTUNITY_MODULE, "view")
         self.access.require_account_view(current_user, opportunity.account, module=OPPORTUNITY_MODULE)
@@ -877,6 +906,7 @@ class OpportunityService:
             stage_history=[self._stage_history_read(item) for item in stage_history],
             decisions=[self._decision_read(item) for item in decisions],
             action_items=[self._action_item_read(item) for item in action_items],
+            custom_field_values=self.custom_fields.record_values(OPPORTUNITY_FIELD_MODULE, opportunity.id),
         )
 
     @staticmethod
@@ -945,8 +975,7 @@ class OpportunityService:
             in_use_count=self.repository.count_opportunities_for_type(opportunity_type.id),
         )
 
-    @staticmethod
-    def _stage_definition_read(stage: OpportunityStageDefinition) -> OpportunityStageDefinitionRead:
+    def _stage_definition_read(self, stage: OpportunityStageDefinition) -> OpportunityStageDefinitionRead:
         return OpportunityStageDefinitionRead(
             id=stage.id,
             slug=stage.slug,
@@ -955,6 +984,7 @@ class OpportunityService:
             requires_outcome_reason=stage.requires_outcome_reason,
             is_active=stage.is_active,
             display_order=stage.display_order,
+            in_use_count=self.repository.count_opportunities_for_stage(stage.name),
         )
 
     @staticmethod
@@ -1010,6 +1040,11 @@ class OpportunityService:
             "outcome_reason": opportunity.outcome_reason,
             "archived_at": opportunity.archived_at.isoformat() if opportunity.archived_at else None,
         }
+
+    def _evaluate_alerts_for_account(self, account_id: str) -> None:
+        from app.services.alerts import AlertsService
+
+        AlertsService(self.db).evaluate_for_account(account_id)
 
     @staticmethod
     def _type_snapshot(opportunity_type: OpportunityType) -> dict:

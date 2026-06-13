@@ -16,8 +16,8 @@ import {
   listRetentionRecommendations,
   listServiceRecommendations,
   listWhitespace,
+  patchWhitespace,
   saveAccountPlan,
-  saveWhitespace,
 } from '@/services/relationshipsPlanning'
 import { useOpportunityStore } from '@/stores/opportunityStore'
 import type { Account } from '@/types/account'
@@ -157,6 +157,36 @@ export function GrowthWhitespacePanel({ account }: { account: Account }) {
   const [whitespace, setWhitespace] = useState<WhitespaceItem[]>([])
   const [recommendations, setRecommendations] = useState<ServiceRecommendation[]>([])
   const [coverage, setCoverage] = useState<Record<string, string>>({})
+  const [savedCoverage, setSavedCoverage] = useState<Record<string, string>>({})
+  const [coverageSearch, setCoverageSearch] = useState('')
+  const [coverageCategory, setCoverageCategory] = useState('')
+  const [coverageStatus, setCoverageStatus] = useState('all')
+  const [coveragePage, setCoveragePage] = useState(1)
+  const [coveragePageSize, setCoveragePageSize] = useState(12)
+
+  const coverageCategories = useMemo(() => [...new Set(catalog.map(item => item.category).filter(Boolean) as string[])].sort((a, b) => a.localeCompare(b)), [catalog])
+  const filteredCatalog = useMemo(() => {
+    const term = coverageSearch.trim().toLowerCase()
+    return catalog.filter(service => {
+      const status = coverage[service.id] ?? 'unknown'
+      const matchesSearch = !term || [service.name, service.slug, service.category ?? '', service.tags.join(' ')].some(value => value.toLowerCase().includes(term))
+      const matchesCategory = !coverageCategory || service.category === coverageCategory
+      const matchesStatus = !coverageStatus || coverageStatus === 'all' || status === coverageStatus
+      return matchesSearch && matchesCategory && matchesStatus
+    })
+  }, [catalog, coverage, coverageCategory, coverageSearch, coverageStatus])
+  const coveragePages = Math.max(1, Math.ceil(filteredCatalog.length / coveragePageSize))
+  const coverageStartIndex = filteredCatalog.length ? (coveragePage - 1) * coveragePageSize : 0
+  const coverageEndIndex = filteredCatalog.length ? Math.min(coverageStartIndex + coveragePageSize, filteredCatalog.length) : 0
+  const pagedCatalog = useMemo(() => filteredCatalog.slice(coverageStartIndex, coverageEndIndex), [coverageEndIndex, coverageStartIndex, filteredCatalog])
+
+  useEffect(() => {
+    setCoveragePage(current => Math.min(Math.max(1, coveragePages), current))
+  }, [coveragePages])
+
+  useEffect(() => {
+    setCoveragePage(1)
+  }, [coverageCategory, coverageSearch, coverageStatus])
 
   async function load() {
     setLoading(true)
@@ -171,7 +201,9 @@ export function GrowthWhitespacePanel({ account }: { account: Account }) {
       setCatalog(catalogPage.items)
       setWhitespace(whitespaceItems)
       setRecommendations(recommendationPage.items)
-      setCoverage(Object.fromEntries(whitespaceItems.map(item => [item.serviceId, item.coverageStatus])))
+      const nextCoverage = Object.fromEntries(whitespaceItems.map(item => [item.serviceId, item.coverageStatus]))
+      setCoverage(nextCoverage)
+      setSavedCoverage(nextCoverage)
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Unable to load growth planning data')
     } finally {
@@ -187,9 +219,19 @@ export function GrowthWhitespacePanel({ account }: { account: Account }) {
     setSaving(true)
     try {
       if (!token) throw new Error('You must be logged in to save whitespace')
-      const saved = await saveWhitespace(token, account.id, Object.entries(coverage).map(([serviceId, coverageStatus]) => ({ serviceId, coverageStatus, source: 'manual' })))
+      const changedItems = Object.entries(coverage)
+        .filter(([serviceId, coverageStatus]) => coverageStatus !== (savedCoverage[serviceId] ?? 'unknown'))
+        .map(([serviceId, coverageStatus]) => ({ serviceId, coverageStatus, source: 'manual' }))
+      if (!changedItems.length) {
+        toast.success('No coverage changes to save')
+        return
+      }
+      const saved = await patchWhitespace(token, account.id, changedItems)
       const recPage = await listServiceRecommendations(token, account.id)
       setWhitespace(saved)
+      const nextCoverage = Object.fromEntries(saved.map(item => [item.serviceId, item.coverageStatus]))
+      setCoverage(nextCoverage)
+      setSavedCoverage(nextCoverage)
       setRecommendations(recPage.items)
       toast.success('Whitespace saved')
     } catch (err) {
@@ -217,14 +259,21 @@ export function GrowthWhitespacePanel({ account }: { account: Account }) {
     }
   }
 
-  if (loading) return <PanelShell title="Recommendations"><LoadingRow label="Loading service coverage" /></PanelShell>
-  if (error) return <PanelShell title="Recommendations"><ErrorRow message={error} onRetry={load} /></PanelShell>
+  if (loading) return <PanelShell title="Service coverage & growth recommendations"><LoadingRow label="Loading service coverage" /></PanelShell>
+  if (error) return <PanelShell title="Service coverage & growth recommendations"><ErrorRow message={error} onRetry={load} /></PanelShell>
 
   return (
-    <PanelShell title="Recommendations" detail={`${catalog.length} configured services · ${recommendations.length} recommendations`}>
+    <PanelShell title="Service coverage & growth recommendations" detail={`${catalog.length} configured services · ${recommendations.length} recommendations`}>
       {!catalog.length ? <EmptyState icon={BriefcaseBusiness} heading="No services configured" body="Configure the service catalog in Admin Settings to capture whitespace." className="py-8" /> : null}
+      {catalog.length ? (
+        <div className="grid grid-cols-[repeat(auto-fit,minmax(180px,1fr))] gap-3">
+          <TextInput label="Search services" value={coverageSearch} onChange={setCoverageSearch} placeholder="Service, category, tag" />
+          <SelectField label="Category" value={coverageCategory} options={coverageCategories.map(item => ({ value: item, label: item }))} onChange={setCoverageCategory} />
+          <SelectField label="Coverage" value={coverageStatus} options={[{ value: 'all', label: 'All coverage' }, { value: 'unknown', label: 'Unknown' }, { value: 'active', label: 'Active' }, { value: 'potential', label: 'Potential' }, { value: 'not_relevant', label: 'Not relevant' }]} onChange={setCoverageStatus} />
+        </div>
+      ) : null}
       <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
-        {catalog.map(service => (
+        {pagedCatalog.map(service => (
           <label key={service.id} className="grid gap-2 rounded-lg border border-surface-border p-3">
             <span className="text-sm font-semibold text-ink">{service.name}</span>
             <span className="text-xs text-ink-secondary">{service.category || 'Uncategorized'} · {service.tags.slice(0, 3).join(', ') || 'No tags'}</span>
@@ -236,7 +285,27 @@ export function GrowthWhitespacePanel({ account }: { account: Account }) {
             </select>
           </label>
         ))}
+        {catalog.length && !filteredCatalog.length ? <EmptyState icon={BriefcaseBusiness} heading="No matching services" body="Adjust the growth coverage filters." className="py-8 xl:col-span-3" /> : null}
       </div>
+      {filteredCatalog.length ? (
+        <ListPagination
+          label="services"
+          page={coveragePage}
+          pages={coveragePages}
+          pageSize={coveragePageSize}
+          pageSizeLabel="Services per page"
+          pageSizeOptions={[12, 24, 48]}
+          start={coverageStartIndex + 1}
+          end={coverageEndIndex}
+          total={filteredCatalog.length}
+          onPageSizeChange={value => {
+            setCoveragePageSize(value)
+            setCoveragePage(1)
+          }}
+          onPrevious={() => setCoveragePage(current => Math.max(1, current - 1))}
+          onNext={() => setCoveragePage(current => Math.min(coveragePages, current + 1))}
+        />
+      ) : null}
       <button type="button" className="tk-button-primary w-fit" disabled={saving} onClick={saveCoverage}>
         {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
         Save coverage
@@ -248,9 +317,21 @@ export function GrowthWhitespacePanel({ account }: { account: Account }) {
               <span>
                 <span className="block text-sm font-semibold text-ink">{recommendation.targetServiceName}</span>
                 <span className="mt-1 block text-xs leading-5 text-ink-secondary">{recommendation.rationale}</span>
+                <span className="mt-2 block text-xs font-semibold text-ink-secondary">
+                  {recommendation.sourceServiceName ? `From ${recommendation.sourceServiceName} · ` : ''}Base fit {recommendation.baseFitScore} · Account fit {recommendation.accountFitScore}
+                </span>
               </span>
-              <span className="rounded-full bg-white px-3 py-1 text-xs font-bold text-brand-blue">{recommendation.relevanceScore}%</span>
+              <span className="rounded-full bg-white px-3 py-1 text-xs font-bold text-brand-blue">{recommendation.accountFitScore}%</span>
             </div>
+            {recommendation.scoreFactors.length ? (
+              <div className="mt-3 flex flex-wrap gap-2">
+                {recommendation.scoreFactors.map(factor => (
+                  <span key={`${recommendation.id}-${factor.label}`} className="rounded-full bg-white px-2.5 py-1 text-[11px] font-semibold text-ink-secondary">
+                    {factor.value > 0 ? '+' : ''}{factor.value} {factor.label}
+                  </span>
+                ))}
+              </div>
+            ) : null}
             <button type="button" className="tk-button-secondary mt-3 bg-white" disabled={recommendation.status === 'converted'} onClick={() => convertRecommendation(recommendation)}>
               <ArrowRight className="h-4 w-4" />
               {recommendation.status === 'converted' ? 'Converted' : 'Create opportunity'}
@@ -540,6 +621,68 @@ function TextInput({ label, value, onChange, placeholder, type = 'text' }: { lab
       <span className="text-xs font-semibold text-ink-secondary">{label}</span>
       <input type={type} className="tk-input" value={value} placeholder={placeholder} onChange={event => onChange(event.target.value)} />
     </label>
+  )
+}
+
+function SelectField({ label, value, options, onChange }: { label: string; value: string; options: { value: string; label: string }[]; onChange: (value: string) => void }) {
+  return (
+    <label className="grid gap-1">
+      <span className="text-xs font-semibold text-ink-secondary">{label}</span>
+      <select className="tk-input" value={value} onChange={event => onChange(event.target.value)}>
+        <option value="">All</option>
+        {options.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}
+      </select>
+    </label>
+  )
+}
+
+function ListPagination({
+  label,
+  page,
+  pages,
+  pageSize,
+  pageSizeLabel,
+  pageSizeOptions,
+  start,
+  end,
+  total,
+  onPageSizeChange,
+  onPrevious,
+  onNext,
+}: {
+  label: string
+  page: number
+  pages: number
+  pageSize: number
+  pageSizeLabel: string
+  pageSizeOptions: number[]
+  start: number
+  end: number
+  total: number
+  onPageSizeChange: (value: number) => void
+  onPrevious: () => void
+  onNext: () => void
+}) {
+  return (
+    <div className="flex flex-col gap-3 rounded-lg border border-surface-border bg-white px-4 py-3 text-sm text-ink-secondary sm:flex-row sm:items-center sm:justify-between">
+      <span>
+        Showing {start}-{end} of {total} {label}
+      </span>
+      <div className="flex flex-wrap items-center gap-2">
+        <select className="tk-input min-h-[38px] w-[150px] py-1.5 text-sm" value={pageSize} onChange={event => onPageSizeChange(Number(event.target.value))} aria-label={pageSizeLabel}>
+          {pageSizeOptions.map(option => <option key={option} value={option}>{option} per page</option>)}
+        </select>
+        <button type="button" className="tk-button-secondary min-h-[38px] px-3 py-1.5" onClick={onPrevious} disabled={page <= 1}>
+          Previous
+        </button>
+        <span className="min-w-[72px] text-center text-xs font-semibold uppercase tracking-wider text-ink-secondary">
+          {page} / {pages}
+        </span>
+        <button type="button" className="tk-button-secondary min-h-[38px] px-3 py-1.5" onClick={onNext} disabled={!pages || page >= pages}>
+          Next
+        </button>
+      </div>
+    </div>
   )
 }
 

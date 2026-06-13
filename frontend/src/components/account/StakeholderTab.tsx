@@ -15,13 +15,14 @@ import {
   useArchiveStakeholder,
   useRecalculateStakeholderCoverageGaps,
   useStakeholderCoverageGaps,
+  useStakeholderRoleOptions,
   useStakeholders,
 } from '@/hooks/useStakeholders'
 import type { Account } from '@/types/account'
 import type {
   Stakeholder,
   StakeholderFilters,
-  StakeholderRole,
+  StakeholderRoleOption,
   StakeholderSentiment,
   StakeholderStatus,
 } from '@/types/stakeholder'
@@ -29,7 +30,7 @@ import { cn } from '@/utils/cn'
 
 type BadgeTone = 'green' | 'amber' | 'red' | 'blue' | 'gray' | 'purple'
 
-const stakeholderRoles: StakeholderRole[] = ['executive_sponsor', 'economic_buyer', 'technical_decision_maker', 'operational_poc', 'commercial_owner', 'influencer']
+const fallbackRoleOptions: StakeholderRoleOption[] = ['executive_sponsor', 'economic_buyer', 'technical_decision_maker', 'operational_poc', 'commercial_owner', 'influencer'].map(value => ({ value, label: titleize(value) }))
 const statusOptions: StakeholderStatus[] = ['active', 'inactive', 'left_company', 'do_not_contact']
 const sentimentOptions: StakeholderSentiment[] = ['negative', 'neutral', 'positive', 'champion']
 const relationshipScore: Record<string, number> = { unknown: 0, weak: 1, developing: 2, strong: 3, champion: 4 }
@@ -63,11 +64,14 @@ export function StakeholderTab({ account }: { account: Account }) {
   const summaryQuery = useStakeholders(account.id, { page: 1, page_size: 100 })
   const listQuery = useStakeholders(account.id, filters)
   const coverageQuery = useStakeholderCoverageGaps(account.id)
+  const roleOptionsQuery = useStakeholderRoleOptions()
   const { recalculateStakeholderCoverageGaps, isLoading: recalculating } = useRecalculateStakeholderCoverageGaps(account.id)
   const { archiveStakeholder, isLoading: archiving } = useArchiveStakeholder()
 
   const summaryStakeholders = summaryQuery.stakeholders
   const stakeholders = listQuery.stakeholders
+  const configuredRoleOptions = roleOptionsQuery.roleOptions.length ? roleOptionsQuery.roleOptions : fallbackRoleOptions
+  const roleFilterOptions = mergeRoleOptions(configuredRoleOptions, summaryStakeholders.map(stakeholder => stakeholder.role))
   const coverageGaps = coverageQuery.coverageGaps
   const openCoverageGaps = coverageGaps.filter(gap => gap.status !== 'resolved')
   const summaryLoading = summaryQuery.isLoading && !summaryQuery.data
@@ -250,7 +254,7 @@ export function StakeholderTab({ account }: { account: Account }) {
             <input className="tk-input pl-9" value={search} onChange={event => setSearch(event.target.value)} placeholder="Name, title, company" />
           </div>
         </label>
-        <FilterSelect label="Role" value={role} onChange={setRole} options={stakeholderRoles.map(value => ({ value, label: titleize(value) }))} />
+        <FilterSelect label="Role" value={role} onChange={setRole} options={roleFilterOptions} />
         <FilterSelect label="Status" value={status} onChange={setStatus} options={statusOptions.map(value => ({ value, label: titleize(value) }))} />
         <FilterSelect label="Sentiment" value={sentiment} onChange={setSentiment} options={sentimentOptions.map(value => ({ value, label: titleize(value) }))} />
       </FilterBar>
@@ -296,6 +300,7 @@ export function StakeholderTab({ account }: { account: Account }) {
         account={account}
         stakeholder={editingStakeholder}
         stakeholders={summaryStakeholders}
+        roleOptions={configuredRoleOptions}
         open={drawerOpen}
         onOpenChange={setDrawerOpen}
         onSaved={refreshData}
@@ -420,6 +425,22 @@ function SummaryMetric({
       </div>
     </div>
   )
+}
+
+function mergeRoleOptions(options: StakeholderRoleOption[], roleSlugs: string[]) {
+  const seen = new Set<string>()
+  const merged: StakeholderRoleOption[] = []
+  options.forEach(option => {
+    if (seen.has(option.value)) return
+    seen.add(option.value)
+    merged.push(option)
+  })
+  roleSlugs.forEach(roleSlug => {
+    if (!roleSlug || seen.has(roleSlug)) return
+    seen.add(roleSlug)
+    merged.push({ value: roleSlug, label: titleize(roleSlug) })
+  })
+  return merged
 }
 
 function Badge({ tone, children }: { tone: BadgeTone; children: string }) {

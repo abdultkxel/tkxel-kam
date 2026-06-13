@@ -1,22 +1,18 @@
 import * as Dialog from '@radix-ui/react-dialog'
 import * as Select from '@radix-ui/react-select'
-import * as Switch from '@radix-ui/react-switch'
 import { format } from 'date-fns'
-import { AlertCircle, Calendar, Check, ChevronDown, FileText, Loader2, Lock, Paperclip, Plus, Settings2, Tag, X } from 'lucide-react'
+import { AlertCircle, Calendar, Check, ChevronDown, FileText, Loader2, Paperclip, Plus, Tag, X } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
 import { DayPicker } from 'react-day-picker'
 import { useForm } from 'react-hook-form'
-import { Link } from 'react-router-dom'
 import { toast } from 'sonner'
 import { MentionTextarea } from '@/components/collaboration/MentionTextarea'
 import { useAuth } from '@/contexts/AuthContext'
-import { useCapabilities } from '@/hooks/useCapabilities'
 import { useRole } from '@/hooks/useRole'
 import { useAccountStore } from '@/stores/accountStore'
 import { useNotificationStore } from '@/stores/notificationStore'
-import { useTimelineStore } from '@/stores/timelineStore'
 import { createTimelineNote, getTimelineEventTypes } from '@/services/timeline'
-import { TimelineEntry, SensitivityLevel, TimelineEventTypeConfig } from '@/types/timeline'
+import { TimelineEntry, TimelineEventTypeConfig } from '@/types/timeline'
 import { cn } from '@/utils/cn'
 import { extractMentionIds } from '@/utils/mentions'
 
@@ -25,8 +21,6 @@ interface FormValues {
   title: string
   description: string
   attachmentUrl: string
-  sensitive: boolean
-  sensitivityLevel: SensitivityLevel
 }
 
 interface Props {
@@ -36,21 +30,21 @@ interface Props {
   onAdded?: (entry: TimelineEntry) => void
 }
 
+const fixedManualEventTypes = new Set(['manual_note', 'governance_event', 'escalation_event', 'opportunity_event', 'client_education'])
+
 export function AddNoteModal({ accountId, open: controlledOpen, onOpenChange, onAdded }: Props) {
   const [internalOpen, setInternalOpen] = useState(false)
   const [selectedDate, setSelectedDate] = useState<Date>(new Date())
   const [backendError, setBackendError] = useState('')
+  const [eventTypesError, setEventTypesError] = useState('')
+  const [eventTypesLoading, setEventTypesLoading] = useState(false)
   const { token } = useAuth()
   const user = useRole()
-  const { capabilities } = useCapabilities()
   const accountName = useAccountStore(state => state.accounts.find(account => account.id === accountId)?.name ?? 'Account')
   const addNotification = useNotificationStore(state => state.addNotification)
-  const fallbackEventTypes = useTimelineStore(state => state.eventTypes)
-  const [serverEventTypes, setServerEventTypes] = useState<TimelineEventTypeConfig[] | null>(null)
-  const allEventTypes = serverEventTypes ?? fallbackEventTypes
-  const eventTypes = useMemo(() => allEventTypes.filter(item => item.active), [allEventTypes])
+  const [serverEventTypes, setServerEventTypes] = useState<TimelineEventTypeConfig[]>([])
+  const eventTypes = useMemo(() => serverEventTypes.filter(item => item.active && fixedManualEventTypes.has(item.eventType)), [serverEventTypes])
   const open = controlledOpen ?? internalOpen
-  const canCreateSensitive = capabilities.can_view_sensitive_sources || capabilities.can_moderate_timeline
   const {
     register,
     handleSubmit,
@@ -64,8 +58,6 @@ export function AddNoteModal({ accountId, open: controlledOpen, onOpenChange, on
       title: '',
       description: '',
       attachmentUrl: '',
-      sensitive: false,
-      sensitivityLevel: 'commercial',
     },
     shouldFocusError: true,
   })
@@ -73,7 +65,6 @@ export function AddNoteModal({ accountId, open: controlledOpen, onOpenChange, on
   const selectedEventType = watch('eventType')
   const title = watch('title') ?? ''
   const description = watch('description') ?? ''
-  const sensitive = watch('sensitive')
   const selectedConfig = useMemo(() => eventTypes.find(item => item.eventType === selectedEventType), [eventTypes, selectedEventType])
   const hasEventTypes = eventTypes.length > 0
   const titleField = register('title', {
@@ -90,13 +81,17 @@ export function AddNoteModal({ accountId, open: controlledOpen, onOpenChange, on
       reset()
       setSelectedDate(new Date())
       setBackendError('')
+      setEventTypesError('')
+      setServerEventTypes([])
       if (token) {
+        setEventTypesLoading(true)
         getTimelineEventTypes(token, 'active')
           .then(result => setServerEventTypes(result.items))
-          .catch(() => setServerEventTypes(fallbackEventTypes))
+          .catch(() => setEventTypesError('Timeline event types are unavailable. Refresh and try again.'))
+          .finally(() => setEventTypesLoading(false))
       }
     }
-  }, [fallbackEventTypes, open, reset, token])
+  }, [open, reset, token])
 
   useEffect(() => {
     if (!open || !eventTypes.length) return
@@ -131,8 +126,6 @@ export function AddNoteModal({ accountId, open: controlledOpen, onOpenChange, on
         tags: ['manual'],
         mentions,
         attachments: values.attachmentUrl ? [{ name: 'Attachment', url: values.attachmentUrl }] : [],
-        is_sensitive: canCreateSensitive ? values.sensitive : false,
-        sensitivity_level: canCreateSensitive && values.sensitive ? values.sensitivityLevel : undefined,
       })
       mentions.forEach(mentionedUserId => {
         addNotification({
@@ -195,23 +188,17 @@ export function AddNoteModal({ accountId, open: controlledOpen, onOpenChange, on
                   </p>
                 ) : null}
 
-                {!hasEventTypes ? (
+                {(eventTypesError || (!eventTypesLoading && !hasEventTypes)) ? (
                   <div className="rounded-lg border border-dashed border-surface-border bg-surface-tertiary p-4">
                     <div className="flex gap-3">
                       <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-md bg-white text-brand-blue">
                         <AlertCircle className="h-5 w-5" />
                       </span>
-                      <div className="space-y-3">
-                        <div>
-                          <p className="text-sm font-semibold text-ink">No active timeline types</p>
-                          <p className="mt-1 text-sm leading-5 text-ink-secondary">
-                            Create a timeline type in Admin before adding account events.
-                          </p>
-                        </div>
-                        <Link to="/admin?section=timeline" className="tk-button-secondary w-fit">
-                          <Settings2 className="h-4 w-4" />
-                          Open Timeline settings
-                        </Link>
+                      <div>
+                        <p className="text-sm font-semibold text-ink">Timeline event types unavailable</p>
+                        <p className="mt-1 text-sm leading-5 text-ink-secondary">
+                          {eventTypesError || 'Timeline event types are unavailable. Refresh and try again.'}
+                        </p>
                       </div>
                     </div>
                   </div>
@@ -312,34 +299,6 @@ export function AddNoteModal({ accountId, open: controlledOpen, onOpenChange, on
                   </dl>
                 </div>
 
-                {canCreateSensitive ? (
-                  <div className="rounded-lg border border-surface-border p-4">
-                    <div className="flex items-center justify-between gap-4">
-                      <div className="flex items-center gap-2">
-                        <Lock className="h-4 w-4 text-brand-blue-dark" />
-                        <div>
-                          <p className="text-sm font-semibold text-ink">Restrict visibility</p>
-                          <p className="text-xs text-ink-secondary">For sensitive account context.</p>
-                        </div>
-                      </div>
-                      <Switch.Root
-                        checked={sensitive}
-                        onCheckedChange={value => setValue('sensitive', value)}
-                        className="relative h-6 w-11 rounded-full bg-surface-border data-[state=checked]:bg-brand-blue"
-                      >
-                        <Switch.Thumb className="block h-5 w-5 translate-x-0.5 rounded-full bg-white transition-transform data-[state=checked]:translate-x-5" />
-                      </Switch.Root>
-                    </div>
-                    {sensitive ? (
-                      <select {...register('sensitivityLevel')} className="tk-input mt-3">
-                        <option value="commercial">Commercial</option>
-                        <option value="executive">Executive</option>
-                        <option value="legal">Legal</option>
-                        <option value="escalation">Escalation</option>
-                      </select>
-                    ) : null}
-                  </div>
-                ) : null}
               </div>
 
               <aside className="border-t border-surface-border bg-surface-tertiary p-5 lg:border-l lg:border-t-0">

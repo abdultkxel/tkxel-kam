@@ -5,24 +5,24 @@ Phase 3 self-review for `specs/09-approved-integrations.md`.
 ## Review Outcome
 
 - Status: Partial overall.
-- Phase 3 fixes applied: sync-run failure-type filtering, sync-log severity/date/search filtering, imported-item payload search for external participant metadata, Fathom provider pagination, Fathom webhook replay rejection, Admin in-app notifications for repeated integration failures, and unified AI Gateway run logging for KYC extraction, Timeline AI Search, and signal explanations.
+- Phase 3 fixes applied: sync-run failure-type filtering, sync-log severity/date/search filtering, imported-item payload search for external participant metadata, Admin in-app notifications for repeated integration failures, and unified AI Gateway run logging for KYC extraction, Timeline AI Search, and signal explanations. Global/admin Fathom has since been retired in favor of personal Profile meeting capture.
 - Verified: backend compile, approved-integrations backend tests, frontend TypeScript, integration panel test, production frontend build, and whitespace check.
 
 ## Requirements Coverage
 
 | Requirement | Status | Evidence |
 | --- | --- | --- |
-| Only approved adapters are configurable: Google Calendar, Fathom, CSAT, AI/LLM Gateway. | Complete | `backend/app/services/integrations.py`, `backend/app/repositories/integrations.py`, `backend/tests/test_content_escalations_governance.py` |
-| Adapter list shows all four adapters before configuration and normalizes canonical IDs. | Complete | `backend/app/services/integrations.py`, `backend/app/schemas.py`, `frontend/src/components/admin/IntegrationsPanel.tsx` |
+| Only active admin-owned adapters are configurable in Admin Integrations: Google Calendar and AI/LLM Gateway. | Complete | `backend/app/services/integrations.py`, `backend/app/repositories/integrations.py`, `frontend/src/components/admin/IntegrationsPanel.tsx`, `backend/tests/test_content_escalations_governance.py` |
+| Adapter list hides moved/internal adapters before configuration and normalizes canonical IDs. | Complete | `backend/app/services/integrations.py`, `backend/app/schemas.py`, `frontend/src/components/admin/IntegrationsPanel.tsx` |
 | Adapter configure, test, sync, status, retry, disconnect, dedupe, error logging. | Complete | `backend/app/routers/integrations.py`, `backend/app/services/integrations.py`, `backend/app/repositories/integrations.py`; Google Calendar keeps OAuth/test/logging but skips inbound sync by product decision. |
 | Repeated failures use retry backoff and create Admin alerts. | Complete | `backend/app/services/integrations.py`, `backend/app/services/notifications.py`, `backend/tests/test_content_escalations_governance.py` |
 | Manual sync and local scheduled sync. | Complete | `backend/app/main.py`, `backend/app/config.py`, `backend/app/services/integrations.py` |
 | Google Calendar OAuth, minimum outbound event scope, outbound governance scheduling/update, owner profile Calendar resolution. | Complete | `backend/app/routers/integrations.py`, `backend/app/services/integrations.py`, `backend/app/services/governance.py` |
 | KAM profile primary Calendar ID and Admin user-management Calendar ID, defaulted from user email. | Complete | `backend/app/services/user_management.py`, `backend/app/services/seed.py`, `frontend/src/pages/Profile.tsx`, `frontend/src/components/admin/AdminUsersPanel.tsx` |
-| Fathom API-key sync, signed webhook, meeting/share links, imported review items, redaction, approve/reject. | Complete | `backend/app/services/integrations.py`, `backend/app/routers/integrations.py`, `frontend/src/components/admin/IntegrationsPanel.tsx`, `backend/tests/test_content_escalations_governance.py` |
+| Global/admin Fathom API-key sync, signed webhook, meeting/share links, imported review items, redaction, approve/reject. | Retired | Fathom moved to personal Profile meeting capture; retired admin/global endpoints return `404`, and historical records are preserved. |
 | Personal Fathom connection and user-owned meeting artifacts. | Complete | `backend/app/services/meeting_capture.py`, `backend/app/routers/meeting_capture.py`, `frontend/src/pages/Profile.tsx`, `frontend/src/components/governance/CompleteGovernanceEventDialog.tsx`, `backend/tests/test_content_escalations_governance.py` |
 | Fathom transcript sensitivity controls. | Complete | `backend/app/services/integrations.py`, `backend/app/schemas.py` |
-| Fathom task suggestions approve/reject into current-user tasks. | Deferred | Historical endpoints remain, but new Fathom sync/webhook no longer creates standalone task suggestions. Governance completion now owns Fathom-assisted task creation. |
+| Fathom task suggestions approve/reject into current-user tasks. | Retired | Historical data structures remain, but admin/global Fathom task-suggestion endpoints are no longer exposed. Governance completion now owns Fathom-assisted task creation. |
 | Manual CSAT module with score scale, normalization, mapping, freshness, trend, timeline/scoring links. | Complete | `backend/app/services/csat.py`, `backend/app/repositories/csat.py`, `backend/app/routers/csat.py`, `frontend/src/pages/HealthScores.tsx` |
 | Future third-party CSAT writes into same CSAT storage model. | Partial | Storage/API model exists in `backend/app/models.py` and `backend/app/services/csat.py`; no external CSAT adapter yet by requirement decision. |
 | AI/LLM Gateway connection status and unified run table. | Partial | `backend/app/models.py`, `backend/app/services/integrations.py`, `backend/app/routers/integrations.py`, `backend/app/services/kyc.py`, `backend/app/services/timeline.py`, `backend/app/services/signals.py`; KYC, Timeline AI Search, and signal explanations are wired, while future summary/semantic retrieval paths still need linkage. |
@@ -47,7 +47,7 @@ Phase 3 self-review for `specs/09-approved-integrations.md`.
 | Audit configuration changes, tests, syncs, review decisions, CSAT changes, Calendar writes. | Complete | `backend/app/services/integrations.py`, `backend/app/services/csat.py`, `backend/app/services/governance.py`, `backend/app/services/user_management.py` |
 | Webhook signature validation and replay rejection. | Complete | `backend/app/services/integrations.py`, `backend/tests/test_content_escalations_governance.py` |
 | Provider pagination and duplicate records across pages. | Partial | Fathom pagination added in `backend/app/services/integrations.py`; duplicate handling depends on imported-item external ID dedupe. Google Calendar inbound provider pagination is no longer in scope for the outbound-only flow. |
-| UI adapter cards, configure/test/sync/retry, logs, credentials masking, loading/empty/error states. | Complete | `frontend/src/components/admin/IntegrationsPanel.tsx`, `frontend/src/services/integrations.ts`, `frontend/src/components/admin/IntegrationsPanel.test.tsx`; Google Calendar hides inbound sync/read-token controls. |
+| UI adapter cards, configure/test/sync/retry, logs, credentials masking, loading/empty/error states. | Complete | `frontend/src/components/admin/IntegrationsPanel.tsx`, `frontend/src/services/integrations.ts`, `frontend/src/components/admin/IntegrationsPanel.test.tsx`; Admin Integrations shows Google Calendar and AI/LLM Gateway only, while Google Calendar hides inbound sync/read-token controls. |
 | Profile/Admin user Calendar ID UI states. | Complete | `frontend/src/pages/Profile.tsx`, `frontend/src/components/admin/AdminUsersPanel.tsx` |
 | CSAT trend/manual score UI states. | Complete | `frontend/src/pages/HealthScores.tsx`, `frontend/src/services/csat.ts` |
 | Mapping rules screen, full unmapped/review queue, AI Gateway run log UI, error log detail drawer. | Partial | Backend APIs exist; full production UI remains to be expanded beyond Admin Integrations preview/list areas. |
@@ -58,7 +58,7 @@ Phase 3 self-review for `specs/09-approved-integrations.md`.
 - Full Admin UI for mapping rules, unmapped item queue, AI Gateway run logs, and error-log detail drawer is partial.
 - Google Calendar external edit/deletion conflict reconciliation is partial; inbound provider pagination is intentionally out of scope for the outbound-only flow.
 - Sync concurrency locking for "Admin disables adapter while sync is running" and scheduled/manual sync overlap is partial.
-- Fathom OAuth is intentionally missing for the current MVP because the implemented requirement uses API keys for internal workflows.
+- Fathom OAuth is intentionally missing for the current MVP. The active Fathom path uses personal API keys in Profile; global/admin Fathom workflows are retired.
 - External third-party CSAT adapter mapping is pending product inputs; the internal/manual CSAT scoring formula is implemented.
 
 ## Field Builder Impact
@@ -70,7 +70,7 @@ Phase 3 self-review for `specs/09-approved-integrations.md`.
 ## Missing Tests
 
 - Needed next: AI Gateway run logging assertions for KYC and signal explanation paths, frontend mapping-rule/review-queue interactions, frontend AI Gateway run log UI, Google Calendar token expiry/revocation, outbound Calendar write fallback/error branches, and sync overlap/adapter-disabled race conditions.
-- Current coverage added or verified: approved adapter list, config-required sync, disabled Calendar inbound sync, owner-profile outbound Calendar writes without invitees, profile/Admin Calendar IDs, Fathom API-key sync, personal Fathom meeting capture, Fathom meeting links, external-participant search, sync-log filters, signed webhook/replay rejection, manual CSAT, CSAT mapping, sync-run failure filtering, Admin repeated-failure notifications, and Timeline AI Search unified AI Gateway run logging.
+- Current coverage added or verified: approved adapter list without global Fathom, retired Fathom admin/global endpoints, config-required sync, disabled Calendar inbound sync, owner-profile outbound Calendar writes without invitees, profile/Admin Calendar IDs, personal Fathom meeting capture, manual CSAT, CSAT mapping, sync-run failure filtering, Admin repeated-failure notifications, and Timeline AI Search unified AI Gateway run logging.
 
 ## Potential Bugs And Security Concerns
 
@@ -93,11 +93,10 @@ Phase 3 self-review for `specs/09-approved-integrations.md`.
 - Added sync-run `failure_type` filtering in repository, service, and routes.
 - Added sync-log `severity`, `date_from`, `date_to`, and `search` filtering in repository, service, and routes.
 - Extended imported-item search to sanitized provider payloads for external participant metadata.
-- Added Fathom webhook replay rejection using `webhook-id`.
-- Added Fathom provider pagination with cursor support and bounded page count.
+- Historical global Fathom webhook replay and pagination work remains in preserved code/data paths, but the admin/global endpoints are now retired.
 - Added in-app Admin notifications for repeated integration failures.
 - Added unified AI Gateway run logging for KYC extraction, Timeline AI Search, and signal explanations.
-- Added tests for Fathom webhook replay, log/imported-item search filters, sync-run failure filtering, and repeated-failure notifications.
+- Added tests for retired Fathom admin/global endpoints, log/imported-item search filters, sync-run failure filtering, and repeated-failure notifications.
 
 ## Verification
 

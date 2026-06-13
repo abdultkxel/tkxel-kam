@@ -8,6 +8,7 @@ import { FieldError } from '@/components/form/FieldError'
 import { AddGovernanceEventDialog } from '@/components/governance/AddGovernanceEventDialog'
 import { CompleteGovernanceEventDialog } from '@/components/governance/CompleteGovernanceEventDialog'
 import { GovernanceEventActions } from '@/components/governance/GovernanceEventActions'
+import { RuntimeCustomFieldValues } from '@/components/custom-fields/RuntimeCustomFields'
 import { Account } from '@/types/account'
 import { useGovernanceStore } from '@/stores/governanceStore'
 import { useTimelineStore } from '@/stores/timelineStore'
@@ -17,7 +18,7 @@ import { GovernanceEventRecord } from '@/types/governance'
 import { formatDate } from '@/utils/formatters'
 import { useAuth } from '@/contexts/AuthContext'
 import { useRole } from '@/hooks/useRole'
-import { ContentRecommendation, createSentContent, Escalation, listContentRecommendations, listEscalations, listSentContent, SentContent } from '@/services/contentGovernance'
+import { ContentRecommendation, RuntimeCustomField, createSentContent, Escalation, listContentRecommendations, listEscalations, listRuntimeCustomFields, listSentContent, SentContent } from '@/services/contentGovernance'
 import { downloadAccountAttachment, extractAccountAttachment, listAccountAttachments, uploadAccountAttachment } from '@/services/accountWorkspace'
 import { ApiError } from '@/services/api'
 import { createTimelineNote, deleteTimelineEvent, getAccountTimeline, updateTimelineEvent } from '@/services/timeline'
@@ -306,7 +307,24 @@ function formatBytes(value: number) {
 }
 
 function GovernanceAccountPanel({ account, governance }: { account: Account; governance: GovernanceEventRecord[] }) {
+  const { token } = useAuth()
+  const [customFields, setCustomFields] = useState<RuntimeCustomField[]>([])
   const sortedGovernance = [...governance].sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime())
+
+  useEffect(() => {
+    if (!token) return
+    let cancelled = false
+    listRuntimeCustomFields(token, 'governance_reviews')
+      .then(fields => {
+        if (!cancelled) setCustomFields(Array.isArray(fields) ? fields : [])
+      })
+      .catch(() => {
+        if (!cancelled) setCustomFields([])
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [token])
 
   return (
     <section className="tk-card overflow-hidden">
@@ -360,6 +378,7 @@ function GovernanceAccountPanel({ account, governance }: { account: Account; gov
                 <GovernanceDetailList title="Action items" items={event.actionItems} empty="No governance action items." />
                 <GovernanceDetailList title="Notes" items={event.notes.map(item => item.body)} empty="No completion notes yet." richText />
               </div>
+              <RuntimeCustomFieldValues fields={customFields} values={event.customFieldValues} className="mt-4 bg-surface-secondary" />
               {event.status !== 'completed' && event.status !== 'cancelled' ? (
                 <div className="mt-4 flex justify-end">
                   <CompleteGovernanceEventDialog event={event} />

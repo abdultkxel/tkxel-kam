@@ -26,6 +26,7 @@ from app.repositories.onboarding import OnboardingRepository
 from app.repositories.rbac import RbacRepository
 from app.repositories.timeline import TimelineRepository
 from app.repositories.custom_fields import CustomFieldRepository
+from app.rbac import ACCOUNT_CUSTOM_FIELD_MODULES
 from app.schemas import (
     AccountCsvImportRequest,
     AccountCsvImportResponse,
@@ -60,7 +61,7 @@ from app.services.timeline import TimelineService
 from app.services.user_management import page_count
 
 
-ACCOUNT_FIELD_MODULES = ["account_onboarding_workspace", "account_overview", "onboarding", "accounts"]
+ACCOUNT_FIELD_MODULES = list(ACCOUNT_CUSTOM_FIELD_MODULES)
 
 
 class OnboardingService:

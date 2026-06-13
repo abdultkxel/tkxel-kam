@@ -38,10 +38,26 @@ class ResizeObserverMock {
 }
 
 vi.stubGlobal('ResizeObserver', ResizeObserverMock)
+Object.defineProperty(HTMLElement.prototype, 'hasPointerCapture', {
+  configurable: true,
+  value: vi.fn(() => false),
+})
+Object.defineProperty(HTMLElement.prototype, 'setPointerCapture', {
+  configurable: true,
+  value: vi.fn(),
+})
+Object.defineProperty(HTMLElement.prototype, 'releasePointerCapture', {
+  configurable: true,
+  value: vi.fn(),
+})
+Object.defineProperty(HTMLElement.prototype, 'scrollIntoView', {
+  configurable: true,
+  value: vi.fn(),
+})
 
-const customNoteType: TimelineEventTypeConfig = {
+const manualNoteType: TimelineEventTypeConfig = {
   id: 'cfg-manual',
-  name: 'Testing',
+  name: 'Manual note',
   eventType: 'manual_note',
   module: 'manual',
   colorToken: 'surface-border',
@@ -51,11 +67,23 @@ const customNoteType: TimelineEventTypeConfig = {
   retentionPolicy: 'keep',
 }
 
+const governanceType: TimelineEventTypeConfig = {
+  id: 'cfg-governance',
+  name: 'Governance update',
+  eventType: 'governance_event',
+  module: 'governance',
+  colorToken: 'brand-blue-dark',
+  active: true,
+  defaultVisibility: 'public',
+  createdDate: '2026-06-02T00:00:00Z',
+  retentionPolicy: 'keep',
+}
+
 const createdEntry: TimelineEntry = {
   id: 'tl-new',
   accountId: 'acct-1',
-  eventType: 'manual_note',
-  module: 'manual',
+  eventType: 'governance_event',
+  module: 'governance',
   title: 'Sponsor handoff',
   description: 'Reviewed sponsor transition with the account team.',
   performedBy: 'usr-admin',
@@ -87,7 +115,7 @@ function renderDialog(onAdded = vi.fn()) {
 describe('AddNoteModal', () => {
   beforeEach(() => {
     vi.clearAllMocks()
-    vi.mocked(getTimelineEventTypes).mockResolvedValue(page([customNoteType]))
+    vi.mocked(getTimelineEventTypes).mockResolvedValue(page([manualNoteType, governanceType]))
     vi.mocked(createTimelineNote).mockResolvedValue(createdEntry)
   })
 
@@ -100,15 +128,20 @@ describe('AddNoteModal', () => {
     expect(screen.getByLabelText(/event type/i)).toBeInTheDocument()
     expect(screen.getByText(/event date/i)).toBeInTheDocument()
     expect(screen.getByText(/event details/i)).toBeInTheDocument()
+    expect(screen.queryByText(/restrict visibility/i)).not.toBeInTheDocument()
+    expect(screen.queryByText(/for sensitive account context/i)).not.toBeInTheDocument()
     expect(screen.getByRole('button', { name: /save event/i })).toBeEnabled()
   })
 
-  it('submits the event title and description with the selected timeline type', async () => {
+  it('submits the event title and description with a selected fixed timeline type', async () => {
     const onAdded = vi.fn()
     const user = userEvent.setup()
     renderDialog(onAdded)
 
     await waitFor(() => expect(screen.getByRole('button', { name: /save event/i })).toBeEnabled())
+    await user.click(screen.getByLabelText(/event type/i))
+    const governanceOptions = await screen.findAllByText('Governance update')
+    await user.click(governanceOptions[governanceOptions.length - 1])
     await user.type(screen.getByLabelText(/event title/i), 'Sponsor handoff')
     await user.type(screen.getByPlaceholderText(/write the account update/i), 'Reviewed sponsor transition with the account team.')
     await user.click(screen.getByRole('button', { name: /save event/i }))
@@ -118,22 +151,25 @@ describe('AddNoteModal', () => {
         'test-token',
         'acct-1',
         expect.objectContaining({
-          event_type: 'manual_note',
+          event_type: 'governance_event',
           title: 'Sponsor handoff',
           description: 'Reviewed sponsor transition with the account team.',
         }),
       )
     })
+    const payload = vi.mocked(createTimelineNote).mock.calls[0][2]
+    expect(payload).not.toHaveProperty('is_sensitive')
+    expect(payload).not.toHaveProperty('sensitivity_level')
     expect(onAdded).toHaveBeenCalledWith(createdEntry)
   })
 
-  it('shows a setup state when no active timeline types exist', async () => {
+  it('shows a non-admin unavailable state when timeline types cannot load', async () => {
     vi.mocked(getTimelineEventTypes).mockResolvedValue(page([]))
 
     renderDialog()
 
-    expect(await screen.findByText(/no active timeline types/i)).toBeInTheDocument()
-    expect(screen.getByRole('link', { name: /open timeline settings/i })).toHaveAttribute('href', '/admin?section=timeline')
+    expect(await screen.findByText(/timeline event types unavailable/i)).toBeInTheDocument()
+    expect(screen.queryByRole('link', { name: /open timeline settings/i })).not.toBeInTheDocument()
     expect(screen.getByRole('button', { name: /save event/i })).toBeDisabled()
   })
 })

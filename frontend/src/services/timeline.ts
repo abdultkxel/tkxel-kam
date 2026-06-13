@@ -93,7 +93,7 @@ export interface TimelineNotePayload {
   owner_id?: string
   mentions: string[]
   attachments: { name?: string; url?: string }[]
-  is_sensitive: boolean
+  is_sensitive?: boolean
   sensitivity_level?: string
   tags?: string[]
 }
@@ -231,16 +231,8 @@ export async function deleteTimelineComment(token: string, eventId: string, comm
 }
 
 export async function getTimelineEventTypes(token: string, activeState = 'all') {
-  const page = await apiRequest<Page<ApiEventType>>(`/api/admin/timeline-event-types?active_state=${activeState}&page=1&page_size=100`, { token })
+  const page = await apiRequest<Page<ApiEventType>>(`/api/timeline-event-types?active_state=${activeState}&page=1&page_size=100`, { token })
   return { ...page, items: page.items.map(mapEventType) }
-}
-
-export async function createTimelineEventType(token: string, payload: { slug: string; name: string; module: string; category?: string }) {
-  return mapEventType(await apiRequest<ApiEventType>('/api/admin/timeline-event-types', { method: 'POST', token, body: JSON.stringify(payload) }))
-}
-
-export async function updateTimelineEventType(token: string, typeId: string, payload: Partial<{ name: string; module: string; is_active: boolean; action: string }>) {
-  return mapEventType(await apiRequest<ApiEventType>(`/api/admin/timeline-event-types/${typeId}`, { method: 'PATCH', token, body: JSON.stringify(payload) }))
 }
 
 export async function getRetentionPolicies(token: string) {

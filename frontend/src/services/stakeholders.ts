@@ -9,6 +9,7 @@ import type {
   StakeholderInteractionPage,
   StakeholderOrgChart,
   StakeholderPage,
+  StakeholderRoleOption,
   StakeholderUpdatePayload,
 } from '@/types/stakeholder'
 
@@ -104,9 +105,21 @@ interface ApiStakeholderOrgChart {
   edges: ApiStakeholderOrgChartEdge[]
 }
 
+interface ApiStakeholderRoleConfig {
+  slug: string
+  name: string
+  is_active: boolean
+  display_order: number
+}
+
 export function listStakeholders(token: string, accountId: string, filters: StakeholderFilters | URLSearchParams = {}) {
   return apiRequest<ApiPage<ApiStakeholder>>(`/api/accounts/${accountId}/stakeholders${queryString(filters)}`, { token })
     .then(page => ({ ...page, items: page.items.map(mapStakeholder) }) satisfies StakeholderPage)
+}
+
+export function listStakeholderRoleOptions(token: string) {
+  return listAllPages<ApiStakeholderRoleConfig>('/api/stakeholder-roles', token)
+    .then(page => page.items.filter(item => item.is_active).map(mapStakeholderRoleOption))
 }
 
 export function createStakeholder(token: string, accountId: string, payload: StakeholderCreatePayload) {
@@ -278,6 +291,25 @@ function mapOrgChart(chart: ApiStakeholderOrgChart): StakeholderOrgChart {
       target: edge.target,
       relationshipType: edge.relationship_type,
     })),
+  }
+}
+
+function mapStakeholderRoleOption(role: ApiStakeholderRoleConfig): StakeholderRoleOption {
+  return { value: role.slug, label: role.name }
+}
+
+async function listAllPages<T>(basePath: string, token: string) {
+  const pageSize = 100
+  const separator = basePath.includes('?') ? '&' : '?'
+  const readPage = (page: number) => apiRequest<ApiPage<T>>(`${basePath}${separator}page=${page}&page_size=${pageSize}`, { token })
+  const firstPage = await readPage(1)
+  if (firstPage.pages <= 1) return firstPage
+  const remainingPages = await Promise.all(
+    Array.from({ length: firstPage.pages - 1 }, (_, index) => readPage(index + 2)),
+  )
+  return {
+    ...firstPage,
+    items: [...firstPage.items, ...remainingPages.flatMap(page => page.items)],
   }
 }
 

@@ -95,13 +95,13 @@ def seed_account_and_engagement(session: Session) -> None:
     session.commit()
 
 
-def seed_custom_field(session: Session) -> None:
+def seed_custom_field(session: Session, module: str = "playbooks", field_key: str = "risk_theme", label: str = "Risk Theme") -> None:
     admin = seeded_user(session, "admin")
     session.add(
         CustomFieldDefinition(
-            module="playbooks_tasks_calendar",
-            field_key="risk_theme",
-            label="Risk Theme",
+            module=module,
+            field_key=field_key,
+            label=label,
             field_type="single_select",
             options=["Renewal", "Delivery"],
             is_required=True,
@@ -247,6 +247,7 @@ def test_playbook_template_recommendation_execution_task_evidence_and_calendar(c
 def test_playbooks_tasks_authorization_and_validation(client: TestClient, db_session: Session) -> None:
     headers = auth_headers(client)
     owner = seeded_user(db_session, "account_manager")
+    seed_custom_field(db_session, module="tasks", field_key="task_theme", label="Task Theme")
     created = client.post("/api/admin/playbook-templates", headers=headers, json={**template_payload(owner.id), "custom_field_values": {}})
     assert created.status_code == 201
     template = created.json()
@@ -276,9 +277,18 @@ def test_playbooks_tasks_authorization_and_validation(client: TestClient, db_ses
     task = client.post(
         "/api/tasks",
         headers=headers,
-        json={"account_id": "account-playbook", "owner_id": owner.id, "title": "Manual renewal follow-up", "due_at": (datetime.now(timezone.utc) + timedelta(days=2)).isoformat(), "priority": "medium", "status": "open"},
+        json={
+            "account_id": "account-playbook",
+            "owner_id": owner.id,
+            "title": "Manual renewal follow-up",
+            "due_at": (datetime.now(timezone.utc) + timedelta(days=2)).isoformat(),
+            "priority": "medium",
+            "status": "open",
+            "custom_field_values": {"task_theme": "Delivery"},
+        },
     )
     assert task.status_code == 201
+    assert task.json()["custom_field_values"]["task_theme"] == "Delivery"
 
     skipped_without_reason = client.patch(f"/api/tasks/{task.json()['id']}", headers=headers, json={"status": "cancelled"})
     assert skipped_without_reason.status_code == 400

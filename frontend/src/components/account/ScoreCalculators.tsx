@@ -1,5 +1,5 @@
 import { CalendarClock, Check, CheckCircle2, ChevronDown, ClipboardCheck, Info, Loader2, Play, Save, XCircle } from 'lucide-react'
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { toast } from 'sonner'
 import { useRole } from '@/hooks/useRole'
 import { useScoreActivityStore } from '@/stores/scoreActivityStore'
@@ -488,6 +488,10 @@ export function ScoreCalculators({
     [accountTasks],
   )
   const summary = useMemo(() => buildSummary(selections, selectedServiceLines, activityEvidence), [activityEvidence, selectedServiceLines, selections])
+
+  useEffect(() => {
+    setSelections(seedSelections(account))
+  }, [account.id, account.health.commercial, account.health.delivery, account.health.relationship, account.health.usage, account.riskStatus])
 
   function setScore(calculatorId: ScoreCalculatorId, criterionId: string, value: string) {
     setSelections(current => ({

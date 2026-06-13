@@ -6,6 +6,7 @@ from fastapi.responses import FileResponse
 
 from app.dependencies import get_account_service, get_current_user, get_custom_field_service, get_engagement_service, get_onboarding_service, require_permission
 from app.models import User
+from app.rbac import ACCOUNT_CUSTOM_FIELD_MODULES
 from app.schemas import (
     AccountCsvImportRequest,
     AccountCsvImportResponse,
@@ -112,8 +113,8 @@ def list_accounts(
     response_model=list[CustomFieldDefinitionRead],
     summary="List account custom fields",
     description=(
-        "Returns active Field Builder definitions that should render in the account creation form. "
-        "Requires account onboarding create permission."
+        "Returns active Accounts Field Builder definitions that should render in the account creation form. "
+        "Legacy account-intake module definitions are included for backwards compatibility. Requires account onboarding create permission."
     ),
     responses={
         401: {"description": "Missing, invalid, or expired bearer token."},
@@ -124,7 +125,7 @@ def list_account_custom_fields(
     _: AccountCreateAccess,
     service: Annotated[CustomFieldService, Depends(get_custom_field_service)],
 ) -> list[CustomFieldDefinitionRead]:
-    return service.list_active_definitions(["account_onboarding_workspace", "account_overview", "onboarding", "accounts"])
+    return service.list_active_definitions(list(ACCOUNT_CUSTOM_FIELD_MODULES))
 
 
 @router.post(

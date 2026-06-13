@@ -9,9 +9,11 @@ from sqlalchemy.orm import Session
 from app.models import Account, AccountOwner, AccountOwnershipHistory, SourceCitation, SourceDocument, SourceDocumentChunk, User
 from app.repositories.accounts import AccountRepository
 from app.repositories.audit import AuditRepository
+from app.repositories.custom_fields import CustomFieldRepository
 from app.repositories.kyc import KycRepository
 from app.repositories.rbac import RbacRepository
 from app.repositories.timeline import TimelineRepository
+from app.rbac import ACCOUNT_CUSTOM_FIELD_MODULES
 from app.schemas import (
     AccountOwnerCreateRequest,
     AccountOwnerRead,
@@ -34,6 +36,7 @@ from app.schemas import (
 )
 from app.services.account_access import AccountAccessService
 from app.services.audit import AuditService
+from app.services.custom_fields import CustomFieldService
 from app.services.in_app_notifications import InAppNotificationService
 from app.services.kyc_document_extraction import KycDocumentExtractionService
 from app.services.source_document_contract import SENSITIVE_SOURCE_TYPES
@@ -51,6 +54,7 @@ class AccountService:
         self.kyc = KycRepository(db)
         self.access = AccountAccessService(self.accounts, RbacRepository(db))
         self.audit = AuditService(AuditRepository(db))
+        self.custom_fields = CustomFieldService(db, CustomFieldRepository(db))
         self.timeline = TimelineService(TimelineRepository(db))
         self.in_app_notifications = InAppNotificationService(db)
 
@@ -798,7 +802,15 @@ class AccountService:
                 "engagement_records": bool(account.engagements),
                 "next_governance": account.next_governance_at is not None,
             },
+            custom_field_values=self._account_custom_field_values(account),
         )
+
+    def _account_custom_field_values(self, account: Account) -> dict[str, object]:
+        return {
+            field_key: value
+            for module in ACCOUNT_CUSTOM_FIELD_MODULES
+            for field_key, value in self.custom_fields.record_values(module, account.id).items()
+        }
 
     def _has_current_kyc(self, account: Account) -> bool:
         if not account.kyc_snapshots:

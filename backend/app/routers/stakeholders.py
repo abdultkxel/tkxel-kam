@@ -258,6 +258,22 @@ def delete_stakeholder(
 
 
 @router.get(
+    "/stakeholder-roles",
+    response_model=StakeholderRoleConfigPageRead,
+    summary="List active stakeholder roles",
+    description="Returns active stakeholder role taxonomy for account stakeholder forms and filters.",
+)
+def list_active_stakeholder_roles(
+    current_user: Annotated[User, Depends(get_current_user)],
+    service: Annotated[StakeholderConfigService, Depends(get_stakeholder_config_service)],
+    search: str | None = None,
+    page: Annotated[int, Query(ge=1)] = 1,
+    page_size: Annotated[int, Query(ge=1, le=100)] = 50,
+) -> StakeholderRoleConfigPageRead:
+    return service.list_roles(current_user, active_state="active", search=search, page=page, page_size=page_size)
+
+
+@router.get(
     "/admin/stakeholder-roles",
     response_model=StakeholderRoleConfigPageRead,
     summary="List stakeholder role configuration",
@@ -293,6 +309,22 @@ def create_stakeholder_role(payload: StakeholderRoleConfigCreateRequest, current
 )
 def update_stakeholder_role(role_id: str, payload: StakeholderRoleConfigUpdateRequest, current_user: Annotated[User, Depends(get_current_user)], service: Annotated[StakeholderConfigService, Depends(get_stakeholder_config_service)]) -> StakeholderRoleConfigRead:
     return service.update_role(role_id, payload, current_user)
+
+
+@router.delete(
+    "/admin/stakeholder-roles/{role_id}",
+    response_model=MessageResponse,
+    summary="Delete unused stakeholder role",
+    description="Deletes a stakeholder role only when no stakeholder records or gap rules reference it. Used roles should be deactivated instead.",
+    responses={
+        401: {"description": "Missing, invalid, or expired bearer token."},
+        403: {"description": "Authenticated user cannot configure stakeholder roles."},
+        404: {"description": "Stakeholder role was not found."},
+        409: {"description": "Role is referenced by stakeholders or gap rules and cannot be deleted."},
+    },
+)
+def delete_stakeholder_role(role_id: str, current_user: Annotated[User, Depends(get_current_user)], service: Annotated[StakeholderConfigService, Depends(get_stakeholder_config_service)]) -> MessageResponse:
+    return service.delete_role(role_id, current_user)
 
 
 @router.get(

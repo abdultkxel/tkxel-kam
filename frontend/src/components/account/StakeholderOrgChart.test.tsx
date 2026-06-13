@@ -8,6 +8,18 @@ vi.mock('@/hooks/useStakeholders', () => ({
   useStakeholderOrgChart: () => ({
     nodes: [
       {
+        id: 'unmapped_stakeholders',
+        name: 'Unmapped Stakeholders',
+        title: null,
+        linkedinUrl: null,
+        role: 'group',
+        influenceLevel: null,
+        relationshipStrength: null,
+        sentiment: null,
+        parentId: null,
+        sensitiveFieldsRedacted: false,
+      },
+      {
         id: 'sponsor-1',
         name: 'Jane Sponsor',
         title: 'Chief Operating Officer',
@@ -16,7 +28,7 @@ vi.mock('@/hooks/useStakeholders', () => ({
         influenceLevel: 'high',
         relationshipStrength: 'strong',
         sentiment: 'positive',
-        parentId: null,
+        parentId: 'unmapped_stakeholders',
         sensitiveFieldsRedacted: false,
       },
       {
@@ -46,6 +58,9 @@ describe('StakeholderOrgChart', () => {
 
     const link = screen.getByRole('link', { name: /linkedin/i })
     expect(link).toHaveAttribute('href', 'https://www.linkedin.com/in/jane-sponsor')
+    expect(screen.getByText('Top-level stakeholders')).toBeInTheDocument()
+    expect(screen.getByText('No reporting line')).toBeInTheDocument()
+    expect(screen.queryByText('Unmapped')).not.toBeInTheDocument()
     expect(screen.getByText('Sensitive Stakeholder')).toBeInTheDocument()
     expect(screen.getAllByRole('link', { name: /linkedin/i })).toHaveLength(1)
   })

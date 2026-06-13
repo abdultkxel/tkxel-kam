@@ -3,7 +3,7 @@ import { CalendarClock, Check, CheckCircle2, ClipboardCheck, ExternalLink, FileU
 import { FormEvent, useEffect, useMemo, useState } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
 import { toast } from 'sonner'
-import { RuntimeCustomFields, customValuesForSubmit, requiredCustomFieldErrors } from '@/components/custom-fields/RuntimeCustomFields'
+import { RuntimeCustomFieldValues, RuntimeCustomFields, customValuesForSubmit, requiredCustomFieldErrors } from '@/components/custom-fields/RuntimeCustomFields'
 import { EmptyState } from '@/components/ui/EmptyState'
 import { PageHeader } from '@/components/ui/PageHeader'
 import { useAuth } from '@/contexts/AuthContext'
@@ -97,7 +97,7 @@ export function Tasks() {
 
   useEffect(() => {
     if (!token) return
-    listRuntimeCustomFields(token, 'playbooks_tasks_calendar')
+    listRuntimeCustomFields(token, 'tasks')
       .then(setCustomFields)
       .catch(() => setCustomFields([]))
   }, [token])
@@ -284,11 +284,11 @@ export function Tasks() {
           </div>
         ) : (
           viewMode === 'kanban' ? (
-            <TaskKanbanBoard tasks={tasks} readOnly={readOnly} onStatus={changeStatus} />
+            <TaskKanbanBoard tasks={tasks} customFields={customFields} readOnly={readOnly} onStatus={changeStatus} />
           ) : (
             <div className="grid gap-4">
               {tasks.map(task => (
-                <TaskCard key={task.id} task={task} token={token} readOnly={readOnly} onStatus={changeStatus} onUpdated={upsertTask} />
+                <TaskCard key={task.id} task={task} token={token} customFields={customFields} readOnly={readOnly} onStatus={changeStatus} onUpdated={upsertTask} />
               ))}
             </div>
           )
@@ -298,7 +298,7 @@ export function Tasks() {
   )
 }
 
-function TaskKanbanBoard({ tasks, readOnly, onStatus }: { tasks: PlaybookTask[]; readOnly: boolean; onStatus: (task: PlaybookTask, status: TaskStatus, patch?: Partial<PlaybookTask>) => Promise<void> }) {
+function TaskKanbanBoard({ tasks, customFields, readOnly, onStatus }: { tasks: PlaybookTask[]; customFields: RuntimeCustomField[]; readOnly: boolean; onStatus: (task: PlaybookTask, status: TaskStatus, patch?: Partial<PlaybookTask>) => Promise<void> }) {
   const grouped = useMemo(() => {
     return taskStatusColumns.map(column => ({
       ...column,
@@ -320,7 +320,7 @@ function TaskKanbanBoard({ tasks, readOnly, onStatus }: { tasks: PlaybookTask[];
             </div>
             <div className="grid flex-1 content-start gap-3 p-3">
               {column.tasks.length ? column.tasks.map(task => (
-                <TaskKanbanCard key={task.id} task={task} readOnly={readOnly} onStatus={onStatus} />
+                <TaskKanbanCard key={task.id} task={task} customFields={customFields} readOnly={readOnly} onStatus={onStatus} />
               )) : (
                 <div className="rounded-md border border-dashed border-surface-border bg-white/60 p-4 text-center text-xs font-medium text-ink-secondary">
                   No tasks
@@ -334,7 +334,7 @@ function TaskKanbanBoard({ tasks, readOnly, onStatus }: { tasks: PlaybookTask[];
   )
 }
 
-function TaskKanbanCard({ task, readOnly, onStatus }: { task: PlaybookTask; readOnly: boolean; onStatus: (task: PlaybookTask, status: TaskStatus, patch?: Partial<PlaybookTask>) => Promise<void> }) {
+function TaskKanbanCard({ task, customFields, readOnly, onStatus }: { task: PlaybookTask; customFields: RuntimeCustomField[]; readOnly: boolean; onStatus: (task: PlaybookTask, status: TaskStatus, patch?: Partial<PlaybookTask>) => Promise<void> }) {
   const locked = readOnly || ['done', 'cancelled'].includes(task.status)
   const overdue = new Date(task.due_at) < new Date() && !['done', 'cancelled'].includes(task.status)
 
@@ -351,6 +351,7 @@ function TaskKanbanCard({ task, readOnly, onStatus }: { task: PlaybookTask; read
         <span className="inline-flex items-center gap-1"><CalendarClock className="h-3.5 w-3.5 text-brand-orange" />{formatDate(task.due_at)}</span>
         <span className={cn('w-fit rounded-full border px-2 py-1 text-[11px] font-semibold uppercase tracking-wider', sourceClass(task.source_type))}>{sourceLabel(task.source_type)}</span>
       </div>
+      <RuntimeCustomFieldValues fields={customFields} values={task.custom_field_values} variant="badges" className="mt-3" />
       <div className="mt-4 grid gap-2">
         <Link className="tk-button-secondary justify-center px-3 py-2 text-xs" to={`/accounts/${task.account_id}`}>
           <ExternalLink className="h-3.5 w-3.5" />
@@ -384,7 +385,7 @@ function TaskKanbanCard({ task, readOnly, onStatus }: { task: PlaybookTask; read
   )
 }
 
-function TaskCard({ task, token, readOnly, onStatus, onUpdated }: { task: PlaybookTask; token: string | null; readOnly: boolean; onStatus: (task: PlaybookTask, status: TaskStatus, patch?: Partial<PlaybookTask>) => Promise<void>; onUpdated: (task: PlaybookTask) => void }) {
+function TaskCard({ task, token, customFields, readOnly, onStatus, onUpdated }: { task: PlaybookTask; token: string | null; customFields: RuntimeCustomField[]; readOnly: boolean; onStatus: (task: PlaybookTask, status: TaskStatus, patch?: Partial<PlaybookTask>) => Promise<void>; onUpdated: (task: PlaybookTask) => void }) {
   const [notes, setNotes] = useState(task.notes ?? '')
   const [outcome, setOutcome] = useState(task.outcome ?? '')
   const locked = readOnly || ['done', 'cancelled'].includes(task.status)
@@ -418,6 +419,7 @@ function TaskCard({ task, token, readOnly, onStatus, onUpdated }: { task: Playbo
             {task.completed_at ? <span>Completed {formatRelative(task.completed_at)}</span> : null}
             {task.success_criteria.length ? <span>{task.success_criteria.length} success criteria</span> : null}
           </div>
+          <RuntimeCustomFieldValues fields={customFields} values={task.custom_field_values} className="mt-4 bg-surface-secondary" />
           <div className="mt-4 grid gap-3 md:grid-cols-2">
             <label className="space-y-1">
               <span className="text-xs font-semibold text-ink-secondary">Notes</span>

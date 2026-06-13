@@ -2,7 +2,7 @@
 
 ## Feature Overview
 
-Provide a source-linked chronological account/engagement timeline, manual notes, event type configuration, retention/tombstone policies, and source-backed handover summaries.
+Provide a source-linked chronological account/engagement timeline, manual notes, a fixed manual event catalog, retention/tombstone policies, and source-backed handover summaries.
 
 ## Business Goal
 
@@ -22,7 +22,7 @@ Preserve institutional memory across account activity and ownership changes whil
 ## User Stories Covered
 
 - Story 15.1 - Source-linked chronological timeline
-- Story 15.2 - Manual timeline notes and event type configuration
+- Story 15.2 - Manual timeline notes and fixed event type catalog
 - Story 15.3 - Timeline retention and deletion policy
 - Story 16.1 - Source-backed handover summary
 
@@ -34,6 +34,8 @@ Preserve institutional memory across account activity and ownership changes whil
 - Critical event defaults for the software services domain include escalations, delivery delays, severe delivery health deterioration, severe account health/score drops, missed renewal/notice deadlines, executive decisions, governance decisions, approval decisions, and high-severity client risks. Admin-configurable critical rules may be added later.
 - Retention must support both Admin/RBAC-authorized manual execution and a local scheduled background worker.
 - Existing frontend mock timeline data can be replaced by server-backed data; mock data may remain only as a development fallback when the backend is unavailable.
+- Admin Timeline configuration has been removed from the frontend; manual timeline events use a fixed seeded catalog.
+- The manual Add Event UI no longer exposes a visibility/sensitivity toggle; manual events created there are non-sensitive.
 
 ## Functional Requirements
 
@@ -44,14 +46,14 @@ Preserve institutional memory across account activity and ownership changes whil
 - Link entries to source records, including account, engagement, charter, SOW, KYC snapshot, score, signal, task, opportunity, content item, escalation, governance event, approval, AI output, and attachment.
 - Source links must degrade gracefully when the source record is archived, restricted, or unavailable.
 - Show before/after values for configured key changes, including score, stage, owner, status, threshold, weight, signal status, escalation severity, SOW end date, renewal date, notice deadline, and approval changes.
-- Allow manual timeline notes with event type, date, owner, description, mentions, attachments, and sensitivity.
+- Allow manual timeline notes with event type, date, owner, description, mentions, and attachments.
 - Manual notes and note comments/annotations must be persisted; frontend-only timeline notes are not sufficient.
 - Timeline comments/annotations can be created, edited, and deleted by authorized users while preserving audit history.
 - Notify mentioned users where notification policy permits without granting access to restricted content.
 - Mentioned users without account access may receive only an allowed notification shell and must not receive restricted note content.
-- Configure timeline event types, categories, visibility, retention, active state, and source module.
-- Seed a default event type catalog for account setup, KYC update, score change, calculator change, stage change, opportunity event, retention event, client education, escalation event, governance event, approval event, executive event, AI event, manual note, engagement created/updated, SOW terms updated, renewal dates updated, engagement health changed, delivery status changed, and engagement archived.
-- Seed default critical event type/rule flags for escalations, delivery delays, severe health or score deterioration, missed renewal/notice deadlines, executive decisions, governance decisions, approval decisions, and high-severity client risks.
+- Seed a fixed manual event catalog for Manual note, Governance update, Escalation update, Opportunity update, and Client education.
+- Account Timeline add-event and filters read event types from a non-admin endpoint; the frontend no longer exposes event type create/update controls.
+- Account Timeline add-event does not expose sensitivity controls and submits manual events as non-sensitive.
 - Enforce sensitive-entry rules at the data layer.
 - Retain, archive, restrict, or delete eligible entries according to policy.
 - Use audit-preserving tombstones for deletion.
@@ -85,7 +87,7 @@ Preserve institutional memory across account activity and ownership changes whil
 - Authorized account users view timeline entries allowed by RBAC and sensitivity.
 - KAM/KAM Head add manual notes.
 - Ops Lead, Commercial Stakeholder, Delivery Stakeholder, and Content Specialist permissions follow module/account access and may view or create timeline entries only where their role grants the underlying account/module permission.
-- Admin configures event types and retention policies.
+- Admin configures retention policies.
 - Admin can simulate, apply, and audit retention policy actions.
 - Admin and any explicitly authorized RBAC role can manually run retention; the scheduled worker must execute as a system actor and produce the same audit trail.
 - KAM Head/Leadership Viewer generate handover summaries where authorized.
@@ -158,9 +160,10 @@ Preserve institutional memory across account activity and ownership changes whil
 - `GET /api/timeline-events/{event_id}/comments`
 - `PATCH /api/timeline-events/{event_id}/comments/{comment_id}`
 - `DELETE /api/timeline-events/{event_id}/comments/{comment_id}`
-- `GET /api/admin/timeline-event-types`
-- `POST /api/admin/timeline-event-types`
-- `PATCH /api/admin/timeline-event-types/{type_id}`
+- `GET /api/timeline-event-types`
+- `GET /api/admin/timeline-event-types` (backward-compatible configuration API; not exposed in frontend)
+- `POST /api/admin/timeline-event-types` (backward-compatible configuration API; not exposed in frontend)
+- `PATCH /api/admin/timeline-event-types/{type_id}` (backward-compatible configuration API; not exposed in frontend)
 - `GET /api/admin/retention-policies`
 - `POST /api/admin/retention-policies`
 - `PATCH /api/admin/retention-policies/{policy_id}`
@@ -180,7 +183,7 @@ Preserve institutional memory across account activity and ownership changes whil
 ## Database/Storage Requirements
 
 - Timeline entries must be persisted in the database with account, optional engagement, event type, source module, source record, source route, actor/system actor, event timestamp, before/after values, sensitivity, sensitivity level, tags, metadata, immutable flag, archived/restricted/deleted status, and retention policy reference.
-- Timeline event type configuration must be persisted with slug/key, display name, category, module, color/display order, default visibility, retention policy reference, active state, critical flag, and in-use protection.
+- Timeline event type catalog rows must be persisted with slug/key, display name, category, module, color/display order, default visibility, active state, and compatibility metadata for historical entries.
 - Manual note comments/annotations must be persisted separately from timeline entries with entry ID, author, body, mentions, sensitivity inheritance, and created/updated timestamps.
 - Timeline note attachments must be persisted or linked through the existing attachment/storage mechanism with inherited sensitivity.
 - Retention policies must be persisted with entity type, action, duration/window, active state, reason/template, critical-event behavior, schedule configuration, last/next run timestamps, created/updated actor, and audit metadata.
@@ -192,8 +195,8 @@ Preserve institutional memory across account activity and ownership changes whil
 
 - Account Timeline tab with event cards, filters, search, source links, diff display, and detail drawer.
 - Engagement timeline subset.
-- Add note modal with event type picker, date, owner, mentions, attachments, sensitivity.
-- Admin event type configuration.
+- Add note modal with event type picker, date, owner, mentions, and attachments.
+- Fixed event type picker for manual account timeline events.
 - Admin retention policy screen with simulation/test action, action controls, retention logs, and tombstone display.
 - Admin retention policy screen must expose manual retention run, scheduled retention status, last run, next run, and run errors.
 - Handover summary generation action from Account Overview and ownership-change flow, summary page/drawer, citations, section navigation, history, print/PDF export/internal share controls where permitted, and redaction indicators.
@@ -284,8 +287,8 @@ Preserve institutional memory across account activity and ownership changes whil
 ## Audit/Logging Requirements
 
 - Audit automatic event creation source and actor/system actor.
-- Audit manual note create/update and sensitivity changes.
-- Audit event type configuration changes.
+- Audit manual note create/update and any backend/API sensitivity changes.
+- Audit event type configuration changes made through backward-compatible admin APIs.
 - Audit retention policy changes and every archive/restrict/delete action.
 - Audit handover generation, source set, viewer, redactions, and export/share if supported.
 - Audit timeline comments/annotations and mention notifications.
@@ -298,8 +301,8 @@ Preserve institutional memory across account activity and ownership changes whil
 - Apply all major timeline filters.
 - Search authorized timeline entries.
 - Verify restricted entries are omitted without hints.
-- Add manual sensitive note and verify permissions.
-- Configure inactive event type and verify hidden from new note picker.
+- Verify sensitive timeline entries are omitted or shown according to permissions.
+- Verify only fixed active manual event types appear in the new note picker.
 - Delete critical event and verify tombstone behavior.
 - Generate handover summary and open citations.
 - View handover as restricted user and verify redactions.
@@ -346,9 +349,9 @@ Preserve institutional memory across account activity and ownership changes whil
 - Account Timeline is implemented in Account 360 with server-backed timeline loading, latest-page loading state, empty state, error state, pagination/load more, keyword search, event type filter, module filter, owner filter, date filters, sensitivity toggle where authorized, and newest/oldest sorting.
 - Engagement timeline subset is implemented through `GET /api/engagements/{engagement_id}/timeline`, with pagination and RBAC/sensitivity filtering.
 - Timeline events are persisted with account, optional engagement, event type, module/source context, source route, actor, event timestamp, before/after values, metadata, tags, mentions, attachments, sensitivity, immutable flag, status, retention metadata, source hash, and idempotency key.
-- Manual timeline notes are persisted with active event type validation, owner validation, mentions, attachments, sensitivity handling, backend authorization, audit logging, and frontend loading/error/empty states.
+- Manual timeline notes are persisted with active event type validation, owner validation, mentions, attachments, backend authorization, audit logging, and frontend loading/error/empty states. The Add Event UI submits manual events as non-sensitive while backend sensitivity handling remains for legacy/API and moderation paths.
 - Timeline comments/annotations are persisted separately, can be created/edited/deleted by authorized users, inherit sensitivity from the entry, and are covered by backend tests.
-- Timeline event type configuration is implemented in Admin with server-backed list/create/update, search/filter/pagination API, active/inactive handling, default seeded event type catalog, and seeded critical defaults for software-services critical events.
+- Timeline event type creation/update UI has been removed from Admin; account Timeline uses the fixed seeded manual catalog through `GET /api/timeline-event-types`, while legacy admin APIs remain backward-compatible.
 - Sensitive and restricted timeline entries are enforced at the data/API layer; unauthorized users receive no restricted-entry count or hint.
 - Retention policies are implemented with persisted policy configuration, simulation, manual run, local scheduled worker, archive/restrict/delete behavior, action history, tombstone creation for deletes, and searchable/filterable/paginated Admin history.
 - Handover summaries are generated from authorized account/timeline data with selected sections, optional date window, ownership-change context, source set, citations, redaction metadata, persisted summary history, PDF export, internal share link, and frontend history/loading/error/empty states.

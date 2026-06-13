@@ -57,6 +57,7 @@ interface ApiAccount {
   primary_owner?: ApiAccountOwner | null
   owners: ApiAccountOwner[]
   governance_completeness: Record<string, boolean>
+  custom_field_values?: Record<string, unknown>
 }
 
 interface ApiSourceCitation {
@@ -948,6 +949,7 @@ function mapApiAccount(account: ApiAccount): Account {
     risks: Object.entries(account.governance_completeness)
       .filter(([, complete]) => !complete)
       .map(([key]) => `${key.replace(/_/g, ' ')} is incomplete`),
+    customFieldValues: account.custom_field_values ?? {},
   }
 }
 

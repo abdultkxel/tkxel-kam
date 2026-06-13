@@ -16,6 +16,7 @@ from app.services.account_planning import AccountPlanningService
 from app.services.admin_security import AdminSecurityService
 from app.services.analytics import AnalyticsService
 from app.services.ai_assistance import AiAssistanceService
+from app.services.alerts import AlertsService
 from app.services.content import ContentService
 from app.services.csat import CsatService
 from app.services.custom_fields import CustomFieldService
@@ -208,6 +209,10 @@ def get_reports_service(db: Annotated[Session, Depends(get_db)]) -> ReportsServi
 
 def get_analytics_service(db: Annotated[Session, Depends(get_db)]) -> AnalyticsService:
     return AnalyticsService(db)
+
+
+def get_alerts_service(db: Annotated[Session, Depends(get_db)]) -> AlertsService:
+    return AlertsService(db)
 
 
 def get_admin_security_service(db: Annotated[Session, Depends(get_db)]) -> AdminSecurityService:

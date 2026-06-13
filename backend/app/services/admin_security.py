@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session
 from app.config import get_settings
 from app.models import (
     Account,
-    AccountChangeAlert,
+    Alert,
     ConfigurationChange,
     FieldPermission,
     IntegrationConnection,
@@ -234,7 +234,7 @@ class AdminSecurityService:
             checks=checks,
             metrics={
                 "accounts": self.db.scalar(select(func.count(Account.id))) or 0,
-                "account_change_alerts": self.db.scalar(select(func.count(AccountChangeAlert.id))) or 0,
+                "account_change_alerts": self.db.scalar(select(func.count(Alert.id))) or 0,
                 "notifications": self.db.scalar(select(func.count(NotificationRecord.id))) or 0,
                 "workers_failed": failed_workers,
             },

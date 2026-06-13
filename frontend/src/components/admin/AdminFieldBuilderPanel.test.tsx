@@ -8,13 +8,13 @@ vi.mock('@/contexts/AuthContext', () => ({
 }))
 
 const modules = [
-  { slug: 'account_overview', name: 'Account Overview' },
-  { slug: 'opportunity_management', name: 'Growth and Opportunity Management' },
+  { slug: 'accounts', name: 'Accounts' },
+  { slug: 'opportunities', name: 'Opportunities' },
 ]
 
 const field = {
   id: 'field-1',
-  module: 'account_overview',
+  module: 'accounts',
   field_key: 'customer_tier',
   label: 'Customer Tier',
   description: 'Tier configured by account leadership.',
@@ -73,6 +73,10 @@ describe('AdminFieldBuilderPanel', () => {
 
     expect(await screen.findByText('No custom fields match the current filters.')).toBeInTheDocument()
     await userEvent.click(screen.getByRole('button', { name: /create field/i }))
+    expect(screen.queryByLabelText(/sort order/i)).not.toBeInTheDocument()
+    expect(screen.queryByLabelText(/sensitive/i)).not.toBeInTheDocument()
+    expect(screen.queryByLabelText(/show in list/i)).not.toBeInTheDocument()
+    expect(screen.queryByLabelText(/show in detail/i)).not.toBeInTheDocument()
     await userEvent.type(screen.getByLabelText(/^Label$/i), 'Customer Tier')
     await userEvent.selectOptions(screen.getByLabelText(/field type/i), 'single_select')
     await userEvent.type(screen.getByLabelText(/options/i), 'Gold\nSilver')
@@ -81,12 +85,20 @@ describe('AdminFieldBuilderPanel', () => {
 
     expect(await screen.findByText('Customer Tier')).toBeInTheDocument()
     expect(screen.getByText('customer_tier')).toBeInTheDocument()
-    expect(screen.getAllByText('Account Overview').length).toBeGreaterThan(0)
+    expect(screen.getAllByText('Accounts').length).toBeGreaterThan(0)
     expect(fetchMock.mock.calls.some(call => {
       const [, init] = call
       if (init?.method !== 'POST') return false
       const payload = JSON.parse(String(init.body))
-      return payload.field_key === 'customer_tier' && payload.options.length === 2 && payload.is_required === true
+      return (
+        payload.field_key === 'customer_tier' &&
+        payload.options.length === 2 &&
+        payload.is_required === true &&
+        !('sort_order' in payload) &&
+        !('is_sensitive' in payload) &&
+        !('show_in_list' in payload) &&
+        !('show_in_detail' in payload)
+      )
     })).toBe(true)
   })
 
@@ -133,7 +145,7 @@ describe('AdminFieldBuilderPanel', () => {
 
     expect(await screen.findByText('Customer Tier')).toBeInTheDocument()
     await userEvent.type(screen.getByPlaceholderText(/search label/i), 'tier')
-    await userEvent.selectOptions(screen.getByLabelText(/filter fields by module/i), 'account_overview')
+    await userEvent.selectOptions(screen.getByLabelText(/filter fields by module/i), 'accounts')
     await userEvent.selectOptions(screen.getByLabelText(/filter fields by type/i), 'single_select')
     await userEvent.selectOptions(screen.getByLabelText(/filter fields by status/i), 'active')
     await userEvent.selectOptions(screen.getByLabelText(/sort fields/i), 'label')
@@ -145,7 +157,7 @@ describe('AdminFieldBuilderPanel', () => {
       return (
         url.includes('/api/admin/custom-fields?') &&
         url.includes('search=tier') &&
-        url.includes('module=account_overview') &&
+        url.includes('module=accounts') &&
         url.includes('field_type=single_select') &&
         url.includes('status=active') &&
         url.includes('sort=label') &&

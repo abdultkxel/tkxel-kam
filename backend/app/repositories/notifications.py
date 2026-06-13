@@ -1,6 +1,6 @@
 from datetime import datetime, timezone
 
-from sqlalchemy import String, cast, func, or_, select
+from sqlalchemy import String, cast, delete, func, or_, select
 from sqlalchemy.orm import Session
 
 from app.models import (
@@ -32,6 +32,11 @@ class NotificationRepository:
         self.db.flush()
         return config
 
+    def delete_trigger_configs_not_in(self, triggers: set[str]) -> int:
+        result = self.db.execute(delete(NotificationTriggerConfig).where(~NotificationTriggerConfig.trigger.in_(triggers)))
+        self.db.flush()
+        return result.rowcount or 0
+
     def list_preferences(self, user_id: str) -> list[NotificationPreference]:
         return list(self.db.scalars(select(NotificationPreference).where(NotificationPreference.user_id == user_id).order_by(NotificationPreference.trigger)))
 
@@ -42,6 +47,11 @@ class NotificationRepository:
         self.db.add(preference)
         self.db.flush()
         return preference
+
+    def delete_preferences_not_in(self, triggers: set[str]) -> int:
+        result = self.db.execute(delete(NotificationPreference).where(~NotificationPreference.trigger.in_(triggers)))
+        self.db.flush()
+        return result.rowcount or 0
 
     def get_notification_by_deduplication_key(self, key: str) -> NotificationRecord | None:
         return self.db.scalar(select(NotificationRecord).where(NotificationRecord.deduplication_key == key))

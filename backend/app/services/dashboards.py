@@ -15,9 +15,9 @@ from app.services.forecasting import ForecastingService
 ADMIN_ROLES = {"super_admin", "admin"}
 KAM_HEAD_ROLES = {"kam_head"}
 AM_ROLES = {"account_manager"}
-LEADERSHIP_ROLES: set[str] = set()
+LEADERSHIP_ROLES = {"leadership_viewer"}
 OPS_ROLES: set[str] = set()
-DELIVERY_ROLES = {"delivery_stakeholder"}
+DELIVERY_ROLES = {"delivery_lead", "delivery_stakeholder"}
 AM_OWNERSHIP_ROLES = {"primary_am", "supporting_am", "account_manager", "am", "kam"}
 
 class DashboardsService:
@@ -110,7 +110,7 @@ class DashboardsService:
         if dashboard == "operations":
             return self._build_operational_dashboard(current_user, role_group="ops_lead", display_name="Ops Lead Dashboard", dashboard="operations", search=search, risk=risk, account_id=account_id, page=page, page_size=page_size)
         if dashboard == "delivery":
-            return self._build_operational_dashboard(current_user, role_group="delivery_stakeholder", display_name="Delivery Stakeholder Dashboard", dashboard="delivery", search=search, risk=risk, account_id=account_id, page=page, page_size=page_size)
+            return self._build_operational_dashboard(current_user, role_group="delivery_lead", display_name="Delivery Lead Dashboard", dashboard="delivery", search=search, risk=risk, account_id=account_id, page=page, page_size=page_size)
         return self._build_rbac_dashboard(current_user, search=search, risk=risk, account_id=account_id, page=page, page_size=page_size)
 
     def _profile_for_user(self, user: User) -> dict[str, Any]:
@@ -126,7 +126,7 @@ class DashboardsService:
         if role in OPS_ROLES:
             return {"dashboard": "operations", "display_name": "Ops Lead Dashboard", "role_group": "ops_lead", "read_only": False}
         if role in DELIVERY_ROLES:
-            return {"dashboard": "delivery", "display_name": "Delivery Stakeholder Dashboard", "role_group": "delivery_stakeholder", "read_only": False}
+            return {"dashboard": "delivery", "display_name": "Delivery Lead Dashboard", "role_group": "delivery_lead", "read_only": False}
         return {"dashboard": "rbac_widgets", "display_name": "My Dashboard", "role_group": "rbac", "read_only": not self._can(user, "dashboards_reporting", "update")}
 
     def _can_access_requested_dashboard(self, user: User, requested_dashboard: str) -> bool:

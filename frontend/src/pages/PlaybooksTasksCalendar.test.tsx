@@ -6,6 +6,7 @@ import { GovernancePanel } from '@/components/governance/GovernancePanel'
 import { Playbook } from '@/pages/Playbook'
 import { Tasks } from '@/pages/Tasks'
 import { useAccountStore } from '@/stores/accountStore'
+import { useGovernanceStore } from '@/stores/governanceStore'
 
 const mockedAuth = vi.hoisted(() => {
   function fullCapabilities() {
@@ -110,7 +111,7 @@ const template = {
       updated_at: '2026-05-31T00:00:00Z',
     },
   ],
-  custom_field_values: {},
+  custom_field_values: { risk_theme: 'Renewal' },
 }
 
 const task = {
@@ -135,8 +136,41 @@ const task = {
   skipped_reason: null,
   completed_at: null,
   evidence: [],
+  custom_field_values: { task_theme: 'Delivery' },
   created_at: '2026-05-31T00:00:00Z',
   updated_at: '2026-05-31T00:00:00Z',
+}
+
+const playbookCustomField = {
+  id: 'field-playbook',
+  module: 'playbooks',
+  field_key: 'risk_theme',
+  label: 'Risk Theme',
+  field_type: 'text',
+  options: [],
+  validation_rules: {},
+  is_required: false,
+  is_sensitive: false,
+  is_active: true,
+  show_in_list: true,
+  show_in_detail: true,
+  sort_order: 1,
+}
+
+const taskCustomField = {
+  id: 'field-task',
+  module: 'tasks',
+  field_key: 'task_theme',
+  label: 'Task Theme',
+  field_type: 'text',
+  options: [],
+  validation_rules: {},
+  is_required: false,
+  is_sensitive: false,
+  is_active: true,
+  show_in_list: true,
+  show_in_detail: true,
+  sort_order: 1,
 }
 
 function page<T>(items: T[], pageSize = 10) {
@@ -152,12 +186,13 @@ describe('playbooks, tasks, and calendar UI', () => {
     mockedAuth.user = { id: 'usr-admin', name: 'Admin User', role: 'super_admin', email: 'admin@example.com', avatarInitials: 'AU' }
     mockedAuth.capabilities = mockedAuth.fullCapabilities()
     useAccountStore.setState({ accounts: [account] as any })
+    useGovernanceStore.setState({ events: [], loading: false, error: '', loaded: false })
   })
 
   it('loads playbook templates, sends recommendation filters, and executes a confirmed playbook', async () => {
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input)
-      if (url.includes('/api/custom-fields')) return jsonResponse([])
+      if (url.includes('/api/custom-fields')) return jsonResponse(url.includes('module=playbooks') ? [playbookCustomField] : [])
       if (url.includes('/api/signals/') && url.includes('/recommended-playbooks')) return jsonResponse([{ template, rationale: 'Matched notice window.', match_score: 100, matched_signal_types: ['notice_window'], matched_metrics: ['commercial'] }])
       if (url.includes('/api/admin/playbook-templates')) return jsonResponse(page([template], 8))
       if (url.includes('/api/playbooks/tpl-1/execute') && init?.method === 'POST') return jsonResponse({ id: 'exec-1', template_id: 'tpl-1', template_name_snapshot: template.name, template_version_snapshot: 1, account_id: account.id, status: 'active', tasks: [task], created_at: '2026-05-31T00:00:00Z' }, 201)
@@ -168,6 +203,7 @@ describe('playbooks, tasks, and calendar UI', () => {
     render(<Playbook />, { wrapper: MemoryRouter })
 
     expect(await screen.findAllByText('Renewal readiness recovery')).not.toHaveLength(0)
+    expect(await screen.findByText('Risk Theme: Renewal')).toBeInTheDocument()
     await userEvent.clear(screen.getByPlaceholderText('relationship_gap'))
     await userEvent.type(screen.getByPlaceholderText('relationship_gap'), 'notice_window')
     await waitFor(() => expect(fetchMock.mock.calls.some(call => String(call[0]).includes('signal_type=notice_window'))).toBe(true))
@@ -193,7 +229,7 @@ describe('playbooks, tasks, and calendar UI', () => {
   it('loads tasks, sends filters, and posts note evidence', async () => {
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input)
-      if (url.includes('/api/custom-fields')) return jsonResponse([])
+      if (url.includes('/api/custom-fields')) return jsonResponse(url.includes('module=tasks') ? [taskCustomField] : [])
       if (url.includes('/api/tasks/task-1/evidence') && init?.method === 'POST') return jsonResponse({ id: 'ev-1', task_id: 'task-1', evidence_type: 'note', body: 'Evidence captured.', created_by_name: 'Admin User', created_at: '2026-05-31T00:00:00Z' }, 201)
       if (url.includes('/api/tasks')) return jsonResponse(page([task]))
       return jsonResponse({})
@@ -204,6 +240,7 @@ describe('playbooks, tasks, and calendar UI', () => {
 
     expect(screen.getByText(/Loading tasks/i)).toBeInTheDocument()
     expect(await screen.findByText('Confirm renewal owner')).toBeInTheDocument()
+    expect(await screen.findByText('Task Theme: Delivery')).toBeInTheDocument()
 
     await userEvent.type(screen.getByPlaceholderText(/Search title/i), 'renewal')
     await waitFor(() => expect(fetchMock.mock.calls.some(call => String(call[0]).includes('search=renewal'))).toBe(true))
@@ -246,5 +283,65 @@ describe('playbooks, tasks, and calendar UI', () => {
 
     expect(await screen.findByText('Confirm renewal owner')).toBeInTheDocument()
     expect(fetchMock.mock.calls.some(call => String(call[0]).includes('/api/calendar/items'))).toBe(true)
+  })
+
+  it('shows governance Field Builder values in the event register', async () => {
+    useGovernanceStore.setState({
+      events: [
+        {
+          id: 'gov-1',
+          accountId: account.id,
+          accountName: account.name,
+          ownerId: 'usr-admin',
+          ownerName: 'Admin User',
+          type: 'Executive Review',
+          date: '2026-06-20T10:00:00Z',
+          agenda: 'Executive recovery agenda.',
+          attendeeEmails: ['exec@example.com'],
+          attendees: ['exec@example.com'],
+          actionItemRecords: [],
+          actionItems: [],
+          notes: [],
+          decisions: [],
+          generatedOutputs: [],
+          status: 'upcoming',
+          source: 'manual',
+          customFieldValues: { executive_theme: 'Recovery confidence' },
+        },
+      ] as any,
+      loading: false,
+      error: '',
+      loaded: true,
+    })
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input)
+      if (url.includes('/api/custom-fields')) {
+        return jsonResponse([
+          {
+            id: 'field-governance',
+            module: 'governance_reviews',
+            field_key: 'executive_theme',
+            label: 'Executive Theme',
+            field_type: 'text',
+            options: [],
+            validation_rules: {},
+            is_required: false,
+            is_sensitive: false,
+            is_active: true,
+            show_in_list: true,
+            show_in_detail: true,
+            sort_order: 1,
+          },
+        ])
+      }
+      if (url.includes('/api/calendar/items')) return jsonResponse(page([], 500))
+      return jsonResponse({})
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    render(<GovernancePanel />, { wrapper: MemoryRouter })
+
+    expect((await screen.findAllByText('Executive Review')).length).toBeGreaterThanOrEqual(2)
+    expect(await screen.findByText('Executive Theme: Recovery confidence')).toBeInTheDocument()
   })
 })

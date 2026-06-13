@@ -3,7 +3,7 @@ from datetime import datetime, timezone
 from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session, selectinload
 
-from app.models import Account, AccountChangeAlert, AccountOwner, Engagement, Escalation, GovernanceEvent, IntegrationConnection, KycSnapshot, NotificationRecord, Opportunity, ScheduledWorkerRun, Signal, Task
+from app.models import Account, AccountOwner, Alert, Engagement, Escalation, GovernanceEvent, IntegrationConnection, KycSnapshot, NotificationRecord, Opportunity, ScheduledWorkerRun, Signal, Task
 
 
 ACTIVE_TASK_STATUSES = ("open", "todo", "in_progress", "blocked")
@@ -124,20 +124,6 @@ class DashboardRepository:
             )
         )
 
-    def list_account_change_alerts(self, *, account_ids: list[str] | None = None, limit: int = 100) -> list[AccountChangeAlert]:
-        conditions = [AccountChangeAlert.status.in_(["open", "acknowledged"])]
-        if account_ids is not None:
-            conditions.append(AccountChangeAlert.account_id.in_(account_ids) if account_ids else False)
-        return list(
-            self.db.scalars(
-                select(AccountChangeAlert)
-                .where(*conditions)
-                .options(selectinload(AccountChangeAlert.account))
-                .order_by(AccountChangeAlert.severity.desc(), AccountChangeAlert.created_at.desc())
-                .limit(limit)
-            )
-        )
-
     def list_engagement_health_items(self, *, account_ids: list[str] | None = None, limit: int = 100) -> list[Engagement]:
         conditions = [Engagement.archived_at.is_(None)]
         if account_ids is not None:
@@ -157,7 +143,7 @@ class DashboardRepository:
             "failed_workers": self.db.scalar(select(func.count(ScheduledWorkerRun.id)).where(ScheduledWorkerRun.status == "failed")) or 0,
             "failed_notifications": self.db.scalar(select(func.count(NotificationRecord.id)).where(NotificationRecord.delivery_status == "failed")) or 0,
             "integration_errors": self.db.scalar(select(func.count(IntegrationConnection.id)).where(IntegrationConnection.status == "error")) or 0,
-            "open_account_change_alerts": self.db.scalar(select(func.count(AccountChangeAlert.id)).where(AccountChangeAlert.status == "open")) or 0,
+            "open_account_change_alerts": self.db.scalar(select(func.count(Alert.id)).where(Alert.status.in_(["open", "acknowledged"]))) or 0,
         }
 
     def list_failed_worker_runs(self, *, limit: int = 20) -> list[ScheduledWorkerRun]:

@@ -220,10 +220,10 @@ def test_admin_can_create_update_and_delete_managed_users(client: TestClient) ->
     update_response = client.patch(
         f"/api/admin/users/{created_user['id']}",
         headers=headers,
-        json={"role": "delivery_stakeholder", "is_active": False},
+        json={"role": "delivery_lead", "is_active": False},
     )
     assert update_response.status_code == 200
-    assert update_response.json()["role"] == "delivery_stakeholder"
+    assert update_response.json()["role"] == "delivery_lead"
     assert update_response.json()["is_active"] is False
 
     list_response = client.get("/api/admin/users", headers=headers)
@@ -389,7 +389,67 @@ def test_field_builder_crud_filters_pagination_validation_and_docs(client: TestC
 
     modules_response = client.get("/api/admin/custom-fields/modules", headers=headers)
     assert modules_response.status_code == 200
-    assert any(module["slug"] == "accounts" for module in modules_response.json())
+    module_slugs = [module["slug"] for module in modules_response.json()]
+    assert module_slugs == [
+        "accounts",
+        "client_education_content",
+        "escalation_management",
+        "governance_reviews",
+        "playbooks",
+        "tasks",
+        "opportunities",
+    ]
+    assert "account_onboarding_workspace" not in module_slugs
+    assert "account_overview" not in module_slugs
+    assert "onboarding" not in module_slugs
+    assert "playbooks_tasks_calendar" not in module_slugs
+    assert "content" not in module_slugs
+    assert "escalations" not in module_slugs
+
+    legacy_account_response = client.post(
+        "/api/admin/custom-fields",
+        headers=headers,
+        json={
+            "module": "account_overview",
+            "field_key": "legacy_account_note",
+            "label": "Legacy Account Note",
+            "field_type": "text",
+        },
+    )
+    assert legacy_account_response.status_code == 422
+    legacy_account_errors = legacy_account_response.json()["detail"]["errors"]
+    assert legacy_account_errors[0]["field"] == "module"
+    assert legacy_account_errors[0]["message"] == "Module must have runtime custom field support."
+
+    legacy_playbook_task_response = client.post(
+        "/api/admin/custom-fields",
+        headers=headers,
+        json={
+            "module": "playbooks_tasks_calendar",
+            "field_key": "legacy_work_note",
+            "label": "Legacy Work Note",
+            "field_type": "text",
+        },
+    )
+    assert legacy_playbook_task_response.status_code == 422
+    legacy_playbook_task_errors = legacy_playbook_task_response.json()["detail"]["errors"]
+    assert legacy_playbook_task_errors[0]["field"] == "module"
+    assert legacy_playbook_task_errors[0]["message"] == "Module must have runtime custom field support."
+
+    unsupported_response = client.post(
+        "/api/admin/custom-fields",
+        headers=headers,
+        json={
+            "module": "content",
+            "field_key": "legacy_content_note",
+            "label": "Legacy Content Note",
+            "field_type": "text",
+        },
+    )
+    assert unsupported_response.status_code == 422
+    unsupported_errors = unsupported_response.json()["detail"]["errors"]
+    assert unsupported_errors[0]["field"] == "module"
+    assert unsupported_errors[0]["message"] == "Module must have runtime custom field support."
 
     invalid_response = client.post(
         "/api/admin/custom-fields",
@@ -428,6 +488,46 @@ def test_field_builder_crud_filters_pagination_validation_and_docs(client: TestC
     field_id = create_response.json()["id"]
     assert create_response.json()["field_key"] == "customer_tier"
     assert create_response.json()["options"] == ["Gold", "Silver"]
+
+    account_runtime_response = client.get("/api/custom-fields", headers=headers, params={"module": "accounts"})
+    assert account_runtime_response.status_code == 200
+    assert any(item["field_key"] == "customer_tier" for item in account_runtime_response.json())
+
+    escalation_response = client.post(
+        "/api/admin/custom-fields",
+        headers=headers,
+        json={
+            "module": "escalation_management",
+            "field_key": "mitigation_owner_note",
+            "label": "Mitigation Owner Note",
+            "field_type": "text",
+            "show_in_detail": True,
+        },
+    )
+    assert escalation_response.status_code == 201
+    escalation_field_id = escalation_response.json()["id"]
+
+    task_response = client.post(
+        "/api/admin/custom-fields",
+        headers=headers,
+        json={
+            "module": "tasks",
+            "field_key": "task_theme",
+            "label": "Task Theme",
+            "field_type": "text",
+            "show_in_detail": True,
+        },
+    )
+    assert task_response.status_code == 201
+    task_field_id = task_response.json()["id"]
+
+    runtime_response = client.get("/api/custom-fields", headers=headers, params={"module": "escalation_management"})
+    assert runtime_response.status_code == 200
+    assert any(item["field_key"] == "mitigation_owner_note" for item in runtime_response.json())
+
+    task_runtime_response = client.get("/api/custom-fields", headers=headers, params={"module": "tasks"})
+    assert task_runtime_response.status_code == 200
+    assert any(item["field_key"] == "task_theme" for item in task_runtime_response.json())
 
     duplicate_response = client.post(
         "/api/admin/custom-fields",
@@ -490,6 +590,12 @@ def test_field_builder_crud_filters_pagination_validation_and_docs(client: TestC
 
     missing_response = client.get(f"/api/admin/custom-fields/{field_id}", headers=headers)
     assert missing_response.status_code == 404
+
+    cleanup_response = client.delete(f"/api/admin/custom-fields/{escalation_field_id}", headers=headers)
+    assert cleanup_response.status_code == 200
+
+    task_cleanup_response = client.delete(f"/api/admin/custom-fields/{task_field_id}", headers=headers)
+    assert task_cleanup_response.status_code == 200
 
 
 def test_role_validation_returns_meaningful_field_errors(client: TestClient) -> None:

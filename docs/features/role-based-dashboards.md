@@ -19,6 +19,7 @@ Implements role-resolved dashboard behavior so users no longer see AM Home, KAM 
 - Forecast Chart is available where `analytics_portfolio:view` is allowed, and on the Account Manager dashboard from assigned-account opportunities with sensitive values masked before leaving the backend when required.
 - Dashboard widgets and items include route metadata for source navigation.
 - `delivery_lead` is added as the preferred system role while `delivery_stakeholder` remains a legacy-compatible delivery dashboard role.
+- Fresh resets seed `delivery_lead` and `leadership_viewer`; `delivery_stakeholder` is accepted only as a legacy user role alias and is no longer a visible seeded role.
 - Dashboard UI now uses the approved V4 dashboard visual language from `Feature/Playbooks-Activities` while omitting the previous Generative command center.
 - `governance_calendar` and `engagement_health` widgets are returned where role/RBAC permits.
 - The dashboard calendar is rendered from `GET /api/governance-events/calendar`; `governance_calendar` is the visibility/enabler widget.
@@ -92,9 +93,10 @@ Latest verification:
 - `docker compose run --rm --no-deps frontend npm test -- Dashboard.test.tsx Tasks.test.tsx opportunities.test.ts` passed with 10 tests.
 - `docker compose run --rm --no-deps backend pytest tests/test_notifications_dashboards_reporting.py::test_role_based_dashboard_profiles_and_reduced_direct_endpoints -q` passed after AM workload links switched to the broader `am_id` account filter.
 - `docker compose run --rm --no-deps frontend npm test -- Dashboard.test.tsx Accounts.test.tsx` passed after preserving `am_id` query aliases from dashboard workload clicks.
+- `docker compose run --rm --no-deps backend pytest tests/test_rbac.py tests/test_notifications_dashboards_reporting.py tests/test_playbooks_tasks_calendar.py -q` passed with 29 tests after seeded `delivery_lead`/`leadership_viewer` alignment, legacy `delivery_stakeholder` aliasing, and custom account-field report compatibility.
 
 ## Known Follow-Ups
 
-- Decide whether existing `delivery_stakeholder` users should be migrated to `delivery_lead` or kept as a visible legacy role.
+- Optionally migrate existing `delivery_stakeholder` users to `delivery_lead`; until then, the backend alias preserves delivery dashboard and permission behavior without showing the old role as a seeded default.
 - Replace MVP forecast weights with finalized forecasting rules when available.
 - Introduce a centralized dashboard/report/export redaction service for sensitive fields beyond the current Leadership commercial masking.

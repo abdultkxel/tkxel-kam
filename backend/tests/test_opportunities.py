@@ -9,7 +9,7 @@ from sqlalchemy.pool import StaticPool
 
 from app.database import Base, get_db
 from app.main import app
-from app.models import Account, AccountOwner, Opportunity, OpportunityActionItem, Task, TimelineEntry
+from app.models import Account, AccountOwner, CustomFieldDefinition, CustomFieldValue, Opportunity, OpportunityActionItem, Task, TimelineEntry
 from app.services.seed import seed_default_data
 
 
@@ -95,6 +95,25 @@ def first_opportunity_type(client: TestClient, headers: dict[str, str]) -> dict:
     return page["items"][0]
 
 
+def seed_custom_field(session: Session, field_key: str = "expansion_theme", label: str = "Expansion Theme") -> None:
+    admin = session.scalar(select(AccountOwner).where(AccountOwner.user_id.is_not(None)))
+    created_by_id = admin.user_id if admin else None
+    session.add(
+        CustomFieldDefinition(
+            module="opportunities",
+            field_key=field_key,
+            label=label,
+            field_type="single_select",
+            options=["Growth", "Retention"],
+            is_required=True,
+            show_in_detail=True,
+            created_by_id=created_by_id,
+            updated_by_id=created_by_id,
+        )
+    )
+    session.commit()
+
+
 def opportunity_payload(account_id: str, owner_id: str, type_id: str, **overrides: object) -> dict:
     payload = {
         "account_id": account_id,
@@ -135,22 +154,36 @@ def test_opportunity_create_list_stage_decision_action_archive_flow(client: Test
     assert invalid_response.status_code == 422
     assert invalid_response.json()["errors"][0]["field"] == "value"
 
+    seed_custom_field(db_session)
+
+    missing_custom_response = client.post(
+        "/api/opportunities",
+        headers=headers,
+        json=opportunity_payload(account_id, owner["id"], opportunity_type["id"], action_items=[]),
+    )
+    assert missing_custom_response.status_code == 422
+    assert missing_custom_response.json()["detail"]["errors"][0]["field"] == "custom_field_values.expansion_theme"
+
     create_response = client.post(
         "/api/opportunities",
         headers=headers,
-        json=opportunity_payload(account_id, owner["id"], opportunity_type["id"]),
+        json=opportunity_payload(account_id, owner["id"], opportunity_type["id"], custom_field_values={"expansion_theme": "Growth"}),
     )
     assert create_response.status_code == 201
     opportunity = create_response.json()
     assert opportunity["account_name"] == "Opportunity Workspace"
     assert opportunity["type_id"] == opportunity_type["id"]
     assert opportunity["estimated_value"] == 175000
+    assert opportunity["custom_field_values"]["expansion_theme"] == "Growth"
     assert opportunity["action_items"][0]["title"] == "Send discovery summary"
     assert opportunity["action_items"][0]["future_task_id"]
     initial_task = db_session.get(Task, opportunity["action_items"][0]["future_task_id"])
     assert initial_task is not None
     assert initial_task.source_type == "opportunity_action_item"
     assert initial_task.source_record_id == opportunity["action_items"][0]["id"]
+    custom_values = db_session.query(CustomFieldValue).filter(CustomFieldValue.record_id == opportunity["id"]).all()
+    assert custom_values
+    assert custom_values[0].module == "opportunities"
 
     summary_response = client.get(f"/api/accounts/{account_id}/summary-cards", headers=headers)
     assert summary_response.status_code == 200
@@ -178,6 +211,22 @@ def test_opportunity_create_list_stage_decision_action_archive_flow(client: Test
     )
     assert stalled_list.status_code == 200
     assert stalled_list.json()["total"] == 1
+
+    qualified_response = client.post(
+        f"/api/opportunities/{opportunity['id']}/stage",
+        headers=headers,
+        json={"stage": "Qualified", "reason": "Discovery qualified."},
+    )
+    assert qualified_response.status_code == 200
+    assert qualified_response.json()["opportunity"]["stage"] == "Qualified"
+
+    backward_response = client.post(
+        f"/api/opportunities/{opportunity['id']}/stage",
+        headers=headers,
+        json={"stage": "Identified", "reason": "Qualification needs more discovery."},
+    )
+    assert backward_response.status_code == 200
+    assert backward_response.json()["opportunity"]["stage"] == "Identified"
 
     stage_response = client.post(
         f"/api/opportunities/{opportunity['id']}/stage",
@@ -333,3 +382,75 @@ def test_opportunity_type_admin_lifecycle_and_openapi(client: TestClient) -> Non
     assert paths["/api/opportunities"]["post"]["summary"] == "Create opportunity"
     assert paths["/api/opportunities/{opportunity_id}/stage"]["post"]["summary"] == "Move opportunity stage"
     assert paths["/api/opportunities/{opportunity_id}/restore"]["post"]["summary"] == "Restore opportunity"
+
+
+def test_stage_deactivation_requires_no_existing_opportunities_and_order_controls(client: TestClient, db_session: Session) -> None:
+    headers = auth_headers(client)
+    owner = seeded_user(client, headers, "account_manager")
+    account_id = create_account(db_session, owner, account_id="stage-admin-account")
+    opportunity_type = first_opportunity_type(client, headers)
+
+    create_response = client.post(
+        "/api/opportunities",
+        headers=headers,
+        json=opportunity_payload(account_id, owner["id"], opportunity_type["id"], action_items=[]),
+    )
+    assert create_response.status_code == 201
+
+    stages = client.get("/api/admin/opportunity-stages", headers=headers)
+    assert stages.status_code == 200
+    identified = next(item for item in stages.json() if item["name"] == "Identified")
+    assert identified["in_use_count"] == 1
+
+    blocked_deactivation = client.patch(
+        f"/api/admin/opportunity-stages/{identified['id']}",
+        headers=headers,
+        json={"is_active": False},
+    )
+    assert blocked_deactivation.status_code == 409
+    assert blocked_deactivation.json()["detail"]["errors"][0]["field"] == "is_active"
+    assert "1 opportunity record" in blocked_deactivation.json()["detail"]["errors"][0]["message"]
+
+    kickoff_stage = client.post(
+        "/api/admin/opportunity-stages",
+        headers=headers,
+        json={"slug": "kickoff_review", "name": "Kickoff Review", "display_order": 0},
+    )
+    assert kickoff_stage.status_code == 201
+    assert kickoff_stage.json()["display_order"] == 0
+    assert kickoff_stage.json()["in_use_count"] == 0
+
+    ordered_stages = client.get("/api/opportunity-stages", headers=headers)
+    assert ordered_stages.status_code == 200
+    assert ordered_stages.json()[0]["name"] == "Kickoff Review"
+
+    deactivate_unused = client.patch(
+        f"/api/admin/opportunity-stages/{kickoff_stage.json()['id']}",
+        headers=headers,
+        json={"is_active": False},
+    )
+    assert deactivate_unused.status_code == 200
+    assert deactivate_unused.json()["is_active"] is False
+
+
+def test_opportunity_create_without_stage_uses_first_active_stage(client: TestClient, db_session: Session) -> None:
+    headers = auth_headers(client)
+    owner = seeded_user(client, headers, "account_manager")
+    account_id = create_account(db_session, owner, account_id="stage-default-account")
+    opportunity_type = first_opportunity_type(client, headers)
+
+    kickoff_stage = client.post(
+        "/api/admin/opportunity-stages",
+        headers=headers,
+        json={"slug": "kickoff_review", "name": "Kickoff Review", "display_order": 0},
+    )
+    assert kickoff_stage.status_code == 201
+
+    payload = opportunity_payload(account_id, owner["id"], opportunity_type["id"], action_items=[])
+    payload.pop("stage")
+    create_response = client.post("/api/opportunities", headers=headers, json=payload)
+
+    assert create_response.status_code == 201
+    opportunity = create_response.json()
+    assert opportunity["stage"] == "Kickoff Review"
+    assert opportunity["stage_history"][0]["after_stage"] == "Kickoff Review"

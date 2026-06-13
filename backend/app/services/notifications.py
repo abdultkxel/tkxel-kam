@@ -63,10 +63,12 @@ from app.services.account_access import AccountAccessService
 from app.services.audit import AuditService
 from app.services.email_delivery import EmailDeliveryService
 from app.services.notification_catalog import (
+    CONFIGURABLE_NOTIFICATION_TRIGGERS,
     MANDATORY_TRIGGERS,
     NOTIFICATION_TRIGGER_DEFINITIONS,
     OPTIONAL_TRIGGERS,
     REMINDER_DEFAULTS,
+    RUNTIME_NOTIFICATION_TRIGGERS,
 )
 from app.services.user_management import page_count
 
@@ -104,11 +106,14 @@ class NotificationsService:
         self.email_delivery = email_delivery or EmailDeliveryService()
 
     def seed_defaults(self, actor: User | None = None) -> None:
+        self.repository.delete_preferences_not_in(RUNTIME_NOTIFICATION_TRIGGERS)
+        self.repository.delete_trigger_configs_not_in(RUNTIME_NOTIFICATION_TRIGGERS)
         for definition in NOTIFICATION_TRIGGER_DEFINITIONS:
             timing_mode, timing_value, timing_unit = REMINDER_DEFAULTS.get(definition.trigger, ("immediate", None, "business_days"))
             mandatory = definition.trigger in MANDATORY_TRIGGERS or definition.priority == "critical"
             default_mode = "in_app_email" if mandatory or definition.trigger in {"sla_escalation", "unresolved_escalation", "integration_failure"} else "in_app"
-            is_active = definition.trigger not in OPTIONAL_TRIGGERS
+            is_active = definition.trigger not in OPTIONAL_TRIGGERS or definition.trigger == "alert_created"
+            default_digest_cadence = "immediate" if definition.trigger == "alert_created" else "daily"
             config = self.repository.get_trigger_config(definition.trigger)
             if config is None:
                 self.repository.save_trigger_config(
@@ -121,7 +126,7 @@ class NotificationsService:
                         recipient_policy=definition.recipients,
                         action_label=definition.action_label,
                         default_mode=default_mode,
-                        default_digest_cadence="daily",
+                        default_digest_cadence=default_digest_cadence,
                         supported_channels=["in_app", "email"],
                         mandatory=mandatory,
                         timing_mode=timing_mode,
@@ -151,7 +156,7 @@ class NotificationsService:
             config.default_mode = config.default_mode or default_mode
             if mandatory and config.default_mode == "in_app":
                 config.default_mode = "in_app_email"
-            config.default_digest_cadence = config.default_digest_cadence or "daily"
+            config.default_digest_cadence = default_digest_cadence if definition.trigger == "alert_created" else config.default_digest_cadence or "daily"
             config.mandatory = mandatory
             config.timing_mode = config.timing_mode or timing_mode
             config.timing_unit = config.timing_unit or timing_unit
@@ -192,16 +197,18 @@ class NotificationsService:
 
     def list_trigger_configs(self, current_user: User) -> NotificationDefaultsRead:
         self.access.require_module_permission(current_user, "notifications_digests", "view")
-        return NotificationDefaultsRead(items=[NotificationTriggerConfigRead.model_validate(item) for item in self.repository.list_trigger_configs()])
+        return NotificationDefaultsRead(items=[NotificationTriggerConfigRead.model_validate(item) for item in self._configurable_trigger_configs()])
 
     def get_defaults(self, current_user: User) -> NotificationDefaultsRead:
         self.access.require_module_permission(current_user, "notifications_digests", "configure")
-        return NotificationDefaultsRead(items=[NotificationTriggerConfigRead.model_validate(item) for item in self.repository.list_trigger_configs()])
+        return NotificationDefaultsRead(items=[NotificationTriggerConfigRead.model_validate(item) for item in self._configurable_trigger_configs()])
 
     def update_defaults(self, payload: NotificationDefaultsUpdateRequest, current_user: User) -> NotificationDefaultsRead:
         self.access.require_module_permission(current_user, "notifications_digests", "configure")
         before = [NotificationTriggerConfigRead.model_validate(item).model_dump(mode="json") for item in self.repository.list_trigger_configs()]
         for item in payload.items:
+            if item.trigger not in CONFIGURABLE_NOTIFICATION_TRIGGERS:
+                raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Notification trigger '{item.trigger}' is not configurable")
             if item.trigger in MANDATORY_TRIGGERS and (not item.is_active or item.default_mode == "off"):
                 raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"{item.label} is mandatory and cannot be disabled")
         for item in payload.items:
@@ -242,6 +249,8 @@ class NotificationsService:
 
     def update_trigger_config(self, trigger: str, payload: NotificationTriggerUpdateRequest, current_user: User) -> NotificationTriggerConfigRead:
         self.access.require_module_permission(current_user, "notifications_digests", "configure")
+        if trigger not in CONFIGURABLE_NOTIFICATION_TRIGGERS:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Notification trigger was not found")
         config = self.repository.get_trigger_config(trigger)
         if config is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Notification trigger was not found")
@@ -267,6 +276,8 @@ class NotificationsService:
 
     def reset_trigger_config(self, trigger: str, current_user: User) -> NotificationTriggerConfigRead:
         self.access.require_module_permission(current_user, "notifications_digests", "configure")
+        if trigger not in CONFIGURABLE_NOTIFICATION_TRIGGERS:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Notification trigger was not found")
         definition = next((item for item in NOTIFICATION_TRIGGER_DEFINITIONS if item.trigger == trigger), None)
         config = self.repository.get_trigger_config(trigger)
         if definition is None or config is None:
@@ -280,7 +291,7 @@ class NotificationsService:
         config.recipient_policy = definition.recipients
         config.action_label = definition.action_label
         config.default_mode = "in_app_email" if mandatory else "in_app"
-        config.default_digest_cadence = "daily"
+        config.default_digest_cadence = "immediate" if trigger == "alert_created" else "daily"
         config.supported_channels = ["in_app", "email"]
         config.mandatory = mandatory
         config.timing_mode = timing_mode
@@ -297,18 +308,18 @@ class NotificationsService:
         config.quiet_hours_start = None
         config.quiet_hours_end = None
         config.template_json = {"title": definition.label, "body": definition.description, "action_label": definition.action_label}
-        config.is_active = trigger not in OPTIONAL_TRIGGERS
+        config.is_active = trigger not in OPTIONAL_TRIGGERS or trigger == "alert_created"
         self.audit.log(module="notifications_digests", action="reset_trigger", entity_type="notification_trigger", entity_id=config.trigger, actor=current_user)
         self.repository.commit()
         return NotificationTriggerConfigRead.model_validate(config)
 
     def get_preferences(self, current_user: User) -> list[NotificationPreferenceRead]:
-        configs = self.repository.list_trigger_configs(active_only=True)
+        configs = self._configurable_trigger_configs(active_only=True)
         preferences = {item.trigger: item for item in self.repository.list_preferences(current_user.id)}
         return [self._preference_read(config, preferences.get(config.trigger)) for config in configs]
 
     def update_preferences(self, payload: NotificationPreferenceUpdateRequest, current_user: User) -> list[NotificationPreferenceRead]:
-        configs = {item.trigger: item for item in self.repository.list_trigger_configs(active_only=True)}
+        configs = {item.trigger: item for item in self._configurable_trigger_configs(active_only=True)}
         before = [item.model_dump(mode="json") for item in self.get_preferences(current_user)]
         for item in payload.items:
             config = configs.get(item.trigger)
@@ -327,6 +338,13 @@ class NotificationsService:
         self.audit.log(module="notifications_digests", action="update_preferences", entity_type="user", entity_id=current_user.id, actor=current_user, before_value={"items": before}, after_value={"items": after})
         self.repository.commit()
         return self.get_preferences(current_user)
+
+    def _configurable_trigger_configs(self, *, active_only: bool = False) -> list[NotificationTriggerConfig]:
+        return [
+            item
+            for item in self.repository.list_trigger_configs(active_only=active_only)
+            if item.trigger in CONFIGURABLE_NOTIFICATION_TRIGGERS
+        ]
 
     def list_notifications(
         self,
@@ -350,7 +368,7 @@ class NotificationsService:
         if trigger and self.repository.get_trigger_config(trigger) is None:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Notification trigger '{trigger}' was not found")
         if workflow:
-            workflows = {item.workflow for item in self.repository.list_trigger_configs()}
+            workflows = {item.workflow for item in self._configurable_trigger_configs()}
             if workflow not in workflows:
                 raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Notification workflow '{workflow}' was not found")
         items, total, unread_count = self.repository.list_notifications(
@@ -399,6 +417,8 @@ class NotificationsService:
 
     def test_trigger(self, trigger: str, payload: NotificationTriggerTestRequest, current_user: User) -> NotificationRecordRead:
         self.access.require_module_permission(current_user, "notifications_digests", "configure")
+        if trigger not in CONFIGURABLE_NOTIFICATION_TRIGGERS:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Notification trigger was not found")
         config = self.repository.get_trigger_config(trigger)
         if config is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Notification trigger was not found")
@@ -424,7 +444,7 @@ class NotificationsService:
 
     def dry_run_scheduler(self, current_user: User) -> NotificationSchedulerDryRunRead:
         self.access.require_module_permission(current_user, "notifications_digests", "configure")
-        configs = self.repository.list_trigger_configs(active_only=True)
+        configs = self._configurable_trigger_configs(active_only=True)
         due = [item for item in configs if item.timing_mode in {"before_due", "after_pending", "scheduled"}]
         self.repository.save_worker_run(
             ScheduledWorkerRun(

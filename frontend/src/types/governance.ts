@@ -88,6 +88,7 @@ export interface GovernanceEventRecord {
   generatedOutputs: GovernanceGeneratedOutputRecord[]
   status: GovernanceEventStatus
   source?: string
+  customFieldValues?: Record<string, unknown>
   completedAt?: string | null
   createdAt?: string
   updatedAt?: string

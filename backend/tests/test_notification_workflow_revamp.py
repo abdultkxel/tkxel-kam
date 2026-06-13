@@ -8,7 +8,8 @@ from sqlalchemy.pool import StaticPool
 
 from app.database import Base, get_db
 from app.main import app
-from app.models import Account, AccountOwner, NotificationTriggerConfig
+from app.models import Account, AccountOwner, NotificationPreference, NotificationTriggerConfig
+from app.services.notification_catalog import CONFIGURABLE_NOTIFICATION_TRIGGERS, RUNTIME_NOTIFICATION_TRIGGERS
 from app.services.seed import seed_base_data, seed_default_data
 
 
@@ -123,43 +124,117 @@ def test_base_seed_includes_notification_triggers() -> None:
             count = session.query(NotificationTriggerConfig).count()
             account_attachment = session.query(NotificationTriggerConfig).filter_by(trigger="account_attachment_added").one()
             governance_decision = session.query(NotificationTriggerConfig).filter_by(trigger="governance_decision_recorded").one()
-            assert count >= 130
+            assert count == len(RUNTIME_NOTIFICATION_TRIGGERS)
             assert account_attachment.is_active is True
             assert governance_decision.is_active is True
+            assert session.query(NotificationTriggerConfig).filter_by(trigger="renewal_due").one_or_none() is None
+            assert session.query(NotificationTriggerConfig).filter_by(trigger="sla_escalation").one_or_none() is not None
     finally:
         Base.metadata.drop_all(bind=engine)
 
 
-def test_full_catalog_is_seeded_with_admin_timing_controls() -> None:
+def test_seed_removes_stale_notification_trigger_configs_and_preferences() -> None:
+    engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+    testing_session = sessionmaker(bind=engine, autoflush=False, autocommit=False)
+    Base.metadata.create_all(bind=engine)
+    try:
+        with testing_session() as session:
+            user = seed_base_data(session)
+            session.add(NotificationTriggerConfig(trigger="renewal_due", label="Renewal due", workflow="engagements"))
+            session.add(NotificationPreference(user_id=user.id, trigger="renewal_due", mode="in_app", digest_cadence="daily"))
+            session.commit()
+
+            seed_base_data(session)
+
+            assert session.query(NotificationTriggerConfig).filter_by(trigger="renewal_due").one_or_none() is None
+            assert session.query(NotificationPreference).filter_by(trigger="renewal_due").one_or_none() is None
+            assert session.query(NotificationTriggerConfig).count() == len(RUNTIME_NOTIFICATION_TRIGGERS)
+    finally:
+        Base.metadata.drop_all(bind=engine)
+
+
+def test_admin_defaults_only_show_configurable_notification_triggers() -> None:
     for client, db_session in _client_with_db():
         headers = auth_headers(client)
         response = client.get("/api/admin/notification-defaults", headers=headers)
         assert response.status_code == 200
         triggers = {item["trigger"]: item for item in response.json()["items"]}
-        assert len(triggers) >= 130
+        assert len(triggers) == len(CONFIGURABLE_NOTIFICATION_TRIGGERS)
         assert triggers["account_draft_created"]["workflow"] == "account_onboarding"
         assert triggers["task_created"]["recipient_policy"] == "task_assignee"
-        assert triggers["account_draft_pending_review"]["timing_unit"] == "business_days"
+        assert triggers["integration_failure"]["workflow"] == "integrations"
+        assert triggers["alert_created"]["workflow"] == "alerts"
+        assert triggers["low_csat_detected"]["workflow"] == "csat"
         assert triggers["account_attachment_added"]["is_active"] is True
+        assert "account_draft_pending_review" not in triggers
+        assert "renewal_due" not in triggers
+        assert "fathom_review_required" not in triggers
+        assert "governance_action_overdue" not in triggers
+        assert "signal_unreviewed" not in triggers
+        assert "sla_escalation" not in triggers
+
+        stale_update = client.patch(
+            "/api/admin/notification-triggers/renewal_due",
+            headers=headers,
+            json={"default_mode": "in_app"},
+        )
+        assert stale_update.status_code == 404
+
+        stale_default_payload = {
+            "trigger": "renewal_due",
+            "label": "Renewal due",
+            "workflow": "engagements",
+            "priority": "high",
+            "recipient_policy": "account_owner",
+            "default_mode": "in_app",
+            "default_digest_cadence": "daily",
+            "supported_channels": ["in_app"],
+            "mandatory": False,
+            "timing_mode": "immediate",
+            "timing_unit": "business_days",
+            "repeat_enabled": False,
+            "escalation_enabled": False,
+            "is_active": True,
+        }
+        stale_bulk_update = client.put(
+            "/api/admin/notification-defaults",
+            headers=headers,
+            json={"items": [stale_default_payload]},
+        )
+        assert stale_bulk_update.status_code == 400
+
+        metadata = client.get("/api/notifications/triggers", headers=headers)
+        assert metadata.status_code == 200
+        metadata_triggers = {item["trigger"] for item in metadata.json()["items"]}
+        assert "account_draft_created" in metadata_triggers
+        assert "renewal_due" not in metadata_triggers
+        assert "signal_unreviewed" not in metadata_triggers
+
+        preferences = client.get("/api/users/me/notification-preferences", headers=headers)
+        assert preferences.status_code == 200
+        preference_triggers = {item["trigger"] for item in preferences.json()}
+        assert "account_draft_created" in preference_triggers
+        assert "renewal_due" not in preference_triggers
+        assert "sla_escalation" not in preference_triggers
 
         update = client.patch(
-            "/api/admin/notification-triggers/account_draft_pending_review",
+            "/api/admin/notification-triggers/account_draft_created",
             headers=headers,
-            json={"pending_threshold_value": 3, "timing_unit": "business_days", "default_mode": "in_app_email"},
+            json={"timing_unit": "business_days", "default_mode": "in_app_email"},
         )
         assert update.status_code == 200
-        assert update.json()["pending_threshold_value"] == 3
+        assert update.json()["default_mode"] == "in_app_email"
 
         disable_mandatory = client.patch(
-            "/api/admin/notification-triggers/account_draft_pending_review",
+            "/api/admin/notification-triggers/account_draft_created",
             headers=headers,
             json={"is_active": False},
         )
         assert disable_mandatory.status_code == 400
 
-        test = client.post("/api/admin/notification-triggers/account_draft_pending_review/test", headers=headers, json={})
+        test = client.post("/api/admin/notification-triggers/account_draft_created/test", headers=headers, json={})
         assert test.status_code == 200
-        assert test.json()["trigger"] == "account_draft_pending_review"
+        assert test.json()["trigger"] == "account_draft_created"
 
         dry_run = client.post("/api/admin/notification-scheduler/dry-run", headers=headers)
         assert dry_run.status_code == 200
@@ -178,7 +253,7 @@ def test_full_catalog_is_seeded_with_admin_timing_controls() -> None:
         archived = client.patch(f"/api/notifications/{notification_id}/archive", headers=headers)
         assert archived.status_code == 200
         assert archived.json()["archived_at"] is not None
-        default_list = client.get("/api/notifications", headers=headers, params={"trigger": "account_draft_pending_review"})
+        default_list = client.get("/api/notifications", headers=headers, params={"trigger": "account_draft_created"})
         assert all(item["id"] != notification_id for item in default_list.json()["items"])
         archived_list = client.get("/api/notifications", headers=headers, params={"read_state": "archived"})
         assert any(item["id"] == notification_id for item in archived_list.json()["items"])
@@ -196,11 +271,11 @@ def test_mandatory_notifications_force_email_delivery() -> None:
         preference = client.put(
             "/api/users/me/notification-preferences",
             headers=headers,
-            json={"items": [{"trigger": "sla_escalation", "mode": "in_app", "digest_cadence": "daily"}]},
+            json={"items": [{"trigger": "account_draft_created", "mode": "in_app", "digest_cadence": "daily"}]},
         )
         assert preference.status_code == 200
 
-        test = client.post("/api/admin/notification-triggers/sla_escalation/test", headers=headers, json={"recipient_user_id": me["id"]})
+        test = client.post("/api/admin/notification-triggers/account_draft_created/test", headers=headers, json={"recipient_user_id": me["id"]})
         assert test.status_code == 200
         assert test.json()["email_queued"] is True
         assert test.json()["delivery_metadata_json"]["email_delivery"]["channel"] == "email"

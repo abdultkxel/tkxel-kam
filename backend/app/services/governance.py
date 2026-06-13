@@ -77,6 +77,7 @@ TERMINAL_TASK_STATUSES = {"done", "cancelled"}
 
 class GovernanceService:
     def __init__(self, db: Session) -> None:
+        self.db = db
         self.repository = GovernanceRepository(db)
         self.accounts = AccountRepository(db)
         self.access = AccountAccessService(self.accounts, RbacRepository(db))
@@ -207,6 +208,7 @@ class GovernanceService:
         self._update_next_governance(event.account)
         self._notify_governance_event(event, "governance_scheduled", "Governance scheduled", current_user)
         self.repository.commit()
+        self._evaluate_alerts_for_account(event.account_id)
         return self._event_read(event)
 
     def get_event(self, event_id: str, current_user: User) -> GovernanceEventRead:
@@ -245,6 +247,7 @@ class GovernanceService:
         if before.get("account_id") and before.get("governance_type") and (before.get("account_id") != event.account_id or before.get("governance_type") != event.governance_type):
             self._sync_next_governance_prep_task(str(before["account_id"]), str(before["governance_type"]), current_user)
         self.repository.commit()
+        self._evaluate_alerts_for_account(event.account_id)
         return self._event_read(event)
 
     def delete_event(self, event_id: str, current_user: User) -> MessageResponse:
@@ -316,6 +319,7 @@ class GovernanceService:
         if event.account_id:
             self._sync_next_governance_prep_task(event.account_id, event.governance_type, current_user)
         self.repository.commit()
+        self._evaluate_alerts_for_account(event.account_id)
         return self._event_read(event)
 
     def agenda_draft(self, event_id: str, current_user: User, payload: GovernanceGeneratedOutputRequest | None = None) -> GovernanceGeneratedOutputRead:
@@ -422,6 +426,7 @@ class GovernanceService:
         self.audit.log(module="governance_reviews", action="add_action_item", entity_type="governance_action_item", entity_id=action_item.id, actor=current_user)
         self._notify_governance_action_assigned(event, action_item, current_user)
         self.repository.commit()
+        self._evaluate_alerts_for_account(event.account_id)
         return self._action_item_read(action_item)
 
     def list_action_items(self, event_id: str, current_user: User, page: int, page_size: int) -> GovernanceActionItemPageRead:
@@ -447,6 +452,7 @@ class GovernanceService:
             item.completed_by_id = current_user.id
         self.audit.log(module="governance_reviews", action="update_action_item", entity_type="governance_action_item", entity_id=item.id, actor=current_user)
         self.repository.commit()
+        self._evaluate_alerts_for_account(event.account_id)
         return self._action_item_read(item)
 
     def list_recurrence_rules(self, current_user: User, *, search: str | None = None, cadence: str | None = None, governance_type: str | None = None, active_state: str = "active", owner_id: str | None = None, account_id: str | None = None, segment: str | None = None, page: int = 1, page_size: int = 10) -> GovernanceRecurrenceRulePageRead:
@@ -1284,6 +1290,13 @@ class GovernanceService:
             "scheduled_at": event.scheduled_at.isoformat() if event.scheduled_at else None,
             "owner_id": event.owner_id,
         }
+
+    def _evaluate_alerts_for_account(self, account_id: str | None) -> None:
+        if not account_id:
+            return
+        from app.services.alerts import AlertsService
+
+        AlertsService(self.db).evaluate_for_account(account_id)
 
     @staticmethod
     def _add_cadence(start: datetime, cadence: str, step: int) -> datetime:

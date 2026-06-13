@@ -1,7 +1,7 @@
 import * as Tabs from '@radix-ui/react-tabs'
-import { AlertTriangle, BriefcaseBusiness, CalendarClock, CalendarPlus, FileText, Loader2, PhoneCall, RefreshCcw, Target } from 'lucide-react'
+import { AlertTriangle, BriefcaseBusiness, CalendarClock, CheckCircle2, Clock3, FileText, Loader2, RefreshCcw, Target, X } from 'lucide-react'
 import { nanoid } from 'nanoid'
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { toast } from 'sonner'
 import { HealthScoreRing } from '@/components/account/HealthScoreRing'
@@ -19,12 +19,15 @@ import { EmptyState } from '@/components/ui/EmptyState'
 import { TimelineFeed } from '@/components/timeline/TimelineFeed'
 import { HandoverSummary } from '@/components/timeline/HandoverSummary'
 import { AddOpportunityDialog, OpportunityDetailDialog, type OwnerOption } from '@/pages/Opportunities'
+import { RuntimeCustomFieldValues } from '@/components/custom-fields/RuntimeCustomFields'
 import { useAuth } from '@/contexts/AuthContext'
 import { useCapabilities } from '@/hooks/useCapabilities'
 import { useRole } from '@/hooks/useRole'
-import { recalculateAccountScore, ScoreRead } from '@/services/scoringSignalsTasks'
+import { RuntimeCustomField, listRuntimeCustomFields } from '@/services/contentGovernance'
+import { AlertRecord, evaluateAlerts, getAlerts, updateAlertStatus } from '@/services/alerts'
+import { recalculateAccountScore } from '@/services/scoringSignalsTasks'
+import type { ScoreRead } from '@/services/scoringSignalsTasks'
 import { useAccountStore } from '@/stores/accountStore'
-import { useAlertStore } from '@/stores/alertStore'
 import { useGovernanceStore } from '@/stores/governanceStore'
 import { useOpportunityStore } from '@/stores/opportunityStore'
 import { useScoreStore } from '@/stores/scoreStore'
@@ -33,7 +36,6 @@ import { useUIStore } from '@/stores/uiStore'
 import { Account } from '@/types/account'
 import { canViewTimelineEntry } from '@/types/timeline'
 import { emit } from '@/utils/emitTimelineEvent'
-import { emitTimelineEvent } from '@/utils/emitTimelineEvent'
 import { formatCompactCurrency, formatCurrency, formatDate } from '@/utils/formatters'
 
 export const accountDetailTabs = ['Overview', 'Engagement', 'Stakeholders', 'KYC', 'Health', 'Stage', 'Opportunities', 'Governance', 'Education', 'Timeline', 'Notes', 'Documents'] as const
@@ -62,6 +64,32 @@ export function resolveStageWorkspaceTab(value?: string | null): StageWorkspaceT
   return 'Growth'
 }
 
+export function scoreReadToAccountHealth(score: ScoreRead, fallback: Account['health']): Account['health'] {
+  const scoreByKey = Object.fromEntries(score.drivers.map(driver => [driver.key, driver.score]))
+  const driverScore = (...keys: string[]) => {
+    for (const key of keys) {
+      const value = scoreByKey[key]
+      if (typeof value === 'number' && Number.isFinite(value)) return value
+    }
+    return undefined
+  }
+  const commercialDrivers = [
+    driverScore('contract_health_score', 'contract_health', 'contract'),
+    driverScore('account_risk_score', 'risk_score', 'commercial'),
+  ].filter((value): value is number => value !== undefined)
+  const commercial = commercialDrivers.length
+    ? Math.round(commercialDrivers.reduce((sum, value) => sum + value, 0) / commercialDrivers.length)
+    : driverScore('commercial_score', 'commercial')
+
+  return {
+    overall: score.overall,
+    relationship: driverScore('relationship_score', 'relationship') ?? fallback.relationship,
+    usage: driverScore('service_line_score', 'service_lines_score', 'usage') ?? fallback.usage,
+    delivery: driverScore('resource_score', 'resource_health', 'resource', 'delivery') ?? fallback.delivery,
+    commercial: commercial ?? fallback.commercial,
+  }
+}
+
 export function Account360({ account }: { account: Account }) {
   const { token } = useAuth()
   const user = useRole()
@@ -69,13 +97,16 @@ export function Account360({ account }: { account: Account }) {
   const [searchParams, setSearchParams] = useSearchParams()
   const [handoverOpen, setHandoverOpen] = useState(false)
   const [savingHealth, setSavingHealth] = useState(false)
+  const [accountCustomFields, setAccountCustomFields] = useState<RuntimeCustomField[]>([])
+  const [accountAlerts, setAccountAlerts] = useState<AlertRecord[]>([])
+  const [alertsLoading, setAlertsLoading] = useState(false)
+  const [alertActionId, setAlertActionId] = useState('')
   const requestedTab = searchParams.get('tab')
+  const requestedAlertId = searchParams.get('alert')
   const [activeTab, setActiveTab] = useState<AccountDetailTab>(() => resolveAccountDetailTab(requestedTab))
   const [stageWorkspaceTab, setStageWorkspaceTab] = useState<StageWorkspaceTab>(() => resolveStageWorkspaceTab(requestedTab))
   const setHealth = useAccountStore(state => state.setHealth)
   const addScoreSnapshot = useScoreStore(state => state.addSnapshot)
-  const evaluateAccount = useAlertStore(state => state.evaluateAccount)
-  const alerts = useAlertStore(state => state.alerts)
   const allOpportunities = useOpportunityStore(state => state.opportunities)
   const opportunityTypes = useOpportunityStore(state => state.types)
   const opportunities = useMemo(() => allOpportunities.filter(item => item.accountId === account.id), [account.id, allOpportunities])
@@ -103,10 +134,7 @@ export function Account360({ account }: { account: Account }) {
     .reduce((sum, opportunity) => sum + opportunity.estimatedValue, 0)
   const recentDecisions = visibleEntries.filter(entry => entry.eventType === 'approval_event' || entry.eventType === 'executive_event').length
   const privileged = capabilities.can_view_portfolio || capabilities.can_update_portfolio_accounts || capabilities.can_view_sensitive_sources
-  const accountAlerts = useMemo(
-    () => alerts.filter(alert => alert.accountId === account.id && !alert.dismissedAt),
-    [account.id, alerts],
-  )
+  const focusedAlert = accountAlerts.find(alert => alert.id === requestedAlertId) ?? null
   const healthDimensions = [
     { key: 'relationship', label: 'Relationship', value: account.health.relationship },
     { key: 'usage', label: 'Usage', value: account.health.usage },
@@ -128,20 +156,47 @@ export function Account360({ account }: { account: Account }) {
     return Array.from(options.values()).sort((a, b) => a.name.localeCompare(b.name))
   }, [account.ownerEmail, account.ownerId, account.ownerName, user.email, user.id, user.name])
 
-  function healthFromScore(score: ScoreRead) {
-    const scoreByKey = Object.fromEntries(score.drivers.map(driver => [driver.key, driver.score]))
-    return {
-      overall: score.overall,
-      relationship: Number(scoreByKey.relationship ?? account.health.relationship),
-      usage: Number(scoreByKey.usage ?? account.health.usage),
-      delivery: Number(scoreByKey.delivery ?? account.health.delivery),
-      commercial: Number(scoreByKey.commercial ?? account.health.commercial),
+  const refreshAccountAlerts = useCallback(async () => {
+    if (!token) {
+      setAccountAlerts([])
+      return
     }
-  }
+    setAlertsLoading(true)
+    try {
+      const result = await getAlerts(token, { account_id: account.id, status: 'active', page: 1, page_size: 25 })
+      setAccountAlerts(result.items)
+    } catch {
+      setAccountAlerts([])
+    } finally {
+      setAlertsLoading(false)
+    }
+  }, [account.id, token])
 
   useEffect(() => {
     setActiveAccountId(account.id)
   }, [account.id, setActiveAccountId])
+
+  useEffect(() => {
+    if (!token) {
+      setAccountCustomFields([])
+      return
+    }
+    let cancelled = false
+    listRuntimeCustomFields(token, 'accounts')
+      .then(fields => {
+        if (!cancelled) setAccountCustomFields(Array.isArray(fields) ? fields : [])
+      })
+      .catch(() => {
+        if (!cancelled) setAccountCustomFields([])
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [token])
+
+  useEffect(() => {
+    refreshAccountAlerts()
+  }, [refreshAccountAlerts])
 
   useEffect(() => {
     setActiveTab(resolveAccountDetailTab(requestedTab))
@@ -165,13 +220,44 @@ export function Account360({ account }: { account: Account }) {
     setSearchParams(next, { replace: true })
   }
 
+  function openAlertDetails(alertId: string) {
+    const next = new URLSearchParams(searchParams)
+    next.set('tab', 'overview')
+    next.set('alert', alertId)
+    setSearchParams(next, { replace: true })
+  }
+
+  function closeAlertDetails() {
+    const next = new URLSearchParams(searchParams)
+    next.delete('alert')
+    setSearchParams(next, { replace: true })
+  }
+
+  async function setAlertStatus(alert: AlertRecord, status: 'acknowledged' | 'snoozed' | 'resolved') {
+    if (!token) return
+    setAlertActionId(alert.id)
+    try {
+      const payload = status === 'snoozed'
+        ? { status, snoozed_until: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString(), reason: 'Snoozed from alert details drawer.' }
+        : { status, reason: `${status} from alert details drawer.` }
+      await updateAlertStatus(token, alert.id, payload)
+      await refreshAccountAlerts()
+      if (status === 'resolved') closeAlertDetails()
+      toast.success(`Alert ${status}`)
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Alert status could not be updated')
+    } finally {
+      setAlertActionId('')
+    }
+  }
+
   async function recalcHealth() {
     setSavingHealth(true)
     const before = { ...account.health, scoringVersion: 'v1.3' }
     try {
       if (!token) throw new Error('You must be logged in to recalculate health')
       const score = await recalculateAccountScore(token, account.id, { trigger_source: 'account_health_tab', include_signal_evaluation: true })
-      const after = { ...healthFromScore(score), scoringVersion: score.metric_version }
+      const after = { ...scoreReadToAccountHealth(score, account.health), scoringVersion: score.metric_version }
       setHealth(account.id, after)
       const entry = emit.scoreChanged(account.id, user.id, user.name, before, after, score.metric_version)
       addScoreSnapshot({
@@ -190,7 +276,8 @@ export function Account360({ account }: { account: Account }) {
         changedByName: score.latest_snapshot?.calculated_by_name ?? user.name,
         triggerEntryId: entry.id,
       })
-      evaluateAccount({ ...account, health: after }, [entry, ...entries])
+      await evaluateAlerts(token, { scope: 'account', account_id: account.id })
+      await refreshAccountAlerts()
       toast.success('Health score recalculated')
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Health score recalculation failed')
@@ -213,7 +300,7 @@ export function Account360({ account }: { account: Account }) {
           evidence: summary.activityEvidence,
         },
       })
-      const after = healthFromScore(score)
+      const after = scoreReadToAccountHealth(score, account.health)
       const afterValue = {
         ...after,
         scoringVersion: score.metric_version,
@@ -248,66 +335,14 @@ export function Account360({ account }: { account: Account }) {
         changedByName: score.latest_snapshot?.calculated_by_name ?? user.name,
         triggerEntryId: entry.id,
       })
-      evaluateAccount({ ...account, health: after }, [entry, ...entries])
+      await evaluateAlerts(token, { scope: 'account', account_id: account.id })
+      await refreshAccountAlerts()
       toast.success('Calculator scores saved')
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Calculator scores could not be saved')
     } finally {
       setSavingHealth(false)
     }
-  }
-
-  function handleAlertAction(action: string) {
-    if (action === 'Log a check-in call') {
-      emitTimelineEvent({
-        accountId: account.id,
-        eventType: 'manual_note',
-        module: 'activity',
-        title: 'Check-in call logged from alert',
-        description: 'Alert action completed: check-in call recorded for follow-up.',
-        performedBy: user.id,
-        performedByName: user.name,
-        tags: ['alert-action', 'check-in'],
-        isSensitive: false,
-        isSystemGenerated: false,
-        isImmutable: false,
-      })
-      toast.success('Check-in call logged')
-      return
-    }
-    if (action === 'Schedule QBR') {
-      emitTimelineEvent({
-        accountId: account.id,
-        eventType: 'governance_event',
-        module: 'governance',
-        title: 'QBR scheduled from alert',
-        description: 'Alert action completed: QBR scheduling workflow started for this account.',
-        performedBy: user.id,
-        performedByName: user.name,
-        sourceRecordType: 'governance',
-        sourceRecordRoute: '/governance',
-        tags: ['alert-action', 'qbr'],
-        isSensitive: false,
-        isSystemGenerated: true,
-        isImmutable: false,
-      })
-      toast.success('QBR scheduling action recorded')
-      return
-    }
-    emitTimelineEvent({
-      accountId: account.id,
-      eventType: 'retention_event',
-      module: 'stage',
-      title: `${action} started`,
-      description: `Alert action completed: ${action}.`,
-      performedBy: user.id,
-      performedByName: user.name,
-      tags: ['alert-action'],
-      isSensitive: false,
-      isSystemGenerated: false,
-      isImmutable: false,
-    })
-    toast.success(`${action} started`)
   }
 
   function reviewKYCData() {
@@ -370,25 +405,33 @@ export function Account360({ account }: { account: Account }) {
                 <OverviewMetric icon={Target} label="Open opportunities" value={opportunities.length} detail={`${opportunities.filter(item => item.stage !== 'Won' && item.stage !== 'Lost').length} active pursuits`} />
                 <OverviewMetric icon={CalendarClock} label="Next governance" value={nextGovernance ? formatDate(nextGovernance.date) : 'Not set'} detail={nextGovernance ? nextGovernance.type : 'Schedule from Governance'} />
               </div>
+              <RuntimeCustomFieldValues fields={accountCustomFields} values={account.customFieldValues} className="m-5 bg-surface-secondary" />
               {accountAlerts.length ? (
                 <div className="m-5 rounded-lg border border-brand-orange/20 bg-brand-orange/10 p-4">
                   <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
                     <div className="flex min-w-0 gap-3">
                       <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0 text-brand-orange" />
                       <div>
-                        <p className="text-sm font-semibold text-ink">{accountAlerts.length} active alerts</p>
-                        <p className="mt-1 text-xs text-ink-secondary">{accountAlerts[0].headline}</p>
+                        <p className="text-sm font-semibold text-ink">{accountAlerts.length} active alert{accountAlerts.length === 1 ? '' : 's'}</p>
+                        <p className="mt-1 text-xs text-ink-secondary">{accountAlerts[0].title}</p>
                       </div>
                     </div>
-                    <div className="flex flex-wrap gap-2">
-                      {accountAlerts[0].suggestedActions.slice(0, 3).map(action => (
-                        <button key={action} className="tk-button-secondary bg-white" onClick={() => handleAlertAction(action)}>
-                          {action === 'Schedule QBR' ? <CalendarPlus className="h-4 w-4" /> : <PhoneCall className="h-4 w-4" />}
-                          {action}
-                        </button>
-                      ))}
-                    </div>
+                    <button className="tk-button-secondary bg-white" onClick={() => openAlertDetails(accountAlerts[0].id)}>
+                      Alert details
+                    </button>
                   </div>
+                  <div className="mt-3 grid gap-2">
+                    {accountAlerts.slice(0, 3).map(alert => (
+                      <button key={alert.id} className="grid gap-1 rounded-md border border-brand-orange/20 bg-white px-3 py-2 text-left" onClick={() => openAlertDetails(alert.id)}>
+                        <span className="text-xs font-semibold uppercase tracking-wider text-brand-orange">{alert.severity}</span>
+                        <span className="text-sm font-semibold text-ink">{alert.title}</span>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              ) : alertsLoading ? (
+                <div className="m-5 flex items-center gap-2 rounded-lg border border-surface-border bg-surface-secondary p-4 text-sm text-ink-secondary">
+                  <Loader2 className="h-4 w-4 animate-spin" />Loading alerts
                 </div>
               ) : null}
             </section>
@@ -513,7 +556,75 @@ export function Account360({ account }: { account: Account }) {
       </Tabs.Root>
 
       <HandoverSummary account={account} entries={visibleEntries} opportunities={opportunities} open={handoverOpen} onOpenChange={setHandoverOpen} />
+      {focusedAlert ? <AlertDetailsDrawer alert={focusedAlert} busy={alertActionId === focusedAlert.id} onClose={closeAlertDetails} onStatus={status => setAlertStatus(focusedAlert, status)} /> : null}
     </>
+  )
+}
+
+function AlertDetailsDrawer({ alert, busy, onClose, onStatus }: { alert: AlertRecord; busy: boolean; onClose: () => void; onStatus: (status: 'acknowledged' | 'snoozed' | 'resolved') => void }) {
+  const tone =
+    alert.severity === 'critical' || alert.severity === 'high'
+      ? 'border-rag-red/20 bg-rag-red/10 text-rag-red'
+      : alert.severity === 'medium'
+        ? 'border-brand-orange/20 bg-brand-orange/10 text-brand-orange'
+        : 'border-brand-blue/20 bg-blue-tint-20 text-brand-blue'
+
+  return (
+    <div className="fixed inset-0 z-50 bg-ink/30">
+      <aside className="ml-auto flex h-full w-full max-w-xl flex-col border-l border-surface-border bg-white shadow-xl">
+        <div className="flex items-start justify-between gap-4 border-b border-surface-border p-5">
+          <div className="min-w-0">
+            <p className="text-[10px] font-extrabold uppercase tracking-widest text-brand-blue">Alert details</p>
+            <h2 className="mt-1 text-lg font-bold text-ink">{alert.title}</h2>
+          </div>
+          <button className="tk-icon-button" onClick={onClose} aria-label="Close alert details">
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+        <div className="flex-1 space-y-4 overflow-y-auto p-5">
+          <div className="flex flex-wrap gap-2">
+            <span className={`rounded-full border px-3 py-1 text-[11px] font-semibold uppercase tracking-wider ${tone}`}>{alert.severity}</span>
+            <span className="rounded-full border border-surface-border bg-surface-tertiary px-3 py-1 text-[11px] font-semibold uppercase tracking-wider text-ink-secondary">{alert.status}</span>
+          </div>
+          <p className="text-sm leading-6 text-ink-secondary">{alert.detail}</p>
+          <div className="rounded-md border border-surface-border bg-surface-secondary p-4">
+            <p className="text-xs font-semibold uppercase tracking-wider text-ink-secondary">Recommended action</p>
+            <p className="mt-2 text-sm text-ink">{alert.recommended_action}</p>
+          </div>
+          <div>
+            <p className="text-xs font-semibold uppercase tracking-wider text-ink-secondary">Evidence</p>
+            <div className="mt-2 grid gap-2">
+              {alert.source_evidence_json.length ? alert.source_evidence_json.slice(0, 6).map((item, index) => (
+                <div key={`${alert.id}-evidence-${index}`} className="rounded-md border border-surface-border bg-white p-3 text-xs text-ink-secondary">
+                  {Object.entries(item).map(([key, value]) => (
+                    <p key={key}><span className="font-semibold text-ink">{key.replace(/_/g, ' ')}:</span> {String(value)}</p>
+                  ))}
+                </div>
+              )) : <p className="text-sm text-ink-secondary">No source evidence was attached.</p>}
+            </div>
+          </div>
+          <div className="grid gap-2 text-xs text-ink-secondary">
+            <p><span className="font-semibold text-ink">Owner:</span> {alert.owner_name ?? 'Unassigned'}</p>
+            <p><span className="font-semibold text-ink">Source:</span> {alert.source_record_type.replace(/_/g, ' ')}</p>
+            <p><span className="font-semibold text-ink">Last triggered:</span> {formatDate(alert.last_triggered_at)}</p>
+          </div>
+        </div>
+        <div className="grid gap-2 border-t border-surface-border p-5 sm:grid-cols-3">
+          <button className="tk-button-secondary justify-center" disabled={busy || alert.status === 'acknowledged'} onClick={() => onStatus('acknowledged')}>
+            {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4" />}
+            Acknowledge
+          </button>
+          <button className="tk-button-secondary justify-center" disabled={busy || alert.status === 'snoozed'} onClick={() => onStatus('snoozed')}>
+            {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Clock3 className="h-4 w-4" />}
+            Snooze
+          </button>
+          <button className="tk-button-primary justify-center" disabled={busy} onClick={() => onStatus('resolved')}>
+            {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4" />}
+            Resolve
+          </button>
+        </div>
+      </aside>
+    </div>
   )
 }
 

@@ -1,7 +1,9 @@
 import { FieldError } from '@/components/form/FieldError'
 import { RuntimeCustomField } from '@/services/contentGovernance'
+import { cn } from '@/utils/cn'
 
 type CustomValues = Record<string, unknown>
+type RuntimeCustomFieldValueDefinition = Pick<RuntimeCustomField, 'id' | 'field_key' | 'label' | 'field_type'>
 
 export function RuntimeCustomFields({
   fields,
@@ -46,6 +48,60 @@ export function requiredCustomFieldErrors(fields: RuntimeCustomField[], values: 
     }
     return errors
   }, {})
+}
+
+export function RuntimeCustomFieldValues({
+  fields,
+  values,
+  title = 'Custom fields',
+  variant = 'panel',
+  className,
+}: {
+  fields: RuntimeCustomFieldValueDefinition[]
+  values?: CustomValues | null
+  title?: string
+  variant?: 'panel' | 'badges' | 'definition-grid'
+  className?: string
+}) {
+  const entries = fields
+    .map(field => ({ field, value: values?.[field.field_key] }))
+    .filter(entry => !isEmptyCustomValue(entry.value))
+
+  if (!entries.length) return null
+
+  if (variant === 'badges') {
+    return (
+      <div className={cn('flex flex-wrap gap-2', className)}>
+        {entries.map(({ field, value }) => (
+          <span key={field.id} className="rounded-full bg-surface-tertiary px-2 py-1 text-[11px] font-semibold text-ink-secondary">
+            {field.label}: {formatCustomFieldValue(field, value)}
+          </span>
+        ))}
+      </div>
+    )
+  }
+
+  const content = (
+    <dl className="grid gap-3 sm:grid-cols-2">
+      {entries.map(({ field, value }) => (
+        <div key={field.id}>
+          <dt className="text-xs font-semibold uppercase tracking-wider text-ink-secondary">{field.label}</dt>
+          <dd className="mt-1 break-words text-sm font-medium text-ink">{formatCustomFieldValue(field, value)}</dd>
+        </div>
+      ))}
+    </dl>
+  )
+
+  if (variant === 'definition-grid') {
+    return <div className={className}>{content}</div>
+  }
+
+  return (
+    <section className={cn('rounded-lg border border-surface-border bg-white p-4', className)}>
+      <h3 className="text-sm font-semibold text-ink">{title}</h3>
+      <div className="mt-3">{content}</div>
+    </section>
+  )
 }
 
 function RuntimeCustomFieldInput({
@@ -144,4 +200,12 @@ function numberValue(value: string) {
 
 function isEmptyCustomValue(value: unknown) {
   return value === undefined || value === null || value === '' || (Array.isArray(value) && value.length === 0)
+}
+
+function formatCustomFieldValue(field: RuntimeCustomFieldValueDefinition, value: unknown) {
+  if (field.field_type === 'boolean') return value ? 'Yes' : 'No'
+  if (Array.isArray(value)) return value.map(item => String(item)).join(', ')
+  if (typeof value === 'number') return Number.isFinite(value) ? String(value) : ''
+  if (typeof value === 'object' && value !== null) return JSON.stringify(value)
+  return String(value)
 }

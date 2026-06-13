@@ -212,11 +212,11 @@ export interface CustomFieldPayload {
   validation_rules?: Record<string, unknown>
   default_value?: unknown
   is_required: boolean
-  is_sensitive: boolean
+  is_sensitive?: boolean
   is_active: boolean
-  show_in_list: boolean
-  show_in_detail: boolean
-  sort_order: number
+  show_in_list?: boolean
+  show_in_detail?: boolean
+  sort_order?: number
 }
 
 export function listAdminUsers(token: string, params: UserListParams = {}) {

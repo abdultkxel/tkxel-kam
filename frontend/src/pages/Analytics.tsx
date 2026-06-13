@@ -6,7 +6,8 @@ import { EmptyState } from '@/components/ui/EmptyState'
 import { PageHeader } from '@/components/ui/PageHeader'
 import { useAuth } from '@/contexts/AuthContext'
 import { useCapabilities } from '@/hooks/useCapabilities'
-import { AnalyticsPortfolio as AnalyticsPortfolioRead, getAccountChangeAlerts, getAnalyticsPortfolio, getKamPerformance, KamPerformance } from '@/services/analytics'
+import { getAlerts } from '@/services/alerts'
+import { AnalyticsPortfolio as AnalyticsPortfolioRead, getAnalyticsPortfolio, getKamPerformance, KamPerformance } from '@/services/analytics'
 import { formatCompactCurrency } from '@/utils/formatters'
 
 function exportCsv(filename: string, rows: Record<string, unknown>[]) {
@@ -153,7 +154,7 @@ export function PortfolioAnalytics({ embedded = false }: { embedded?: boolean })
     Promise.all([
       getAnalyticsPortfolio(token, filters),
       getKamPerformance(token, { page: 1, page_size: 50 }),
-      getAccountChangeAlerts(token, { page: 1, page_size: 1, refresh: true, status: 'open' }),
+      getAlerts(token, { page: 1, page_size: 1, status: 'active' }),
     ])
       .then(([portfolioResult, kamResult, alertResult]) => {
         if (!active) return
@@ -321,7 +322,7 @@ export function PortfolioAnalytics({ embedded = false }: { embedded?: boolean })
               <AlertTriangle className="h-5 w-5 text-brand-orange" />
             </div>
             <p className="mt-3 text-sm text-ink-secondary">
-              {alertCount ? `${alertCount} open persisted alert${alertCount === 1 ? '' : 's'} need owner review.` : 'No open account-change alerts in this view.'}
+              {alertCount ? `${alertCount} active persisted alert${alertCount === 1 ? '' : 's'} need owner review.` : 'No active alerts in this view.'}
             </p>
           </section>
         </>

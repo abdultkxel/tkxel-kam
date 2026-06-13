@@ -6,9 +6,6 @@ from fastapi import APIRouter, Depends, Query
 from app.dependencies import get_analytics_service, get_current_user
 from app.models import User
 from app.schemas import (
-    AccountChangeAlertPageRead,
-    AccountChangeAlertRead,
-    AccountChangeAlertUpdateRequest,
     AnalyticsBenchmarkPageRead,
     AnalyticsPortfolioRead,
     KamPerformancePageRead,
@@ -69,39 +66,3 @@ def kam_performance(
     page_size: Annotated[int, Query(ge=1, le=100)] = 25,
 ) -> KamPerformancePageRead:
     return service.kam_performance(current_user, page=page, page_size=page_size)
-
-
-@router.get(
-    "/account-change-alerts",
-    response_model=AccountChangeAlertPageRead,
-    summary="List account-change alerts",
-    description="Returns persisted proactive account-change alerts and refreshes deterministic alerts from current score/account evidence.",
-)
-def account_change_alerts(
-    current_user: Annotated[User, Depends(get_current_user)],
-    service: Annotated[AnalyticsService, Depends(get_analytics_service)],
-    search: str | None = None,
-    status_filter: Annotated[str | None, Query(alias="status")] = None,
-    severity: str | None = None,
-    owner_id: str | None = None,
-    refresh: bool = True,
-    page: Annotated[int, Query(ge=1)] = 1,
-    page_size: Annotated[int, Query(ge=1, le=100)] = 25,
-) -> AccountChangeAlertPageRead:
-    return service.list_change_alerts(current_user, search=search, status_filter=status_filter, severity=severity, owner_id=owner_id, refresh=refresh, page=page, page_size=page_size)
-
-
-@router.patch(
-    "/account-change-alerts/{alert_id}/status",
-    response_model=AccountChangeAlertRead,
-    summary="Update account-change alert status",
-    description="Updates a proactive account-change alert lifecycle status with audit logging.",
-    responses={404: {"description": "Alert was not found."}, 403: {"description": "User lacks analytics update permission."}},
-)
-def update_account_change_alert_status(
-    alert_id: str,
-    payload: AccountChangeAlertUpdateRequest,
-    current_user: Annotated[User, Depends(get_current_user)],
-    service: Annotated[AnalyticsService, Depends(get_analytics_service)],
-) -> AccountChangeAlertRead:
-    return service.update_change_alert(alert_id, payload, current_user)

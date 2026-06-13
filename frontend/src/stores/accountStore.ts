@@ -18,7 +18,6 @@ interface AccountStore {
   importAccounts: (accounts: Account[]) => void
   assignOwner: (accountIds: string[], ownerId: string, ownerName: string) => void
   addTagToAccounts: (accountIds: string[], tag: string) => void
-  addSegmentTag: (tag: string) => void
 }
 
 export const useAccountStore = create<AccountStore>()(
@@ -75,10 +74,6 @@ export const useAccountStore = create<AccountStore>()(
           accounts: state.accounts.map(account =>
             accountIds.includes(account.id) && !account.tags.includes(tag) ? { ...account, tags: [...account.tags, tag] } : account,
           ),
-        })),
-      addSegmentTag: tag =>
-        set(state => ({
-          segmentTags: state.segmentTags.includes(tag) ? state.segmentTags : [...state.segmentTags, tag],
         })),
     }),
     {

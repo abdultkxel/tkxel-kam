@@ -190,7 +190,7 @@ export function AccountCsvImport() {
     listAccountCustomFields(token)
       .then(fields => {
         if (!active) return
-        setCustomFields(fields.filter(field => field.show_in_detail))
+        setCustomFields(fields)
       })
       .catch(() => {
         if (active) setCustomFields([])

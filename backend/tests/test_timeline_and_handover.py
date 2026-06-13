@@ -12,6 +12,8 @@ from app.main import app
 from app.models import Account, AccountOwner, Engagement, TimelineEntry, TimelineEventTypeConfig, TimelineTombstone, User, utc_now
 from app.services.seed import seed_default_data
 
+FIXED_TIMELINE_TYPE_SLUGS = {"manual_note", "governance_event", "escalation_event", "opportunity_event", "client_education"}
+
 
 @pytest.fixture()
 def db_session() -> Generator[Session, None, None]:
@@ -86,35 +88,33 @@ def seeded_user(db_session: Session, role: str) -> User:
     return user
 
 
-def ensure_manual_note_event_type(db_session: Session) -> None:
-    if db_session.scalar(select(TimelineEventTypeConfig).where(TimelineEventTypeConfig.slug == "manual_note")) is not None:
-        return
-    admin = seeded_user(db_session, "admin")
-    db_session.add(
-        TimelineEventTypeConfig(
-            slug="manual_note",
-            name="Manual note",
-            category="manual",
-            module="manual",
-            color_token="surface-border",
-            display_order=1,
-            default_visibility="public",
-            is_active=True,
-            is_critical=False,
-            created_by_id=admin.id,
-            updated_by_id=admin.id,
-        )
+def test_default_seed_creates_fixed_timeline_event_types(db_session: Session) -> None:
+    slugs = set(db_session.scalars(select(TimelineEventTypeConfig.slug)).all())
+    assert FIXED_TIMELINE_TYPE_SLUGS.issubset(slugs)
+
+
+def test_non_admin_reads_fixed_timeline_event_types_and_creates_note(client: TestClient, db_session: Session) -> None:
+    account_manager = seeded_user(db_session, "account_manager")
+    account = create_account(db_session, owner=account_manager)
+    headers = auth_headers(client, account_manager.email, "User@12345")
+
+    type_response = client.get("/api/timeline-event-types", headers=headers, params={"active_state": "active", "page": 1, "page_size": 100})
+    assert type_response.status_code == 200
+    slugs = {item["slug"] for item in type_response.json()["items"]}
+    assert FIXED_TIMELINE_TYPE_SLUGS.issubset(slugs)
+
+    note_response = client.post(
+        f"/api/accounts/{account.id}/timeline-notes",
+        headers=headers,
+        json={"event_type": "governance_event", "title": "Governance update", "description": "Governance follow-up captured."},
     )
-    db_session.commit()
-
-
-def test_default_seed_leaves_timeline_event_types_empty(db_session: Session) -> None:
-    assert db_session.scalar(select(TimelineEventTypeConfig)) is None
+    assert note_response.status_code == 201
+    assert note_response.json()["event_type"] == "governance_event"
+    assert note_response.json()["module"] == "governance"
 
 
 def test_timeline_note_comments_handover_ai_and_exports(client: TestClient, db_session: Session) -> None:
     headers = auth_headers(client)
-    ensure_manual_note_event_type(db_session)
     account = create_account(db_session)
 
     create_response = client.post(
@@ -187,7 +187,6 @@ def test_timeline_note_comments_handover_ai_and_exports(client: TestClient, db_s
 
 def test_sensitive_timeline_authorization_and_retention_tombstones(client: TestClient, db_session: Session) -> None:
     admin_headers = auth_headers(client)
-    ensure_manual_note_event_type(db_session)
     account_manager = seeded_user(db_session, "account_manager")
     account = create_account(db_session, owner=account_manager)
 
@@ -251,7 +250,6 @@ def test_sensitive_timeline_authorization_and_retention_tombstones(client: TestC
 
 def test_timeline_filters_handover_history_and_owner_validation(client: TestClient, db_session: Session) -> None:
     headers = auth_headers(client)
-    ensure_manual_note_event_type(db_session)
     account = create_account(db_session)
     account_manager = seeded_user(db_session, "account_manager")
 
@@ -317,7 +315,6 @@ def test_timeline_filters_handover_history_and_owner_validation(client: TestClie
 
 def test_engagement_timeline_hides_sensitive_entries_for_unauthorized_viewers(client: TestClient, db_session: Session) -> None:
     admin_headers = auth_headers(client)
-    ensure_manual_note_event_type(db_session)
     account_manager = seeded_user(db_session, "account_manager")
     account = create_account(db_session, owner=account_manager)
     engagement = create_engagement(db_session, account, account_manager)

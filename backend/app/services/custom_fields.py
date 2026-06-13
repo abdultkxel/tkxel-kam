@@ -4,7 +4,7 @@ from fastapi import HTTPException, status
 from sqlalchemy.orm import Session
 
 from app.models import CustomFieldDefinition, CustomFieldValue, User
-from app.rbac_catalog import PERMISSION_SECTIONS
+from app.rbac import FIELD_BUILDER_RUNTIME_MODULES, FIELD_BUILDER_RUNTIME_MODULE_SLUGS
 from app.repositories.accounts import AccountRepository
 from app.repositories.audit import AuditRepository
 from app.repositories.custom_fields import CustomFieldRepository
@@ -20,16 +20,6 @@ from app.services.account_access import AccountAccessService
 from app.services.user_management import page_count
 
 SELECT_FIELD_TYPES = {"single_select", "multi_select"}
-FIELD_BUILDER_DOMAIN_MODULES: tuple[tuple[str, str], ...] = (
-    ("account_overview", "Account Overview"),
-    ("account_onboarding_workspace", "Account Onboarding Workspace"),
-    ("client_education_content", "Client Education Content"),
-    ("playbooks_tasks_calendar", "Playbooks, Activities, Tasks, and Calendar"),
-)
-FIELD_BUILDER_MODULES: tuple[tuple[str, str], ...] = tuple(
-    (slug, name)
-    for slug, name in dict([*FIELD_BUILDER_DOMAIN_MODULES, *PERMISSION_SECTIONS]).items()
-)
 
 
 def field_not_found(definition_id: str) -> HTTPException:
@@ -57,7 +47,7 @@ class CustomFieldService:
         self.audit = AuditService(AuditRepository(db))
 
     def list_modules(self) -> list[CustomFieldModuleRead]:
-        return [CustomFieldModuleRead(slug=slug, name=name) for slug, name in FIELD_BUILDER_MODULES]
+        return [CustomFieldModuleRead(slug=slug, name=name) for slug, name in FIELD_BUILDER_RUNTIME_MODULES]
 
     def list_active_definitions(self, modules: list[str]) -> list[CustomFieldDefinition]:
         return self.repository.list_active_definitions(modules)
@@ -65,6 +55,11 @@ class CustomFieldService:
     def list_active_definitions_for_user(self, module: str, actor: User) -> list[CustomFieldDefinition]:
         self.access.require_module_permission(actor, module, "view")
         return self.repository.list_active_definitions([module])
+
+    def validate_record_values(self, modules: str | list[str], values: dict[str, Any]) -> None:
+        module_list = [modules] if isinstance(modules, str) else modules
+        definitions = self.repository.list_active_definitions(module_list)
+        self._validated_values(definitions, values)
 
     def list_definitions(
         self,
@@ -103,6 +98,7 @@ class CustomFieldService:
         return definition
 
     def create_definition(self, payload: CustomFieldDefinitionCreateRequest, actor: User) -> CustomFieldDefinition:
+        self._ensure_supported_module(payload.module)
         self._ensure_unique(payload.module, payload.field_key)
         self._validate_field_configuration(payload.field_type, payload.options)
         definition = CustomFieldDefinition(
@@ -128,6 +124,8 @@ class CustomFieldService:
         updates = payload.model_dump(exclude_unset=True)
         next_module = updates.get("module", definition.module)
         next_key = updates.get("field_key", definition.field_key)
+        if "module" in updates:
+            self._ensure_supported_module(next_module)
         if next_module != definition.module or next_key != definition.field_key:
             self._ensure_unique(next_module, next_key, current_id=definition.id)
 
@@ -253,6 +251,11 @@ class CustomFieldService:
                 status_code=status.HTTP_409_CONFLICT,
                 detail="A custom field with this module and field key already exists",
             )
+
+    @staticmethod
+    def _ensure_supported_module(module: str) -> None:
+        if module not in FIELD_BUILDER_RUNTIME_MODULE_SLUGS:
+            raise field_validation_error("module", "Module must have runtime custom field support.")
 
     @staticmethod
     def _validate_field_configuration(field_type: str, options: list[str]) -> None:

@@ -1,6 +1,6 @@
 import * as Collapsible from '@radix-ui/react-collapsible'
 import { ChevronDown, ExternalLink, Link as LinkIcon, Link2, Loader2, Lock, MessageCircle, PenLine, Pencil, Send, Trash2 } from 'lucide-react'
-import { ReactNode, useEffect, useMemo, useRef, useState } from 'react'
+import { ReactNode, useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { toast } from 'sonner'
 import { MentionText } from '@/components/collaboration/MentionText'
@@ -9,7 +9,6 @@ import { useAuth } from '@/contexts/AuthContext'
 import { useCapabilities } from '@/hooks/useCapabilities'
 import { useRole } from '@/hooks/useRole'
 import { useAccountStore } from '@/stores/accountStore'
-import { useIntegrationStore } from '@/stores/integrationStore'
 import { useNotificationStore } from '@/stores/notificationStore'
 import { createTimelineComment, deleteTimelineComment, getTimelineComments, updateTimelineComment } from '@/services/timeline'
 import { TimelineComment, TimelineEntry, MODULE_COLOURS } from '@/types/timeline'
@@ -54,8 +53,6 @@ export function TimelineCard({ entry, searchQuery, flash = false }: { entry: Tim
   const user = useRole()
   const { token } = useAuth()
   const { capabilities } = useCapabilities()
-  const loggedSensitiveView = useRef(false)
-  const addAccessAudit = useIntegrationStore(state => state.addAccessAudit)
   const accountName = useAccountStore(state => state.accounts.find(account => account.id === entry.accountId)?.name ?? 'Account')
   const addNotification = useNotificationStore(state => state.addNotification)
   const rows = diffRows(entry)
@@ -81,19 +78,6 @@ export function TimelineCard({ entry, searchQuery, flash = false }: { entry: Tim
       active = false
     }
   }, [commentsOpen, entry.id, token])
-
-  useEffect(() => {
-    if (!entry.isSensitive || loggedSensitiveView.current) return
-    loggedSensitiveView.current = true
-    addAccessAudit({
-      id: `audit-${entry.id}-${Date.now()}`,
-      user: user.name,
-      entryId: entry.id,
-      timestamp: new Date().toISOString(),
-      ip: '127.0.0.1',
-      action: 'viewed',
-    })
-  }, [addAccessAudit, entry.id, entry.isSensitive, user.name])
 
   function annotate() {
     setCommentsOpen(true)

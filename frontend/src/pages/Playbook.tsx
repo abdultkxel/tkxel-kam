@@ -1,7 +1,7 @@
 import { BookOpen, CheckCircle2, ClipboardList, Layers3, Loader2, Play, Plus, RefreshCw, Save, Target, UsersRound, X } from 'lucide-react'
 import { FormEvent, useEffect, useMemo, useState } from 'react'
 import { toast } from 'sonner'
-import { RuntimeCustomFields, customValuesForSubmit, requiredCustomFieldErrors } from '@/components/custom-fields/RuntimeCustomFields'
+import { RuntimeCustomFieldValues, RuntimeCustomFields, customValuesForSubmit, requiredCustomFieldErrors } from '@/components/custom-fields/RuntimeCustomFields'
 import { EmptyState } from '@/components/ui/EmptyState'
 import { PageHeader } from '@/components/ui/PageHeader'
 import { useAuth } from '@/contexts/AuthContext'
@@ -195,7 +195,7 @@ export function Playbook() {
 
   useEffect(() => {
     if (!token || !canConfigure) return
-    listRuntimeCustomFields(token, 'playbooks_tasks_calendar')
+    listRuntimeCustomFields(token, 'playbooks')
       .then(setCustomFields)
       .catch(() => setCustomFields([]))
   }, [canConfigure, token])
@@ -417,6 +417,7 @@ export function Playbook() {
                     canConfigure={canConfigure}
                     readOnly={readOnly}
                     executing={executingId === template.id}
+                    customFields={customFields}
                     onSelect={() => setSelectedTemplateId(template.id)}
                     onEdit={() => startEdit(template)}
                     onRun={() => runTemplate(template)}
@@ -496,7 +497,7 @@ export function Playbook() {
   )
 }
 
-function TemplateCard({ template, selected, canConfigure, readOnly, executing, onSelect, onEdit, onRun }: { template: PlaybookTemplate; selected: boolean; canConfigure: boolean; readOnly: boolean; executing: boolean; onSelect: () => void; onEdit: () => void; onRun: () => void }) {
+function TemplateCard({ template, selected, canConfigure, readOnly, executing, customFields, onSelect, onEdit, onRun }: { template: PlaybookTemplate; selected: boolean; canConfigure: boolean; readOnly: boolean; executing: boolean; customFields: RuntimeCustomField[]; onSelect: () => void; onEdit: () => void; onRun: () => void }) {
   return (
     <article className={cn('rounded-lg border bg-white p-4', selected ? 'border-brand-blue shadow-card' : 'border-surface-border')}>
       <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
@@ -523,6 +524,7 @@ function TemplateCard({ template, selected, canConfigure, readOnly, executing, o
           </button>
         </div>
       </div>
+      <RuntimeCustomFieldValues fields={customFields} values={template.custom_field_values} variant="badges" className="mt-3" />
     </article>
   )
 }

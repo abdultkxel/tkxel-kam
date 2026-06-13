@@ -117,6 +117,7 @@ export interface ApiOpportunity {
   stage_history: ApiOpportunityStageHistory[]
   decisions: ApiOpportunityDecision[]
   action_items: ApiOpportunityActionItem[]
+  custom_field_values?: Record<string, unknown>
 }
 
 export interface ApiOpportunityPipelineTotals {
@@ -278,7 +279,7 @@ export async function updateOpportunityActionItem(token: string, actionItemId: s
 }
 
 export function buildCreatePayload(payload: OpportunityCreateInput) {
-  return {
+  const body: Record<string, unknown> = {
     account_id: payload.accountId,
     engagement_id: payload.engagementId ?? null,
     type_id: payload.typeId,
@@ -287,7 +288,6 @@ export function buildCreatePayload(payload: OpportunityCreateInput) {
     service_line: payload.serviceLine,
     value: payload.value,
     currency: payload.currency,
-    stage: payload.stage,
     next_step: payload.nextStep,
     target_date: payload.targetDate,
     source_context: payload.sourceContext ?? 'manual',
@@ -295,8 +295,11 @@ export function buildCreatePayload(payload: OpportunityCreateInput) {
     source_record_type: payload.sourceRecordType ?? null,
     source_record_route: payload.sourceRecordRoute ?? null,
     outcome_reason: payload.outcomeReason ?? null,
+    custom_field_values: payload.customFieldValues ?? {},
     action_items: (payload.actionItems ?? []).map(buildActionItemPayload),
   }
+  if (payload.stage) body.stage = payload.stage
+  return body
 }
 
 export function buildUpdatePayload(payload: OpportunityUpdateInput) {
@@ -397,6 +400,7 @@ export function mapApiOpportunity(opportunity: ApiOpportunity): Opportunity {
     stageHistory: (opportunity.stage_history ?? []).map(mapApiStageHistory),
     decisions: (opportunity.decisions ?? []).map(mapApiDecision),
     actionItems: (opportunity.action_items ?? []).map(mapApiActionItem),
+    customFieldValues: opportunity.custom_field_values ?? {},
   }
 }
 

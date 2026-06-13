@@ -43,6 +43,14 @@ class StakeholderConfigRepository:
     def count_role_usage(self, slug: str) -> int:
         return self.db.scalar(select(func.count(Stakeholder.id)).where(Stakeholder.role == slug)) or 0
 
+    def count_gap_rule_usage(self, slug: str) -> int:
+        rules = self.db.scalars(select(StakeholderGapRule)).all()
+        return sum(1 for rule in rules if _condition_mentions_role(rule.condition_json or {}, slug))
+
+    def delete_role(self, role: StakeholderRoleConfig) -> None:
+        self.db.delete(role)
+        self.db.flush()
+
     def list_rules(self, *, active_state: str = "active", search: str | None = None, page: int = 1, page_size: int = 50) -> tuple[list[StakeholderGapRule], int]:
         conditions = []
         if active_state == "active":
@@ -83,3 +91,11 @@ class StakeholderConfigRepository:
 
     def commit(self) -> None:
         self.db.commit()
+
+
+def _condition_mentions_role(value: object, slug: str) -> bool:
+    if isinstance(value, dict):
+        return any(_condition_mentions_role(item, slug) for item in value.values())
+    if isinstance(value, list):
+        return any(_condition_mentions_role(item, slug) for item in value)
+    return value == slug
