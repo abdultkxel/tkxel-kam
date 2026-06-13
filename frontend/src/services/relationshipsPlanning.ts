@@ -10,6 +10,9 @@ import type {
   RetentionRecommendation,
   ServiceAdjacencyRule,
   ServiceCatalogItem,
+  ServiceGrowthBundle,
+  ServiceGrowthRule,
+  ServiceGrowthSelectorType,
   ServiceRecommendation,
   StakeholderGapRule,
   StakeholderRoleConfig,
@@ -66,6 +69,7 @@ interface ApiStakeholderRoleConfig {
   is_active: boolean
   display_order: number
   in_use_count: number
+  gap_rule_usage_count?: number
 }
 
 interface ApiStakeholderGapRule {
@@ -87,6 +91,7 @@ interface ApiOpportunityStageConfig {
   requires_outcome_reason: boolean
   is_active: boolean
   display_order: number
+  in_use_count: number
 }
 
 interface ApiOpportunityStageTransitionConfig {
@@ -115,7 +120,11 @@ interface ApiServiceRecommendation {
   source_service_name?: string | null
   target_service_id: string
   target_service_name: string
+  growth_rule_id?: string | null
+  base_fit_score?: number
   relevance_score: number
+  account_fit_score?: number
+  score_factors?: { label: string; value: number; reason: string }[]
   rationale: string
   status: string
   source_context: string
@@ -193,6 +202,31 @@ interface ApiAdjacency {
   is_active: boolean
 }
 
+interface ApiServiceGrowthBundle {
+  id: string
+  slug: string
+  name: string
+  description?: string | null
+  service_ids: string[]
+  service_names: string[]
+  is_active: boolean
+  display_order: number
+}
+
+interface ApiServiceGrowthRule {
+  id: string
+  source_selector_type: ServiceGrowthSelectorType
+  source_selector_value: string
+  source_selector_label: string
+  target_selector_type: ServiceGrowthSelectorType
+  target_selector_value: string
+  target_selector_label: string
+  base_fit_score: number
+  priority: number
+  rationale_template: string
+  is_active: boolean
+}
+
 export async function getAccountPlan(token: string, accountId: string) {
   const plan = await apiRequest<ApiAccountPlan | null>(`/api/accounts/${accountId}/plan`, { token })
   return plan ? mapPlan(plan) : null
@@ -230,16 +264,96 @@ export async function listAdminServiceCatalog(token: string) {
   return { ...page, items: page.items.map(mapService) }
 }
 
+export async function listServiceGrowthBundles(token: string) {
+  return (await apiRequest<ApiServiceGrowthBundle[]>('/api/admin/service-growth-bundles', { token })).map(mapGrowthBundle)
+}
+
+export async function createServiceGrowthBundle(token: string, payload: { slug: string; name: string; description?: string | null; serviceIds: string[]; displayOrder?: number; isActive?: boolean }) {
+  return mapGrowthBundle(await apiRequest<ApiServiceGrowthBundle>('/api/admin/service-growth-bundles', {
+    method: 'POST',
+    token,
+    body: JSON.stringify({
+      slug: payload.slug,
+      name: payload.name,
+      description: payload.description ?? null,
+      service_ids: payload.serviceIds,
+      display_order: payload.displayOrder ?? 0,
+      is_active: payload.isActive ?? true,
+    }),
+  }))
+}
+
+export async function updateServiceGrowthBundle(token: string, bundleId: string, payload: { slug?: string; name?: string; description?: string | null; serviceIds?: string[]; displayOrder?: number; isActive?: boolean }) {
+  return mapGrowthBundle(await apiRequest<ApiServiceGrowthBundle>(`/api/admin/service-growth-bundles/${bundleId}`, {
+    method: 'PATCH',
+    token,
+    body: JSON.stringify({
+      slug: payload.slug,
+      name: payload.name,
+      description: payload.description,
+      service_ids: payload.serviceIds,
+      display_order: payload.displayOrder,
+      is_active: payload.isActive,
+    }),
+  }))
+}
+
+export async function listServiceGrowthRules(token: string) {
+  return (await apiRequest<ApiServiceGrowthRule[]>('/api/admin/service-growth-rules', { token })).map(mapGrowthRule)
+}
+
+export async function createServiceGrowthRule(token: string, payload: { sourceSelectorType: ServiceGrowthSelectorType; sourceSelectorValue: string; targetSelectorType: ServiceGrowthSelectorType; targetSelectorValue: string; baseFitScore: number; priority?: number; rationaleTemplate: string; isActive?: boolean }) {
+  return mapGrowthRule(await apiRequest<ApiServiceGrowthRule>('/api/admin/service-growth-rules', {
+    method: 'POST',
+    token,
+    body: JSON.stringify({
+      source_selector_type: payload.sourceSelectorType,
+      source_selector_value: payload.sourceSelectorValue,
+      target_selector_type: payload.targetSelectorType,
+      target_selector_value: payload.targetSelectorValue,
+      base_fit_score: payload.baseFitScore,
+      priority: payload.priority ?? 0,
+      rationale_template: payload.rationaleTemplate,
+      is_active: payload.isActive ?? true,
+    }),
+  }))
+}
+
+export async function updateServiceGrowthRule(token: string, ruleId: string, payload: { sourceSelectorType: ServiceGrowthSelectorType; sourceSelectorValue: string; targetSelectorType: ServiceGrowthSelectorType; targetSelectorValue: string; baseFitScore: number; priority?: number; rationaleTemplate: string; isActive?: boolean }) {
+  return mapGrowthRule(await apiRequest<ApiServiceGrowthRule>(`/api/admin/service-growth-rules/${ruleId}`, {
+    method: 'PATCH',
+    token,
+    body: JSON.stringify({
+      source_selector_type: payload.sourceSelectorType,
+      source_selector_value: payload.sourceSelectorValue,
+      target_selector_type: payload.targetSelectorType,
+      target_selector_value: payload.targetSelectorValue,
+      base_fit_score: payload.baseFitScore,
+      priority: payload.priority ?? 0,
+      rationale_template: payload.rationaleTemplate,
+      is_active: payload.isActive ?? true,
+    }),
+  }))
+}
+
 export async function listServiceCatalog(token: string) {
   const page = await apiRequest<Page<ApiServiceCatalogItem>>('/api/service-catalog?page=1&page_size=100', { token })
   return { ...page, items: page.items.map(mapService) }
 }
 
-export async function createServiceCatalogItem(token: string, payload: { slug: string; name: string; category?: string; description?: string; tags?: string[] }) {
+export async function createServiceCatalogItem(token: string, payload: { slug: string; name: string; category?: string; description?: string | null; tags?: string[]; displayOrder?: number }) {
   return mapService(await apiRequest<ApiServiceCatalogItem>('/api/admin/service-catalog', {
     method: 'POST',
     token,
-    body: JSON.stringify({ ...payload, tags: payload.tags ?? [], is_active: true }),
+    body: JSON.stringify({
+      slug: payload.slug,
+      name: payload.name,
+      category: payload.category,
+      description: payload.description ?? null,
+      tags: payload.tags ?? [],
+      display_order: payload.displayOrder ?? 0,
+      is_active: true,
+    }),
   }))
 }
 
@@ -260,7 +374,7 @@ export async function updateServiceCatalogItem(token: string, serviceId: string,
 }
 
 export async function listStakeholderRoles(token: string) {
-  const page = await apiRequest<Page<ApiStakeholderRoleConfig>>('/api/admin/stakeholder-roles?active_state=all&page=1&page_size=100', { token })
+  const page = await listAllPages<ApiStakeholderRoleConfig>('/api/admin/stakeholder-roles?active_state=all', token)
   return { ...page, items: page.items.map(mapStakeholderRole) }
 }
 
@@ -292,8 +406,15 @@ export async function updateStakeholderRole(token: string, roleId: string, paylo
   }))
 }
 
+export async function deleteStakeholderRole(token: string, roleId: string) {
+  return apiRequest<{ message: string }>(`/api/admin/stakeholder-roles/${roleId}`, {
+    method: 'DELETE',
+    token,
+  })
+}
+
 export async function listStakeholderGapRules(token: string) {
-  const page = await apiRequest<Page<ApiStakeholderGapRule>>('/api/admin/stakeholder-gap-rules?active_state=all&page=1&page_size=100', { token })
+  const page = await listAllPages<ApiStakeholderGapRule>('/api/admin/stakeholder-gap-rules?active_state=all', token)
   return { ...page, items: page.items.map(mapStakeholderGapRule) }
 }
 
@@ -396,6 +517,14 @@ export async function saveWhitespace(token: string, accountId: string, items: { 
     method: 'PUT',
     token,
     body: JSON.stringify({ items: items.map(item => ({ service_id: item.serviceId, coverage_status: item.coverageStatus, notes: item.notes ?? null, source: item.source ?? 'manual' })) }),
+})).map(mapWhitespace)
+}
+
+export async function patchWhitespace(token: string, accountId: string, items: { serviceId: string; coverageStatus: string; notes?: string | null; source?: string }[]) {
+  return (await apiRequest<ApiWhitespaceItem[]>(`/api/accounts/${accountId}/whitespace`, {
+    method: 'PATCH',
+    token,
+    body: JSON.stringify({ items: items.map(item => ({ service_id: item.serviceId, coverage_status: item.coverageStatus, notes: item.notes ?? null, source: item.source ?? 'manual' })) }),
   })).map(mapWhitespace)
 }
 
@@ -491,8 +620,23 @@ function mapService(item: ApiServiceCatalogItem): ServiceCatalogItem {
   return { id: item.id, slug: item.slug, name: item.name, category: item.category, description: item.description, tags: item.tags, isActive: item.is_active, displayOrder: item.display_order, inUseCount: item.in_use_count }
 }
 
+async function listAllPages<T>(basePath: string, token: string) {
+  const pageSize = 100
+  const separator = basePath.includes('?') ? '&' : '?'
+  const readPage = (page: number) => apiRequest<Page<T>>(`${basePath}${separator}page=${page}&page_size=${pageSize}`, { token })
+  const firstPage = await readPage(1)
+  if (firstPage.pages <= 1) return firstPage
+  const remainingPages = await Promise.all(
+    Array.from({ length: firstPage.pages - 1 }, (_, index) => readPage(index + 2)),
+  )
+  return {
+    ...firstPage,
+    items: [...firstPage.items, ...remainingPages.flatMap(page => page.items)],
+  }
+}
+
 function mapStakeholderRole(item: ApiStakeholderRoleConfig): StakeholderRoleConfig {
-  return { id: item.id, slug: item.slug, name: item.name, description: item.description, isActive: item.is_active, displayOrder: item.display_order, inUseCount: item.in_use_count }
+  return { id: item.id, slug: item.slug, name: item.name, description: item.description, isActive: item.is_active, displayOrder: item.display_order, inUseCount: item.in_use_count, gapRuleUsageCount: item.gap_rule_usage_count ?? 0 }
 }
 
 function mapStakeholderGapRule(item: ApiStakeholderGapRule): StakeholderGapRule {
@@ -500,7 +644,7 @@ function mapStakeholderGapRule(item: ApiStakeholderGapRule): StakeholderGapRule 
 }
 
 function mapOpportunityStage(item: ApiOpportunityStageConfig): OpportunityStageConfig {
-  return { id: item.id, slug: item.slug, name: item.name, isTerminal: item.is_terminal, requiresOutcomeReason: item.requires_outcome_reason, isActive: item.is_active, displayOrder: item.display_order }
+  return { id: item.id, slug: item.slug, name: item.name, isTerminal: item.is_terminal, requiresOutcomeReason: item.requires_outcome_reason, isActive: item.is_active, displayOrder: item.display_order, inUseCount: item.in_use_count ?? 0 }
 }
 
 function mapOpportunityStageTransition(item: ApiOpportunityStageTransitionConfig): OpportunityStageTransitionConfig {
@@ -511,12 +655,48 @@ function mapAdjacency(item: ApiAdjacency): ServiceAdjacencyRule {
   return { id: item.id, sourceServiceId: item.source_service_id, sourceServiceName: item.source_service_name, targetServiceId: item.target_service_id, targetServiceName: item.target_service_name, relevanceScore: item.relevance_score, rationale: item.rationale, isActive: item.is_active }
 }
 
+function mapGrowthBundle(item: ApiServiceGrowthBundle): ServiceGrowthBundle {
+  return { id: item.id, slug: item.slug, name: item.name, description: item.description, serviceIds: item.service_ids, serviceNames: item.service_names, isActive: item.is_active, displayOrder: item.display_order }
+}
+
+function mapGrowthRule(item: ApiServiceGrowthRule): ServiceGrowthRule {
+  return {
+    id: item.id,
+    sourceSelectorType: item.source_selector_type,
+    sourceSelectorValue: item.source_selector_value,
+    sourceSelectorLabel: item.source_selector_label,
+    targetSelectorType: item.target_selector_type,
+    targetSelectorValue: item.target_selector_value,
+    targetSelectorLabel: item.target_selector_label,
+    baseFitScore: item.base_fit_score,
+    priority: item.priority,
+    rationaleTemplate: item.rationale_template,
+    isActive: item.is_active,
+  }
+}
+
 function mapWhitespace(item: ApiWhitespaceItem): WhitespaceItem {
   return { id: item.id, accountId: item.account_id, engagementId: item.engagement_id, serviceId: item.service_id, serviceName: item.service_name, coverageStatus: item.coverage_status, notes: item.notes, source: item.source }
 }
 
 function mapRecommendation(item: ApiServiceRecommendation): ServiceRecommendation {
-  return { id: item.id, accountId: item.account_id, sourceServiceId: item.source_service_id, sourceServiceName: item.source_service_name, targetServiceId: item.target_service_id, targetServiceName: item.target_service_name, relevanceScore: item.relevance_score, rationale: item.rationale, status: item.status, sourceContext: item.source_context, createdOpportunityId: item.created_opportunity_id }
+  return {
+    id: item.id,
+    accountId: item.account_id,
+    sourceServiceId: item.source_service_id,
+    sourceServiceName: item.source_service_name,
+    targetServiceId: item.target_service_id,
+    targetServiceName: item.target_service_name,
+    growthRuleId: item.growth_rule_id,
+    baseFitScore: item.base_fit_score ?? item.relevance_score,
+    relevanceScore: item.relevance_score,
+    accountFitScore: item.account_fit_score ?? item.relevance_score,
+    scoreFactors: item.score_factors ?? [],
+    rationale: item.rationale,
+    status: item.status,
+    sourceContext: item.source_context,
+    createdOpportunityId: item.created_opportunity_id,
+  }
 }
 
 function mapRenewal(item: ApiRenewalProfile): RenewalProfile {

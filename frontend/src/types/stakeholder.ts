@@ -17,6 +17,11 @@ type CustomStakeholderValue = string & {}
 export type StakeholderGapSeverity = 'low' | 'medium' | 'high' | 'critical' | CustomStakeholderValue
 export type StakeholderGapStatus = 'open' | 'resolved' | CustomStakeholderValue
 
+export interface StakeholderRoleOption {
+  value: StakeholderRole | CustomStakeholderValue
+  label: string
+}
+
 export interface Stakeholder {
   id: string
   accountId: string

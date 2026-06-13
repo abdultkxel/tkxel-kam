@@ -46,7 +46,7 @@ export function StakeholderOrgChart({ accountId, onSelectStakeholder }: Props) {
         ) : error ? (
           <EmptyState icon={AlertTriangle} heading="Stakeholder hierarchy could not be loaded" body={error.message} action={{ label: 'Retry', onClick: () => void refetch() }} className="rounded-lg border border-surface-border bg-surface-secondary" />
         ) : !hasStakeholderNodes ? (
-          <EmptyState icon={Network} heading="No stakeholder hierarchy mapped yet." body="Add stakeholder reporting lines to build the account relationship map." className="rounded-lg border border-surface-border bg-surface-secondary" />
+          <EmptyState icon={Network} heading="No stakeholder hierarchy yet" body="Add stakeholders or reporting lines to build the account relationship map." className="rounded-lg border border-surface-border bg-surface-secondary" />
         ) : (
           <div className="overflow-x-auto">
             <ul role="tree" aria-label="Stakeholder hierarchy" className="min-w-[520px] space-y-3">
@@ -62,29 +62,29 @@ export function StakeholderOrgChart({ accountId, onSelectStakeholder }: Props) {
 function OrgTreeItem({ item, level, onSelectStakeholder }: { item: OrgTreeNode; level: number; onSelectStakeholder: (stakeholderId: string) => void }) {
   const { node, children } = item
   const group = isGroupNode(node)
-  const unmapped = node.parentId === UNMAPPED_NODE_ID || node.id === UNMAPPED_NODE_ID
+  const topLevel = node.parentId === UNMAPPED_NODE_ID || node.id === UNMAPPED_NODE_ID
   const hasChildren = children.length > 0
 
   return (
     <li role="treeitem" aria-level={level} aria-expanded={hasChildren ? true : undefined} className="list-none">
       {group ? (
-        <div className="rounded-lg border border-dashed border-brand-orange/30 bg-brand-orange/10 p-3">
+        <div className="rounded-lg border border-dashed border-surface-border bg-surface-secondary p-3">
           <div className="flex items-center gap-2">
-            <GitBranch className="h-4 w-4 text-brand-orange" />
-            <span className="text-sm font-semibold text-ink">{node.name}</span>
-            <Badge tone="amber">Unmapped</Badge>
+            <GitBranch className="h-4 w-4 text-brand-blue" />
+            <span className="text-sm font-semibold text-ink">Top-level stakeholders</span>
+            <Badge tone="gray">No reporting line</Badge>
           </div>
-          <p className="mt-1 text-xs text-ink-secondary">Stakeholders without a mapped reporting line.</p>
+          <p className="mt-1 text-xs text-ink-secondary">Stakeholders with no Reports to value. This is expected for senior sponsors or when hierarchy is still being mapped.</p>
         </div>
       ) : (
         <div
           className={cn(
             'block w-full rounded-lg border bg-white p-3 text-left transition-colors hover:bg-surface-tertiary focus:outline-none focus:ring-2 focus:ring-brand-blue/30',
-            unmapped ? 'border-dashed border-brand-orange/40' : 'border-surface-border',
+            topLevel ? 'border-dashed border-surface-border' : 'border-surface-border',
           )}
         >
           <button type="button" className="flex w-full items-start gap-3 text-left" onClick={() => onSelectStakeholder(node.id)}>
-            <span className={cn('mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-lg', unmapped ? 'bg-brand-orange/10 text-brand-orange' : 'bg-blue-tint-20 text-brand-blue')}>
+            <span className={cn('mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-lg', topLevel ? 'bg-surface-tertiary text-ink-secondary' : 'bg-blue-tint-20 text-brand-blue')}>
               <UserRound className="h-4 w-4" />
             </span>
             <span className="min-w-0 flex-1">
@@ -95,7 +95,7 @@ function OrgTreeItem({ item, level, onSelectStakeholder }: { item: OrgTreeNode; 
                 {node.influenceLevel ? <Badge tone={influenceTone(node.influenceLevel)}>{titleize(node.influenceLevel)}</Badge> : null}
                 {node.sentiment ? <Badge tone={sentimentTone(node.sentiment)}>{titleize(node.sentiment)}</Badge> : null}
                 {node.relationshipStrength ? <Badge tone={relationshipTone(node.relationshipStrength)}>{titleize(node.relationshipStrength)}</Badge> : null}
-                {unmapped ? <Badge tone="amber">Unmapped</Badge> : null}
+                {topLevel ? <Badge tone="gray">Top level</Badge> : null}
                 {node.sensitiveFieldsRedacted ? <Badge tone="gray">Redacted</Badge> : null}
               </span>
             </span>
@@ -114,7 +114,7 @@ function OrgTreeItem({ item, level, onSelectStakeholder }: { item: OrgTreeNode; 
         </div>
       )}
       {hasChildren ? (
-        <ul role="group" className={cn('mt-3 space-y-3 border-l pl-4', unmapped ? 'border-brand-orange/30' : 'border-surface-border')}>
+        <ul role="group" className="mt-3 space-y-3 border-l border-surface-border pl-4">
           {children.map(child => <OrgTreeItem key={child.node.id} item={child} level={level + 1} onSelectStakeholder={onSelectStakeholder} />)}
         </ul>
       ) : null}

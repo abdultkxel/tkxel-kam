@@ -1,5 +1,7 @@
+import json
 import logging
 from datetime import datetime, timedelta, timezone
+from typing import Any
 
 from fastapi import HTTPException, status
 from sqlalchemy import select
@@ -750,14 +752,14 @@ class SignalsService:
         if len(scores) < 2:
             return []
         latest, previous = scores[0], scores[1]
-        previous_drivers = {driver.get("key"): driver for driver in previous.drivers or []}
+        previous_drivers = {driver["key"]: driver for driver in self._score_driver_records(previous.drivers)}
         drops = []
-        for driver in latest.drivers or []:
+        for driver in self._score_driver_records(latest.drivers):
             key = driver.get("key")
             previous_driver = previous_drivers.get(key)
             if not previous_driver:
                 continue
-            drop = float(previous_driver.get("score") or 0) - float(driver.get("score") or 0)
+            drop = self._score_driver_value(previous_driver) - self._score_driver_value(driver)
             if drop >= 10:
                 drops.append({"key": key, "label": driver.get("label", key), "previous": previous_driver.get("score"), "latest": driver.get("score"), "drop": round(drop, 2)})
         overall_drop = previous.overall - latest.overall
@@ -785,6 +787,24 @@ class SignalsService:
                 due_at=datetime.now(timezone.utc) + timedelta(days=2),
             )
         ]
+
+    def _score_driver_records(self, drivers: Any) -> list[dict[str, Any]]:
+        if isinstance(drivers, str):
+            try:
+                drivers = json.loads(drivers)
+            except ValueError:
+                return []
+        if isinstance(drivers, dict):
+            drivers = [drivers]
+        if not isinstance(drivers, list):
+            return []
+        return [driver for driver in drivers if isinstance(driver, dict) and driver.get("key")]
+
+    def _score_driver_value(self, driver: dict[str, Any]) -> float:
+        try:
+            return float(driver.get("score") or 0)
+        except (TypeError, ValueError):
+            return 0.0
 
     def _payment_risk_signal_seeds(self, account: Account, rules: dict[str, SignalRule]) -> list["SignalSeed"]:
         text = " ".join(filter(None, [account.commercial_summary, account.initial_notes, account.service_context])).lower()

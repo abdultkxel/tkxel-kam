@@ -1,13 +1,15 @@
-import { render, screen, waitFor } from '@testing-library/react'
+import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { Opportunities } from '@/pages/Opportunities'
 import {
+  createOpportunity,
   listOpportunities,
   listOpportunityStages,
   listOpportunityTypes,
 } from '@/services/opportunities'
+import { listRuntimeCustomFields } from '@/services/contentGovernance'
 import { useAccountStore } from '@/stores/accountStore'
 import { useOpportunityStore } from '@/stores/opportunityStore'
 import type { Account } from '@/types/account'
@@ -49,6 +51,10 @@ vi.mock('@/services/opportunities', () => ({
   restoreOpportunity: vi.fn(),
   updateOpportunity: vi.fn(),
   updateOpportunityActionItem: vi.fn(),
+}))
+
+vi.mock('@/services/contentGovernance', () => ({
+  listRuntimeCustomFields: vi.fn(),
 }))
 
 const account: Account = {
@@ -148,6 +154,7 @@ describe('Opportunities filters', () => {
     vi.mocked(listOpportunities).mockResolvedValue(opportunityPage())
     vi.mocked(listOpportunityTypes).mockResolvedValue(typePage())
     vi.mocked(listOpportunityStages).mockResolvedValue(stages)
+    vi.mocked(listRuntimeCustomFields).mockResolvedValue([])
     useAccountStore.setState({ accounts: [account] })
     useOpportunityStore.setState({
       opportunities: [],
@@ -223,5 +230,105 @@ describe('Opportunities filters', () => {
       const lastCall = vi.mocked(listOpportunities).mock.calls.at(-1)
       expect(lastCall?.[1]?.accountId).toBe('')
     })
+  })
+
+  it('defaults new opportunities to the first configured stage by order', async () => {
+    const user = userEvent.setup()
+    const customStages: OpportunityStageDefinition[] = [
+      {
+        id: 'stage-kickoff',
+        slug: 'kickoff_review',
+        name: 'Kickoff Review',
+        isTerminal: false,
+        isActive: true,
+        displayOrder: 0,
+      },
+      ...stages,
+    ]
+    vi.mocked(listOpportunityStages).mockResolvedValue(customStages)
+    vi.mocked(createOpportunity).mockResolvedValue({ ...opportunity, id: 'opp-new', name: 'Kickoff opportunity', stage: 'Kickoff Review' })
+
+    renderOpportunities()
+
+    await waitFor(() => expect(useOpportunityStore.getState().stages[0]?.name).toBe('Kickoff Review'))
+    await user.click(screen.getByRole('button', { name: /add opportunity/i }))
+    const dialog = screen.getByRole('dialog', { name: /add opportunity/i })
+
+    expect(within(dialog).getByLabelText('Stage')).toHaveValue('Kickoff Review')
+
+    await user.type(within(dialog).getByLabelText('Opportunity name'), 'Kickoff opportunity')
+    await user.type(within(dialog).getByLabelText('Service line'), 'Data Analytics')
+    await user.type(within(dialog).getByLabelText('Next step'), 'Confirm sponsor priority.')
+    await user.click(within(dialog).getByRole('button', { name: /create opportunity/i }))
+
+    await waitFor(() => {
+      expect(createOpportunity).toHaveBeenCalledWith('test-token', expect.objectContaining({ stage: 'Kickoff Review' }))
+    })
+  })
+
+  it('renders Field Builder fields and submits them with new opportunities', async () => {
+    const user = userEvent.setup()
+    vi.mocked(listRuntimeCustomFields).mockResolvedValue([
+      {
+        id: 'field-1',
+        module: 'opportunities',
+        field_key: 'expansion_theme',
+        label: 'Expansion Theme',
+        field_type: 'single_select',
+        options: ['Growth', 'Retention'],
+        validation_rules: {},
+        is_required: true,
+        is_sensitive: false,
+        is_active: true,
+        show_in_list: false,
+        show_in_detail: true,
+        sort_order: 1,
+      },
+    ])
+    vi.mocked(createOpportunity).mockResolvedValue({ ...opportunity, id: 'opp-custom', name: 'Custom opportunity', customFieldValues: { expansion_theme: 'Growth' } })
+
+    renderOpportunities()
+
+    expect(await screen.findByText('Pipeline board')).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: /add opportunity/i }))
+    const dialog = screen.getByRole('dialog', { name: /add opportunity/i })
+
+    await user.type(within(dialog).getByLabelText('Opportunity name'), 'Custom opportunity')
+    await user.type(within(dialog).getByLabelText('Service line'), 'Data Analytics')
+    await user.type(within(dialog).getByLabelText('Next step'), 'Confirm sponsor priority.')
+    await user.selectOptions(await within(dialog).findByLabelText(/expansion theme/i), 'Growth')
+    await user.click(within(dialog).getByRole('button', { name: /create opportunity/i }))
+
+    await waitFor(() => {
+      expect(createOpportunity).toHaveBeenCalledWith('test-token', expect.objectContaining({ customFieldValues: { expansion_theme: 'Growth' } }))
+    })
+  })
+
+  it('shows saved Field Builder values in opportunity details', async () => {
+    vi.mocked(listRuntimeCustomFields).mockResolvedValue([
+      {
+        id: 'field-1',
+        module: 'opportunities',
+        field_key: 'expansion_theme',
+        label: 'Expansion Theme',
+        field_type: 'single_select',
+        options: ['Growth', 'Retention'],
+        validation_rules: {},
+        is_required: false,
+        is_sensitive: false,
+        is_active: true,
+        show_in_list: true,
+        show_in_detail: true,
+        sort_order: 1,
+      },
+    ])
+    vi.mocked(listOpportunities).mockResolvedValue(opportunityPage([{ ...opportunity, customFieldValues: { expansion_theme: 'Growth' } }]))
+
+    renderOpportunities('/opportunities?view=list&opportunity=opp-1')
+
+    const dialog = await screen.findByRole('dialog', { name: /Fintua analytics expansion/i })
+    expect(await within(dialog).findByText('Custom fields')).toBeInTheDocument()
+    expect(within(dialog).getByText('Expansion Theme')).toBeInTheDocument()
+    expect(within(dialog).getByText('Growth')).toBeInTheDocument()
   })
 })

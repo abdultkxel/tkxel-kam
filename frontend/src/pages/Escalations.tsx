@@ -3,7 +3,7 @@ import { FormEvent, useEffect, useMemo, useState } from 'react'
 import { toast } from 'sonner'
 import { EmptyState } from '@/components/ui/EmptyState'
 import { FieldError } from '@/components/form/FieldError'
-import { RuntimeCustomFields, customValuesForSubmit, requiredCustomFieldErrors } from '@/components/custom-fields/RuntimeCustomFields'
+import { RuntimeCustomFieldValues, RuntimeCustomFields, customValuesForSubmit, requiredCustomFieldErrors } from '@/components/custom-fields/RuntimeCustomFields'
 import { PageHeader } from '@/components/ui/PageHeader'
 import { useAuth } from '@/contexts/AuthContext'
 import { Account } from '@/types/account'
@@ -30,8 +30,8 @@ export function Escalations() {
   const [customValues, setCustomValues] = useState<Record<string, unknown>>({})
   const [customErrors, setCustomErrors] = useState<Record<string, string>>({})
   const [form, setForm] = useState({ account_id: '', summary: '', impact: '', severity: 'high', priority: 'high', watchlist: false })
-  const formCustomFields = customFields.filter(field => field.show_in_detail)
-  const listCustomFields = customFields.filter(field => field.show_in_list)
+  const formCustomFields = customFields
+  const listCustomFields = customFields
   const params = useMemo(() => {
     const next = new URLSearchParams({ page: String(page), page_size: '8', sort: 'sla_due_at', direction: 'asc' })
     if (search) next.set('search', search)
@@ -220,10 +220,8 @@ export function Escalations() {
                   <div><dt className="font-semibold uppercase text-ink-secondary">SLA</dt><dd className="mt-1 text-ink">{formatDate(item.sla_due_at)}</dd></div>
                   <div><dt className="font-semibold uppercase text-ink-secondary">Owner</dt><dd className="mt-1 text-ink">{item.owner_name}</dd></div>
                   <div><dt className="font-semibold uppercase text-ink-secondary">Priority</dt><dd className="mt-1 capitalize text-ink">{item.priority}</dd></div>
-                  {listCustomFields.map(field => item.custom_field_values?.[field.field_key] ? (
-                    <div key={field.id}><dt className="font-semibold uppercase text-ink-secondary">{field.label}</dt><dd className="mt-1 text-ink">{String(item.custom_field_values[field.field_key])}</dd></div>
-                  ) : null)}
                 </dl>
+                <RuntimeCustomFieldValues fields={listCustomFields} values={item.custom_field_values} variant="definition-grid" className="mt-4" />
                 <div className="mt-4 flex gap-2">
                   {item.status === 'closed' ? (
                     <button className="tk-button-secondary" onClick={() => reopenItem(item)}><RefreshCcw className="h-4 w-4" />Reopen</button>

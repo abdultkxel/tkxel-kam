@@ -4,6 +4,7 @@ import { FormEvent, ReactNode, useEffect, useMemo, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { toast } from 'sonner'
 import { OpportunityBoard } from '@/components/opportunities/OpportunityBoard'
+import { RuntimeCustomFieldValues, RuntimeCustomFields, customValuesForSubmit, requiredCustomFieldErrors } from '@/components/custom-fields/RuntimeCustomFields'
 import { FieldError } from '@/components/form/FieldError'
 import { AnimatedNumber } from '@/components/ui/AnimatedNumber'
 import { EmptyState } from '@/components/ui/EmptyState'
@@ -12,6 +13,7 @@ import { useAuth } from '@/contexts/AuthContext'
 import { Account } from '@/types/account'
 import { listEngagements } from '@/services/accountWorkspace'
 import { ApiError } from '@/services/api'
+import { RuntimeCustomField, listRuntimeCustomFields } from '@/services/contentGovernance'
 import { useAccountStore } from '@/stores/accountStore'
 import { useOpportunityStore } from '@/stores/opportunityStore'
 import { Opportunity, OpportunityActionItem, OpportunityCreateInput, OpportunityTypeRecord, Stage } from '@/types/opportunity'
@@ -63,6 +65,7 @@ export function Opportunities() {
   const accounts = useAccountStore(state => state.accounts)
   const opportunities = useOpportunityStore(state => state.opportunities)
   const types = useOpportunityStore(state => state.types)
+  const stages = useOpportunityStore(state => state.stages)
   const totals = useOpportunityStore(state => state.totals)
   const total = useOpportunityStore(state => state.total)
   const page = useOpportunityStore(state => state.page)
@@ -94,6 +97,7 @@ export function Opportunities() {
   const selectedOpportunity = opportunities.find(item => item.id === selectedOpportunityId) ?? null
 
   const ownerOptions = useMemo(() => buildOwnerOptions(accounts, user ? { id: user.id, name: user.name, email: user.email } : undefined), [accounts, user])
+  const stageOptions = useMemo(() => stages.length ? stages.map(item => item.name) : STAGES, [stages])
 
   useEffect(() => {
     if (!token) return
@@ -220,7 +224,7 @@ export function Opportunities() {
           <div className="mt-4 flex flex-wrap items-center gap-2">
             <span className="text-xs font-semibold uppercase tracking-wider text-ink-secondary">Stage</span>
             <StageFilterButton label="All" active={!stage} onClick={() => setFilter('stage', '')} />
-            {STAGES.map(item => <StageFilterButton key={item} label={item} active={stage === item} onClick={() => setFilter('stage', item)} />)}
+            {stageOptions.map(item => <StageFilterButton key={item} label={item} active={stage === item} onClick={() => setFilter('stage', item)} />)}
           </div>
 
           <div className="mt-4 flex flex-wrap gap-2">
@@ -447,16 +451,41 @@ export function AddOpportunityDialog({ accounts, types, ownerOptions, initialAcc
   const { token, user } = useAuth()
   const createOpportunity = useOpportunityStore(state => state.createOpportunity)
   const saving = useOpportunityStore(state => state.saving)
+  const stages = useOpportunityStore(state => state.stages)
+  const stageOptions = useMemo(() => stages.length ? stages.map(item => item.name) : STAGES, [stages])
   const [open, setOpen] = useState(false)
   const [fieldErrors, setFieldErrors] = useState<FieldErrors>({})
   const [formError, setFormError] = useState('')
   const [engagements, setEngagements] = useState<EngagementRecord[]>([])
   const [engagementLoading, setEngagementLoading] = useState(false)
-  const [form, setForm] = useState(() => emptyCreateForm(accounts, types, user?.id ?? '', initialAccountId))
+  const [customFields, setCustomFields] = useState<RuntimeCustomField[]>([])
+  const [customValues, setCustomValues] = useState<Record<string, unknown>>({})
+  const [customErrors, setCustomErrors] = useState<Record<string, string>>({})
+  const [form, setForm] = useState(() => emptyCreateForm(accounts, types, user?.id ?? '', initialAccountId, stageOptions))
+  const formCustomFields = customFields
 
   useEffect(() => {
-    if (!open) setForm(emptyCreateForm(accounts, types, user?.id ?? '', initialAccountId))
-  }, [accounts, initialAccountId, open, types, user?.id])
+    if (!open) {
+      setForm(emptyCreateForm(accounts, types, user?.id ?? '', initialAccountId, stageOptions))
+      setCustomValues({})
+      setCustomErrors({})
+    }
+  }, [accounts, initialAccountId, open, stageOptions, types, user?.id])
+
+  useEffect(() => {
+    if (!open || !token) return
+    let cancelled = false
+    listRuntimeCustomFields(token, 'opportunities')
+      .then(fields => {
+        if (!cancelled) setCustomFields(Array.isArray(fields) ? fields : [])
+      })
+      .catch(() => {
+        if (!cancelled) setCustomFields([])
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [open, token])
 
   useEffect(() => {
     if (!open || !token || !form.accountId) {
@@ -489,20 +518,25 @@ export function AddOpportunityDialog({ accounts, types, ownerOptions, initialAcc
     event.preventDefault()
     if (!token) return
     setFieldErrors({})
+    setCustomErrors({})
     setFormError('')
     if (form.actionTitle.trim() && !form.actionDueDate) {
       setFieldErrors({ actionDueDate: 'Due date is required when adding an initial action item.' })
       return
     }
+    const nextCustomErrors = requiredCustomFieldErrors(formCustomFields, customValues)
+    setCustomErrors(nextCustomErrors)
+    if (Object.keys(nextCustomErrors).length) return
     try {
-      const payload = createPayload(form)
+      const payload = createPayload(form, customValuesForSubmit(formCustomFields, customValues))
       const opportunity = await createOpportunity(token, payload)
       toast.success('Opportunity created')
       setOpen(false)
       onCreated(opportunity)
     } catch (err) {
       if (err instanceof ApiError) {
-        setFieldErrors(apiFieldErrors(err, opportunityFieldAliases))
+        setFieldErrors(Object.fromEntries(err.fieldErrors.filter(item => !item.field.startsWith('custom_field_values.')).map(item => [opportunityFieldAliases[item.field as keyof typeof opportunityFieldAliases] ?? item.field, item.message])))
+        setCustomErrors(Object.fromEntries(err.fieldErrors.filter(item => item.field.startsWith('custom_field_values.')).map(item => [item.field.replace('custom_field_values.', ''), item.message])))
         setFormError(err.message)
       } else {
         setFormError('Unable to create opportunity')
@@ -545,13 +579,24 @@ export function AddOpportunityDialog({ accounts, types, ownerOptions, initialAcc
               <FormInput type="number" label="Estimated value" value={form.value} onChange={value => update('value', value)} error={fieldErrors.value} placeholder="125000" />
               <FormInput type="date" label="Target date" value={form.targetDate} onChange={value => update('targetDate', value)} error={fieldErrors.targetDate} />
               <FormSelect label="Stage" value={form.stage} onChange={value => update('stage', value)} error={fieldErrors.stage}>
-                {STAGES.map(item => <option key={item} value={item}>{item}</option>)}
+                {stageOptions.map(item => <option key={item} value={item}>{item}</option>)}
               </FormSelect>
               <FormInput label="Currency" value={form.currency} onChange={value => update('currency', value)} error={fieldErrors.currency} placeholder="USD" />
               <FormSelect label="Source" value={form.sourceContext} onChange={value => update('sourceContext', value)} error={fieldErrors.sourceContext}>
                 {SOURCE_CONTEXTS.map(item => <option key={item} value={item}>{sourceLabel(item)}</option>)}
               </FormSelect>
               <FormTextarea className="md:col-span-2" label="Next step" value={form.nextStep} onChange={value => update('nextStep', value)} error={fieldErrors.nextStep} placeholder="Confirm sponsor priority and success criteria." />
+              <div className="md:col-span-2">
+                <RuntimeCustomFields
+                  fields={formCustomFields}
+                  values={customValues}
+                  errors={customErrors}
+                  onChange={(fieldKey, value) => {
+                    setCustomValues(current => ({ ...current, [fieldKey]: value }))
+                    setCustomErrors(current => ({ ...current, [fieldKey]: '' }))
+                  }}
+                />
+              </div>
               <div className="md:col-span-2 rounded-lg border border-surface-border bg-surface-secondary p-4">
                 <p className="text-xs font-bold uppercase tracking-wider text-ink-secondary">Initial action item</p>
                 <div className="mt-3 grid gap-3 md:grid-cols-2">
@@ -596,6 +641,8 @@ export function OpportunityDetailDialog({
   const addActionItem = useOpportunityStore(state => state.addActionItem)
   const updateActionItem = useOpportunityStore(state => state.updateActionItem)
   const saving = useOpportunityStore(state => state.saving)
+  const stages = useOpportunityStore(state => state.stages)
+  const stageOptions = useMemo(() => stages.length ? stages.map(item => item.name) : STAGES, [stages])
   const [fieldErrors, setFieldErrors] = useState<FieldErrors>({})
   const [formError, setFormError] = useState('')
   const [sideError, setSideError] = useState('')
@@ -606,6 +653,7 @@ export function OpportunityDetailDialog({
   const [actionTitle, setActionTitle] = useState('')
   const [actionDueDate, setActionDueDate] = useState('')
   const [actionCreateTask, setActionCreateTask] = useState(true)
+  const [customFields, setCustomFields] = useState<RuntimeCustomField[]>([])
 
   useEffect(() => {
     setEdit(detailForm(opportunity))
@@ -629,6 +677,21 @@ export function OpportunityDetailDialog({
       .then(page => setEngagements(page.items))
       .catch(() => setEngagements([]))
   }, [open, opportunity?.accountId, token])
+
+  useEffect(() => {
+    if (!open || !token) return
+    let cancelled = false
+    listRuntimeCustomFields(token, 'opportunities')
+      .then(fields => {
+        if (!cancelled) setCustomFields(Array.isArray(fields) ? fields : [])
+      })
+      .catch(() => {
+        if (!cancelled) setCustomFields([])
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [open, token])
 
   if (!opportunity) return null
 
@@ -757,7 +820,7 @@ export function OpportunityDetailDialog({
                   <FormInput type="number" label="Estimated value" value={edit.value} onChange={value => update('value', value)} error={fieldErrors.value} />
                   <FormInput type="date" label="Target date" value={edit.targetDate} onChange={value => update('targetDate', value)} error={fieldErrors.targetDate} />
                   <FormSelect label="Stage" value={edit.stage} onChange={value => update('stage', value)} error={fieldErrors.stage}>
-                    {STAGES.map(item => <option key={item} value={item}>{item}</option>)}
+                    {stageOptions.map(item => <option key={item} value={item}>{item}</option>)}
                   </FormSelect>
                   <FormSelect label="Source" value={edit.sourceContext} onChange={value => update('sourceContext', value)} error={fieldErrors.sourceContext}>
                     {SOURCE_CONTEXTS.map(item => <option key={item} value={item}>{sourceLabel(item)}</option>)}
@@ -765,6 +828,7 @@ export function OpportunityDetailDialog({
                   <FormInput label="Outcome reason" value={edit.outcomeReason} onChange={value => update('outcomeReason', value)} error={fieldErrors.outcomeReason} placeholder="Optional for won/lost" />
                   <FormTextarea className="md:col-span-2" label="Next step" value={edit.nextStep} onChange={value => update('nextStep', value)} error={fieldErrors.nextStep} />
                 </div>
+                <RuntimeCustomFieldValues fields={customFields} values={opportunity.customFieldValues} />
                 {formError ? <p className="rounded-lg bg-rag-red/10 px-3 py-2 text-sm font-semibold text-rag-red">{formError}</p> : null}
                 <div className="flex flex-wrap justify-between gap-2">
                   {opportunity.archivedAt ? (
@@ -889,7 +953,7 @@ interface DetailFormState {
   outcomeReason: string
 }
 
-function emptyCreateForm(accounts: Account[], types: OpportunityTypeRecord[], currentUserId: string, initialAccountId?: string): CreateFormState {
+function emptyCreateForm(accounts: Account[], types: OpportunityTypeRecord[], currentUserId: string, initialAccountId?: string, stageOptions: Stage[] = STAGES): CreateFormState {
   const account = accounts.find(item => item.id === initialAccountId) ?? accounts[0]
   return {
     accountId: account?.id ?? '',
@@ -900,7 +964,7 @@ function emptyCreateForm(accounts: Account[], types: OpportunityTypeRecord[], cu
     serviceLine: '',
     value: '125000',
     currency: 'USD',
-    stage: 'Identified',
+    stage: stageOptions[0] ?? '',
     targetDate: new Date(Date.now() + 45 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10),
     nextStep: '',
     sourceContext: 'manual',
@@ -927,7 +991,7 @@ function detailForm(opportunity: Opportunity | null): DetailFormState {
   }
 }
 
-function createPayload(form: CreateFormState): OpportunityCreateInput {
+function createPayload(form: CreateFormState, customFieldValues: Record<string, unknown> = {}): OpportunityCreateInput {
   return {
     accountId: form.accountId,
     engagementId: form.engagementId || null,
@@ -941,6 +1005,7 @@ function createPayload(form: CreateFormState): OpportunityCreateInput {
     nextStep: form.nextStep,
     targetDate: dateToNoonIso(form.targetDate),
     sourceContext: form.sourceContext || 'manual',
+    customFieldValues,
     actionItems: form.actionTitle.trim() ? [{ title: form.actionTitle.trim(), dueDate: dateToNoonIso(form.actionDueDate), priority: 'medium', createTask: form.actionCreateTask }] : [],
   }
 }
@@ -976,7 +1041,7 @@ function formatFilterCurrency(value: string) {
 }
 
 function StageBadge({ stage }: { stage: Stage }) {
-  const tone: Record<Stage, string> = {
+  const tone: Record<string, string> = {
     Identified: 'border-brand-blue/20 bg-blue-tint-20 text-brand-blue',
     Qualified: 'border-brand-blue-dark/20 bg-blue-tint-20 text-brand-blue-dark',
     'Proposal Sent': 'border-surface-border bg-surface-tertiary text-ink-secondary',
@@ -984,7 +1049,7 @@ function StageBadge({ stage }: { stage: Stage }) {
     Won: 'border-rag-green/20 bg-rag-green/10 text-rag-green',
     Lost: 'border-rag-red/20 bg-rag-red/10 text-rag-red',
   }
-  return <span className={cn('rounded-full border px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wider', tone[stage])}>{stage}</span>
+  return <span className={cn('rounded-full border px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wider', tone[stage] ?? 'border-surface-border bg-surface-tertiary text-ink-secondary')}>{stage}</span>
 }
 
 function DialogHeader({ title, subtitle, onClose }: { title: string; subtitle: string; onClose: () => void }) {

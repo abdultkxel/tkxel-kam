@@ -6,6 +6,11 @@ from app.permission_resolver import permission_key_candidates
 from app.rbac_catalog import permission_key
 
 
+ROLE_PERMISSION_ALIASES = {
+    "delivery_stakeholder": "delivery_lead",
+}
+
+
 class RbacRepository:
     def __init__(self, db: Session) -> None:
         self.db = db
@@ -115,10 +120,14 @@ class RbacRepository:
         return role_permission
 
     def role_has_permission(self, role_slug: str, module: str, action: str) -> bool:
-        return any(self._role_has_exact_permission(role_slug, candidate) for candidate in permission_key_candidates(module, action))
+        return any(
+            self._role_has_exact_permission(candidate_role, candidate)
+            for candidate_role in self._permission_lookup_roles(role_slug)
+            for candidate in permission_key_candidates(module, action)
+        )
 
     def list_role_permission_keys(self, role_slug: str) -> set[str]:
-        conditions = [Role.slug == role_slug, RolePermission.allowed.is_(True)]
+        conditions = [Role.slug.in_(self._permission_lookup_roles(role_slug)), RolePermission.allowed.is_(True)]
         return {
             permission_key(module, action)
             for module, action in self.db.execute(
@@ -162,6 +171,13 @@ class RbacRepository:
                 )
             )
         )
+
+    @staticmethod
+    def _permission_lookup_roles(role_slug: str) -> tuple[str, ...]:
+        alias = ROLE_PERMISSION_ALIASES.get(role_slug)
+        if alias is None:
+            return (role_slug,)
+        return (role_slug, alias)
 
     def count_users_for_role(self, role_slug: str) -> int:
         return self.db.scalar(select(func.count(User.id)).where(User.role == role_slug)) or 0

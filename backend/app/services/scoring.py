@@ -284,6 +284,7 @@ class ScoringService:
 
                 SignalsService(self.db).evaluate(current_user, account_id=account.id, trigger_source="score_recalculation", commit=False)
             self.repository.commit()
+            self._evaluate_alerts_for_account(account.id)
             return self._score_read_from_snapshot_or_account(account, snapshot)
         except Exception as exc:
             logger.exception("Account score recalculation failed for account %s", account.id)
@@ -474,6 +475,7 @@ class ScoringService:
         account.health_overall = overall
         account.health_relationship = clamp_percent(category_scores["relationship_score"]["normalized_score"])
         account.health_usage = clamp_percent(category_scores["service_line_score"]["normalized_score"])
+        account.health_delivery = clamp_percent(category_scores["resource_score"]["normalized_score"])
         account.health_commercial = clamp_percent((category_scores["contract_health_score"]["normalized_score"] + category_scores["account_risk_score"]["normalized_score"]) / 2)
         account.risk_status = self._legacy_risk_status(rag_status)
         self.db.add(
@@ -1173,6 +1175,11 @@ class ScoringService:
             "freshness_status": snapshot.freshness_status,
             "trend": snapshot.trend,
         }
+
+    def _evaluate_alerts_for_account(self, account_id: str) -> None:
+        from app.services.alerts import AlertsService
+
+        AlertsService(self.db).evaluate_for_account(account_id)
 
     def _formula_ops(self, formula: Any) -> set[str]:
         ops: set[str] = set()

@@ -3,6 +3,8 @@ export type UserRole =
   | 'admin'
   | 'super_admin'
   | 'kam_head'
+  | 'delivery_lead'
+  | 'leadership_viewer'
   | 'delivery_stakeholder'
   | (string & {})
 

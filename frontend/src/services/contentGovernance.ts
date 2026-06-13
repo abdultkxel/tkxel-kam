@@ -266,5 +266,6 @@ function mapGovernanceEvent(event: GovernanceEventApi): GovernanceEventRecord {
     generatedOutputs: [],
     status: event.status === 'completed' ? 'completed' : event.status === 'overdue' ? 'overdue' : 'upcoming',
     source: event.source,
+    customFieldValues: event.custom_field_values ?? {},
   }
 }

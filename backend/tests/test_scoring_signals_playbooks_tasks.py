@@ -196,6 +196,27 @@ def test_account_scoring_signal_lifecycle_conversion_and_authorization(client: T
     owner = seeded_user(client, admin_headers, "account_manager")
     account_id = create_account_with_engagement(db_session, owner)
     owner_headers = auth_headers(client, owner["email"], "User@12345")
+    account = db_session.get(Account, account_id)
+    assert account is not None
+    account.health_delivery = 88
+    db_session.add(
+        ScoreSnapshot(
+            account_id=account_id,
+            scope="account",
+            overall=82,
+            rag_status="green",
+            drivers=["relationship_score"],
+            reason_codes=["legacy driver seed"],
+            metric_version="legacy-score",
+            freshness_status="fresh",
+            trend=0,
+            status="complete",
+            source_context={"source": "legacy_seed"},
+            calculated_by_name=owner["full_name"],
+            calculated_at=datetime.now(timezone.utc) - timedelta(days=7),
+        )
+    )
+    db_session.commit()
 
     relationship_metric = client.get("/api/admin/metrics", headers=admin_headers, params={"search": "Relationship Health", "page": 1, "page_size": 1})
     assert relationship_metric.status_code == 200
@@ -226,6 +247,9 @@ def test_account_scoring_signal_lifecycle_conversion_and_authorization(client: T
     assert score["latest_snapshot"]["source_context"]["delivery_score_active"] is False
     assert score["latest_snapshot"]["source_context"]["manual_submission_id"]
     assert score["latest_snapshot"]["source_context"]["published_metrics"]
+    resource_driver = next(driver for driver in score["drivers"] if driver["key"] == "resource_score")
+    db_session.refresh(account)
+    assert account.health_delivery == resource_driver["score"]
 
     snapshots = client.get(f"/api/accounts/{account_id}/score-snapshots", headers=owner_headers, params={"page": 1, "page_size": 1, "rag_status": "red"})
     assert snapshots.status_code == 200
@@ -257,7 +281,7 @@ def test_account_scoring_signal_lifecycle_conversion_and_authorization(client: T
     assert list_signals.status_code == 200
     assert list_signals.json()["total"] >= 1
 
-    other_owner = seeded_user(client, admin_headers, "ops_lead")
+    other_owner = seeded_user(client, admin_headers, "delivery_lead")
     unowned_headers = auth_headers(client, other_owner["email"], "User@12345")
     denied = client.post(f"/api/accounts/{account_id}/scores/recalculate", headers=unowned_headers, json={"trigger_source": "forbidden"})
     assert denied.status_code == 403

@@ -43,8 +43,11 @@ from app.models import (
     ScoringMetricDefinition,
     ScoringMetricVersion,
     ScoreSnapshot,
-    ServiceAdjacencyRule,
     ServiceCatalogItem,
+    ServiceAdjacencyRule,
+    ServiceGrowthBundle,
+    ServiceGrowthBundleItem,
+    ServiceGrowthRule,
     ServiceRecommendation,
     Signal,
     SourceCitation,
@@ -59,6 +62,7 @@ from app.models import (
     StakeholderRoleConfig,
     Task,
     TimelineEntry,
+    TimelineEventTypeConfig,
     TimelineRetentionPolicy,
     User,
     utc_now,
@@ -67,6 +71,7 @@ from app.repositories.accounts import AccountRepository
 from app.rbac import DEFAULT_ROLES
 from app.security import hash_password
 from app.services.email_domains import EmailDomainPolicyService
+from app.services.alerts import AlertsService
 from app.services.integrations import IntegrationService
 from app.services.kyc import FIELD_CATALOG, WORKSTREAMS
 from app.services.notifications import NotificationsService
@@ -78,7 +83,8 @@ DEFAULT_ROLE_USER_NAMES = {
     "admin": "Admin User",
     "kam_head": "KAM Head User",
     "account_manager": "Account Manager KAM",
-    "delivery_stakeholder": "Delivery Stakeholder",
+    "delivery_lead": "Delivery Lead User",
+    "leadership_viewer": "Leadership Viewer User",
 }
 FORECAST_DEMO_ACCOUNT_ID = "forecast-demo-account"
 FORECAST_DEMO_ACCOUNT_OWNER_ID = "forecast-demo-account-owner"
@@ -91,6 +97,13 @@ FORECAST_DEMO_OPPORTUNITY_IDS = (
     "forecast-demo-platform-expansion",
 )
 DEMO_PROJECT_SLUGS = ("cafe-zupas", "fintua", "canvs", "signals")
+FIXED_TIMELINE_EVENT_TYPES: tuple[dict[str, Any], ...] = (
+    {"slug": "manual_note", "name": "Manual note", "category": "manual", "module": "manual", "color_token": "surface-border", "display_order": 10},
+    {"slug": "governance_event", "name": "Governance update", "category": "governance", "module": "governance", "color_token": "brand-blue-dark", "display_order": 20},
+    {"slug": "escalation_event", "name": "Escalation update", "category": "escalation", "module": "escalation", "color_token": "brand-orange", "display_order": 30},
+    {"slug": "opportunity_event", "name": "Opportunity update", "category": "opportunity", "module": "opportunity", "color_token": "brand-blue", "display_order": 40},
+    {"slug": "client_education", "name": "Client education", "category": "education", "module": "education", "color_token": "rag-green", "display_order": 50},
+)
 
 
 DEMO_PROJECTS: tuple[dict[str, Any], ...] = (
@@ -188,7 +201,6 @@ def seed_default_data(db: Session) -> User:
     seed_opportunity_reference_data(db)
     seed_relationship_planning_reference_data(db)
     seed_scoring_signals_playbooks(db, super_admin)
-    seed_timeline_reference_data(db, super_admin)
     return super_admin
 
 
@@ -203,7 +215,7 @@ def seed_demo_project_data(db: Session, *, now: datetime | None = None) -> dict[
     current = _aware(now or utc_now())
     account_manager = _seed_user_by_role(db, "account_manager")
     kam_head = _seed_user_by_role(db, "kam_head")
-    delivery_stakeholder = _seed_user_by_role(db, "delivery_stakeholder")
+    delivery_lead = _seed_user_by_role(db, "delivery_lead")
     portfolio_reviewer = kam_head
     admin = _seed_user_by_role(db, "admin")
     account_repo = AccountRepository(db)
@@ -252,7 +264,7 @@ def seed_demo_project_data(db: Session, *, now: datetime | None = None) -> dict[
         db.flush()
 
         _seed_account_owner(db, account, account_manager, actor, "primary_am", "Primary AM for demo project.")
-        _seed_account_owner(db, account, delivery_stakeholder, actor, "delivery_lead", "Delivery stakeholder assigned for demo delivery governance.")
+        _seed_account_owner(db, account, delivery_lead, actor, "delivery_lead", "Delivery lead assigned for demo delivery governance.")
 
         engagement = _get_or_create(db, Engagement, engagement_id)
         engagement.account_id = account.id
@@ -261,8 +273,8 @@ def seed_demo_project_data(db: Session, *, now: datetime | None = None) -> dict[
         engagement.status = "active"
         engagement.owner_id = account_manager.id
         engagement.owner_name = account_manager.full_name
-        engagement.ops_lead_id = delivery_stakeholder.id
-        engagement.ops_lead_name = delivery_stakeholder.full_name
+        engagement.ops_lead_id = delivery_lead.id
+        engagement.ops_lead_name = delivery_lead.full_name
         engagement.service_lines = list(spec["service_lines"])
         engagement.source_links = [{"title": "Demo SOW", "url": source_route}]
         engagement.value = float(spec["value"])
@@ -297,11 +309,11 @@ def seed_demo_project_data(db: Session, *, now: datetime | None = None) -> dict[
         _seed_health_and_scores(db, spec, account, engagement, actor, current)
         _seed_signal(db, spec, account, engagement, account_manager, current)
         _seed_growth_and_retention(db, spec, account, engagement, account_manager, actor, opportunity_type, services, current)
-        _seed_governance(db, spec, account, engagement, account_manager, delivery_stakeholder, actor, current)
-        _seed_escalation(db, spec, account, engagement, delivery_stakeholder, actor, current)
-        _seed_tasks(db, spec, account, engagement, account_manager, delivery_stakeholder, actor, current)
+        _seed_governance(db, spec, account, engagement, account_manager, delivery_lead, actor, current)
+        _seed_escalation(db, spec, account, engagement, delivery_lead, actor, current)
+        _seed_tasks(db, spec, account, engagement, account_manager, delivery_lead, actor, current)
         _seed_timeline(db, spec, account, engagement, actor, current)
-        _seed_notifications(db, spec, account, engagement, kyc_draft, snapshot, account_manager, kam_head, delivery_stakeholder, portfolio_reviewer, admin, current)
+        _seed_notifications(db, spec, account, engagement, kyc_draft, snapshot, account_manager, kam_head, delivery_lead, portfolio_reviewer, admin, current)
         results.append({"account_id": account.id, "account_name": account.name, "engagement_id": engagement.id})
 
     db.commit()
@@ -866,7 +878,7 @@ def _seed_growth_and_retention(
         whitespace.engagement_id = engagement.id
         whitespace.service_id = target.id
         whitespace.service_name_snapshot = target.name
-        whitespace.coverage_status = "open"
+        whitespace.coverage_status = "potential"
         whitespace.notes = f"Whitespace candidate for {spec['name']} demo growth review."
         whitespace.source = "demo_project_seed"
         whitespace.created_by_id = actor.id
@@ -1130,6 +1142,7 @@ def seed_base_data(db: Session) -> User:
     if get_settings().seed_default_role_users:
         seed_default_role_users(db)
     seed_notifications_dashboards_reporting(db, super_admin)
+    seed_timeline_reference_data(db, super_admin)
     return super_admin
 
 
@@ -1362,6 +1375,7 @@ def seed_approved_integrations(db: Session, super_admin: User) -> None:
 
 def seed_notifications_dashboards_reporting(db: Session, super_admin: User) -> None:
     NotificationsService(db).seed_defaults(super_admin)
+    AlertsService(db).seed_default_rules(super_admin)
 
 
 def seed_kyc_configuration(db: Session) -> KycConfiguration:
@@ -1502,10 +1516,13 @@ def seed_opportunity_reference_data(db: Session) -> None:
 
     transitions = (
         ("Identified", "Qualified", False),
+        ("Qualified", "Identified", False),
         ("Identified", "Won", True),
         ("Identified", "Lost", True),
         ("Qualified", "Proposal Sent", False),
+        ("Proposal Sent", "Qualified", False),
         ("Proposal Sent", "Negotiation", False),
+        ("Negotiation", "Proposal Sent", False),
         ("Negotiation", "Won", True),
         ("Negotiation", "Lost", True),
         ("Proposal Sent", "Lost", True),
@@ -1602,58 +1619,164 @@ def seed_relationship_planning_reference_data(db: Session) -> None:
         rule.is_active = True
         rule.display_order = index
 
+    _seed_service_growth_reference_data(db)
+    db.commit()
+
+
+def _seed_service_growth_reference_data(db: Session) -> None:
     service_specs = (
-        ("product_engineering", "Product Engineering", "Engineering", ["web", "mobile", "platform"]),
-        ("cloud_devops", "Cloud & DevOps", "Engineering", ["cloud", "sre", "infra"]),
-        ("data_analytics", "Data Analytics", "Data", ["bi", "warehouse", "analytics"]),
-        ("automation_qa", "Automation & QA", "Quality", ["qa", "automation", "testing"]),
-        ("customer_success_ops", "Customer Success Ops", "Customer", ["retention", "ops", "enablement"]),
+        ("product_engineering", "Product Engineering", "Engineering", ["web", "mobile", "platform"], "Custom software, product squads, and platform feature delivery."),
+        ("cloud_devops", "Cloud & DevOps", "Engineering", ["cloud", "sre", "infra"], "Cloud infrastructure, release automation, reliability, and operational maturity."),
+        ("data_analytics", "Data Analytics", "Data", ["bi", "warehouse", "analytics"], "Data warehouse, dashboarding, analytics enablement, and reporting foundations."),
+        ("automation_qa", "Automation & QA", "Quality", ["qa", "automation", "testing"], "Quality engineering, automated regression coverage, and testing acceleration."),
+        ("customer_success_ops", "Customer Success Ops", "Customer", ["retention", "ops", "enablement"], "Retention operations, success workflows, enablement, and customer health execution."),
     )
-    services: dict[str, ServiceCatalogItem] = {}
-    for index, (slug, name, category, tags) in enumerate(service_specs, start=1):
+    services_by_slug: dict[str, ServiceCatalogItem] = {}
+    for display_order, (slug, name, category, tags, description) in enumerate(service_specs, start=1):
         service = db.scalar(select(ServiceCatalogItem).where(ServiceCatalogItem.slug == slug))
         if service is None:
-            service = ServiceCatalogItem(slug=slug, name=name, category=category, tags=tags, is_active=True, display_order=index)
+            service = ServiceCatalogItem(slug=slug)
             db.add(service)
-        else:
-            service.name = name
-            service.category = category
-            service.tags = tags
-            service.is_active = True
-            service.display_order = index
-        services[slug] = service
+        service.name = name
+        service.category = category
+        service.description = description
+        service.tags = list(tags)
+        service.is_active = True
+        service.display_order = display_order
+        services_by_slug[slug] = service
+
     db.flush()
 
     adjacency_specs = (
-        ("product_engineering", "automation_qa", 82, "Product engineering accounts often benefit from test automation and quality enablement."),
+        ("product_engineering", "automation_qa", 82, "{source_service} accounts often benefit from test automation and quality enablement."),
         ("product_engineering", "cloud_devops", 78, "Product delivery maturity usually exposes cloud, release, and reliability opportunities."),
-        ("cloud_devops", "data_analytics", 72, "Cloud modernization can unlock data platform and analytics expansion."),
-        ("data_analytics", "automation_qa", 68, "Analytics programs often need validation, automation, and data quality coverage."),
-        ("customer_success_ops", "data_analytics", 70, "Customer success operations benefit from reporting, segmentation, and retention analytics."),
+        ("cloud_devops", "data_analytics", 72, "Cloud modernization creates the foundation for stronger data pipelines and analytics."),
+        ("data_analytics", "automation_qa", 68, "Analytics-heavy accounts often need automated validation for data quality and reporting."),
+        ("customer_success_ops", "data_analytics", 70, "Customer success operations benefit from dashboards, health metrics, and retention analytics."),
     )
     for source_slug, target_slug, score, rationale in adjacency_specs:
-        source = services.get(source_slug)
-        target = services.get(target_slug)
-        if not source or not target:
-            continue
-        existing = db.scalar(
+        source = services_by_slug[source_slug]
+        target = services_by_slug[target_slug]
+        adjacency = db.scalar(
             select(ServiceAdjacencyRule).where(
                 ServiceAdjacencyRule.source_service_id == source.id,
                 ServiceAdjacencyRule.target_service_id == target.id,
             )
         )
-        if existing:
-            existing.relevance_score = score
-            existing.rationale = rationale
-            existing.is_active = True
-            continue
-        db.add(ServiceAdjacencyRule(source_service_id=source.id, target_service_id=target.id, relevance_score=score, rationale=rationale, is_active=True))
+        if adjacency is None:
+            adjacency = ServiceAdjacencyRule(source_service_id=source.id, target_service_id=target.id)
+            db.add(adjacency)
+        adjacency.relevance_score = score
+        adjacency.rationale = rationale
+        adjacency.is_active = True
 
-    db.commit()
+    bundle_specs = (
+        (
+            "engineering_growth",
+            "Engineering Growth",
+            "Product delivery expansion package covering engineering, quality, and cloud maturity.",
+            ("product_engineering", "automation_qa", "cloud_devops"),
+        ),
+        (
+            "data_growth",
+            "Data Growth",
+            "Data and customer operations package for account intelligence and retention insight.",
+            ("data_analytics", "customer_success_ops"),
+        ),
+    )
+    bundles_by_slug: dict[str, ServiceGrowthBundle] = {}
+    for display_order, (slug, name, description, service_slugs) in enumerate(bundle_specs, start=1):
+        bundle = db.scalar(select(ServiceGrowthBundle).where(ServiceGrowthBundle.slug == slug))
+        if bundle is None:
+            bundle = ServiceGrowthBundle(slug=slug)
+            db.add(bundle)
+        bundle.name = name
+        bundle.description = description
+        bundle.is_active = True
+        bundle.display_order = display_order
+        db.flush()
+        bundle.items.clear()
+        db.flush()
+        for service_slug in service_slugs:
+            bundle.items.append(ServiceGrowthBundleItem(service_id=services_by_slug[service_slug].id))
+        bundles_by_slug[slug] = bundle
+
+    db.flush()
+
+    rule_specs = (
+        (
+            "category",
+            "Engineering",
+            "category",
+            "Quality",
+            78,
+            20,
+            "{account_name} already has {source_service}; {target_service} can reduce delivery risk through stronger quality coverage.",
+        ),
+        (
+            "tag",
+            "cloud",
+            "category",
+            "Data",
+            72,
+            15,
+            "{account_name} has cloud maturity signals from {source_service}; {target_service} can convert platform work into reporting insight.",
+        ),
+        (
+            "bundle",
+            "engineering_growth",
+            "service",
+            "data_analytics",
+            70,
+            10,
+            "{account_name} has engineering-growth coverage through {source_service}; {target_service} can expose account and product insights.",
+        ),
+    )
+    for source_type, source_value, target_type, target_value, base_score, priority, rationale in rule_specs:
+        normalized_source = bundles_by_slug[source_value].id if source_type == "bundle" else services_by_slug[source_value].id if source_type == "service" else source_value
+        normalized_target = bundles_by_slug[target_value].id if target_type == "bundle" else services_by_slug[target_value].id if target_type == "service" else target_value
+        growth_rule = db.scalar(
+            select(ServiceGrowthRule).where(
+                ServiceGrowthRule.source_selector_type == source_type,
+                ServiceGrowthRule.source_selector_value == normalized_source,
+                ServiceGrowthRule.target_selector_type == target_type,
+                ServiceGrowthRule.target_selector_value == normalized_target,
+            )
+        )
+        if growth_rule is None:
+            growth_rule = ServiceGrowthRule(
+                source_selector_type=source_type,
+                source_selector_value=normalized_source,
+                target_selector_type=target_type,
+                target_selector_value=normalized_target,
+            )
+            db.add(growth_rule)
+        growth_rule.base_fit_score = base_score
+        growth_rule.priority = priority
+        growth_rule.rationale_template = rationale
+        growth_rule.is_active = True
 
 
 def seed_timeline_reference_data(db: Session, actor: User) -> None:
-    # Timeline event types intentionally start empty so admins can create their own taxonomy.
+    for spec in FIXED_TIMELINE_EVENT_TYPES:
+        event_type = db.scalar(select(TimelineEventTypeConfig).where(TimelineEventTypeConfig.slug == spec["slug"]))
+        if event_type is None:
+            event_type = TimelineEventTypeConfig(
+                slug=spec["slug"],
+                created_by_id=actor.id,
+            )
+            db.add(event_type)
+        event_type.name = spec["name"]
+        event_type.category = spec["category"]
+        event_type.module = spec["module"]
+        event_type.color_token = spec["color_token"]
+        event_type.display_order = spec["display_order"]
+        event_type.default_visibility = "public"
+        event_type.is_active = True
+        event_type.is_critical = False
+        event_type.critical_rule_json = {}
+        event_type.updated_by_id = actor.id
+
     policy = db.scalar(select(TimelineRetentionPolicy).where(TimelineRetentionPolicy.name == "Default timeline archive"))
     next_run_at = utc_now() + timedelta(days=1)
     if policy is None:

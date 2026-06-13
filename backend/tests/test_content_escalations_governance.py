@@ -1,9 +1,5 @@
-import base64
 from collections.abc import Generator
-import hashlib
-import hmac
 import json
-import time
 from datetime import datetime, timedelta, timezone
 
 import pytest
@@ -385,7 +381,7 @@ def test_governance_recurrence_ai_brief_integrations_and_permissions(client: Tes
 
     integrations = client.get("/api/admin/integrations", headers=headers)
     assert integrations.status_code == 200
-    assert {item["provider"] for item in integrations.json()} == {"google_calendar", "fathom", "csat", "ai_llm_gateway"}
+    assert {item["provider"] for item in integrations.json()} == {"google_calendar", "csat", "ai_llm_gateway"}
 
     config_required = client.post("/api/admin/integrations/google-calendar/sync", headers=headers)
     assert config_required.status_code == 200
@@ -553,99 +549,23 @@ def test_google_calendar_oauth_callback_redirects_to_frontend(client: TestClient
     assert "Google+Calendar+connected+successfully" in location
 
 
-def test_fathom_api_key_sync_meeting_links_and_signed_webhook(client: TestClient, db_session: Session, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_global_fathom_admin_endpoints_are_retired(client: TestClient) -> None:
     headers = auth_headers(client)
 
-    def fathom_get(url: str, request_headers: dict[str, str]) -> dict:
-        assert url.startswith("https://api.fathom.ai/external/v1/meetings/?")
-        assert request_headers["X-Api-Key"] == "test-fathom-key"
-        return {
-            "items": [
-                {
-                    "recording_id": 12345,
-                    "title": "[KAM:Cafe Zupas] Executive QBR",
-                    "meeting_title": "Cafe Zupas executive QBR",
-                    "share_url": "https://fathom.video/share/abc123",
-                    "scheduled_start_time": (datetime.now(timezone.utc) - timedelta(days=1)).isoformat(),
-                    "calendar_invitees": [{"name": "Client Sponsor", "email": "sponsor@example.com"}],
-                    "default_summary": {"markdown_formatted": "## Summary\nReviewed rollout recovery and expansion risks."},
-                    "transcript": [{"speaker": {"display_name": "Client"}, "text": "Sensitive text", "timestamp": "00:01:00"}],
-                    "action_items": [{"description": "Share the recovery plan", "recording_playback_url": "https://fathom.video/abc123#t=60"}],
-                }
-            ]
-        }
-
-    monkeypatch.setattr(IntegrationService, "_json_get", staticmethod(fathom_get))
-    configured = client.patch(
+    configure = client.patch(
         "/api/admin/integrations/fathom",
         headers=headers,
-        json={
-            "enabled": True,
-            "credentials_json": {"api_key": "test-fathom-key", "webhook_secret": "whsec_dGVzdC13ZWJob29rLXNlY3JldA=="},
-            "settings_json": {"base_url": "https://api.fathom.ai", "recordings_path": "/external/v1/meetings/"},
-        },
+        json={"enabled": True, "credentials_json": {"api_key": "test-fathom-key"}},
     )
-    assert configured.status_code == 200
-    assert configured.json()["credential_status"]["configured"] is True
-    assert "credentials_json" not in configured.json()
+    assert configure.status_code == 404
 
-    synced = client.post("/api/admin/integrations/fathom/sync", headers=headers)
-    assert synced.status_code == 200
-    assert synced.json()["created"] == 1
-    imported = db_session.scalar(select(IntegrationImportedItem).where(IntegrationImportedItem.provider == "fathom", IntegrationImportedItem.external_id == "12345"))
-    assert imported is not None
-    assert imported.source_link == "https://fathom.video/share/abc123"
-    assert imported.review_required is True
-    assert imported.sanitized_payload_json["transcript_metadata"]["omitted"] is True
-    assert "transcript" not in imported.sanitized_payload_json
-    search = client.get("/api/admin/integrations/imported-items", headers=headers, params={"search": "Client Sponsor"})
-    assert search.status_code == 200
-    assert search.json()["total"] >= 1
-
-    logs = client.get(
-        "/api/admin/integrations/sync-logs",
-        headers=headers,
-        params={"provider": "fathom", "severity": "created", "search": "Imported item", "date_from": (datetime.now(timezone.utc) - timedelta(minutes=5)).isoformat()},
-    )
-    assert logs.status_code == 200
-    assert logs.json()["total"] >= 1
-
-    webhook_payload = {
-        "recording_id": 67890,
-        "title": "[KAM:Cafe Zupas] Client recovery sync",
-        "share_url": "https://fathom.video/share/webhook123",
-        "scheduled_start_time": datetime.now(timezone.utc).isoformat(),
-        "default_summary": {"markdown_formatted": "Webhook summary captured."},
-        "action_items": [{"description": "Confirm next steering committee agenda"}],
-    }
-    raw_body = json.dumps(webhook_payload, separators=(",", ":")).encode("utf-8")
-    timestamp = str(int(time.time()))
-    message_id = "msg_test"
-    secret_bytes = base64.b64decode("dGVzdC13ZWJob29rLXNlY3JldA==")
-    signature = base64.b64encode(hmac.new(secret_bytes, b".".join([message_id.encode(), timestamp.encode(), raw_body]), hashlib.sha256).digest()).decode()
-    webhook = client.post(
-        "/api/integrations/fathom/webhook",
-        content=raw_body,
-        headers={"webhook-id": message_id, "webhook-timestamp": timestamp, "webhook-signature": f"v1,{signature}", "Content-Type": "application/json"},
-    )
-    assert webhook.status_code == 200
-    webhook_item = db_session.scalar(select(IntegrationImportedItem).where(IntegrationImportedItem.provider == "fathom", IntegrationImportedItem.external_id == "67890"))
-    assert webhook_item is not None
-    assert webhook_item.source_link == "https://fathom.video/share/webhook123"
-
-    replay = client.post(
-        "/api/integrations/fathom/webhook",
-        content=raw_body,
-        headers={"webhook-id": message_id, "webhook-timestamp": timestamp, "webhook-signature": f"v1,{signature}", "Content-Type": "application/json"},
-    )
-    assert replay.status_code == 409
-
-    bad_webhook = client.post(
-        "/api/integrations/fathom/webhook",
-        content=raw_body,
-        headers={"webhook-id": message_id, "webhook-timestamp": timestamp, "webhook-signature": "v1,bad", "Content-Type": "application/json"},
-    )
-    assert bad_webhook.status_code == 401
+    assert client.post("/api/admin/integrations/fathom/test", headers=headers).status_code == 404
+    assert client.post("/api/admin/integrations/fathom/sync", headers=headers).status_code == 404
+    assert client.post("/api/admin/integrations/fathom/retry", headers=headers).status_code == 404
+    assert client.post("/api/admin/integrations/fathom/disconnect", headers=headers).status_code == 404
+    assert client.get("/api/admin/integrations/fathom/logs", headers=headers).status_code == 404
+    assert client.get("/api/admin/integrations/fathom/sync-runs", headers=headers).status_code == 404
+    assert client.post("/api/integrations/fathom/webhook", content=b"{}", headers={"Content-Type": "application/json"}).status_code == 404
 
 
 def test_personal_fathom_connection_syncs_private_meeting_artifacts(client: TestClient, db_session: Session, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -981,23 +901,23 @@ def test_timeline_ai_search_writes_unified_ai_gateway_run(client: TestClient, db
 def test_repeated_integration_failures_create_admin_notification(client: TestClient, db_session: Session, monkeypatch: pytest.MonkeyPatch) -> None:
     headers = auth_headers(client)
     configured = client.patch(
-        "/api/admin/integrations/fathom",
+        "/api/admin/integrations/ai_llm_gateway",
         headers=headers,
-        json={"enabled": True, "credentials_json": {"api_key": "test-fathom-key"}, "settings_json": {"base_url": "https://api.fathom.ai", "recordings_path": "/external/v1/meetings/"}},
+        json={"enabled": True, "credentials_json": {"api_key": "test-ai-key"}, "settings_json": {"base_url": "https://ai-gateway.example.com"}},
     )
     assert configured.status_code == 200
 
-    def failing_fetch(self: IntegrationService, provider: str, connection) -> list[dict]:
+    def failing_sync(self: IntegrationService, provider: str, connection, actor: User) -> tuple[int, int, int]:
         raise RuntimeError("Provider timeout")
 
-    monkeypatch.setattr(IntegrationService, "_fetch_provider_records", failing_fetch)
+    monkeypatch.setattr(IntegrationService, "_sync_provider", failing_sync)
     for _ in range(3):
-        response = client.post("/api/admin/integrations/fathom/sync", headers=headers)
+        response = client.post("/api/admin/integrations/ai_llm_gateway/sync", headers=headers)
         assert response.status_code == 200
         assert response.json()["status"] == "error"
 
-    runs = client.get("/api/admin/integrations/sync-runs", headers=headers, params={"provider": "fathom", "failure_type": "error"})
+    runs = client.get("/api/admin/integrations/sync-runs", headers=headers, params={"provider": "ai_llm_gateway", "failure_type": "error"})
     assert runs.status_code == 200
     assert runs.json()["total"] == 3
-    assert db_session.scalar(select(IntegrationSyncRun).where(IntegrationSyncRun.provider == "fathom", IntegrationSyncRun.failure_type == "error")) is not None
+    assert db_session.scalar(select(IntegrationSyncRun).where(IntegrationSyncRun.provider == "ai_llm_gateway", IntegrationSyncRun.failure_type == "error")) is not None
     assert db_session.scalar(select(NotificationRecord).where(NotificationRecord.trigger == "integration_failure")) is not None

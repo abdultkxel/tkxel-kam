@@ -8,6 +8,7 @@ import {
   getStakeholderOrgChart as getStakeholderOrgChartRequest,
   listStakeholderCoverageGaps as listStakeholderCoverageGapsRequest,
   listStakeholderInteractions as listStakeholderInteractionsRequest,
+  listStakeholderRoleOptions as listStakeholderRoleOptionsRequest,
   listStakeholders as listStakeholdersRequest,
   recalculateStakeholderCoverageGaps as recalculateStakeholderCoverageGapsRequest,
   updateStakeholder as updateStakeholderRequest,
@@ -22,6 +23,7 @@ import type {
   StakeholderInteractionPage,
   StakeholderOrgChart,
   StakeholderPage,
+  StakeholderRoleOption,
   StakeholderUpdatePayload,
 } from '@/types/stakeholder'
 
@@ -61,6 +63,16 @@ export function useStakeholders(accountId?: string, filters: StakeholderFilters 
   }, [accountId, filtersKey, token])
   const query = useStakeholderQuery(Boolean(token && accountId), { accountId, resources: ['stakeholders'] }, load)
   return { ...query, stakeholders: query.data?.items ?? [] }
+}
+
+export function useStakeholderRoleOptions(): QueryState<StakeholderRoleOption[]> & { roleOptions: StakeholderRoleOption[] } {
+  const { token } = useAuth()
+  const load = useCallback(() => {
+    if (!token) return Promise.resolve(null)
+    return listStakeholderRoleOptionsRequest(token)
+  }, [token])
+  const query = useStakeholderQuery(Boolean(token), { resources: ['all'] }, load)
+  return { ...query, roleOptions: query.data ?? [] }
 }
 
 export function useCreateStakeholder(accountId?: string): MutationState & { createStakeholder: (payload: StakeholderCreatePayload, overrideAccountId?: string) => Promise<Stakeholder> } {

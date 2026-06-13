@@ -1,7 +1,7 @@
 import { apiRequest } from '@/services/api'
 import type { Page } from '@/services/accountWorkspace'
 
-export type IntegrationProvider = 'google_calendar' | 'fathom' | 'csat' | 'ai_llm_gateway'
+export type IntegrationProvider = 'google_calendar' | 'csat' | 'ai_llm_gateway'
 
 export interface IntegrationConnection {
   id: string

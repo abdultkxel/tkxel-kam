@@ -11,7 +11,7 @@ import type {
   StakeholderCreatePayload,
   StakeholderInfluence,
   StakeholderRelationshipStrength,
-  StakeholderRole,
+  StakeholderRoleOption,
   StakeholderSentiment,
   StakeholderStatus,
 } from '@/types/stakeholder'
@@ -46,7 +46,7 @@ interface StakeholderFormState {
   linkedinUrl: string
   engagementId: string
   reportsToStakeholderId: string
-  role: StakeholderRole
+  role: string
   influence: StakeholderInfluence
   relationshipStrength: StakeholderRelationshipStrength
   sentiment: StakeholderSentiment
@@ -60,12 +60,13 @@ interface Props {
   account: Pick<Account, 'id' | 'name'>
   stakeholder?: Stakeholder | null
   stakeholders: Stakeholder[]
+  roleOptions?: StakeholderRoleOption[]
   open: boolean
   onOpenChange: (open: boolean) => void
   onSaved?: () => Promise<unknown> | unknown
 }
 
-const stakeholderRoles: StakeholderRole[] = ['executive_sponsor', 'economic_buyer', 'technical_decision_maker', 'operational_poc', 'commercial_owner', 'influencer']
+const fallbackRoleOptions: StakeholderRoleOption[] = ['executive_sponsor', 'economic_buyer', 'technical_decision_maker', 'operational_poc', 'commercial_owner', 'influencer'].map(value => ({ value, label: titleize(value) }))
 const influenceOptions: StakeholderInfluence[] = ['low', 'medium', 'high', 'critical']
 const relationshipOptions: StakeholderRelationshipStrength[] = ['unknown', 'weak', 'developing', 'strong', 'champion']
 const sentimentOptions: StakeholderSentiment[] = ['negative', 'neutral', 'positive', 'champion']
@@ -80,11 +81,12 @@ const fieldAliases = {
   is_sensitive: 'isSensitive',
 }
 
-export function StakeholderFormDrawer({ account, stakeholder, stakeholders, open, onOpenChange, onSaved }: Props) {
+export function StakeholderFormDrawer({ account, stakeholder, stakeholders, roleOptions = fallbackRoleOptions, open, onOpenChange, onSaved }: Props) {
   const { createStakeholder, isLoading: creating } = useCreateStakeholder(account.id)
   const { updateStakeholder, isLoading: updating } = useUpdateStakeholder()
   const { engagements } = useEngagements(open ? account.id : undefined, { page: 1, page_size: 100 })
-  const [form, setForm] = useState<StakeholderFormState>(() => initialForm(stakeholder))
+  const effectiveRoleOptions = useMemo(() => mergeRoleOptions(roleOptions.length ? roleOptions : fallbackRoleOptions, stakeholder?.role ? [stakeholder.role] : []), [roleOptions, stakeholder?.role])
+  const [form, setForm] = useState<StakeholderFormState>(() => initialForm(stakeholder, effectiveRoleOptions[0]?.value ?? 'operational_poc'))
   const [fieldErrors, setFieldErrors] = useState<FieldErrors>({})
   const [formError, setFormError] = useState('')
   const isEditing = Boolean(stakeholder)
@@ -92,10 +94,15 @@ export function StakeholderFormDrawer({ account, stakeholder, stakeholders, open
 
   useEffect(() => {
     if (!open) return
-    setForm(initialForm(stakeholder))
+    setForm(initialForm(stakeholder, effectiveRoleOptions[0]?.value ?? 'operational_poc'))
     setFieldErrors({})
     setFormError('')
   }, [open, stakeholder])
+
+  useEffect(() => {
+    if (!open || stakeholder || !effectiveRoleOptions.length) return
+    setForm(current => effectiveRoleOptions.some(option => option.value === current.role) ? current : { ...current, role: effectiveRoleOptions[0].value })
+  }, [effectiveRoleOptions, open, stakeholder])
 
   const managerOptions = useMemo(
     () =>
@@ -179,7 +186,7 @@ export function StakeholderFormDrawer({ account, stakeholder, stakeholders, open
                   </section>
 
                   <section className="grid gap-4 rounded-lg border border-surface-border bg-white p-4 md:grid-cols-2">
-                    <SelectField label="Role" field="role" value={form.role} options={stakeholderRoles} error={fieldErrors.role} onChange={updateField} required />
+                    <SelectField label="Role" field="role" value={form.role} options={effectiveRoleOptions} error={fieldErrors.role} onChange={updateField} required />
                     <SelectField label="Reports to" field="reportsToStakeholderId" value={form.reportsToStakeholderId} options={managerOptions} error={fieldErrors.reportsToStakeholderId} onChange={updateField} />
                     <SelectField label="Influence" field="influence" value={form.influence} options={influenceOptions} error={fieldErrors.influence} onChange={updateField} />
                     <SelectField label="Relationship" field="relationshipStrength" value={form.relationshipStrength} options={relationshipOptions} error={fieldErrors.relationshipStrength} onChange={updateField} />
@@ -274,6 +281,22 @@ function TextField({
   )
 }
 
+function mergeRoleOptions(options: StakeholderRoleOption[], roleSlugs: string[]) {
+  const seen = new Set<string>()
+  const merged: StakeholderRoleOption[] = []
+  options.forEach(option => {
+    if (seen.has(option.value)) return
+    seen.add(option.value)
+    merged.push(option)
+  })
+  roleSlugs.forEach(roleSlug => {
+    if (!roleSlug || seen.has(roleSlug)) return
+    seen.add(roleSlug)
+    merged.push({ value: roleSlug, label: titleize(roleSlug) })
+  })
+  return merged
+}
+
 function SelectField({
   label,
   field,
@@ -307,7 +330,7 @@ function SelectField({
   )
 }
 
-function initialForm(stakeholder?: Stakeholder | null): StakeholderFormState {
+function initialForm(stakeholder: Stakeholder | null | undefined, defaultRole: string): StakeholderFormState {
   return {
     name: stakeholder?.name ?? '',
     title: stakeholder?.title ?? '',
@@ -317,7 +340,7 @@ function initialForm(stakeholder?: Stakeholder | null): StakeholderFormState {
     linkedinUrl: stakeholder?.linkedinUrl ?? '',
     engagementId: stakeholder?.engagementId ?? '',
     reportsToStakeholderId: stakeholder?.reportsToStakeholderId ?? '',
-    role: normalizeRole(stakeholder?.role) ?? 'operational_poc',
+    role: stakeholder?.role ?? defaultRole,
     influence: normalizeInfluence(stakeholder?.influence) ?? 'medium',
     relationshipStrength: normalizeRelationship(stakeholder?.relationshipStrength) ?? 'developing',
     sentiment: normalizeSentiment(stakeholder?.sentiment) ?? 'neutral',
@@ -391,10 +414,6 @@ function fieldClass(error?: string, className?: string) {
 
 function titleize(value: string) {
   return value.replace(/_/g, ' ').replace(/\b\w/g, letter => letter.toUpperCase())
-}
-
-function normalizeRole(value?: string): StakeholderRole | undefined {
-  return stakeholderRoles.find(option => option === value)
 }
 
 function normalizeInfluence(value?: string): StakeholderInfluence | undefined {

@@ -269,6 +269,9 @@ class OpportunityRepository:
     def count_opportunities_for_type(self, type_id: str) -> int:
         return self.db.scalar(select(func.count(Opportunity.id)).where(Opportunity.type_id == type_id)) or 0
 
+    def count_opportunities_for_stage(self, stage: str) -> int:
+        return self.db.scalar(select(func.count(Opportunity.id)).where(Opportunity.stage == stage)) or 0
+
     def add_stage_history(self, history: OpportunityStageHistory) -> OpportunityStageHistory:
         self.db.add(history)
         self.db.flush()

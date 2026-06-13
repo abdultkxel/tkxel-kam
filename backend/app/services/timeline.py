@@ -417,6 +417,11 @@ class TimelineService:
         items, total = self.repository.list_event_types(search=search, active_state=active_state, category=category, module=module, page=page, page_size=page_size)
         return TimelineEventTypePageRead(items=[self._event_type_read(item) for item in items], total=total, page=page, page_size=page_size, pages=page_count(total, page_size))
 
+    def list_readable_event_types(self, current_user: User, *, search: str | None, active_state: str, category: str | None, module: str | None, page: int, page_size: int) -> TimelineEventTypePageRead:
+        self.access.require_module_permission(current_user, TIMELINE_MODULE, "view")
+        items, total = self.repository.list_event_types(search=search, active_state=active_state, category=category, module=module, page=page, page_size=page_size)
+        return TimelineEventTypePageRead(items=[self._event_type_read(item) for item in items], total=total, page=page, page_size=page_size, pages=page_count(total, page_size))
+
     def create_event_type(self, payload: TimelineEventTypeCreateRequest, current_user: User) -> TimelineEventTypeRead:
         self.access.require_module_permission(current_user, ADMIN_MODULE, "configure")
         if self.repository.get_event_type_by_slug(payload.slug):

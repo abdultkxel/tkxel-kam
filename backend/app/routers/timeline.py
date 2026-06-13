@@ -182,6 +182,26 @@ def delete_timeline_comment(
     return service.delete_comment(event_id, comment_id, current_user)
 
 
+@router.get(
+    "/api/timeline-event-types",
+    response_model=TimelineEventTypePageRead,
+    summary="List timeline event types",
+    description="Returns active or historical timeline event type labels for account timeline filters and manual event creation without requiring Admin configuration access.",
+    responses={401: {"description": "Missing, invalid, or expired token."}, 403: {"description": "User cannot view timeline event types."}},
+)
+def list_readable_event_types(
+    current_user: Annotated[User, Depends(get_current_user)],
+    service: Annotated[TimelineService, Depends(get_timeline_service)],
+    search: str | None = None,
+    active_state: str = "all",
+    category: str | None = None,
+    module: str | None = None,
+    page: Annotated[int, Query(ge=1)] = 1,
+    page_size: Annotated[int, Query(ge=1, le=100)] = 50,
+) -> TimelineEventTypePageRead:
+    return service.list_readable_event_types(current_user, search=search, active_state=active_state, category=category, module=module, page=page, page_size=page_size)
+
+
 @router.get("/api/admin/timeline-event-types", response_model=TimelineEventTypePageRead, summary="List timeline event type configuration")
 def list_event_types(
     current_user: Annotated[User, Depends(get_current_user)],

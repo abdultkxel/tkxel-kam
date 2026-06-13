@@ -127,6 +127,7 @@ describe('opportunities service mapping', () => {
       stage: 'Identified',
       nextStep: 'Confirm sponsor priority.',
       targetDate: '2026-06-30T12:00:00Z',
+      customFieldValues: { expansion_theme: 'Growth' },
       actionItems: [{ title: 'Send recap', dueDate: '2026-06-07T12:00:00Z', priority: 'medium', createTask: true }],
     })).toMatchObject({
       account_id: 'acc-1',
@@ -135,8 +136,23 @@ describe('opportunities service mapping', () => {
       service_line: 'Data Analytics',
       next_step: 'Confirm sponsor priority.',
       target_date: '2026-06-30T12:00:00Z',
+      custom_field_values: { expansion_theme: 'Growth' },
       action_items: [{ title: 'Send recap', due_date: '2026-06-07T12:00:00Z', create_task: true }],
     })
+  })
+
+  it('omits stage from create payloads when the configured backend default should apply', () => {
+    expect(buildCreatePayload({
+      accountId: 'acc-1',
+      typeId: 'type-1',
+      ownerId: 'usr-1',
+      name: 'AI support expansion',
+      serviceLine: 'Data Analytics',
+      value: 175000,
+      currency: 'USD',
+      nextStep: 'Confirm sponsor priority.',
+      targetDate: '2026-06-30T12:00:00Z',
+    })).not.toHaveProperty('stage')
   })
 
   it('builds update payloads with stage, engagement, source, and outcome fields for atomic detail saves', () => {

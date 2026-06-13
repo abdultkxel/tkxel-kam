@@ -23,46 +23,49 @@ export function Sidebar() {
   const toggleSidebar = useUIStore(state => state.toggleSidebar)
 
   return (
-    <aside className={cn('v4-sidebar sticky top-0 hidden h-screen shrink-0 flex-col bg-brand-blue-dark text-white transition-all duration-200 lg:flex', collapsed ? 'w-20' : 'w-64')}>
-      <div className="relative z-10 flex h-16 items-center justify-between gap-3 px-3">
-        <div className={cn('flex h-11 items-center overflow-hidden px-1', collapsed ? 'w-12 justify-center' : 'w-[152px]')}>
-          <TkxelLogo size={collapsed ? 'mark' : 'sidebar'} tone="white" />
+    <>
+      <div aria-hidden="true" className={cn('hidden shrink-0 transition-all duration-200 lg:block', collapsed ? 'w-20' : 'w-64')} />
+      <aside className={cn('v4-sidebar fixed inset-y-0 left-0 z-20 hidden h-screen shrink-0 flex-col overflow-hidden bg-brand-blue-dark text-white transition-all duration-200 lg:flex', collapsed ? 'w-20' : 'w-64')}>
+        <div className="relative z-10 flex h-16 items-center justify-between gap-3 px-3">
+          <div className={cn('flex h-11 items-center overflow-hidden px-1', collapsed ? 'w-12 justify-center' : 'w-[152px]')}>
+            <TkxelLogo size={collapsed ? 'mark' : 'sidebar'} tone="white" />
+          </div>
+          <button className="tk-icon-button text-white/70 hover:bg-white/10 hover:text-white" onClick={toggleSidebar} aria-label="Toggle sidebar">
+            <ChevronLeft className={cn('h-4 w-4 transition-transform', collapsed ? 'rotate-180' : '')} />
+          </button>
         </div>
-        <button className="tk-icon-button text-white/70 hover:bg-white/10 hover:text-white" onClick={toggleSidebar} aria-label="Toggle sidebar">
-          <ChevronLeft className={cn('h-4 w-4 transition-transform', collapsed ? 'rotate-180' : '')} />
-        </button>
-      </div>
 
-      <nav className="relative z-10 flex-1 space-y-1 px-3 py-4">
-        {sidebarLinks.filter(link => !link.privileged || capabilities.can_access_admin).map(link => (
-          <NavLink
-            key={link.to}
-            to={link.to}
-            className={({ isActive }) =>
-              cn(
-                'flex min-h-[44px] items-center gap-3 rounded-lg px-3 text-sm font-medium transition-colors',
-                isActive ? 'bg-white/15 text-white font-semibold' : 'text-white/70 hover:bg-white/10 hover:text-white',
-                collapsed ? 'justify-center' : '',
-              )
-            }
-          >
-            <link.icon className="h-5 w-5 shrink-0" />
-            {collapsed ? null : <span>{link.label}</span>}
-          </NavLink>
-        ))}
-      </nav>
+        <nav className="relative z-10 flex-1 space-y-1 px-3 py-4">
+          {sidebarLinks.filter(link => !link.privileged || capabilities.can_access_admin).map(link => (
+            <NavLink
+              key={link.to}
+              to={link.to}
+              className={({ isActive }) =>
+                cn(
+                  'flex min-h-[44px] items-center gap-3 rounded-lg px-3 text-sm font-medium transition-colors',
+                  isActive ? 'bg-white/15 text-white font-semibold' : 'text-white/70 hover:bg-white/10 hover:text-white',
+                  collapsed ? 'justify-center' : '',
+                )
+              }
+            >
+              <link.icon className="h-5 w-5 shrink-0" />
+              {collapsed ? null : <span>{link.label}</span>}
+            </NavLink>
+          ))}
+        </nav>
 
-      <div className="relative z-10 border-t border-white/15 p-3">
-        <div className={cn('flex items-center gap-3 rounded-lg bg-white/10 p-3', collapsed ? 'justify-center' : '')}>
-          <div className="flex h-9 w-9 items-center justify-center rounded-full bg-white text-xs font-bold text-brand-blue-dark">{user.avatarInitials}</div>
-          {collapsed ? null : (
-            <div className="min-w-0">
-              <p className="truncate text-sm font-semibold">{user.name}</p>
-              <p className="text-[11px] font-semibold uppercase tracking-wider text-white/65">{user.role}</p>
-            </div>
-          )}
+        <div className="relative z-10 border-t border-white/15 p-3">
+          <div className={cn('flex items-center gap-3 rounded-lg bg-white/10 p-3', collapsed ? 'justify-center' : '')}>
+            <div className="flex h-9 w-9 items-center justify-center rounded-full bg-white text-xs font-bold text-brand-blue-dark">{user.avatarInitials}</div>
+            {collapsed ? null : (
+              <div className="min-w-0">
+                <p className="truncate text-sm font-semibold">{user.name}</p>
+                <p className="text-[11px] font-semibold uppercase tracking-wider text-white/65">{user.role}</p>
+              </div>
+            )}
+          </div>
         </div>
-      </div>
-    </aside>
+      </aside>
+    </>
   )
 }

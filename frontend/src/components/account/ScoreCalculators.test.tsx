@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react'
+import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
 import { ScoreCalculators } from '@/components/account/ScoreCalculators'
@@ -69,5 +69,24 @@ describe('ScoreCalculators', () => {
     expect(serviceLineToggle).toHaveAttribute('aria-expanded', 'true')
     expect(screen.getByText('Assessment & Strategy')).toBeInTheDocument()
     expect(screen.getByText('Select all')).toBeInTheDocument()
+  })
+
+  it('reseeds calculator projection when persisted account health changes', async () => {
+    const { rerender } = render(<ScoreCalculators account={account} saving={false} onApply={vi.fn()} />)
+    const projection = screen.getByText('Projected health').parentElement
+    expect(projection).not.toBeNull()
+    const initialProjection = projection?.textContent
+
+    rerender(
+      <ScoreCalculators
+        account={{ ...account, riskStatus: 'critical', health: { overall: 40, relationship: 40, usage: 40, delivery: 40, commercial: 40 } }}
+        saving={false}
+        onApply={vi.fn()}
+      />,
+    )
+
+    await waitFor(() => {
+      expect(screen.getByText('Projected health').parentElement?.textContent).not.toBe(initialProjection)
+    })
   })
 })

@@ -228,6 +228,7 @@ export function mapApiGovernanceEvent(event: ApiGovernanceEvent): GovernanceEven
     generatedOutputs: event.generated_outputs.map(mapApiGeneratedOutput),
     status: event.status,
     source: event.source,
+    customFieldValues: event.custom_field_values ?? {},
     completedAt: event.completed_at ?? null,
     createdAt: event.created_at,
     updatedAt: event.updated_at,

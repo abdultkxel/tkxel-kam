@@ -27,7 +27,7 @@ ActiveState = Literal["all", "active", "inactive"]
 TemplateSort = Literal["name", "version", "active_state", "updated_at", "created_at"]
 TaskSort = Literal["due_at", "priority", "status", "updated_at", "created_at"]
 
-router = APIRouter(prefix="/api", tags=["Playbooks, Activities, Tasks, and Calendar"])
+router = APIRouter(prefix="/api", tags=["Playbooks and Tasks"])
 
 
 @router.get("/admin/playbook-templates", response_model=PlaybookTemplatePageRead, summary="List playbook templates", description="Paginated playbook template catalog with search, active-state, signal, metric, owner-rule, sort, and RBAC filters.")

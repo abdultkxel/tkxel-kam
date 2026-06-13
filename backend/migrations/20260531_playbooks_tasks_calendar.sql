@@ -1,4 +1,4 @@
--- PostgreSQL reference DDL for Playbooks, Activities, Tasks, and Calendar.
+-- PostgreSQL reference DDL for Playbooks and Tasks.
 -- Runtime table creation in local/dev environments is still driven by SQLAlchemy metadata.
 
 CREATE TABLE IF NOT EXISTS playbook_templates (

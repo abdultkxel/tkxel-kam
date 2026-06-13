@@ -68,6 +68,7 @@ export interface StakeholderRoleConfig {
   isActive: boolean
   displayOrder: number
   inUseCount: number
+  gapRuleUsageCount: number
 }
 
 export interface StakeholderGapRule {
@@ -89,6 +90,7 @@ export interface OpportunityStageConfig {
   requiresOutcomeReason: boolean
   isActive: boolean
   displayOrder: number
+  inUseCount: number
 }
 
 export interface OpportunityStageTransitionConfig {
@@ -110,6 +112,33 @@ export interface ServiceAdjacencyRule {
   isActive: boolean
 }
 
+export interface ServiceGrowthBundle {
+  id: string
+  slug: string
+  name: string
+  description?: string | null
+  serviceIds: string[]
+  serviceNames: string[]
+  isActive: boolean
+  displayOrder: number
+}
+
+export type ServiceGrowthSelectorType = 'service' | 'category' | 'tag' | 'bundle'
+
+export interface ServiceGrowthRule {
+  id: string
+  sourceSelectorType: ServiceGrowthSelectorType
+  sourceSelectorValue: string
+  sourceSelectorLabel: string
+  targetSelectorType: ServiceGrowthSelectorType
+  targetSelectorValue: string
+  targetSelectorLabel: string
+  baseFitScore: number
+  priority: number
+  rationaleTemplate: string
+  isActive: boolean
+}
+
 export interface WhitespaceItem {
   id: string
   accountId: string
@@ -121,6 +150,12 @@ export interface WhitespaceItem {
   source: string
 }
 
+export interface ServiceScoreFactor {
+  label: string
+  value: number
+  reason: string
+}
+
 export interface ServiceRecommendation {
   id: string
   accountId: string
@@ -128,7 +163,11 @@ export interface ServiceRecommendation {
   sourceServiceName?: string | null
   targetServiceId: string
   targetServiceName: string
+  growthRuleId?: string | null
+  baseFitScore: number
   relevanceScore: number
+  accountFitScore: number
+  scoreFactors: ServiceScoreFactor[]
   rationale: string
   status: string
   sourceContext: string

@@ -31,11 +31,7 @@ interface FieldFormState {
   helpText: string
   optionsText: string
   isRequired: boolean
-  isSensitive: boolean
   isActive: boolean
-  showInList: boolean
-  showInDetail: boolean
-  sortOrder: number
 }
 
 const fieldTypes: { value: CustomFieldType; label: string }[] = [
@@ -54,7 +50,8 @@ const fieldTypes: { value: CustomFieldType; label: string }[] = [
 ]
 
 const selectTypes = new Set<CustomFieldType>(['single_select', 'multi_select'])
-const defaultModule = 'account_overview'
+const defaultModule = 'accounts'
+const legacyAccountModules = new Set(['account_onboarding_workspace', 'account_overview', 'onboarding'])
 
 const emptyForm: FieldFormState = {
   module: defaultModule,
@@ -66,11 +63,7 @@ const emptyForm: FieldFormState = {
   helpText: '',
   optionsText: '',
   isRequired: false,
-  isSensitive: false,
   isActive: true,
-  showInList: false,
-  showInDetail: true,
-  sortOrder: 0,
 }
 
 function formatSlug(value: string) {
@@ -89,7 +82,7 @@ function fieldKeyFromLabel(label: string) {
 
 function formFromField(field: CustomFieldDefinition): FieldFormState {
   return {
-    module: field.module,
+    module: legacyAccountModules.has(field.module) ? defaultModule : field.module,
     fieldKey: field.field_key,
     label: field.label,
     description: field.description ?? '',
@@ -98,11 +91,7 @@ function formFromField(field: CustomFieldDefinition): FieldFormState {
     helpText: field.help_text ?? '',
     optionsText: field.options.join('\n'),
     isRequired: field.is_required,
-    isSensitive: field.is_sensitive,
     isActive: field.is_active,
-    showInList: field.show_in_list,
-    showInDetail: field.show_in_detail,
-    sortOrder: field.sort_order,
   }
 }
 
@@ -126,11 +115,7 @@ function payloadFromForm(form: FieldFormState): CustomFieldPayload {
     options: isSelect ? optionsFromText(form.optionsText) : [],
     validation_rules: {},
     is_required: form.isRequired,
-    is_sensitive: form.isSensitive,
     is_active: form.isActive,
-    show_in_list: form.showInList,
-    show_in_detail: form.showInDetail,
-    sort_order: Number(form.sortOrder) || 0,
   }
 }
 
@@ -146,7 +131,7 @@ export function AdminFieldBuilderPanel() {
   const [moduleFilter, setModuleFilter] = useState('')
   const [typeFilter, setTypeFilter] = useState<CustomFieldType | ''>('')
   const [statusFilter, setStatusFilter] = useState<'all' | 'active' | 'inactive'>('all')
-  const [sort, setSort] = useState<'label' | 'module' | 'field_type' | 'sort_order' | 'updated_at'>('sort_order')
+  const [sort, setSort] = useState<'label' | 'module' | 'field_type' | 'updated_at'>('label')
   const [direction, setDirection] = useState<'asc' | 'desc'>('asc')
   const [page, setPage] = useState(1)
   const [pageSize, setPageSize] = useState(10)
@@ -164,7 +149,6 @@ export function AdminFieldBuilderPanel() {
   const [form, setForm] = useState<FieldFormState>(emptyForm)
 
   const activeCount = useMemo(() => fields.filter(field => field.is_active).length, [fields])
-  const sensitiveCount = useMemo(() => fields.filter(field => field.is_sensitive).length, [fields])
 
   useEffect(() => {
     if (!token) return
@@ -217,7 +201,7 @@ export function AdminFieldBuilderPanel() {
     setModuleFilter('')
     setTypeFilter('')
     setStatusFilter('all')
-    setSort('sort_order')
+    setSort('label')
     setDirection('asc')
     setPage(1)
   }
@@ -306,7 +290,7 @@ export function AdminFieldBuilderPanel() {
             <Settings2 className="h-4 w-4 text-brand-blue" />
             Field Builder
           </h2>
-          <p className="mt-1 text-sm text-ink-secondary">Create module-scoped fields with validation, visibility, and sensitivity settings.</p>
+          <p className="mt-1 text-sm text-ink-secondary">Create module-scoped fields with validation settings.</p>
         </div>
         <div className="flex flex-wrap gap-2">
           <button type="button" className="tk-button-secondary" onClick={() => void loadFields(page)} disabled={loading}>
@@ -320,10 +304,9 @@ export function AdminFieldBuilderPanel() {
         </div>
       </div>
 
-      <div className="grid divide-y divide-surface-border border-b border-surface-border bg-white md:grid-cols-3 md:divide-x md:divide-y-0">
+      <div className="grid divide-y divide-surface-border border-b border-surface-border bg-white md:grid-cols-2 md:divide-x md:divide-y-0">
         <Stat label="Configured fields" value={String(total)} />
         <Stat label="Active on this page" value={String(activeCount)} />
-        <Stat label="Sensitive on this page" value={String(sensitiveCount)} />
       </div>
 
       {error ? <p className="m-5 rounded-md border border-rag-red/20 bg-rag-red/10 px-3 py-2 text-sm font-medium text-rag-red">{error}</p> : null}
@@ -382,7 +365,6 @@ export function AdminFieldBuilderPanel() {
           <option value="inactive">Inactive</option>
         </select>
         <select className="tk-input" value={sort} onChange={event => setSort(event.target.value as typeof sort)} aria-label="Sort fields">
-          <option value="sort_order">Sort order</option>
           <option value="label">Label</option>
           <option value="module">Module</option>
           <option value="field_type">Field type</option>
@@ -402,7 +384,7 @@ export function AdminFieldBuilderPanel() {
               <th className="px-4 py-3">Field</th>
               <th className="px-4 py-3">Module</th>
               <th className="px-4 py-3">Type</th>
-              <th className="px-4 py-3">Visibility</th>
+              <th className="px-4 py-3">Rules</th>
               <th className="px-4 py-3">Status</th>
               <th className="px-4 py-3">Updated</th>
               <th className="px-4 py-3">Actions</th>
@@ -431,9 +413,7 @@ export function AdminFieldBuilderPanel() {
                 <td className="px-4 py-3">
                   <div className="flex flex-wrap gap-1.5">
                     {field.is_required ? <Flag label="Required" tone="orange" /> : null}
-                    {field.is_sensitive ? <Flag label="Sensitive" tone="red" /> : null}
-                    {field.show_in_list ? <Flag label="List" tone="blue" /> : null}
-                    {field.show_in_detail ? <Flag label="Detail" tone="dark" /> : null}
+                    {!field.is_required ? <span className="text-xs text-ink-tertiary">-</span> : null}
                   </div>
                 </td>
                 <td className="px-4 py-3">
@@ -636,15 +616,10 @@ function FieldFormDialog({ open, modules, form, fieldErrors, formError, isEditin
                 <input className={fieldClass(fieldErrors.description)} value={form.description} onChange={event => onFieldChange('description', event.target.value)} aria-invalid={Boolean(fieldErrors.description)} />
                 <FieldError id="custom-field-description-error" message={fieldErrors.description} />
               </label>
-              <label className="block">
+              <label className="block md:col-span-2">
                 <span className="tk-label">Placeholder</span>
                 <input className={fieldClass(fieldErrors.placeholder)} value={form.placeholder} onChange={event => onFieldChange('placeholder', event.target.value)} aria-invalid={Boolean(fieldErrors.placeholder)} />
                 <FieldError id="custom-field-placeholder-error" message={fieldErrors.placeholder} />
-              </label>
-              <label className="block">
-                <span className="tk-label">Sort order</span>
-                <input className={fieldClass(fieldErrors.sortOrder)} type="number" min={0} max={10000} value={form.sortOrder} onChange={event => onFieldChange('sortOrder', Number(event.target.value))} aria-invalid={Boolean(fieldErrors.sortOrder)} />
-                <FieldError id="custom-field-sort-order-error" message={fieldErrors.sortOrder} />
               </label>
               <label className="block md:col-span-2">
                 <span className="tk-label">Help text</span>
@@ -660,12 +635,9 @@ function FieldFormDialog({ open, modules, form, fieldErrors, formError, isEditin
               ) : null}
             </div>
 
-            <div className="grid gap-3 rounded-lg border border-surface-border bg-surface-tertiary p-4 sm:grid-cols-2 lg:grid-cols-5">
+            <div className="grid gap-3 rounded-lg border border-surface-border bg-surface-tertiary p-4 sm:grid-cols-2">
               <ToggleField label="Active" checked={form.isActive} onChange={value => onFieldChange('isActive', value)} />
               <ToggleField label="Required" checked={form.isRequired} onChange={value => onFieldChange('isRequired', value)} />
-              <ToggleField label="Sensitive" checked={form.isSensitive} onChange={value => onFieldChange('isSensitive', value)} />
-              <ToggleField label="Show in list" checked={form.showInList} onChange={value => onFieldChange('showInList', value)} />
-              <ToggleField label="Show in detail" checked={form.showInDetail} onChange={value => onFieldChange('showInDetail', value)} />
             </div>
 
             {formError ? <p className="rounded-md border border-rag-red/20 bg-rag-red/10 px-3 py-2 text-sm font-medium text-rag-red">{formError}</p> : null}
@@ -695,11 +667,7 @@ const fieldAliases: Partial<Record<keyof FieldFormState, string>> = {
   helpText: 'help_text',
   optionsText: 'options',
   isRequired: 'is_required',
-  isSensitive: 'is_sensitive',
   isActive: 'is_active',
-  showInList: 'show_in_list',
-  showInDetail: 'show_in_detail',
-  sortOrder: 'sort_order',
 }
 
 const backendFieldAliases = {
@@ -707,11 +675,7 @@ const backendFieldAliases = {
   field_type: 'fieldType',
   help_text: 'helpText',
   is_required: 'isRequired',
-  is_sensitive: 'isSensitive',
   is_active: 'isActive',
-  show_in_list: 'showInList',
-  show_in_detail: 'showInDetail',
-  sort_order: 'sortOrder',
 }
 
 function fieldClass(error?: string) {

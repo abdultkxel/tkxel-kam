@@ -10,12 +10,28 @@ from app.rbac_catalog import (
 MODULES: tuple[tuple[str, str], ...] = PERMISSION_SECTIONS
 ACTIONS: tuple[str, ...] = tuple(dict.fromkeys(permission.action for permission in PERMISSIONS))
 ADMIN_MODULE = "admin_audit_security_rbac"
+ACCOUNT_CUSTOM_FIELD_MODULE = "accounts"
+LEGACY_ACCOUNT_CUSTOM_FIELD_MODULES: tuple[str, ...] = ("account_onboarding_workspace", "account_overview", "onboarding")
+ACCOUNT_CUSTOM_FIELD_MODULES: tuple[str, ...] = (ACCOUNT_CUSTOM_FIELD_MODULE, *LEGACY_ACCOUNT_CUSTOM_FIELD_MODULES)
 FIELD_BUILDER_DOMAIN_MODULES: tuple[tuple[str, str], ...] = (
     ("account_overview", "Account Overview"),
     ("account_onboarding_workspace", "Account Onboarding Workspace"),
     ("client_education_content", "Client Education Content"),
-    ("playbooks_tasks_calendar", "Playbooks, Activities, Tasks, and Calendar"),
+    ("escalation_management", "Escalation Management"),
+    ("governance_reviews", "Governance Reviews"),
+    ("playbooks_tasks_calendar", "Legacy Playbook/Task Fields"),
 )
+
+FIELD_BUILDER_RUNTIME_MODULES: tuple[tuple[str, str], ...] = (
+    (ACCOUNT_CUSTOM_FIELD_MODULE, "Accounts"),
+    ("client_education_content", "Client Education Content"),
+    ("escalation_management", "Escalation Management"),
+    ("governance_reviews", "Governance Reviews"),
+    ("playbooks", "Playbooks"),
+    ("tasks", "Tasks"),
+    ("opportunities", "Opportunities"),
+)
+FIELD_BUILDER_RUNTIME_MODULE_SLUGS: tuple[str, ...] = tuple(slug for slug, _ in FIELD_BUILDER_RUNTIME_MODULES)
 
 
 @dataclass(frozen=True)
@@ -69,10 +85,16 @@ DEFAULT_ROLES: tuple[DefaultRole, ...] = (
         permission_rules=_permission_rules_for(DEFAULT_ROLE_GRANTS["account_manager"]),
     ),
     DefaultRole(
-        slug="delivery_stakeholder",
-        name="Delivery Stakeholder",
-        description="Legacy delivery stakeholder persona mapped to delivery/task/governance capabilities.",
-        permission_rules=_permission_rules_for(DEFAULT_ROLE_GRANTS["delivery_stakeholder"]),
+        slug="delivery_lead",
+        name="Delivery Lead",
+        description="Delivery owner for engagement health, governance, escalations, and delivery task operations.",
+        permission_rules=_permission_rules_for(DEFAULT_ROLE_GRANTS["delivery_lead"]),
+    ),
+    DefaultRole(
+        slug="leadership_viewer",
+        name="Leadership Viewer",
+        description="Read-only strategic viewer for portfolio, risk, retention, growth, and executive decisions.",
+        permission_rules=_permission_rules_for(DEFAULT_ROLE_GRANTS["leadership_viewer"]),
     ),
 )
 

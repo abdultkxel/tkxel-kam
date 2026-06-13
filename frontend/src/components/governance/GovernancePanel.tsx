@@ -8,8 +8,10 @@ import { AddGovernanceEventDialog } from '@/components/governance/AddGovernanceE
 import { CompleteGovernanceEventDialog } from '@/components/governance/CompleteGovernanceEventDialog'
 import { EditGovernanceEventDialog } from '@/components/governance/EditGovernanceEventDialog'
 import { DeleteGovernanceEventDialog } from '@/components/governance/GovernanceEventActions'
+import { RuntimeCustomFieldValues } from '@/components/custom-fields/RuntimeCustomFields'
 import { useAuth } from '@/contexts/AuthContext'
 import { useRole } from '@/hooks/useRole'
+import { RuntimeCustomField, listRuntimeCustomFields } from '@/services/contentGovernance'
 import { CalendarItem, listCalendarItems } from '@/services/playbooksTasks'
 import { useAccountStore } from '@/stores/accountStore'
 import { useGovernanceStore } from '@/stores/governanceStore'
@@ -81,6 +83,7 @@ export function GovernancePanel() {
   const [agendaDraftText, setAgendaDraftText] = useState('')
   const [outputLoading, setOutputLoading] = useState<'agenda' | 'brief' | 'accept' | ''>('')
   const [mutatingId, setMutatingId] = useState('')
+  const [customFields, setCustomFields] = useState<RuntimeCustomField[]>([])
   const { token } = useAuth()
   const user = useRole()
   const accounts = useAccountStore(state => state.accounts)
@@ -126,6 +129,21 @@ export function GovernancePanel() {
       cancelled = true
     }
   }, [accountFilter, mineOnly, month, search, showGovernance, showRenewalItems, showScoreActivities, token])
+
+  useEffect(() => {
+    if (!token) return
+    let cancelled = false
+    listRuntimeCustomFields(token, 'governance_reviews')
+      .then(fields => {
+        if (!cancelled) setCustomFields(Array.isArray(fields) ? fields : [])
+      })
+      .catch(() => {
+        if (!cancelled) setCustomFields([])
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [token])
 
   const visibleItems = useMemo(() => {
     const items = token ? apiCalendarItems.map(mapApiCalendarItem) : buildUnifiedCalendarItems(events, scoreTasks, signals)
@@ -513,6 +531,7 @@ export function GovernancePanel() {
                       <p className="font-semibold text-ink">{event.type}</p>
                       <p className="mt-1 line-clamp-2 max-w-md text-xs leading-5 text-ink-secondary">{event.agenda}</p>
                       <p className="mt-2 text-[11px] font-semibold uppercase tracking-wider text-ink-tertiary">{event.attendeeEmails.length} attendees | Actions: {event.actionItems.length}</p>
+                      <RuntimeCustomFieldValues fields={customFields} values={event.customFieldValues} variant="badges" className="mt-2" />
                     </td>
                     <td className="border-b border-surface-border px-4 py-4 font-medium text-ink">{event.accountName}</td>
                     <td className="border-b border-surface-border px-4 py-4 text-ink-secondary">{format(new Date(event.date), 'MMM d, yyyy h:mm a')}</td>
@@ -648,6 +667,7 @@ export function GovernancePanel() {
                         </ul>
                         {!selectedGovernanceEvent.actionItems.length ? <p className="mt-2 text-sm text-ink-secondary">No action items recorded.</p> : null}
                       </section>
+                      <RuntimeCustomFieldValues fields={customFields} values={selectedGovernanceEvent.customFieldValues} />
                       <section className="rounded-lg border border-surface-border p-4">
                         <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
                           <div>

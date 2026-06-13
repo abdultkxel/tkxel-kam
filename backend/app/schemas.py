@@ -51,7 +51,7 @@ GovernanceGeneratedOutputType = Literal["agenda_draft", "governance_brief"]
 GovernanceGenerationMethod = Literal["deterministic", "ai_agent"]
 GovernanceCadence = Literal["weekly", "monthly", "quarterly", "yearly"]
 GovernanceEndPolicy = Literal["never", "after_occurrences", "on_date"]
-IntegrationProvider = Literal["google_calendar", "google-calendar", "fathom", "csat", "ai_llm_gateway"]
+IntegrationProvider = Literal["google_calendar", "google-calendar", "csat", "ai_llm_gateway"]
 IntegrationStatus = Literal["configuration_required", "connected", "syncing", "error", "disabled"]
 MeetingArtifactStatus = Literal["draft", "waiting_for_fathom", "ready", "attached"]
 PlaybookOwnerRule = Literal["account_primary_am", "task_creator", "ops_lead", "template_owner"]
@@ -1901,6 +1901,7 @@ class AccountRead(BaseModel):
     primary_owner: AccountOwnerRead | None = None
     owners: list[AccountOwnerRead] = Field(default_factory=list)
     governance_completeness: dict[str, bool] = Field(default_factory=dict)
+    custom_field_values: dict[str, Any] = Field(default_factory=dict)
 
 
 class AccountPageRead(BaseModel):
@@ -3255,6 +3256,7 @@ class StakeholderRoleConfigRead(BaseModel):
     created_at: datetime
     updated_at: datetime
     in_use_count: int = 0
+    gap_rule_usage_count: int = 0
 
 
 class StakeholderRoleConfigPageRead(BaseModel):
@@ -3624,6 +3626,153 @@ class ServiceAdjacencyUpdateRequest(BaseModel):
     rules: list[ServiceAdjacencyRuleRequest] = Field(default_factory=list)
 
 
+ServiceGrowthSelectorType = Literal["service", "category", "tag", "bundle"]
+
+
+class ServiceGrowthBundleRead(BaseModel):
+    id: str
+    slug: str
+    name: str
+    description: str | None = None
+    service_ids: list[str] = Field(default_factory=list)
+    service_names: list[str] = Field(default_factory=list)
+    is_active: bool
+    display_order: int
+    created_at: datetime
+    updated_at: datetime
+
+
+class ServiceGrowthBundleCreateRequest(BaseModel):
+    slug: str
+    name: str
+    description: str | None = None
+    service_ids: list[str] = Field(default_factory=list)
+    is_active: bool = True
+    display_order: int = 0
+
+    @field_validator("slug")
+    @classmethod
+    def slug_is_valid(cls, value: str) -> str:
+        return validate_slug(value, "Bundle slug")
+
+    @field_validator("name")
+    @classmethod
+    def name_is_valid(cls, value: str) -> str:
+        return validate_short_text(value, "Bundle name", 180)
+
+    @field_validator("description")
+    @classmethod
+    def description_is_valid(cls, value: str | None) -> str | None:
+        return validate_optional_long_text(value, "Bundle description", 1000)
+
+    @field_validator("service_ids")
+    @classmethod
+    def service_ids_are_valid(cls, value: list[str]) -> list[str]:
+        if len(value) > 100:
+            raise ValueError("Bundle can include at most 100 services.")
+        seen: set[str] = set()
+        ids: list[str] = []
+        for service_id in value:
+            text = require_text(service_id, "Bundle service")
+            if text in seen:
+                raise ValueError("Bundle services must not contain duplicates.")
+            seen.add(text)
+            ids.append(text)
+        return ids
+
+
+class ServiceGrowthBundleUpdateRequest(BaseModel):
+    slug: str | None = None
+    name: str | None = None
+    description: str | None = None
+    service_ids: list[str] | None = None
+    is_active: bool | None = None
+    display_order: int | None = None
+
+    @field_validator("slug")
+    @classmethod
+    def slug_is_valid(cls, value: str | None) -> str | None:
+        return validate_slug(value, "Bundle slug") if value is not None else None
+
+    @field_validator("name")
+    @classmethod
+    def name_is_valid(cls, value: str | None) -> str | None:
+        return validate_short_text(value, "Bundle name", 180) if value is not None else None
+
+    @field_validator("description")
+    @classmethod
+    def description_is_valid(cls, value: str | None) -> str | None:
+        return validate_optional_long_text(value, "Bundle description", 1000)
+
+    @field_validator("service_ids")
+    @classmethod
+    def service_ids_are_valid(cls, value: list[str] | None) -> list[str] | None:
+        if value is None:
+            return None
+        return ServiceGrowthBundleCreateRequest.service_ids_are_valid(value)
+
+
+class ServiceGrowthRuleRequest(BaseModel):
+    source_selector_type: ServiceGrowthSelectorType
+    source_selector_value: str
+    target_selector_type: ServiceGrowthSelectorType
+    target_selector_value: str
+    base_fit_score: int = 70
+    priority: int = 0
+    rationale_template: str
+    is_active: bool = True
+
+    @field_validator("source_selector_value", "target_selector_value")
+    @classmethod
+    def selector_value_is_valid(cls, value: str) -> str:
+        return validate_short_text(value, "Selector value", 180)
+
+    @field_validator("base_fit_score")
+    @classmethod
+    def base_fit_is_valid(cls, value: int) -> int:
+        return validate_percent(value, "Base fit score")
+
+    @field_validator("priority")
+    @classmethod
+    def priority_is_valid(cls, value: int) -> int:
+        if value < 0 or value > 10000:
+            raise ValueError("Priority must be between 0 and 10000.")
+        return value
+
+    @field_validator("rationale_template")
+    @classmethod
+    def rationale_is_valid(cls, value: str) -> str:
+        return validate_short_text(value, "Growth rule rationale", 2000)
+
+    @model_validator(mode="after")
+    def selectors_are_valid(self) -> "ServiceGrowthRuleRequest":
+        if self.source_selector_type == self.target_selector_type and self.source_selector_value == self.target_selector_value:
+            raise ValueError("Source and target selectors must be different.")
+        return self
+
+
+class ServiceGrowthRuleRead(BaseModel):
+    id: str
+    source_selector_type: str
+    source_selector_value: str
+    source_selector_label: str
+    target_selector_type: str
+    target_selector_value: str
+    target_selector_label: str
+    base_fit_score: int
+    priority: int
+    rationale_template: str
+    is_active: bool
+    created_at: datetime
+    updated_at: datetime
+
+
+class ServiceGrowthTaxonomyRead(BaseModel):
+    categories: list[str] = Field(default_factory=list)
+    tags: list[str] = Field(default_factory=list)
+    bundles: list[ServiceGrowthBundleRead] = Field(default_factory=list)
+
+
 class AccountWhitespaceItemRequest(BaseModel):
     engagement_id: str | None = None
     service_id: str
@@ -3654,6 +3803,10 @@ class AccountWhitespaceUpdateRequest(BaseModel):
     items: list[AccountWhitespaceItemRequest] = Field(default_factory=list)
 
 
+class AccountWhitespacePatchRequest(BaseModel):
+    items: list[AccountWhitespaceItemRequest] = Field(default_factory=list)
+
+
 class AccountWhitespaceItemRead(BaseModel):
     id: str
     account_id: str
@@ -3674,7 +3827,11 @@ class ServiceRecommendationRead(BaseModel):
     source_service_name: str | None = None
     target_service_id: str
     target_service_name: str
+    growth_rule_id: str | None = None
+    base_fit_score: int = 70
     relevance_score: int
+    account_fit_score: int
+    score_factors: list[dict[str, Any]] = Field(default_factory=list)
     rationale: str
     status: str
     source_context: str
@@ -4890,6 +5047,7 @@ class OpportunityStageDefinitionRead(BaseModel):
     requires_outcome_reason: bool = False
     is_active: bool
     display_order: int
+    in_use_count: int = 0
 
 
 class OpportunityStageDefinitionCreateRequest(BaseModel):
@@ -5136,6 +5294,7 @@ class OpportunityRead(BaseModel):
     stage_history: list[OpportunityStageHistoryRead] = Field(default_factory=list)
     decisions: list[OpportunityDecisionRead] = Field(default_factory=list)
     action_items: list[OpportunityActionItemRead] = Field(default_factory=list)
+    custom_field_values: dict[str, Any] = Field(default_factory=dict)
 
 
 class OpportunityPipelineTotalsRead(BaseModel):
@@ -5167,7 +5326,7 @@ class OpportunityCreateRequest(BaseModel):
     service_line: str
     value: float
     currency: str = "USD"
-    stage: OpportunityStage = "Identified"
+    stage: OpportunityStage | None = None
     next_step: str
     target_date: datetime
     source_context: str | None = "manual"
@@ -5176,6 +5335,7 @@ class OpportunityCreateRequest(BaseModel):
     source_record_route: str | None = None
     outcome_reason: str | None = None
     action_items: list[OpportunityActionItemCreateRequest] = Field(default_factory=list)
+    custom_field_values: dict[str, Any] = Field(default_factory=dict, description="Field Builder values keyed by field_key.")
 
     @field_validator("name")
     @classmethod
@@ -5216,6 +5376,11 @@ class OpportunityCreateRequest(BaseModel):
     @classmethod
     def outcome_reason_is_valid(cls, value: str | None) -> str | None:
         return validate_optional_long_text(value, "Outcome reason", 2000)
+
+    @field_validator("custom_field_values")
+    @classmethod
+    def custom_field_keys_are_valid(cls, value: dict[str, Any]) -> dict[str, Any]:
+        return {validate_slug(key, "Custom field key"): item for key, item in value.items()}
 
 
 class OpportunityUpdateRequest(BaseModel):
@@ -6438,6 +6603,159 @@ class AccountChangeAlertUpdateRequest(BaseModel):
     @classmethod
     def alert_reason_is_valid(cls, value: str | None) -> str | None:
         return validate_optional_long_text(value, "Alert status reason", 1000)
+
+
+AlertSeverity = Literal["low", "medium", "high", "critical"]
+AlertStatus = Literal["open", "acknowledged", "snoozed", "resolved"]
+
+
+class AlertStatusHistoryRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    alert_id: str
+    from_status: str | None = None
+    to_status: str
+    reason: str | None = None
+    actor_id: str | None = None
+    actor_name: str | None = None
+    metadata_json: dict = Field(default_factory=dict)
+    created_at: datetime
+
+
+class AlertRuleRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    rule_key: str
+    name: str
+    description: str
+    alert_type: str
+    source_type: str
+    threshold_value: float
+    threshold_unit: str
+    severity: AlertSeverity
+    snooze_days: int
+    recipient_policy: str
+    escalation_enabled: bool
+    is_active: bool
+    sort_order: int
+    created_at: datetime
+    updated_at: datetime
+
+
+class AlertRuleUpdateRequest(BaseModel):
+    is_active: bool | None = None
+    threshold_value: float | None = Field(default=None, ge=0)
+    severity: AlertSeverity | None = None
+    snooze_days: int | None = Field(default=None, ge=0, le=365)
+    recipient_policy: Literal["source_owner_first", "account_owner_first"] | None = None
+    escalation_enabled: bool | None = None
+
+
+class AlertRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    rule_id: str | None = None
+    rule_key: str
+    alert_type: str
+    title: str
+    detail: str
+    severity: AlertSeverity
+    status: AlertStatus
+    owner_id: str | None = None
+    owner_name: str | None = None
+    owner_email: str | None = None
+    account_id: str | None = None
+    account_name: str | None = None
+    engagement_id: str | None = None
+    engagement_name: str | None = None
+    project_name: str | None = None
+    source_record_type: str
+    source_record_id: str
+    source_record_route: str | None = None
+    source_evidence_json: list = Field(default_factory=list)
+    previous_value_json: dict | None = None
+    new_value_json: dict | None = None
+    recommended_action: str
+    deduplication_key: str
+    first_triggered_at: datetime
+    last_triggered_at: datetime
+    snoozed_until: datetime | None = None
+    resolved_at: datetime | None = None
+    resolved_reason: str | None = None
+    created_at: datetime
+    updated_at: datetime
+    status_history: list[AlertStatusHistoryRead] = Field(default_factory=list)
+
+
+class AlertPageRead(BaseModel):
+    items: list[AlertRead]
+    total: int
+    page: int
+    page_size: int
+    pages: int
+
+
+class AlertStatusUpdateRequest(BaseModel):
+    status: AlertStatus
+    reason: str | None = None
+    snoozed_until: datetime | None = None
+
+    @field_validator("reason")
+    @classmethod
+    def status_reason_is_valid(cls, value: str | None) -> str | None:
+        return validate_optional_long_text(value, "Alert status reason", 1000)
+
+    @model_validator(mode="after")
+    def snooze_requires_until(self) -> "AlertStatusUpdateRequest":
+        if self.status == "snoozed" and self.snoozed_until is None:
+            raise ValueError("Snoozed until is required when status is snoozed.")
+        return self
+
+
+class AlertEvaluationRequest(BaseModel):
+    scope: Literal["all", "account"] = "all"
+    account_id: str | None = None
+    rule_id: str | None = None
+
+    @model_validator(mode="after")
+    def account_scope_requires_account(self) -> "AlertEvaluationRequest":
+        if self.scope == "account" and not self.account_id:
+            raise ValueError("Account id is required when scope is account.")
+        return self
+
+
+class AlertEvaluationRead(BaseModel):
+    evaluated: int
+    matched: int
+    created: int
+    updated: int
+    resolved: int
+    reactivated: int
+    notifications_created: int
+    worker_run_id: str | None = None
+
+
+class AlertPreviewMatchRead(BaseModel):
+    account_id: str | None = None
+    account_name: str | None = None
+    engagement_id: str | None = None
+    engagement_name: str | None = None
+    source_record_type: str
+    source_record_id: str
+    title: str
+    detail: str
+    severity: AlertSeverity
+    evidence: list = Field(default_factory=list)
+
+
+class AlertRulePreviewRead(BaseModel):
+    rule_id: str
+    rule_key: str
+    total_matches: int
+    sample: list[AlertPreviewMatchRead] = Field(default_factory=list)
 
 
 class AuditLogRead(BaseModel):

@@ -16,6 +16,7 @@ The platform seeds one hidden setup role and five visible operating roles:
 - `leadership_viewer` - read-only strategic visibility for portfolio, risk, retention, growth, and decisions.
 
 Legacy seeded roles such as `content_specialist`, `commercial_stakeholder`, `delivery_stakeholder`, and `ops_lead` are no longer part of the basic seed set after a database reset.
+Existing `delivery_stakeholder` users remain permission-compatible through a backend alias to `delivery_lead`, but the role is not recreated as a fresh seeded/default role.
 
 ## Seeded Users
 
@@ -42,6 +43,7 @@ The basic seed creates one user for each visible role plus one hidden Super Admi
 ## Implementation Files
 
 - Role catalog: `backend/app/rbac.py`
+- Legacy role permission alias: `backend/app/repositories/rbac.py`
 - Base seeding: `backend/app/services/seed.py`
 - CLI commands: `backend/app/cli.py`
 - Make targets: `Makefile`
@@ -55,3 +57,4 @@ After a reset, verify:
 - Admin users API returns 5 visible users.
 - Admin roles API returns 5 visible roles.
 - `super_admin` does not appear in Admin user/role API responses.
+- Account visibility remains scoped to account/report/dashboard/analytics portfolio grants; task portfolio access alone must not unlock unrelated accounts.

@@ -6,6 +6,7 @@ from app.dependencies import get_current_user, get_service_catalog_service
 from app.models import User
 from app.schemas import (
     AccountWhitespaceItemRead,
+    AccountWhitespacePatchRequest,
     AccountWhitespaceUpdateRequest,
     OpportunityRead,
     RecommendationOpportunityCreateRequest,
@@ -15,6 +16,12 @@ from app.schemas import (
     ServiceCatalogItemRead,
     ServiceCatalogItemUpdateRequest,
     ServiceCatalogPageRead,
+    ServiceGrowthBundleCreateRequest,
+    ServiceGrowthBundleRead,
+    ServiceGrowthBundleUpdateRequest,
+    ServiceGrowthRuleRead,
+    ServiceGrowthRuleRequest,
+    ServiceGrowthTaxonomyRead,
     ServiceRecommendationPageRead,
 )
 from app.services.service_catalog import ServiceCatalogService
@@ -88,6 +95,78 @@ def update_service_catalog_item(service_id: str, payload: ServiceCatalogItemUpda
 
 
 @router.get(
+    "/admin/service-growth-taxonomy",
+    response_model=ServiceGrowthTaxonomyRead,
+    summary="List service growth taxonomy",
+    description="Returns active service categories, tags, and bundles available for scalable growth recommendation rules.",
+)
+def list_service_growth_taxonomy(current_user: Annotated[User, Depends(get_current_user)], service: Annotated[ServiceCatalogService, Depends(get_service_catalog_service)]) -> ServiceGrowthTaxonomyRead:
+    return service.list_taxonomy(current_user)
+
+
+@router.get(
+    "/admin/service-growth-bundles",
+    response_model=list[ServiceGrowthBundleRead],
+    summary="List service growth bundles",
+    description="Returns service bundles used as reusable source or target selectors in growth recommendation rules.",
+)
+def list_service_growth_bundles(current_user: Annotated[User, Depends(get_current_user)], service: Annotated[ServiceCatalogService, Depends(get_service_catalog_service)]) -> list[ServiceGrowthBundleRead]:
+    return service.list_bundles(current_user)
+
+
+@router.post(
+    "/admin/service-growth-bundles",
+    response_model=ServiceGrowthBundleRead,
+    status_code=status.HTTP_201_CREATED,
+    summary="Create service growth bundle",
+    description="Creates a reusable service bundle for scalable growth recommendation rules.",
+)
+def create_service_growth_bundle(payload: ServiceGrowthBundleCreateRequest, current_user: Annotated[User, Depends(get_current_user)], service: Annotated[ServiceCatalogService, Depends(get_service_catalog_service)]) -> ServiceGrowthBundleRead:
+    return service.create_bundle(payload, current_user)
+
+
+@router.patch(
+    "/admin/service-growth-bundles/{bundle_id}",
+    response_model=ServiceGrowthBundleRead,
+    summary="Update service growth bundle",
+    description="Updates a service bundle, including selected active services and active state.",
+)
+def update_service_growth_bundle(bundle_id: str, payload: ServiceGrowthBundleUpdateRequest, current_user: Annotated[User, Depends(get_current_user)], service: Annotated[ServiceCatalogService, Depends(get_service_catalog_service)]) -> ServiceGrowthBundleRead:
+    return service.update_bundle(bundle_id, payload, current_user)
+
+
+@router.get(
+    "/admin/service-growth-rules",
+    response_model=list[ServiceGrowthRuleRead],
+    summary="List service growth rules",
+    description="Returns taxonomy-based service growth recommendation rules with selector labels and base fit scores.",
+)
+def list_service_growth_rules(current_user: Annotated[User, Depends(get_current_user)], service: Annotated[ServiceCatalogService, Depends(get_service_catalog_service)]) -> list[ServiceGrowthRuleRead]:
+    return service.list_growth_rules(current_user)
+
+
+@router.post(
+    "/admin/service-growth-rules",
+    response_model=ServiceGrowthRuleRead,
+    status_code=status.HTTP_201_CREATED,
+    summary="Create service growth rule",
+    description="Creates a taxonomy-based recommendation rule using service, category, tag, or bundle selectors.",
+)
+def create_service_growth_rule(payload: ServiceGrowthRuleRequest, current_user: Annotated[User, Depends(get_current_user)], service: Annotated[ServiceCatalogService, Depends(get_service_catalog_service)]) -> ServiceGrowthRuleRead:
+    return service.create_growth_rule(payload, current_user)
+
+
+@router.patch(
+    "/admin/service-growth-rules/{rule_id}",
+    response_model=ServiceGrowthRuleRead,
+    summary="Update service growth rule",
+    description="Updates a taxonomy-based recommendation rule and its base fit scoring policy.",
+)
+def update_service_growth_rule(rule_id: str, payload: ServiceGrowthRuleRequest, current_user: Annotated[User, Depends(get_current_user)], service: Annotated[ServiceCatalogService, Depends(get_service_catalog_service)]) -> ServiceGrowthRuleRead:
+    return service.update_growth_rule(rule_id, payload, current_user)
+
+
+@router.get(
     "/admin/service-adjacencies",
     response_model=list[ServiceAdjacencyRuleRead],
     summary="List service adjacency rules",
@@ -125,6 +204,16 @@ def list_account_whitespace(account_id: str, current_user: Annotated[User, Depen
 )
 def update_account_whitespace(account_id: str, payload: AccountWhitespaceUpdateRequest, current_user: Annotated[User, Depends(get_current_user)], service: Annotated[ServiceCatalogService, Depends(get_service_catalog_service)], engagement_id: str | None = None) -> list[AccountWhitespaceItemRead]:
     return service.update_whitespace(account_id, payload, current_user, engagement_id=engagement_id)
+
+
+@router.patch(
+    "/accounts/{account_id}/whitespace",
+    response_model=list[AccountWhitespaceItemRead],
+    summary="Patch account whitespace inputs",
+    description="Updates selected whitespace inputs without replacing unseen paginated service coverage rows, then refreshes growth recommendations.",
+)
+def patch_account_whitespace(account_id: str, payload: AccountWhitespacePatchRequest, current_user: Annotated[User, Depends(get_current_user)], service: Annotated[ServiceCatalogService, Depends(get_service_catalog_service)], engagement_id: str | None = None) -> list[AccountWhitespaceItemRead]:
+    return service.patch_whitespace(account_id, payload, current_user, engagement_id=engagement_id)
 
 
 @router.get(

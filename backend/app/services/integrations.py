@@ -77,7 +77,9 @@ logger = logging.getLogger(__name__)
 INTEGRATIONS_MODULE = "integrations"
 SECURITY_ALERT_EMAIL_KEY = "security_alert_administration_email"
 DEFAULT_SECURITY_ALERT_EMAIL = "abdul.rehman@tkxel.io"
-APPROVED_PROVIDERS = ("google_calendar", "fathom", "csat", "ai_llm_gateway")
+APPROVED_PROVIDERS = ("google_calendar", "csat", "ai_llm_gateway")
+RETIRED_ADMIN_PROVIDERS = {"fathom"}
+HISTORICAL_PROVIDERS = set(APPROVED_PROVIDERS) | RETIRED_ADMIN_PROVIDERS
 PROVIDER_DISPLAY_NAMES = {
     "google_calendar": "Google Calendar",
     "fathom": "Fathom",
@@ -92,7 +94,18 @@ def canonical_provider(provider: str) -> str:
     normalized = provider.strip().lower().replace("-", "_")
     aliases = {"googlecalendar": "google_calendar", "ai_gateway": "ai_llm_gateway", "ai-llm-gateway": "ai_llm_gateway"}
     normalized = aliases.get(normalized, normalized)
+    if normalized in RETIRED_ADMIN_PROVIDERS:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Integration provider was not found")
     if normalized not in APPROVED_PROVIDERS:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Unsupported integration provider")
+    return normalized
+
+
+def canonical_history_provider(provider: str) -> str:
+    normalized = provider.strip().lower().replace("-", "_")
+    aliases = {"googlecalendar": "google_calendar", "ai_gateway": "ai_llm_gateway", "ai-llm-gateway": "ai_llm_gateway"}
+    normalized = aliases.get(normalized, normalized)
+    if normalized not in HISTORICAL_PROVIDERS:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Unsupported integration provider")
     return normalized
 
@@ -278,7 +291,7 @@ class IntegrationService:
         page_size: int = 10,
     ) -> IntegrationSyncLogPageRead:
         self.access.require_module_permission(current_user, INTEGRATIONS_MODULE, "view")
-        canonical = canonical_provider(provider) if provider else None
+        canonical = canonical_history_provider(provider) if provider else None
         items, total = self.repository.list_sync_logs(provider=canonical, status=status_filter, severity=severity, date_from=date_from, date_to=date_to, search=search, page=page, page_size=page_size)
         sanitized = [IntegrationSyncLogRead.model_validate(item) for item in items]
         for item in sanitized:
@@ -287,7 +300,7 @@ class IntegrationService:
 
     def list_sync_runs(self, current_user: User, provider: str | None = None, status_filter: str | None = None, failure_type: str | None = None, date_from: datetime | None = None, date_to: datetime | None = None, page: int = 1, page_size: int = 10) -> IntegrationSyncRunPageRead:
         self.access.require_module_permission(current_user, INTEGRATIONS_MODULE, "view")
-        canonical = canonical_provider(provider) if provider else None
+        canonical = canonical_history_provider(provider) if provider else None
         items, total = self.repository.list_sync_runs(provider=canonical, status=status_filter, failure_type=failure_type, date_from=date_from, date_to=date_to, page=page, page_size=page_size)
         return IntegrationSyncRunPageRead(items=[IntegrationSyncRunRead.model_validate(item) for item in items], total=total, page=page, page_size=page_size, pages=page_count(total, page_size))
 
@@ -336,7 +349,7 @@ class IntegrationService:
     def list_imported_items(self, current_user: User, **filters: Any) -> IntegrationImportedItemPageRead:
         self.access.require_module_permission(current_user, INTEGRATIONS_MODULE, "view")
         if filters.get("provider"):
-            filters["provider"] = canonical_provider(filters["provider"])
+            filters["provider"] = canonical_history_provider(filters["provider"])
         items, total = self.repository.list_imported_items(**filters)
         visible = [item for item in items if self._can_view_imported_item(current_user, item)]
         return IntegrationImportedItemPageRead(items=[IntegrationImportedItemRead.model_validate(item) for item in visible], total=total, page=filters.get("page", 1), page_size=filters.get("page_size", 10), pages=page_count(total, filters.get("page_size", 10)))
@@ -616,7 +629,7 @@ class IntegrationService:
         system_user = self.users.get_by_email(self.settings.super_admin_email) or self.users.list_users()[0]
         now = utc_now()
         for connection in self.repository.list_connections():
-            if not connection.enabled or connection.provider == "csat":
+            if not connection.enabled or connection.provider not in APPROVED_PROVIDERS or connection.provider == "csat":
                 continue
             cadence_minutes = int((connection.settings_json or {}).get("sync_interval_minutes") or (1440 if connection.provider == "ai_llm_gateway" else 60))
             if connection.last_synced_at and connection.last_synced_at + timedelta(minutes=cadence_minutes) > now:

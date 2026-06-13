@@ -26,15 +26,14 @@ const integrations = [
 ]
 
 describe('IntegrationsPanel', () => {
-  it('loads approved adapters, hides Google inbound sync, and triggers sync for supported adapters', async () => {
+  it('loads active admin adapters, filters moved/internal adapters, hides Google inbound sync, and triggers AI sync', async () => {
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input)
       if (url.endsWith('/api/admin/integrations')) return jsonResponse(integrations)
       if (url.includes('/api/admin/settings/security-alert-email')) return jsonResponse({ administration_email: 'admin@tkxel.com' })
       if (url.includes('/api/admin/integrations/sync-logs')) return jsonResponse(page([], 0))
-      if (url.includes('/api/admin/integrations/imported-items')) return jsonResponse(page([], 0))
-      if (url.includes('/api/admin/integrations/fathom/sync') && init?.method === 'POST') {
-        return jsonResponse({ provider: 'fathom', status: 'connected', created: 1, updated: 0, skipped: 0, errors: 0, message: 'Synced.' })
+      if (url.includes('/api/admin/integrations/ai_llm_gateway/sync') && init?.method === 'POST') {
+        return jsonResponse({ provider: 'ai_llm_gateway', status: 'connected', created: 1, updated: 0, skipped: 0, errors: 0, message: 'Synced.' })
       }
       return jsonResponse({})
     })
@@ -43,17 +42,19 @@ describe('IntegrationsPanel', () => {
     render(<IntegrationsPanel />)
 
     expect(await screen.findByText('Google Calendar')).toBeInTheDocument()
-    expect(screen.getByText('Fathom')).toBeInTheDocument()
-    expect(screen.getByText('CSAT')).toBeInTheDocument()
     expect(screen.getByText('AI/LLM Gateway')).toBeInTheDocument()
+    expect(screen.queryByText('Fathom')).not.toBeInTheDocument()
+    expect(screen.queryByText('CSAT')).not.toBeInTheDocument()
+    expect(screen.queryByText(/fathom meeting links/i)).not.toBeInTheDocument()
+    expect(fetchMock).not.toHaveBeenCalledWith(expect.stringContaining('/api/admin/integrations/imported-items'), expect.anything())
     const googleCard = screen.getByText('Google Calendar').closest('article')
     expect(googleCard).not.toBeNull()
     expect(within(googleCard as HTMLElement).queryByRole('button', { name: /sync/i })).not.toBeInTheDocument()
 
-    await userEvent.click(within(screen.getByText('Fathom').closest('article') as HTMLElement).getByRole('button', { name: /sync/i }))
+    await userEvent.click(within(screen.getByText('AI/LLM Gateway').closest('article') as HTMLElement).getByRole('button', { name: /sync/i }))
 
     await waitFor(() => {
-      expect(fetchMock).toHaveBeenCalledWith(expect.stringContaining('/api/admin/integrations/fathom/sync'), expect.objectContaining({ method: 'POST' }))
+      expect(fetchMock).toHaveBeenCalledWith(expect.stringContaining('/api/admin/integrations/ai_llm_gateway/sync'), expect.objectContaining({ method: 'POST' }))
     })
 
     const refreshedGoogleCard = (await screen.findByText('Google Calendar')).closest('article')

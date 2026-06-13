@@ -55,4 +55,5 @@ export interface Account {
   health: HealthScore
   stakeholders: string[]
   risks: string[]
+  customFieldValues?: Record<string, unknown>
 }

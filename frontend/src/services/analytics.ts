@@ -32,20 +32,6 @@ export interface KamPerformance {
   open_escalations: number
 }
 
-export interface AccountChangeAlert {
-  id: string
-  account_id: string
-  alert_type: string
-  reason_code: string
-  affected_metric: string
-  severity: string
-  status: string
-  owner_id?: string | null
-  owner_name?: string | null
-  recommended_action: string
-  created_at: string
-}
-
 export interface Page<T> {
   items: T[]
   total: number
@@ -69,8 +55,4 @@ export function getAnalyticsPortfolio(token: string, params: Record<string, stri
 
 export function getKamPerformance(token: string, params: Record<string, string | number | undefined> = {}) {
   return apiRequest<Page<KamPerformance>>(`/api/analytics/kam-performance${query(params)}`, { token })
-}
-
-export function getAccountChangeAlerts(token: string, params: Record<string, string | number | boolean | undefined> = {}) {
-  return apiRequest<Page<AccountChangeAlert>>(`/api/analytics/account-change-alerts${query(params)}`, { token })
 }

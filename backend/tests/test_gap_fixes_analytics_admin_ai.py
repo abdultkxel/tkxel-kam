@@ -9,7 +9,7 @@ from sqlalchemy import create_engine
 
 from app.database import Base, get_db
 from app.main import app
-from app.models import Account, AccountChangeAlert, AccountOwner, AiGatewayRun, AuditLog, NotificationRecord, TimelineEntry
+from app.models import Account, AccountOwner, AiGatewayRun, Alert, AlertStatusHistory, AuditLog, NotificationRecord, ScheduledWorkerRun
 from app.services.seed import seed_default_data
 
 
@@ -82,39 +82,52 @@ def create_risky_account(db_session: Session, owner: dict, account_id: str = "ga
     return account
 
 
-def test_account_change_alerts_are_persisted_with_audit_timeline_and_notification(client: TestClient, db_session: Session) -> None:
+def test_backend_alerts_are_persisted_with_audit_history_and_notification(client: TestClient, db_session: Session) -> None:
     headers = auth_headers(client)
     owner = seeded_user(client, headers, "account_manager")
     account = create_risky_account(db_session, owner)
 
-    response = client.get("/api/analytics/account-change-alerts", headers=headers, params={"refresh": True, "page": 1, "page_size": 10})
+    response = client.post("/api/alerts/evaluate", headers=headers, json={"scope": "account", "account_id": account.id})
     assert response.status_code == 200
-    body = response.json()
-    alert = next(item for item in body["items"] if item["account_id"] == account.id)
-    assert alert["severity"] == "critical"
+    assert response.json()["created"] >= 1
+    assert response.json()["worker_run_id"]
+
+    listed = client.get("/api/alerts", headers=headers, params={"account_id": account.id, "status": "active", "page": 1, "page_size": 10})
+    assert listed.status_code == 200
+    alert = next(item for item in listed.json()["items"] if item["account_id"] == account.id and item["rule_key"] == "low_overall_health")
+    assert alert["severity"] == "high"
     assert alert["status"] == "open"
+    assert alert["source_record_route"] == f"/accounts/{account.id}?tab=overview&alert={alert['id']}"
 
-    persisted_alert = db_session.get(AccountChangeAlert, alert["id"])
+    persisted_alert = db_session.get(Alert, alert["id"])
     assert persisted_alert is not None
-    assert persisted_alert.deduplication_key.startswith("health-critical")
+    assert persisted_alert.deduplication_key == f"low_overall_health:account:{account.id}"
 
-    timeline_entry = db_session.scalar(select(TimelineEntry).where(TimelineEntry.source_record_type == "account_change_alert", TimelineEntry.source_record_id == alert["id"]))
-    assert timeline_entry is not None
-    assert timeline_entry.account_id == account.id
+    status_history = db_session.scalar(select(AlertStatusHistory).where(AlertStatusHistory.alert_id == alert["id"], AlertStatusHistory.to_status == "open"))
+    assert status_history is not None
 
-    audit_log = db_session.scalar(select(AuditLog).where(AuditLog.action == "create_account_change_alert", AuditLog.entity_id == alert["id"]))
+    audit_log = db_session.scalar(select(AuditLog).where(AuditLog.action == "create_alert", AuditLog.entity_id == alert["id"]))
     assert audit_log is not None
 
-    notification = db_session.scalar(select(NotificationRecord).where(NotificationRecord.trigger == "account_change_alert", NotificationRecord.source_record_id == alert["id"]))
+    notification = db_session.scalar(select(NotificationRecord).where(NotificationRecord.trigger == "alert_created", NotificationRecord.source_record_id == alert["id"], NotificationRecord.recipient_user_id == owner["id"]))
     assert notification is not None
     assert notification.recipient_user_id == owner["id"]
+
+    worker_run = db_session.get(ScheduledWorkerRun, response.json()["worker_run_id"])
+    assert worker_run is not None
+    assert worker_run.job_type == "alert_evaluation"
+    assert worker_run.status == "complete"
+
+    duplicate = client.post("/api/alerts/evaluate", headers=headers, json={"scope": "account", "account_id": account.id})
+    assert duplicate.status_code == 200
+    assert duplicate.json()["created"] == 0
 
 
 def test_admin_security_log_endpoints_read_persisted_records(client: TestClient, db_session: Session) -> None:
     headers = auth_headers(client)
     owner = seeded_user(client, headers, "account_manager")
-    create_risky_account(db_session, owner, "gap-admin-health-account")
-    client.get("/api/analytics/account-change-alerts", headers=headers, params={"refresh": True})
+    account = create_risky_account(db_session, owner, "gap-admin-health-account")
+    client.post("/api/alerts/evaluate", headers=headers, json={"scope": "account", "account_id": account.id})
 
     health = client.get("/api/admin/system-health", headers=headers)
     assert health.status_code == 200

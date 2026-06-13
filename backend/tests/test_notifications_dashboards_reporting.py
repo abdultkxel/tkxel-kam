@@ -9,7 +9,8 @@ from sqlalchemy.pool import StaticPool
 
 from app.database import Base, get_db
 from app.main import app
-from app.models import Account, AccountChangeAlert, AccountOwner, CustomFieldDefinition, Engagement, GovernanceEvent, NotificationRecord, Signal, SlaEscalatedItem, Task
+from app.models import Account, AccountOwner, CustomFieldDefinition, Engagement, GovernanceEvent, NotificationRecord, Signal, SlaEscalatedItem, Task, User
+from app.security import hash_password
 from app.services.seed import seed_default_data
 
 
@@ -80,29 +81,6 @@ def create_owned_account(db_session: Session, owner: dict, account_id: str = "nd
     )
     db_session.commit()
     return account
-
-
-def create_account_change_alert(db_session: Session, account: Account, owner: dict) -> AccountChangeAlert:
-    alert = AccountChangeAlert(
-        account_id=account.id,
-        alert_type="health",
-        reason_code="health_drop",
-        affected_metric="health_overall",
-        previous_value_json={"value": 72},
-        new_value_json={"value": account.health_overall},
-        change_magnitude=30,
-        severity="critical",
-        status="open",
-        owner_id=owner["id"],
-        owner_name=owner["full_name"],
-        recommended_action="Review account recovery plan.",
-        source_evidence_json=[{"label": "Health score", "value": account.health_overall}],
-        deduplication_key=f"dashboard-alert-{account.id}",
-        created_by_id=owner["id"],
-    )
-    db_session.add(alert)
-    db_session.commit()
-    return alert
 
 
 def create_engagement_health_item(db_session: Session, account: Account, owner: dict, *, ops_lead: dict | None = None) -> Engagement:
@@ -293,7 +271,6 @@ def test_role_based_dashboard_profiles_and_reduced_direct_endpoints(client: Test
     admin_headers = auth_headers(client)
     owner = seeded_user(client, admin_headers, "account_manager")
     account = create_owned_account(db_session, owner, "role-dashboard-account")
-    alert = create_account_change_alert(db_session, account, owner)
     now = datetime.now(timezone.utc)
     db_session.add_all(
         [
@@ -484,7 +461,17 @@ def test_delivery_lead_dashboard_and_system_role_protection(client: TestClient, 
     admin_headers = auth_headers(client)
     owner = seeded_user(client, admin_headers, "account_manager")
     delivery = seeded_user(client, admin_headers, "delivery_lead")
-    legacy_delivery = seeded_user(client, admin_headers, "delivery_stakeholder")
+    legacy_delivery = User(
+        email="legacy.delivery.user@tkxel.com",
+        hashed_password=hash_password("User@12345"),
+        full_name="Legacy Delivery User",
+        role="delivery_stakeholder",
+        title="Legacy Delivery Stakeholder",
+        avatar_initials="LD",
+        is_active=True,
+    )
+    db_session.add(legacy_delivery)
+    db_session.flush()
     account = create_owned_account(db_session, owner, "delivery-dashboard-account")
     create_engagement_health_item(db_session, account, owner, ops_lead=delivery)
     db_session.add(
@@ -503,9 +490,9 @@ def test_delivery_lead_dashboard_and_system_role_protection(client: TestClient, 
     db_session.add(
         AccountOwner(
             account_id=account.id,
-            user_id=legacy_delivery["id"],
-            user_name=legacy_delivery["full_name"],
-            user_email=legacy_delivery["email"],
+            user_id=legacy_delivery.id,
+            user_name=legacy_delivery.full_name,
+            user_email=legacy_delivery.email,
             ownership_role="delivery_stakeholder",
             is_primary=False,
             is_active=True,
@@ -541,7 +528,7 @@ def test_delivery_lead_dashboard_and_system_role_protection(client: TestClient, 
     engagement_health = next(item for item in body["widgets"] if item["key"] == "engagement_health")
     assert engagement_health["items"][0]["delivery_health"] == 48
 
-    legacy_headers = auth_headers(client, legacy_delivery["email"], "User@12345")
+    legacy_headers = auth_headers(client, legacy_delivery.email, "User@12345")
     legacy_dashboard = client.get("/api/dashboards/me", headers=legacy_headers)
     assert legacy_dashboard.status_code == 200
     assert legacy_dashboard.json()["dashboard"] == "delivery"
@@ -614,11 +601,22 @@ def test_notification_sources_and_escalated_items_are_redacted_after_access_loss
     assert escalated.json()["total"] == 0
 
 
-def test_digest_visibility_and_recipient_authorization(client: TestClient) -> None:
+def test_digest_visibility_and_recipient_authorization(client: TestClient, db_session: Session) -> None:
     admin_headers = auth_headers(client)
     owner = seeded_user(client, admin_headers, "account_manager")
-    commercial = seeded_user(client, admin_headers, "commercial_stakeholder")
     owner_headers = auth_headers(client, owner["email"], "User@12345")
+
+    limited_user = User(
+        email="commercial.legacy.user@tkxel.com",
+        hashed_password=hash_password("User@12345"),
+        full_name="Commercial Legacy User",
+        role="commercial_stakeholder",
+        title="Commercial Stakeholder",
+        avatar_initials="CL",
+        is_active=True,
+    )
+    db_session.add(limited_user)
+    db_session.commit()
 
     digest = client.post("/api/digests/preview", headers=admin_headers, json={"sections": ["strategic_risks"], "filters": {}})
     assert digest.status_code == 200
@@ -633,7 +631,7 @@ def test_digest_visibility_and_recipient_authorization(client: TestClient) -> No
     unauthorized_schedule = client.post(
         "/api/digests/schedules",
         headers=admin_headers,
-        json={"name": "Unauthorized digest", "cadence": "weekly", "timezone": "UTC", "recipient_user_ids": [commercial["id"]], "sections": ["strategic_risks"], "delivery_channels": ["in_app"]},
+        json={"name": "Unauthorized digest", "cadence": "weekly", "timezone": "UTC", "recipient_user_ids": [limited_user.id], "sections": ["strategic_risks"], "delivery_channels": ["in_app"]},
     )
     assert unauthorized_schedule.status_code == 400
     assert "authorized" in unauthorized_schedule.text

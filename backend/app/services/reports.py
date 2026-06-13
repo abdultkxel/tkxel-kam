@@ -5,6 +5,7 @@ from fastapi import HTTPException, status
 from sqlalchemy.orm import Session
 
 from app.models import CustomFieldDefinition, ReportDefinition, ReportRun, ReportSchedule, ScheduledWorkerRun, User
+from app.rbac import ACCOUNT_CUSTOM_FIELD_MODULES
 from app.repositories.accounts import AccountRepository
 from app.repositories.audit import AuditRepository
 from app.repositories.dashboards import DashboardRepository
@@ -89,11 +90,11 @@ BASE_REPORT_FIELDS: dict[str, list[dict[str, Any]]] = {
 }
 
 CUSTOM_FIELD_MODULES = {
-    "accounts": "account_overview",
-    "tasks": "playbooks_tasks_calendar",
-    "signals": "signals_attention",
-    "escalations": "escalation_management",
-    "opportunities": "opportunity_management",
+    "accounts": ACCOUNT_CUSTOM_FIELD_MODULES,
+    "tasks": ("tasks",),
+    "signals": ("signals_attention",),
+    "escalations": ("escalation_management",),
+    "opportunities": ("opportunities",),
 }
 
 
@@ -368,10 +369,10 @@ class ReportsService:
             ReportFieldRead(data_source=source, field=item["field"], label=item["label"], field_type=item.get("field_type", "text"), sortable=True, filterable=True)
             for item in BASE_REPORT_FIELDS[source]
         ]
-        module = CUSTOM_FIELD_MODULES[source]
+        modules = CUSTOM_FIELD_MODULES[source]
         custom_fields = (
             self.db.query(CustomFieldDefinition)
-            .filter(CustomFieldDefinition.module == module, CustomFieldDefinition.is_active.is_(True), CustomFieldDefinition.is_sensitive.is_(False))
+            .filter(CustomFieldDefinition.module.in_(modules), CustomFieldDefinition.is_active.is_(True), CustomFieldDefinition.is_sensitive.is_(False))
             .order_by(CustomFieldDefinition.sort_order, CustomFieldDefinition.label)
             .all()
         )

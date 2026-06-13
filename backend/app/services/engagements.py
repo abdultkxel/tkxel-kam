@@ -57,6 +57,7 @@ ACCOUNT_HEALTH_IMPACT_FIELDS = {"delivery_health", "health_status", "status"}
 
 class EngagementService:
     def __init__(self, db: Session) -> None:
+        self.db = db
         self.accounts = AccountRepository(db)
         self.account_service = AccountService(db)
         self.engagements = EngagementRepository(db)
@@ -167,6 +168,7 @@ class EngagementService:
         )
         self._notify_engagement_created(account, engagement, current_user)
         self.engagements.commit()
+        self._evaluate_alerts_for_account(account.id)
         return EngagementRead.model_validate(engagement)
 
     async def create_engagement_from_charter(self, account_id: str, upload: UploadFile, current_user: User) -> EngagementRead:
@@ -230,6 +232,7 @@ class EngagementService:
             )
             self._notify_engagement_created(account, engagement, current_user)
             self.engagements.commit()
+            self._evaluate_alerts_for_account(account.id)
             return EngagementRead.model_validate(engagement)
         except HTTPException:
             self.accounts.db.rollback()
@@ -302,6 +305,7 @@ class EngagementService:
         self._add_update_timeline_events(account, engagement, current_user, before, after, changed_fields)
         self._notify_engagement_update(account, engagement, current_user, before, after, changed_fields)
         self.engagements.commit()
+        self._evaluate_alerts_for_account(account.id)
         return EngagementRead.model_validate(engagement)
 
     def archive_engagement(self, engagement_id: str, current_user: User) -> MessageResponse:
@@ -400,6 +404,7 @@ class EngagementService:
         )
         self._notify_engagement_health_drop(account, engagement, current_user, before, after)
         self.engagements.commit()
+        self._evaluate_alerts_for_account(account.id)
         return EngagementHealthRead.model_validate(snapshot)
 
     def account_rollup(self, account_id: str, current_user: User) -> AccountHealthRollupRead:
@@ -1076,6 +1081,11 @@ class EngagementService:
             "created_at": entry.created_at,
             "updated_at": entry.updated_at,
         }
+
+    def _evaluate_alerts_for_account(self, account_id: str) -> None:
+        from app.services.alerts import AlertsService
+
+        AlertsService(self.db).evaluate_for_account(account_id)
 
     @staticmethod
     def _days_until(value: date | datetime | None) -> int | None:

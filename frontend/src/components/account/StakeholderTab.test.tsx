@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react'
+import { render, screen, within } from '@testing-library/react'
 import { describe, expect, it, vi } from 'vitest'
 import { StakeholderDetailPanel } from '@/components/account/StakeholderDetailPanel'
 import { StakeholderFormDrawer } from '@/components/account/StakeholderFormDrawer'
@@ -12,6 +12,10 @@ const mockCapabilities = vi.hoisted(() => ({
   can_update_assigned_accounts: true,
   can_update_portfolio_accounts: false,
 }))
+const configuredRoleOptions = vi.hoisted(() => [
+  { value: 'innovation_sponsor', label: 'Innovation Sponsor' },
+  { value: 'technical_advisor', label: 'Technical Advisor' },
+])
 
 const stakeholder = vi.hoisted<Stakeholder>(() => ({
   id: 'stakeholder-1',
@@ -65,6 +69,13 @@ vi.mock('@/hooks/useStakeholders', () => ({
   useStakeholderCoverageGaps: () => ({
     coverageGaps: [],
     data: { items: [], total: 0, page: 1, page_size: 100, pages: 0 },
+    isLoading: false,
+    error: null,
+    refetch: mockRefetch,
+  }),
+  useStakeholderRoleOptions: () => ({
+    roleOptions: configuredRoleOptions,
+    data: configuredRoleOptions,
     isLoading: false,
     error: null,
     refetch: mockRefetch,
@@ -168,5 +179,28 @@ describe('StakeholderTab political risk field', () => {
 
     expect(screen.queryByText(/political risk/i)).not.toBeInTheDocument()
     expect(screen.getByText('https://www.linkedin.com/in/jane-sponsor')).toBeInTheDocument()
+  })
+
+  it('uses configured stakeholder roles in account filters and the add drawer', () => {
+    const { unmount } = render(<StakeholderTab account={account} />)
+
+    expect(within(screen.getByLabelText(/^role$/i)).getByRole('option', { name: 'Innovation Sponsor' })).toBeInTheDocument()
+    expect(within(screen.getByLabelText(/^role$/i)).getByRole('option', { name: 'Executive Sponsor' })).toBeInTheDocument()
+
+    unmount()
+
+    render(
+      <StakeholderFormDrawer
+        account={account}
+        stakeholder={null}
+        stakeholders={[stakeholder]}
+        roleOptions={configuredRoleOptions}
+        open
+        onOpenChange={vi.fn()}
+      />,
+    )
+
+    expect(screen.getByLabelText(/^role/i)).toHaveDisplayValue('Innovation Sponsor')
+    expect(screen.getByRole('option', { name: 'Technical Advisor' })).toBeInTheDocument()
   })
 })

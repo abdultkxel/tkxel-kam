@@ -7,6 +7,7 @@ from app.repositories.audit import AuditRepository
 from app.repositories.rbac import RbacRepository
 from app.repositories.stakeholder_config import StakeholderConfigRepository
 from app.schemas import (
+    MessageResponse,
     StakeholderGapRuleCreateRequest,
     StakeholderGapRulePageRead,
     StakeholderGapRuleRead,
@@ -58,6 +59,26 @@ class StakeholderConfigService:
         self.repository.commit()
         return self._role_read(role)
 
+    def delete_role(self, role_id: str, current_user: User) -> MessageResponse:
+        self.access.require_module_permission(current_user, STAKEHOLDER_MODULE, "configure")
+        role = self._get_role_or_404(role_id)
+        stakeholder_count = self.repository.count_role_usage(role.slug)
+        gap_rule_count = self.repository.count_gap_rule_usage(role.slug)
+        if stakeholder_count or gap_rule_count:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail={
+                    "message": "Stakeholder role cannot be deleted while it is in use. Deactivate it instead or remove the stakeholder and gap-rule references first.",
+                    "stakeholder_count": stakeholder_count,
+                    "gap_rule_usage_count": gap_rule_count,
+                },
+            )
+        before = self._role_snapshot(role)
+        self.audit.log(module=STAKEHOLDER_MODULE, action="delete_role", entity_type="stakeholder_role", entity_id=role.id, actor=current_user, before_value=before)
+        self.repository.delete_role(role)
+        self.repository.commit()
+        return MessageResponse(message="Stakeholder role deleted")
+
     def list_rules(self, current_user: User, *, active_state: str = "active", search: str | None = None, page: int = 1, page_size: int = 50, require_configure: bool = False) -> StakeholderGapRulePageRead:
         self.access.require_module_permission(current_user, STAKEHOLDER_MODULE, "configure" if require_configure else "view")
         items, total = self.repository.list_rules(active_state=active_state, search=search, page=page, page_size=page_size)
@@ -105,7 +126,18 @@ class StakeholderConfigService:
         return rule
 
     def _role_read(self, role: StakeholderRoleConfig) -> StakeholderRoleConfigRead:
-        return StakeholderRoleConfigRead(id=role.id, slug=role.slug, name=role.name, description=role.description, is_active=role.is_active, display_order=role.display_order, created_at=role.created_at, updated_at=role.updated_at, in_use_count=self.repository.count_role_usage(role.slug))
+        return StakeholderRoleConfigRead(
+            id=role.id,
+            slug=role.slug,
+            name=role.name,
+            description=role.description,
+            is_active=role.is_active,
+            display_order=role.display_order,
+            created_at=role.created_at,
+            updated_at=role.updated_at,
+            in_use_count=self.repository.count_role_usage(role.slug),
+            gap_rule_usage_count=self.repository.count_gap_rule_usage(role.slug),
+        )
 
     @staticmethod
     def _role_snapshot(role: StakeholderRoleConfig) -> dict:

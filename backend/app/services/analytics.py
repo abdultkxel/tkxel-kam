@@ -1,20 +1,15 @@
 from collections import defaultdict
-from datetime import datetime, timezone
+from datetime import datetime
 from typing import Any
 
-from fastapi import HTTPException, status
 from sqlalchemy.orm import Session
 
-from app.models import Account, AccountChangeAlert, AccountOwner, User, utc_now
+from app.models import Account, AccountOwner, User, utc_now
 from app.repositories.accounts import AccountRepository
 from app.repositories.analytics import AnalyticsRepository
 from app.repositories.audit import AuditRepository
 from app.repositories.rbac import RbacRepository
-from app.repositories.timeline import TimelineRepository
 from app.schemas import (
-    AccountChangeAlertPageRead,
-    AccountChangeAlertRead,
-    AccountChangeAlertUpdateRequest,
     AnalyticsBenchmarkPageRead,
     AnalyticsBenchmarkRead,
     AnalyticsMetricRead,
@@ -25,8 +20,6 @@ from app.schemas import (
 )
 from app.services.account_access import AccountAccessService
 from app.services.audit import AuditService
-from app.services.notifications import NotificationsService
-from app.services.timeline import TimelineService
 from app.services.user_management import page_count
 
 ANALYTICS_MODULE = "analytics_portfolio"
@@ -39,8 +32,6 @@ class AnalyticsService:
         self.accounts = AccountRepository(db)
         self.access = AccountAccessService(self.accounts, RbacRepository(db))
         self.audit = AuditService(AuditRepository(db))
-        self.timeline = TimelineService(TimelineRepository(db))
-        self.notifications = NotificationsService(db)
 
     def portfolio(
         self,
@@ -146,163 +137,11 @@ class AnalyticsService:
         total = len(items)
         return KamPerformancePageRead(items=items[(page - 1) * page_size : page * page_size], total=total, page=page, page_size=page_size, pages=page_count(total, page_size))
 
-    def list_change_alerts(
-        self,
-        current_user: User,
-        *,
-        search: str | None = None,
-        status_filter: str | None = None,
-        severity: str | None = None,
-        owner_id: str | None = None,
-        page: int = 1,
-        page_size: int = 25,
-        refresh: bool = True,
-    ) -> AccountChangeAlertPageRead:
-        self.access.require_module_permission(current_user, ANALYTICS_MODULE, "view")
-        account_ids = self._account_scope(current_user)
-        if refresh:
-            self._ensure_change_alerts(current_user, account_ids)
-        items, total = self.repository.list_alerts(account_ids=account_ids, search=search, status_filter=status_filter, severity=severity, owner_id=owner_id, page=page, page_size=page_size)
-        return AccountChangeAlertPageRead(items=[AccountChangeAlertRead.model_validate(item) for item in items], total=total, page=page, page_size=page_size, pages=page_count(total, page_size))
-
-    def update_change_alert(self, alert_id: str, payload: AccountChangeAlertUpdateRequest, current_user: User) -> AccountChangeAlertRead:
-        self.access.require_module_permission(current_user, ANALYTICS_MODULE, "update")
-        alert = self.repository.get_alert(alert_id)
-        if alert is None:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Account-change alert was not found")
-        account = self.accounts.get_by_id(alert.account_id)
-        if account is None:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Alert account was not found")
-        self.access.require_account_view(current_user, account, module=ANALYTICS_MODULE)
-        before = AccountChangeAlertRead.model_validate(alert).model_dump(mode="json")
-        alert.status = payload.status
-        alert.updated_by_id = current_user.id
-        alert.resolved_at = utc_now() if payload.status == "resolved" else None
-        self.audit.log(module=ANALYTICS_MODULE, action="update_account_change_alert", entity_type="account_change_alert", entity_id=alert.id, actor=current_user, before_value=before, after_value={"status": payload.status}, reason=payload.reason)
-        self.repository.commit()
-        return AccountChangeAlertRead.model_validate(alert)
-
     def _accounts(self, current_user: User, **filters: Any) -> list[Account]:
         return self.repository.list_accounts(account_ids=self._account_scope(current_user), **filters)
 
     def _account_scope(self, current_user: User) -> list[str] | None:
         return None if self.access.can_view_portfolio(current_user) else self.repository.account_ids_for_user(current_user.id)
-
-    def _ensure_change_alerts(self, current_user: User, account_ids: list[str] | None) -> None:
-        accounts = self.repository.list_accounts(account_ids=account_ids, limit=500)
-        created = 0
-        for account in accounts:
-            owner = self._primary_owner(account)
-            latest = self.repository.latest_score(account.id)
-            if account.risk_status == "critical" or account.health_overall < 55:
-                created += self._create_alert_if_missing(
-                    account,
-                    owner,
-                    current_user,
-                    deduplication_key=f"health-critical:{account.id}:{latest.id if latest else account.updated_at.date().isoformat()}",
-                    alert_type="health_risk",
-                    reason_code="critical_health_or_risk",
-                    affected_metric="health_overall",
-                    previous_value=None,
-                    new_value={"health": account.health_overall, "risk_status": account.risk_status},
-                    change_magnitude=float(account.health_overall),
-                    severity="critical" if account.risk_status == "critical" else "high",
-                    recommended_action="Review score drivers, create a recovery action plan, and confirm executive governance coverage.",
-                    evidence=[{"type": "account", "id": account.id}, {"type": "score_snapshot", "id": latest.id if latest else None}],
-                )
-            if latest:
-                previous = self.repository.previous_score(account.id, latest.calculated_at)
-                if previous and latest.overall <= previous.overall - 10:
-                    created += self._create_alert_if_missing(
-                        account,
-                        owner,
-                        current_user,
-                        deduplication_key=f"score-drop:{account.id}:{latest.id}",
-                        alert_type="score_drop",
-                        reason_code="score_dropped_by_10_or_more",
-                        affected_metric="score_overall",
-                        previous_value={"overall": previous.overall, "rag_status": previous.rag_status, "calculated_at": previous.calculated_at.isoformat()},
-                        new_value={"overall": latest.overall, "rag_status": latest.rag_status, "calculated_at": latest.calculated_at.isoformat()},
-                        change_magnitude=float(latest.overall - previous.overall),
-                        severity="high" if latest.rag_status != "red" else "critical",
-                        recommended_action="Compare score drivers against the previous snapshot and assign follow-up tasks for degraded dimensions.",
-                        evidence=[{"type": "score_snapshot", "id": previous.id}, {"type": "score_snapshot", "id": latest.id}],
-                    )
-        if created:
-            self.repository.commit()
-
-    def _create_alert_if_missing(
-        self,
-        account: Account,
-        owner: AccountOwner | None,
-        actor: User,
-        *,
-        deduplication_key: str,
-        alert_type: str,
-        reason_code: str,
-        affected_metric: str,
-        previous_value: dict | None,
-        new_value: dict | None,
-        change_magnitude: float | None,
-        severity: str,
-        recommended_action: str,
-        evidence: list[dict[str, Any]],
-    ) -> int:
-        existing = self.repository.get_alert_by_deduplication_key(deduplication_key)
-        if existing is not None:
-            return 0
-        alert = AccountChangeAlert(
-            account_id=account.id,
-            alert_type=alert_type,
-            reason_code=reason_code,
-            affected_metric=affected_metric,
-            previous_value_json=previous_value,
-            new_value_json=new_value,
-            change_magnitude=change_magnitude,
-            severity=severity,
-            owner_id=owner.user_id if owner else None,
-            owner_name=owner.user_name if owner else None,
-            recommended_action=recommended_action,
-            source_evidence_json=evidence,
-            deduplication_key=deduplication_key,
-            created_by_id=actor.id,
-        )
-        self.repository.save_alert(alert)
-        self.timeline.add_account_event(
-            account_id=account.id,
-            title=f"Account-change alert: {reason_code.replace('_', ' ')}",
-            description=recommended_action,
-            actor=actor,
-            event_type="score_change",
-            module="scoring",
-            source_record_id=alert.id,
-            source_record_type="account_change_alert",
-            source_record_route=f"/analytics?alert={alert.id}",
-            after_value={"severity": severity, "affected_metric": affected_metric, "reason_code": reason_code},
-            metadata={"deduplication_key": deduplication_key},
-            idempotency_key=deduplication_key,
-        )
-        self.audit.log(module=ANALYTICS_MODULE, action="create_account_change_alert", entity_type="account_change_alert", entity_id=alert.id, actor=actor, after_value={"account_id": account.id, "severity": severity, "reason_code": reason_code})
-        if owner and owner.user_id:
-            recipient = self.db.get(User, owner.user_id)
-            if recipient:
-                try:
-                    self.notifications.queue_notification(
-                        recipient=recipient,
-                        trigger="account_change_alert",
-                        title=f"{account.name}: {reason_code.replace('_', ' ')}",
-                        body=recommended_action,
-                        account=account,
-                        source_record_type="account_change_alert",
-                        source_record_id=alert.id,
-                        source_record_route=f"/analytics?alert={alert.id}",
-                        priority="high" if severity in {"high", "critical"} else "medium",
-                        deduplication_key=f"account-change-alert:{alert.id}:{recipient.id}",
-                        in_app_only=True,
-                    )
-                except HTTPException:
-                    pass
-        return 1
 
     @staticmethod
     def _primary_owner(account: Account) -> AccountOwner | None:

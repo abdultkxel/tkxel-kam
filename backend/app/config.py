@@ -63,6 +63,9 @@ class Settings:
         self.notifications_reporting_worker_enabled = os.getenv("NOTIFICATIONS_REPORTING_WORKER_ENABLED", "true").lower() == "true"
         self.notifications_reporting_worker_initial_delay_seconds = int(os.getenv("NOTIFICATIONS_REPORTING_WORKER_INITIAL_DELAY_SECONDS", "30"))
         self.notifications_reporting_worker_interval_seconds = int(os.getenv("NOTIFICATIONS_REPORTING_WORKER_INTERVAL_SECONDS", "300"))
+        self.alerts_worker_enabled = os.getenv("ALERTS_WORKER_ENABLED", "true").lower() == "true"
+        self.alerts_worker_initial_delay_seconds = int(os.getenv("ALERTS_WORKER_INITIAL_DELAY_SECONDS", "30"))
+        self.alerts_worker_interval_seconds = int(os.getenv("ALERTS_WORKER_INTERVAL_SECONDS", "300"))
         self.integrations_worker_enabled = os.getenv("INTEGRATIONS_WORKER_ENABLED", "true").lower() == "true"
         self.integrations_worker_initial_delay_seconds = int(os.getenv("INTEGRATIONS_WORKER_INITIAL_DELAY_SECONDS", "45"))
         self.integrations_worker_interval_seconds = int(os.getenv("INTEGRATIONS_WORKER_INTERVAL_SECONDS", "300"))

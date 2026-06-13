@@ -1,4 +1,4 @@
-export type Stage = 'Identified' | 'Qualified' | 'Proposal Sent' | 'Negotiation' | 'Won' | 'Lost'
+export type Stage = string
 
 export interface OpportunityTypeRecord {
   id: string
@@ -100,6 +100,7 @@ export interface Opportunity {
   stageHistory?: OpportunityStageHistory[]
   decisions?: OpportunityDecision[]
   actionItems?: OpportunityActionItem[]
+  customFieldValues?: Record<string, unknown>
 }
 
 export interface OpportunityPipelineTotals {
@@ -146,7 +147,7 @@ export interface OpportunityCreateInput {
   serviceLine: string
   value: number
   currency: string
-  stage: Stage
+  stage?: Stage
   nextStep: string
   targetDate: string
   sourceContext?: string | null
@@ -154,6 +155,7 @@ export interface OpportunityCreateInput {
   sourceRecordType?: string | null
   sourceRecordRoute?: string | null
   outcomeReason?: string | null
+  customFieldValues?: Record<string, unknown>
   actionItems?: OpportunityActionItemInput[]
 }
 

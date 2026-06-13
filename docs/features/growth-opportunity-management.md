@@ -310,6 +310,7 @@ The goal is to make opportunities complete without taking ownership of adjacent 
   - Stage history, opportunity-local action items, and decision history attached to opportunities.
   - Backend timeline entries for opportunity creation, stage changes, wins, losses, archives, and source-linked decisions.
   - Opportunity board, list, detail dialog, create/edit modal, pipeline totals, field-level errors, and loading/empty/error states.
+  - Opportunity creation runtime Field Builder support through the `opportunities` module.
   - Account 360 Opportunities tab and account overview open-opportunity count.
 - Support, but do not fully implement here:
   - Dashboard: consume opportunity API data for current pipeline cards/totals and target-date projections; avoid building a new dashboard aggregation/reporting engine.
@@ -318,7 +319,7 @@ The goal is to make opportunities complete without taking ownership of adjacent 
   - Governance: expose opportunity records/timeline entries as sourceable data; avoid changing governance agenda/brief behavior beyond preventing broken references.
   - Account Planning/Whitespace: allow `source_context` and source record fields so future recommendations can create opportunities; do not build service catalog, whitespace capture, or adjacency recommendation workflows.
   - Timeline: write required opportunity timeline entries through existing `TimelineService`; do not implement full timeline list/filter/admin retention APIs.
-  - Admin Field Builder: allow opportunity module custom fields if existing runtime field APIs support it; do not redesign the field builder.
+  - Admin Field Builder: keep using the shared runtime custom-field APIs and avoid redesigning the field builder beyond the `opportunities` create-form integration.
 - Explicitly avoid in this feature:
   - Creating first-class Tasks from opportunity next actions/action items.
   - Implementing `/api/tasks`, `/api/calendar/items`, task evidence, reminders, or unified calendar ownership.

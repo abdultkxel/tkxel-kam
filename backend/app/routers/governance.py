@@ -29,7 +29,6 @@ from app.schemas import (
     GovernanceRecurrenceRuleUpdateRequest,
     IntegrationConnectionRead,
     IntegrationConnectionUpdateRequest,
-    IntegrationProvider,
     IntegrationSyncLogPageRead,
     IntegrationSyncResponse,
     MessageResponse,
@@ -191,12 +190,12 @@ def list_integrations(
 
 
 @router.patch("/admin/integrations/{provider}", response_model=IntegrationConnectionRead, summary="Update integration connection", description="Updates approved provider credentials/settings. Secret values are masked in responses.")
-def update_integration(provider: IntegrationProvider, payload: IntegrationConnectionUpdateRequest, current_user: Annotated[User, Depends(get_current_user)], service: Annotated[IntegrationService, Depends(get_integration_service)]) -> IntegrationConnectionRead:
+def update_integration(provider: str, payload: IntegrationConnectionUpdateRequest, current_user: Annotated[User, Depends(get_current_user)], service: Annotated[IntegrationService, Depends(get_integration_service)]) -> IntegrationConnectionRead:
     return service.update_integration(provider, payload, current_user)
 
 
 @router.post("/admin/integrations/{provider}/sync", response_model=IntegrationSyncResponse, summary="Sync integration", description="Runs an approved provider sync. Requires credentials where applicable and logs configuration-required or error states.")
-def sync_integration(provider: IntegrationProvider, current_user: Annotated[User, Depends(get_current_user)], service: Annotated[IntegrationService, Depends(get_integration_service)]) -> IntegrationSyncResponse:
+def sync_integration(provider: str, current_user: Annotated[User, Depends(get_current_user)], service: Annotated[IntegrationService, Depends(get_integration_service)]) -> IntegrationSyncResponse:
     return service.sync_integration(provider, current_user)
 
 

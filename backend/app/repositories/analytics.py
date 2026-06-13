@@ -1,9 +1,9 @@
 from datetime import datetime
 
-from sqlalchemy import String, and_, cast, func, or_, select
+from sqlalchemy import and_, or_, select
 from sqlalchemy.orm import Session, selectinload
 
-from app.models import Account, AccountChangeAlert, AccountOwner, Escalation, Opportunity, ScoreSnapshot, Signal, Task
+from app.models import Account, AccountOwner, Escalation, Opportunity, ScoreSnapshot, Signal, Task
 
 
 class AnalyticsRepository:
@@ -95,59 +95,6 @@ class AnalyticsRepository:
         conditions = [Signal.status.in_(["new", "reviewed", "accepted"])]
         conditions.append(Signal.account_id.in_(account_ids) if account_ids else False)
         return list(self.db.scalars(select(Signal).where(*conditions).order_by(Signal.severity.desc(), Signal.created_at.desc()).limit(1000)))
-
-    def get_alert_by_deduplication_key(self, deduplication_key: str) -> AccountChangeAlert | None:
-        return self.db.scalar(select(AccountChangeAlert).where(AccountChangeAlert.deduplication_key == deduplication_key))
-
-    def save_alert(self, alert: AccountChangeAlert) -> AccountChangeAlert:
-        self.db.add(alert)
-        self.db.flush()
-        return alert
-
-    def get_alert(self, alert_id: str) -> AccountChangeAlert | None:
-        return self.db.get(AccountChangeAlert, alert_id)
-
-    def list_alerts(
-        self,
-        *,
-        account_ids: list[str] | None,
-        search: str | None = None,
-        status_filter: str | None = None,
-        severity: str | None = None,
-        owner_id: str | None = None,
-        page: int = 1,
-        page_size: int = 25,
-    ) -> tuple[list[AccountChangeAlert], int]:
-        conditions = []
-        if account_ids is not None:
-            conditions.append(AccountChangeAlert.account_id.in_(account_ids) if account_ids else False)
-        if search and search.strip():
-            term = f"%{search.strip()}%"
-            conditions.append(
-                or_(
-                    AccountChangeAlert.reason_code.ilike(term),
-                    AccountChangeAlert.affected_metric.ilike(term),
-                    AccountChangeAlert.recommended_action.ilike(term),
-                    cast(AccountChangeAlert.source_evidence_json, String).ilike(term),
-                )
-            )
-        if status_filter:
-            conditions.append(AccountChangeAlert.status == status_filter)
-        if severity:
-            conditions.append(AccountChangeAlert.severity == severity)
-        if owner_id:
-            conditions.append(AccountChangeAlert.owner_id == owner_id)
-        total = self.db.scalar(select(func.count(AccountChangeAlert.id)).where(*conditions)) or 0
-        items = list(
-            self.db.scalars(
-                select(AccountChangeAlert)
-                .where(*conditions)
-                .order_by(AccountChangeAlert.status.asc(), AccountChangeAlert.severity.desc(), AccountChangeAlert.created_at.desc())
-                .offset((page - 1) * page_size)
-                .limit(page_size)
-            )
-        )
-        return items, total
 
     def commit(self) -> None:
         self.db.commit()

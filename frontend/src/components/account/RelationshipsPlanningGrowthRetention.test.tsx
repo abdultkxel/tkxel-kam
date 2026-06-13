@@ -1,13 +1,20 @@
-import { render, screen, waitFor } from '@testing-library/react'
+import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
-import { RetentionPlanPanel } from '@/components/account/RelationshipsPlanningGrowthRetention'
+import { GrowthWhitespacePanel, RetentionPlanPanel } from '@/components/account/RelationshipsPlanningGrowthRetention'
 
 vi.mock('@/contexts/AuthContext', () => ({
   useAuth: () => ({
     token: 'test-token',
     user: { id: 'usr-owner', name: 'Account Owner', role: 'account_manager', email: 'owner@tkxel.com', avatarInitials: 'AO' },
   }),
+}))
+
+vi.mock('sonner', () => ({
+  toast: {
+    success: vi.fn(),
+    error: vi.fn(),
+  },
 }))
 
 const account = {
@@ -56,6 +63,20 @@ const recommendation = {
   created_task_id: null,
 }
 
+function serviceItem(index: number) {
+  return {
+    id: `svc-${index}`,
+    slug: `service_${index}`,
+    name: `Service ${index}`,
+    category: index % 2 ? 'Engineering' : 'Data',
+    description: null,
+    tags: [`tag-${index}`],
+    is_active: true,
+    display_order: index,
+    in_use_count: 0,
+  }
+}
+
 function page<T>(items: T[], pageSize = 100) {
   return { items, total: items.length, page: 1, page_size: pageSize, pages: items.length ? 1 : 0 }
 }
@@ -94,5 +115,67 @@ describe('RetentionPlanPanel', () => {
       confirm: true,
     })
     expect(String(postedPayload?.due_at)).toContain('2026-06-12')
+  })
+})
+
+describe('GrowthWhitespacePanel', () => {
+  it('paginates service coverage, saves only changed rows, and explains account fit', async () => {
+    const services = Array.from({ length: 14 }, (_, index) => serviceItem(index + 1))
+    let patchPayload: Record<string, any> | undefined
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input)
+      if (url.includes('/api/service-catalog')) return jsonResponse(page(services))
+      if (url.includes(`/api/accounts/${account.id}/whitespace`) && init?.method === 'PATCH') {
+        patchPayload = JSON.parse(String(init.body))
+        return jsonResponse([
+          { id: 'ws-1', account_id: account.id, service_id: 'svc-1', service_name: 'Service 1', coverage_status: 'active', source: 'manual' },
+          { id: 'ws-14', account_id: account.id, service_id: 'svc-14', service_name: 'Service 14', coverage_status: 'potential', source: 'manual' },
+        ])
+      }
+      if (url.includes(`/api/accounts/${account.id}/whitespace`)) {
+        return jsonResponse([{ id: 'ws-1', account_id: account.id, service_id: 'svc-1', service_name: 'Service 1', coverage_status: 'active', source: 'manual' }])
+      }
+      if (url.includes(`/api/accounts/${account.id}/service-recommendations`)) {
+        return jsonResponse(page([
+          {
+            id: 'svc-rec-1',
+            account_id: account.id,
+            source_service_id: 'svc-1',
+            source_service_name: 'Service 1',
+            target_service_id: 'svc-14',
+            target_service_name: 'Service 14',
+            growth_rule_id: 'rule-1',
+            base_fit_score: 75,
+            relevance_score: 89,
+            account_fit_score: 89,
+            score_factors: [{ label: 'Expansion stage', value: 6, reason: 'Account is ready for expansion.' }],
+            rationale: 'Service 1 creates a path into Service 14.',
+            status: 'recommended',
+            source_context: 'growth_rule',
+            created_opportunity_id: null,
+          },
+        ]))
+      }
+      return jsonResponse({})
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    render(<GrowthWhitespacePanel account={account as any} />)
+
+    expect(await screen.findByText('Service coverage & growth recommendations')).toBeInTheDocument()
+    expect(screen.getByText('Service 1')).toBeInTheDocument()
+    expect(screen.queryByText('Service 13')).not.toBeInTheDocument()
+    expect(screen.getByText('Showing 1-12 of 14 services')).toBeInTheDocument()
+    expect(screen.getByText(/Base fit 75 .* Account fit 89/)).toBeInTheDocument()
+    expect(screen.getByText('+6 Expansion stage')).toBeInTheDocument()
+
+    await userEvent.click(screen.getByRole('button', { name: /^next$/i }))
+    const service14Card = screen.getAllByText('Service 14').map(item => item.closest('label')).find(Boolean)
+    expect(service14Card).not.toBeNull()
+    await userEvent.selectOptions(within(service14Card as HTMLElement).getByRole('combobox'), 'potential')
+    await userEvent.click(screen.getByRole('button', { name: /save coverage/i }))
+
+    await waitFor(() => expect(patchPayload).toBeDefined())
+    expect(patchPayload?.items).toEqual([{ service_id: 'svc-14', coverage_status: 'potential', notes: null, source: 'manual' }])
   })
 })

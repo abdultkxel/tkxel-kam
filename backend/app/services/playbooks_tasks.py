@@ -53,11 +53,14 @@ from app.services.timeline import TimelineService
 from app.services.user_management import page_count
 
 MODULE = "playbooks_tasks_calendar"
+PLAYBOOK_FIELD_MODULE = "playbooks"
+TASK_FIELD_MODULE = "tasks"
 LOGGER = logging.getLogger(__name__)
 
 
 class PlaybooksTasksService:
     def __init__(self, db: Session) -> None:
+        self.db = db
         self.repository = PlaybooksTasksRepository(db)
         self.accounts = AccountRepository(db)
         self.access = AccountAccessService(self.accounts, RbacRepository(db))
@@ -120,7 +123,7 @@ class PlaybooksTasksService:
         )
         template.activities = [self._activity_model(item) for item in payload.activities]
         self.repository.save_template(template)
-        self.custom_fields.save_record_values(MODULE, template.id, payload.custom_field_values, current_user, audit_module=MODULE)
+        self.custom_fields.save_record_values(PLAYBOOK_FIELD_MODULE, template.id, payload.custom_field_values, current_user, audit_module=PLAYBOOK_FIELD_MODULE)
         self.audit.log(module=MODULE, action="create_template", entity_type="playbook_template", entity_id=template.id, actor=current_user, after_value=self._template_snapshot(template))
         self.repository.commit()
         return self._template_read(template)
@@ -148,7 +151,7 @@ class PlaybooksTasksService:
             template.status = "active" if template.is_active else "draft"
         template.updated_by_id = current_user.id
         if custom_values is not None:
-            self.custom_fields.replace_record_values(MODULE, template.id, custom_values, current_user, audit_module=MODULE)
+            self.custom_fields.replace_record_values(PLAYBOOK_FIELD_MODULE, template.id, custom_values, current_user, audit_module=PLAYBOOK_FIELD_MODULE)
         self.audit.log(module=MODULE, action="update_template", entity_type="playbook_template", entity_id=template.id, actor=current_user, before_value=before, after_value=self._template_snapshot(template))
         self.repository.commit()
         return self._template_read(template)
@@ -338,11 +341,12 @@ class PlaybooksTasksService:
             updated_by_id=current_user.id,
         )
         self.repository.save_task(task)
-        self.custom_fields.save_record_values(MODULE, task.id, payload.custom_field_values, current_user, audit_module=MODULE)
+        self.custom_fields.save_record_values(TASK_FIELD_MODULE, task.id, payload.custom_field_values, current_user, audit_module=TASK_FIELD_MODULE)
         self._write_timeline(account.id, task.engagement_id, current_user, "task_created", f"Task created: {task.title}", task.description or "Task created.", task.id, "task")
         self.audit.log(module=MODULE, action="create_task", entity_type="task", entity_id=task.id, actor=current_user, after_value=self._task_snapshot(task))
         self._notify_task_created(task, account, current_user)
         self.repository.commit()
+        self._evaluate_alerts_for_account(account.id)
         return self._task_read(task)
 
     def update_task(self, task_id: str, payload: TaskUpdateRequest, current_user: User) -> TaskRead:
@@ -368,7 +372,7 @@ class PlaybooksTasksService:
         if updates.get("status") == "done":
             self._sync_source_action_item_from_task(task, current_user)
         if custom_values is not None:
-            self.custom_fields.replace_record_values(MODULE, task.id, custom_values, current_user, audit_module=MODULE)
+            self.custom_fields.replace_record_values(TASK_FIELD_MODULE, task.id, custom_values, current_user, audit_module=TASK_FIELD_MODULE)
         if task.status in {"done", "cancelled"}:
             action = "task_completed" if task.status == "done" else "task_cancelled"
             self._write_timeline(task.account_id, task.engagement_id, current_user, action, f"Task {task.status}: {task.title}", task.outcome or task.skipped_reason or task.notes or "Task status changed.", task.id, "task", before=before, after=self._task_snapshot(task))
@@ -377,6 +381,7 @@ class PlaybooksTasksService:
             self._notify_task_assigned(task, account, current_user, previous_owner_id=before.get("owner_id"))
         self.audit.log(module=MODULE, action="update_task", entity_type="task", entity_id=task.id, actor=current_user, before_value=before, after_value=self._task_snapshot(task))
         self.repository.commit()
+        self._evaluate_alerts_for_account(task.account_id)
         return self._task_read(task)
 
     def _sync_source_action_item_from_task(self, task: Task, current_user: User) -> None:
@@ -580,12 +585,12 @@ class PlaybooksTasksService:
         return PlaybookTemplateRead.model_validate(template).model_copy(
             update={
                 "activities": [PlaybookTemplateActivityRead.model_validate(item) for item in sorted_activities],
-                "custom_field_values": self.custom_fields.record_values(MODULE, template.id),
+                "custom_field_values": self.custom_fields.record_values(PLAYBOOK_FIELD_MODULE, template.id),
             }
         )
 
     def _task_read(self, task: Task) -> TaskRead:
-        return TaskRead.model_validate(task).model_copy(update={"custom_field_values": self.custom_fields.record_values(MODULE, task.id)})
+        return TaskRead.model_validate(task).model_copy(update={"custom_field_values": self.custom_fields.record_values(TASK_FIELD_MODULE, task.id)})
 
     @staticmethod
     def _slug_from_name(name: str) -> str:
@@ -778,6 +783,11 @@ class PlaybooksTasksService:
             source_record_id=event.id,
             source_record_type="governance_event",
         )
+
+    def _evaluate_alerts_for_account(self, account_id: str) -> None:
+        from app.services.alerts import AlertsService
+
+        AlertsService(self.db).evaluate_for_account(account_id)
 
     @staticmethod
     def _governance_action_calendar_item(action) -> CalendarItemRead:

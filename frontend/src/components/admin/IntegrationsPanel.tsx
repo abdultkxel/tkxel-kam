@@ -10,10 +10,8 @@ import {
   disconnectIntegration,
   googleCalendarOAuthUrl,
   IntegrationConnection,
-  IntegrationImportedItem,
   IntegrationProvider,
   IntegrationSyncLog,
-  listImportedItems,
   listIntegrationLogs,
   listIntegrations,
   readSecurityAlertSettings,
@@ -42,27 +40,26 @@ interface ConfigState {
   calendarId: string
   accessToken: string
   apiKey: string
-  webhookSecret: string
   baseUrl: string
-  recordingsPath: string
   healthPath: string
   syncIntervalMinutes: string
   deduplicationWindowMinutes: string
   autoCreateTaggedEvents: boolean
-  autoApprove: boolean
-  includeTranscript: boolean
-  includeCrmMatches: boolean
 }
 
-const providerHelp: Record<IntegrationProvider, string> = {
+const visibleProviders = new Set<IntegrationProvider>(['google_calendar', 'ai_llm_gateway'])
+
+const providerHelp: Partial<Record<IntegrationProvider, string>> = {
   google_calendar: 'Outbound governance events',
-  fathom: 'Meeting summaries',
-  csat: 'Manual CSAT',
   ai_llm_gateway: 'AI run logs',
 }
 
 function supportsInboundSync(provider: IntegrationProvider) {
-  return provider !== 'google_calendar'
+  return provider === 'ai_llm_gateway'
+}
+
+function isVisibleAdminConnection(connection: IntegrationConnection) {
+  return visibleProviders.has(connection.provider)
 }
 
 function connectionName(connection: IntegrationConnection) {
@@ -125,7 +122,6 @@ function ConfigDrawer({
         'settings_json.sync_interval_minutes': 'syncIntervalMinutes',
         'settings_json.deduplication_window_minutes': 'deduplicationWindowMinutes',
         credentials_json: 'apiKey',
-        'credentials_json.webhook_secret': 'webhookSecret',
         scopes: 'scopes',
       })
       setFieldErrors(nextFieldErrors)
@@ -168,7 +164,7 @@ function ConfigDrawer({
             <div>
               <p className="text-[10px] font-extrabold uppercase tracking-widest text-brand-blue">Integration Configuration</p>
               <Dialog.Title className="font-display text-3xl font-bold text-ink">{connectionName(config)}</Dialog.Title>
-              <Dialog.Description className="mt-1 text-sm text-ink-secondary">{providerHelp[config.provider]}</Dialog.Description>
+              <Dialog.Description className="mt-1 text-sm text-ink-secondary">{providerHelp[config.provider] ?? 'Admin integration'}</Dialog.Description>
             </div>
             <Dialog.Close className="tk-icon-button" aria-label="Close integration configuration">
               <X className="h-5 w-5" />
@@ -201,7 +197,7 @@ function ConfigDrawer({
               </section>
             ) : null}
 
-            {config.provider === 'fathom' || config.provider === 'ai_llm_gateway' ? (
+            {config.provider === 'ai_llm_gateway' ? (
               <section className="rounded-lg border border-surface-border p-4">
                 <div className="grid gap-4 sm:grid-cols-2">
                   <label className="block">
@@ -209,42 +205,15 @@ function ConfigDrawer({
                     <input className={cn('tk-input mt-2', fieldErrors.baseUrl && 'border-rag-red')} value={form.baseUrl} onChange={event => setField('baseUrl', event.target.value)} />
                     <FieldError id="integration-base-url-error" message={fieldErrors.baseUrl} />
                   </label>
-                  {config.provider === 'ai_llm_gateway' ? (
-                    <label className="block">
-                      <span className="tk-label">Health path</span>
-                      <input className="tk-input mt-2" value={form.healthPath} onChange={event => setField('healthPath', event.target.value)} />
-                    </label>
-                  ) : null}
+                  <label className="block">
+                    <span className="tk-label">Health path</span>
+                    <input className="tk-input mt-2" value={form.healthPath} onChange={event => setField('healthPath', event.target.value)} />
+                  </label>
                   <label className="block sm:col-span-2">
                     <span className="tk-label">API key</span>
                     <input className={cn('tk-input mt-2', fieldErrors.apiKey && 'border-rag-red')} value={form.apiKey} onChange={event => setField('apiKey', event.target.value)} type="password" autoComplete="off" />
                     <FieldError id="integration-api-key-error" message={fieldErrors.apiKey} />
                   </label>
-                  {config.provider === 'fathom' ? (
-                    <>
-                      <label className="block">
-                        <span className="tk-label">Meetings path</span>
-                        <input className="tk-input mt-2" value={form.recordingsPath} onChange={event => setField('recordingsPath', event.target.value)} />
-                      </label>
-                      <label className="block sm:col-span-2">
-                        <span className="tk-label">Webhook secret</span>
-                        <input className={cn('tk-input mt-2', fieldErrors.webhookSecret && 'border-rag-red')} value={form.webhookSecret} onChange={event => setField('webhookSecret', event.target.value)} type="password" autoComplete="off" />
-                        <FieldError id="integration-fathom-webhook-secret-error" message={fieldErrors.webhookSecret} />
-                      </label>
-                      <label className="flex min-h-[44px] items-center gap-3">
-                        <input type="checkbox" checked={form.autoApprove} onChange={event => setField('autoApprove', event.target.checked)} />
-                        <span className="text-sm font-semibold text-ink">Auto-approve summaries</span>
-                      </label>
-                      <label className="flex min-h-[44px] items-center gap-3">
-                        <input type="checkbox" checked={form.includeTranscript} onChange={event => setField('includeTranscript', event.target.checked)} />
-                        <span className="text-sm font-semibold text-ink">Include transcript payloads</span>
-                      </label>
-                      <label className="flex min-h-[44px] items-center gap-3">
-                        <input type="checkbox" checked={form.includeCrmMatches} onChange={event => setField('includeCrmMatches', event.target.checked)} />
-                        <span className="text-sm font-semibold text-ink">Include CRM matches</span>
-                      </label>
-                    </>
-                  ) : null}
                 </div>
               </section>
             ) : null}
@@ -292,8 +261,6 @@ export function IntegrationsPanel() {
   const [alertEmail, setAlertEmail] = useState('')
   const [selected, setSelected] = useState<IntegrationConnection | null>(null)
   const [logs, setLogs] = useState<IntegrationSyncLog[]>([])
-  const [fathomMeetings, setFathomMeetings] = useState<IntegrationImportedItem[]>([])
-  const [importedCount, setImportedCount] = useState(0)
   const [loading, setLoading] = useState(true)
   const [loadingLogs, setLoadingLogs] = useState(false)
   const [savingAlertEmail, setSavingAlertEmail] = useState(false)
@@ -321,17 +288,13 @@ export function IntegrationsPanel() {
     setLoading(true)
     setError('')
     try {
-      const [integrationList, alertSettings, imported, fathomImported] = await Promise.all([
+      const [integrationList, alertSettings] = await Promise.all([
         listIntegrations(token),
         readSecurityAlertSettings(token),
-        listImportedItems(token, { page_size: 1 }),
-        listImportedItems(token, { provider: 'fathom', page_size: 5 }),
       ])
-      setConnections(integrationList)
+      setConnections(integrationList.filter(isVisibleAdminConnection))
       setSettings(alertSettings)
       setAlertEmail(alertSettings.administration_email)
-      setImportedCount(imported.total)
-      setFathomMeetings(fathomImported.items)
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Integrations could not load')
     } finally {
@@ -390,8 +353,8 @@ export function IntegrationsPanel() {
       <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
         <div>
           <p className="text-[10px] font-extrabold uppercase tracking-widest text-brand-blue">External Integrations</p>
-          <h2 className="text-base font-semibold text-ink">Approved adapters</h2>
-          <p className="mt-1 text-sm text-ink-secondary">{connectedCount}/{connections.length || 4} connected · {importedCount} imported items</p>
+          <h2 className="text-base font-semibold text-ink">Admin-owned adapters</h2>
+          <p className="mt-1 text-sm text-ink-secondary">{connectedCount}/{connections.length || 2} connected</p>
         </div>
         <button className="tk-icon-button" type="button" onClick={() => void load()} title="Refresh integrations">
           <RefreshCcw className="h-4 w-4" />
@@ -400,12 +363,12 @@ export function IntegrationsPanel() {
 
       {loading ? (
         <div className="grid gap-3 sm:grid-cols-2">
-          {[0, 1, 2, 3].map(item => <div key={item} className="h-36 animate-pulse rounded-lg border border-surface-border bg-surface-secondary" />)}
+          {[0, 1].map(item => <div key={item} className="h-36 animate-pulse rounded-lg border border-surface-border bg-surface-secondary" />)}
         </div>
       ) : null}
 
       {!loading && error ? <EmptyState icon={AlertTriangle} heading="Integrations could not load" body={error} action={{ label: 'Retry', onClick: () => void load() }} className="py-8" /> : null}
-      {!loading && !error && !connections.length ? <EmptyState icon={Settings} heading="No approved adapters" body="Approved adapters are seeded when the backend starts." className="py-8" /> : null}
+      {!loading && !error && !connections.length ? <EmptyState icon={Settings} heading="No admin-owned adapters" body="Google Calendar and AI/LLM Gateway adapters are seeded when the backend starts." className="py-8" /> : null}
 
       {!loading && !error && connections.length ? (
         <div className="grid gap-3 lg:grid-cols-2">
@@ -445,7 +408,7 @@ export function IntegrationsPanel() {
                   <Settings className="h-4 w-4" />
                   Configure
                 </button>
-                <button className="tk-button-secondary px-2 text-xs" type="button" onClick={() => void run(connection.provider, 'disconnect')} disabled={Boolean(action) || connection.provider === 'csat'}>
+                <button className="tk-button-secondary px-2 text-xs" type="button" onClick={() => void run(connection.provider, 'disconnect')} disabled={Boolean(action)}>
                   {action === `disconnect:${connection.provider}` ? <Loader2 className="h-4 w-4 animate-spin" /> : <Unplug className="h-4 w-4" />}
                   Disconnect
                 </button>
@@ -453,46 +416,6 @@ export function IntegrationsPanel() {
             </article>
           ))}
         </div>
-      ) : null}
-
-      {!loading && !error ? (
-        <section className="mt-5 rounded-lg border border-surface-border p-4">
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <div>
-              <h3 className="text-sm font-semibold text-ink">Fathom meeting links</h3>
-              <p className="mt-1 text-xs text-ink-secondary">Imported summaries stay in review until they are mapped and approved.</p>
-            </div>
-            <button className="tk-button-secondary px-3 py-2 text-xs" type="button" onClick={() => void load()}>
-              <RefreshCcw className="h-4 w-4" />
-              Refresh
-            </button>
-          </div>
-          {!fathomMeetings.length ? (
-            <p className="mt-4 rounded-md border border-dashed border-surface-border px-3 py-4 text-sm text-ink-secondary">No Fathom meetings imported yet.</p>
-          ) : (
-            <div className="mt-4 grid gap-3">
-              {fathomMeetings.map(item => (
-                <article key={item.id} className="rounded-md border border-surface-border p-3">
-                  <div className="flex flex-wrap items-start justify-between gap-3">
-                    <div className="min-w-0">
-                      <p className="truncate text-sm font-semibold text-ink">{item.title}</p>
-                      <p className="mt-1 text-xs text-ink-secondary">
-                        {item.mapping_status.replace(/_/g, ' ')} · {item.review_status.replace(/_/g, ' ')}{item.occurred_at ? ` · ${formatRelative(item.occurred_at)}` : ''}
-                      </p>
-                    </div>
-                    {item.source_link ? (
-                      <a className="tk-button-secondary px-3 py-2 text-xs" href={item.source_link} target="_blank" rel="noreferrer">
-                        <ExternalLink className="h-4 w-4" />
-                        Meeting
-                      </a>
-                    ) : null}
-                  </div>
-                  {item.description ? <p className="mt-2 line-clamp-2 text-sm text-ink-secondary">{item.description}</p> : null}
-                </article>
-              ))}
-            </div>
-          )}
-        </section>
       ) : null}
 
       <form className="mt-5 rounded-lg border border-surface-border p-4" onSubmit={saveAlertEmail} noValidate>
@@ -522,16 +445,11 @@ function formFromConnection(config: IntegrationConnection | null): ConfigState {
     calendarId: stringValue(settings.calendar_id),
     accessToken: '',
     apiKey: '',
-    webhookSecret: '',
-    baseUrl: stringValue(settings.base_url) || (config?.provider === 'fathom' ? 'https://api.fathom.ai' : ''),
-    recordingsPath: stringValue(settings.recordings_path) || '/external/v1/meetings/',
+    baseUrl: stringValue(settings.base_url),
     healthPath: stringValue(settings.health_path) || '/health',
     syncIntervalMinutes: stringValue(settings.sync_interval_minutes),
     deduplicationWindowMinutes: stringValue(settings.deduplication_window_minutes),
     autoCreateTaggedEvents: Boolean(settings.auto_create_tagged_events),
-    autoApprove: Boolean(settings.auto_approve),
-    includeTranscript: Boolean(settings.include_transcript),
-    includeCrmMatches: Boolean(settings.include_crm_matches),
   }
 }
 
@@ -545,23 +463,10 @@ function buildPayload(provider: IntegrationProvider, form: ConfigState) {
   if (provider === 'google_calendar') {
     return { enabled: form.enabled }
   }
-  if (provider === 'fathom') {
-    settings.base_url = emptyToUndefined(form.baseUrl)
-    settings.recordings_path = emptyToUndefined(form.recordingsPath)
-    settings.auto_approve = form.autoApprove
-    settings.include_transcript = form.includeTranscript
-    settings.include_crm_matches = form.includeCrmMatches
-    settings.deduplication_window_minutes = numberOrUndefined(form.deduplicationWindowMinutes)
-    if (form.apiKey.trim()) credentials.api_key = form.apiKey.trim()
-    if (form.webhookSecret.trim()) credentials.webhook_secret = form.webhookSecret.trim()
-  }
   if (provider === 'ai_llm_gateway') {
     settings.base_url = emptyToUndefined(form.baseUrl)
     settings.health_path = emptyToUndefined(form.healthPath)
     if (form.apiKey.trim()) credentials.api_key = form.apiKey.trim()
-  }
-  if (provider === 'csat') {
-    settings.mode = 'manual'
   }
 
   Object.keys(settings).forEach(key => settings[key] === undefined && delete settings[key])

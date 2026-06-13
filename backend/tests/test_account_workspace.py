@@ -1187,7 +1187,7 @@ def test_engagement_list_endpoint_returns_items_empty_state_and_rejects_unauthor
     assert page["items"][0]["id"] == created["id"]
     assert page["items"][0]["account_id"] == account_id
 
-    unauthorized_headers = auth_headers(client, "content.specialist.user@tkxel.com", "User@12345")
+    unauthorized_headers = auth_headers(client, "delivery.lead.user@tkxel.com", "User@12345")
     unauthorized_response = client.get(f"/api/accounts/{account_id}/engagements", headers=unauthorized_headers)
     assert unauthorized_response.status_code == 403
 
@@ -1309,7 +1309,7 @@ def test_engagement_detail_endpoint_returns_detail_404_and_rejects_unauthorized_
     missing_response = client.get("/api/engagements/missing-engagement", headers=headers)
     assert missing_response.status_code == 404
 
-    unauthorized_headers = auth_headers(client, "content.specialist.user@tkxel.com", "User@12345")
+    unauthorized_headers = auth_headers(client, "delivery.lead.user@tkxel.com", "User@12345")
     unauthorized_response = client.get(f"/api/engagements/{created['id']}", headers=unauthorized_headers)
     assert unauthorized_response.status_code == 403
 
@@ -1580,7 +1580,7 @@ def test_manual_engagement_create_validation_errors(client: TestClient) -> None:
 def test_account_filters_owner_history_engagement_health_and_openapi_docs(client: TestClient) -> None:
     headers = auth_headers(client)
     account_id, owner_id, _ = create_approved_account(client, headers, "Globex Workspace")
-    ops_lead = seeded_user(client, headers, "ops_lead")
+    ops_lead = seeded_user(client, headers, "delivery_lead")
 
     account_list = client.get(
         "/api/accounts",
@@ -1735,7 +1735,7 @@ def test_account_creation_accepts_field_builder_values(client: TestClient, db_se
         "/api/admin/custom-fields",
         headers=headers,
         json={
-            "module": "account_onboarding_workspace",
+            "module": "accounts",
             "field_key": "customer_tier",
             "label": "Customer Tier",
             "field_type": "single_select",
@@ -1771,6 +1771,10 @@ def test_account_creation_accepts_field_builder_values(client: TestClient, db_se
     values = [value for value in db_session.query(CustomFieldValue).filter(CustomFieldValue.record_id == account_id).all()]
     assert values
     assert values[0].value == "Gold"
+
+    account_response = client.get(f"/api/accounts/{account_id}", headers=headers)
+    assert account_response.status_code == 200
+    assert account_response.json()["custom_field_values"]["customer_tier"] == "Gold"
 
 
 def test_csv_import_persists_accounts_in_onboarding_hierarchy(client: TestClient, db_session: Session) -> None:

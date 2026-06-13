@@ -37,6 +37,7 @@ const escalation = {
   owner_name: 'Admin User',
   sla_due_at: '2026-06-01T00:00:00Z',
   watchlist: true,
+  custom_field_values: { client_commitment: 'Daily executive updates' },
   created_by_name: 'Admin User',
   created_at: '2026-05-31T00:00:00Z',
   updated_at: '2026-05-31T00:00:00Z',
@@ -54,6 +55,25 @@ describe('Escalations', () => {
   it('loads escalation cards, supports filters, and creates an escalation', async () => {
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input)
+      if (url.includes('/api/custom-fields')) {
+        return jsonResponse([
+          {
+            id: 'field-1',
+            module: 'escalation_management',
+            field_key: 'client_commitment',
+            label: 'Client Commitment',
+            field_type: 'text',
+            options: [],
+            validation_rules: {},
+            is_required: false,
+            is_sensitive: false,
+            is_active: true,
+            show_in_list: true,
+            show_in_detail: true,
+            sort_order: 1,
+          },
+        ])
+      }
       if (url.includes('/api/accounts')) return jsonResponse({ ...page([account]), page_size: 100 })
       if (url.endsWith('/api/escalations') && init?.method === 'POST') return jsonResponse({ ...escalation, id: 'esc-2', summary: 'New escalation' }, 201)
       if (url.includes('/api/escalations')) return jsonResponse(page([escalation]))
@@ -69,6 +89,8 @@ describe('Escalations', () => {
 
     expect(screen.getByText(/Loading escalations/i)).toBeInTheDocument()
     expect(await screen.findByText('Regional rollout governance slip')).toBeInTheDocument()
+    expect((await screen.findAllByText('Client Commitment')).length).toBeGreaterThanOrEqual(2)
+    expect(screen.getByText('Daily executive updates')).toBeInTheDocument()
 
     await userEvent.type(screen.getByPlaceholderText(/Search summary/i), 'rollout')
     await waitFor(() => expect(fetchMock.mock.calls.some(call => String(call[0]).includes('search=rollout'))).toBe(true))

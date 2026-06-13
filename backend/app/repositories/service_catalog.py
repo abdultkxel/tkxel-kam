@@ -3,8 +3,12 @@ from sqlalchemy.orm import Session, selectinload
 
 from app.models import (
     AccountWhitespaceItem,
+    Opportunity,
     ServiceAdjacencyRule,
     ServiceCatalogItem,
+    ServiceGrowthBundle,
+    ServiceGrowthBundleItem,
+    ServiceGrowthRule,
     ServiceRecommendation,
 )
 
@@ -57,6 +61,16 @@ class ServiceCatalogRepository:
     def list_active_services(self) -> list[ServiceCatalogItem]:
         return list(self.db.scalars(select(ServiceCatalogItem).where(ServiceCatalogItem.is_active.is_(True)).order_by(ServiceCatalogItem.display_order, ServiceCatalogItem.name)))
 
+    def list_categories(self) -> list[str]:
+        rows = self.db.scalars(select(ServiceCatalogItem.category).where(ServiceCatalogItem.is_active.is_(True), ServiceCatalogItem.category.is_not(None)).distinct().order_by(ServiceCatalogItem.category.asc()))
+        return [str(item) for item in rows if item]
+
+    def list_tags(self) -> list[str]:
+        tags: set[str] = set()
+        for service in self.list_active_services():
+            tags.update(str(tag) for tag in (service.tags or []) if str(tag).strip())
+        return sorted(tags, key=str.lower)
+
     def get_service(self, service_id: str) -> ServiceCatalogItem | None:
         return self.db.get(ServiceCatalogItem, service_id)
 
@@ -83,6 +97,82 @@ class ServiceCatalogRepository:
                 .order_by(ServiceAdjacencyRule.relevance_score.desc(), ServiceAdjacencyRule.created_at.desc())
             )
         )
+
+    def list_bundles(self, active_only: bool = False) -> list[ServiceGrowthBundle]:
+        conditions = [ServiceGrowthBundle.is_active.is_(True)] if active_only else []
+        return list(
+            self.db.scalars(
+                select(ServiceGrowthBundle)
+                .where(*conditions)
+                .options(selectinload(ServiceGrowthBundle.items).selectinload(ServiceGrowthBundleItem.service))
+                .order_by(ServiceGrowthBundle.display_order, ServiceGrowthBundle.name)
+            )
+        )
+
+    def get_bundle(self, bundle_id: str) -> ServiceGrowthBundle | None:
+        return self.db.scalar(
+            select(ServiceGrowthBundle)
+            .where(ServiceGrowthBundle.id == bundle_id)
+            .options(selectinload(ServiceGrowthBundle.items).selectinload(ServiceGrowthBundleItem.service))
+        )
+
+    def get_bundle_by_slug(self, slug: str) -> ServiceGrowthBundle | None:
+        return self.db.scalar(select(ServiceGrowthBundle).where(ServiceGrowthBundle.slug == slug))
+
+    def save_bundle(self, bundle: ServiceGrowthBundle) -> ServiceGrowthBundle:
+        self.db.add(bundle)
+        self.db.flush()
+        return bundle
+
+    def replace_bundle_items(self, bundle: ServiceGrowthBundle, service_ids: list[str]) -> None:
+        for existing in list(bundle.items):
+            self.db.delete(existing)
+        self.db.flush()
+        for service_id in service_ids:
+            self.db.add(ServiceGrowthBundleItem(bundle_id=bundle.id, service_id=service_id))
+        self.db.flush()
+
+    def list_growth_rules(self, active_only: bool = False) -> list[ServiceGrowthRule]:
+        conditions = [ServiceGrowthRule.is_active.is_(True)] if active_only else []
+        return list(
+            self.db.scalars(
+                select(ServiceGrowthRule)
+                .where(*conditions)
+                .order_by(ServiceGrowthRule.priority.desc(), ServiceGrowthRule.base_fit_score.desc(), ServiceGrowthRule.created_at.desc())
+            )
+        )
+
+    def get_growth_rule(self, rule_id: str) -> ServiceGrowthRule | None:
+        return self.db.get(ServiceGrowthRule, rule_id)
+
+    def matching_growth_rule(
+        self,
+        source_selector_type: str,
+        source_selector_value: str,
+        target_selector_type: str,
+        target_selector_value: str,
+    ) -> ServiceGrowthRule | None:
+        return self.db.scalar(
+            select(ServiceGrowthRule).where(
+                ServiceGrowthRule.source_selector_type == source_selector_type,
+                ServiceGrowthRule.source_selector_value == source_selector_value,
+                ServiceGrowthRule.target_selector_type == target_selector_type,
+                ServiceGrowthRule.target_selector_value == target_selector_value,
+            )
+        )
+
+    def save_growth_rule(self, rule: ServiceGrowthRule) -> ServiceGrowthRule:
+        self.db.add(rule)
+        self.db.flush()
+        return rule
+
+    def replace_service_pair_growth_rules(self, rules: list[ServiceGrowthRule]) -> None:
+        for existing in self.db.scalars(select(ServiceGrowthRule).where(ServiceGrowthRule.source_selector_type == "service", ServiceGrowthRule.target_selector_type == "service")):
+            self.db.delete(existing)
+        self.db.flush()
+        for rule in rules:
+            self.db.add(rule)
+        self.db.flush()
 
     def replace_adjacencies(self, rules: list[ServiceAdjacencyRule]) -> None:
         for existing in self.db.scalars(select(ServiceAdjacencyRule)):
@@ -116,6 +206,25 @@ class ServiceCatalogRepository:
             self.db.add(item)
         self.db.flush()
 
+    def upsert_whitespace(self, account_id: str, items: list[AccountWhitespaceItem]) -> None:
+        for item in items:
+            existing = self.db.scalar(
+                select(AccountWhitespaceItem).where(
+                    AccountWhitespaceItem.account_id == account_id,
+                    AccountWhitespaceItem.engagement_id == item.engagement_id,
+                    AccountWhitespaceItem.service_id == item.service_id,
+                )
+            )
+            if existing is None:
+                self.db.add(item)
+            else:
+                existing.coverage_status = item.coverage_status
+                existing.notes = item.notes
+                existing.source = item.source
+                existing.service_name_snapshot = item.service_name_snapshot
+                existing.updated_by_id = item.updated_by_id
+        self.db.flush()
+
     def list_recommendations(
         self,
         *,
@@ -131,6 +240,8 @@ class ServiceCatalogRepository:
         conditions = [ServiceRecommendation.account_id == account_id]
         if status:
             conditions.append(ServiceRecommendation.status == status)
+        else:
+            conditions.append(ServiceRecommendation.status != "stale")
         if service_line:
             conditions.append(ServiceRecommendation.target_service_id == service_line)
         if search and search.strip():
@@ -176,6 +287,16 @@ class ServiceCatalogRepository:
                 source_condition,
             )
         )
+
+    def open_opportunity_service_lines(self, account_id: str) -> set[str]:
+        rows = self.db.scalars(
+            select(Opportunity.service_line).where(
+                Opportunity.account_id == account_id,
+                Opportunity.archived_at.is_(None),
+                Opportunity.stage.notin_(("Won", "Lost")),
+            )
+        )
+        return {str(row).strip().lower() for row in rows if str(row).strip()}
 
     def clear_stale_recommendations(self, account_id: str, keep_ids: set[str]) -> None:
         conditions = [ServiceRecommendation.account_id == account_id]

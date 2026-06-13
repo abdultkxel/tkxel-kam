@@ -10,7 +10,7 @@ from sqlalchemy.pool import StaticPool
 
 from app.database import Base, get_db
 from app.main import app
-from app.models import Account, AccountOwner, Engagement, Opportunity, OpportunityStageHistory, ServiceRecommendation, Task, TimelineEntry, User
+from app.models import Account, AccountOwner, Engagement, Opportunity, OpportunityStageHistory, OpportunityType, ServiceRecommendation, Task, TimelineEntry, User
 from app.services.seed import seed_default_data
 
 
@@ -134,7 +134,7 @@ def create_service(client: TestClient, headers: dict[str, str], slug: str, name:
     return response.json()
 
 
-def test_admin_configuration_catalog_and_stage_endpoints(client: TestClient) -> None:
+def test_admin_configuration_catalog_and_stage_endpoints(client: TestClient, db_session: Session) -> None:
     headers = auth_headers(client)
 
     roles = client.get("/api/admin/stakeholder-roles", headers=headers, params={"active_state": "all", "page": 1, "page_size": 5})
@@ -168,6 +168,41 @@ def test_admin_configuration_catalog_and_stage_endpoints(client: TestClient) -> 
         },
     )
     assert rule.status_code == 201
+
+    blocked_rule_delete = client.delete(f"/api/admin/stakeholder-roles/{role.json()['id']}", headers=headers)
+    assert blocked_rule_delete.status_code == 409
+    assert blocked_rule_delete.json()["detail"]["gap_rule_usage_count"] == 1
+
+    unused_role = client.post(
+        "/api/admin/stakeholder-roles",
+        headers=headers,
+        json={"slug": "obsolete_contact", "name": "Obsolete Contact", "display_order": 55},
+    )
+    assert unused_role.status_code == 201
+    delete_unused_role = client.delete(f"/api/admin/stakeholder-roles/{unused_role.json()['id']}", headers=headers)
+    assert delete_unused_role.status_code == 200
+
+    owner = seeded_user(db_session, "account_manager")
+    account = create_account(db_session, owner, account_id="relationships-role-delete-account")
+    stakeholder_role = client.post(
+        "/api/admin/stakeholder-roles",
+        headers=headers,
+        json={"slug": "client_champion", "name": "Client Champion", "display_order": 60},
+    )
+    assert stakeholder_role.status_code == 201
+    stakeholder = client.post(
+        f"/api/accounts/{account.id}/stakeholders",
+        headers=headers,
+        json={"name": "Client Champion User", "role": "client_champion"},
+    )
+    assert stakeholder.status_code == 201
+    blocked_stakeholder_delete = client.delete(f"/api/admin/stakeholder-roles/{stakeholder_role.json()['id']}", headers=headers)
+    assert blocked_stakeholder_delete.status_code == 409
+    assert blocked_stakeholder_delete.json()["detail"]["stakeholder_count"] == 1
+
+    active_roles = client.get("/api/stakeholder-roles", headers=headers, params={"page": 1, "page_size": 100})
+    assert active_roles.status_code == 200
+    assert any(item["slug"] == "client_champion" for item in active_roles.json()["items"])
 
     invalid_service = client.post("/api/admin/service-catalog", headers=headers, json={"slug": "bad slug", "name": ""})
     assert invalid_service.status_code == 422
@@ -263,7 +298,10 @@ def test_account_plan_whitespace_recommendation_and_opportunity_flow(client: Tes
     assert recommendations.status_code == 200
     recommendation = recommendations.json()["items"][0]
     assert recommendation["target_service_id"] == target["id"]
-    assert recommendation["relevance_score"] == 91
+    assert recommendation["base_fit_score"] == 91
+    assert recommendation["relevance_score"] == 94
+    assert recommendation["account_fit_score"] == 94
+    assert any(factor["label"] == "Active account" for factor in recommendation["score_factors"])
 
     unconfirmed = client.post(
         f"/api/accounts/{account.id}/service-recommendations/{recommendation['id']}/opportunity",
@@ -271,6 +309,13 @@ def test_account_plan_whitespace_recommendation_and_opportunity_flow(client: Tes
         json={"owner_id": owner.id, "target_date": (datetime.now(timezone.utc) + timedelta(days=30)).isoformat(), "confirm": False},
     )
     assert unconfirmed.status_code == 422
+
+    kickoff_stage = client.post(
+        "/api/admin/opportunity-stages",
+        headers=headers,
+        json={"slug": "kickoff_review", "name": "Kickoff Review", "display_order": 0},
+    )
+    assert kickoff_stage.status_code == 201
 
     converted = client.post(
         f"/api/accounts/{account.id}/service-recommendations/{recommendation['id']}/opportunity",
@@ -280,7 +325,7 @@ def test_account_plan_whitespace_recommendation_and_opportunity_flow(client: Tes
     assert converted.status_code == 201
     opportunity = converted.json()
     assert opportunity["source_context"] == "service_recommendation"
-    assert opportunity["stage_history"][0]["after_stage"] == "Identified"
+    assert opportunity["stage_history"][0]["after_stage"] == "Kickoff Review"
 
     stored_recommendation = db_session.get(ServiceRecommendation, recommendation["id"])
     assert stored_recommendation is not None
@@ -289,6 +334,128 @@ def test_account_plan_whitespace_recommendation_and_opportunity_flow(client: Tes
     assert db_session.scalar(select(Opportunity).where(Opportunity.id == opportunity["id"])) is not None
     assert db_session.scalar(select(OpportunityStageHistory).where(OpportunityStageHistory.opportunity_id == opportunity["id"])) is not None
     assert db_session.scalar(select(TimelineEntry).where(TimelineEntry.source_record_id == opportunity["id"])) is not None
+
+
+def test_taxonomy_growth_rules_partial_whitespace_and_open_opportunity_suppression(client: TestClient, db_session: Session) -> None:
+    headers = auth_headers(client)
+    owner = seeded_user(db_session, "account_manager")
+    account = create_account(db_session, owner, account_id="growth-taxonomy-account")
+    account.lifecycle_status = "Expansion Focus"
+    account.risk_status = "healthy"
+    account.health_overall = 76
+    account.health_delivery = 74
+    account.health_commercial = 70
+    db_session.commit()
+
+    source = client.post(
+        "/api/admin/service-catalog",
+        headers=headers,
+        json={"slug": "taxonomy_source", "name": "Taxonomy Source", "category": "Innovation Engineering", "tags": ["platform"], "display_order": 101},
+    )
+    assert source.status_code == 201
+    target = client.post(
+        "/api/admin/service-catalog",
+        headers=headers,
+        json={"slug": "taxonomy_target", "name": "Taxonomy Target", "category": "Innovation Quality", "tags": ["automation"], "display_order": 102},
+    )
+    assert target.status_code == 201
+
+    bundle = client.post(
+        "/api/admin/service-growth-bundles",
+        headers=headers,
+        json={"slug": "quality_bundle", "name": "Quality Bundle", "service_ids": [target.json()["id"]], "display_order": 1},
+    )
+    assert bundle.status_code == 201
+    assert bundle.json()["service_names"] == ["Taxonomy Target"]
+
+    rule = client.post(
+        "/api/admin/service-growth-rules",
+        headers=headers,
+        json={
+            "source_selector_type": "category",
+            "source_selector_value": "Innovation Engineering",
+            "target_selector_type": "bundle",
+            "target_selector_value": bundle.json()["id"],
+            "base_fit_score": 75,
+            "priority": 25,
+            "rationale_template": "{source_service} creates a path into {target_service} for {account_name}.",
+        },
+    )
+    assert rule.status_code == 201
+    assert rule.json()["source_selector_label"] == "Category: Innovation Engineering"
+    assert rule.json()["target_selector_label"] == "Quality Bundle"
+
+    duplicate_pair_rule = client.post(
+        "/api/admin/service-growth-rules",
+        headers=headers,
+        json={
+            "source_selector_type": "service",
+            "source_selector_value": source.json()["id"],
+            "target_selector_type": "service",
+            "target_selector_value": target.json()["id"],
+            "base_fit_score": 82,
+            "priority": 50,
+            "rationale_template": "Direct service pair duplicate.",
+        },
+    )
+    assert duplicate_pair_rule.status_code == 422
+    duplicate_error = duplicate_pair_rule.json()["detail"]["errors"][0]
+    assert duplicate_error["field"] == "target_selector_value"
+    assert "overlaps active rule" in duplicate_error["message"]
+    assert "Taxonomy Source -> Taxonomy Target" in duplicate_error["message"]
+
+    first_save = client.put(
+        f"/api/accounts/{account.id}/whitespace",
+        headers=headers,
+        json={"items": [{"service_id": source.json()["id"], "coverage_status": "active", "source": "manual"}]},
+    )
+    assert first_save.status_code == 200
+
+    patch_save = client.patch(
+        f"/api/accounts/{account.id}/whitespace",
+        headers=headers,
+        json={"items": [{"service_id": target.json()["id"], "coverage_status": "potential", "source": "manual"}]},
+    )
+    assert patch_save.status_code == 200
+    statuses = {item["service_id"]: item["coverage_status"] for item in patch_save.json()}
+    assert statuses[source.json()["id"]] == "active"
+    assert statuses[target.json()["id"]] == "potential"
+
+    recommendations = client.get(f"/api/accounts/{account.id}/service-recommendations", headers=headers, params={"page": 1, "page_size": 10})
+    assert recommendations.status_code == 200
+    recommendation = recommendations.json()["items"][0]
+    assert recommendation["target_service_id"] == target.json()["id"]
+    assert recommendation["base_fit_score"] == 75
+    assert recommendation["relevance_score"] == 94
+    assert {factor["label"] for factor in recommendation["score_factors"]} >= {"Potential coverage", "Expansion stage", "Healthy delivery"}
+
+    opportunity_type = db_session.scalar(select(OpportunityType).where(OpportunityType.slug == "cross_sell"))
+    assert opportunity_type is not None
+    db_session.add(
+        Opportunity(
+            account_id=account.id,
+            type_id=opportunity_type.id,
+            owner_id=owner.id,
+            owner_name=owner.full_name,
+            owner_email=owner.email,
+            name="Existing Taxonomy Target opportunity",
+            service_line=target.json()["name"],
+            value=1000,
+            currency="USD",
+            stage="Identified",
+            next_step="Already in pipeline.",
+            target_date=datetime.now(timezone.utc) + timedelta(days=30),
+            created_by_id=owner.id,
+            created_by_name=owner.full_name,
+            updated_by_id=owner.id,
+            updated_by_name=owner.full_name,
+        )
+    )
+    db_session.commit()
+
+    suppressed = client.get(f"/api/accounts/{account.id}/service-recommendations", headers=headers, params={"page": 1, "page_size": 10})
+    assert suppressed.status_code == 200
+    assert suppressed.json()["items"] == []
 
 
 def test_renewal_retention_plan_and_task_flow(client: TestClient, db_session: Session) -> None:

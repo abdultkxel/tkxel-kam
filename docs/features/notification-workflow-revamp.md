@@ -41,7 +41,12 @@ An AM creates an account draft. KAM Head/Admin users receive a persisted bell no
 
 - Pages/components: `NotificationTray`, `Notifications`, `AdminNotificationsReportingPanel`.
 - Services: `frontend/src/services/notificationsReporting.ts`.
-- Form behavior: Admin can filter by workflow, edit channel/priority/timing, test, reset, and dry-run timed triggers.
+- Form behavior: Admin can filter by workflow, edit channel/priority/timing, test, and reset trigger defaults.
+- Admin Settings now hides signal/escalation workflow trigger defaults and no longer shows SLA rule configuration or SLA run controls.
+- The notification trigger catalog has been pruned to implemented runtime emitters. Seed/bootstrap removes stale trigger configs and preferences such as old renewal, Fathom, signal, content, retention, and planning defaults while preserving historical notification records.
+- Admin Settings, Profile notification preferences, and Notification Center trigger filters now surface only configurable triggers. Runtime-only escalation/SLA configs remain available for existing backend emitters but are hidden from Admin Settings defaults.
+- Admin trigger defaults are paginated in the Settings panel so large trigger catalogs remain scannable.
+- Notification scheduler dry-run controls and scheduler run history are no longer shown in Admin Settings.
 - Backend error display: existing toast/error-state behavior is reused.
 
 ## Validation And Errors
@@ -52,7 +57,7 @@ An AM creates an account draft. KAM Head/Admin users receive a persisted bell no
 ## Tests
 
 - Backend unit/API tests cover base/catalog seeding, mandatory email enforcement for explicit admin test paths, bell summary, admin timing update/test/dry-run, draft workflow notifications, task creation notifications, account-owner notifications, and escalation notifications.
-- Frontend tests should cover tray summary loading and admin trigger settings once the component test suite is expanded.
+- Frontend tests cover tray summary loading and Admin trigger settings visibility/pagination.
 
 ## Linting And Quality
 

@@ -74,5 +74,6 @@ describe('AdminContentPanel', () => {
 
     await waitFor(() => expect(fetchMock.mock.calls.some(call => String(call[0]).endsWith('/api/content/upload'))).toBe(true))
     expect(await screen.findByText('Cafe Zupas deck')).toBeInTheDocument()
+    expect(await screen.findByText('Client Segment Note: Executive rollout')).toBeInTheDocument()
   })
 })

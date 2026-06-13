@@ -10,7 +10,6 @@ PORTFOLIO_VIEW_PERMISSIONS = {
     "dashboards:view_portfolio",
     "reports:view_portfolio",
     "analytics:view_portfolio",
-    "tasks:view_portfolio",
 }
 PORTFOLIO_EDIT_PERMISSIONS = {"accounts:update_profile_portfolio", "accounts:update_lifecycle"}
 ASSIGNED_ACCOUNT_UPDATE_PERMISSIONS = {"accounts:update_profile_assigned"}

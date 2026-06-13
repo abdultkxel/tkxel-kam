@@ -2,7 +2,7 @@ import { FileText, Loader2, Plus, Search, Trash2 } from 'lucide-react'
 import { FormEvent, useEffect, useMemo, useState } from 'react'
 import { toast } from 'sonner'
 import { FieldError } from '@/components/form/FieldError'
-import { RuntimeCustomFields, customValuesForSubmit, requiredCustomFieldErrors } from '@/components/custom-fields/RuntimeCustomFields'
+import { RuntimeCustomFieldValues, RuntimeCustomFields, customValuesForSubmit, requiredCustomFieldErrors } from '@/components/custom-fields/RuntimeCustomFields'
 import { EmptyState } from '@/components/ui/EmptyState'
 import { ApiError } from '@/services/api'
 import { ContentItem, RuntimeCustomField, createContent, deleteContent, listContent, listRuntimeCustomFields, uploadContentFile } from '@/services/contentGovernance'
@@ -33,8 +33,8 @@ export function AdminContentPanel() {
     url: '',
     body_content: '',
   })
-  const formCustomFields = customFields.filter(field => field.show_in_detail)
-  const listCustomFields = customFields.filter(field => field.show_in_list)
+  const formCustomFields = customFields
+  const listCustomFields = customFields
   const params = useMemo(() => {
     const next = new URLSearchParams()
     if (search) next.set('search', search)
@@ -235,10 +235,8 @@ export function AdminContentPanel() {
                 <div className="mt-2 flex flex-wrap gap-2">
                   {(item.tags || []).map(tag => <span key={tag} className="rounded-full bg-blue-tint-20 px-2 py-1 text-[11px] font-semibold text-brand-blue">{tag}</span>)}
                   <span className="rounded-full bg-surface-tertiary px-2 py-1 text-[11px] font-semibold text-ink-secondary">{item.is_active ? 'Active' : 'Inactive'}</span>
-                  {listCustomFields.map(field => item.custom_field_values?.[field.field_key] ? (
-                    <span key={field.id} className="rounded-full bg-surface-tertiary px-2 py-1 text-[11px] font-semibold text-ink-secondary">{field.label}: {String(item.custom_field_values[field.field_key])}</span>
-                  ) : null)}
                 </div>
+                <RuntimeCustomFieldValues fields={listCustomFields} values={item.custom_field_values} variant="badges" className="mt-2" />
               </div>
               <button type="button" className="tk-button-secondary justify-self-start lg:justify-self-end" onClick={() => remove(item)}>
                 <Trash2 className="h-4 w-4" />

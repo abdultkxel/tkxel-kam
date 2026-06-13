@@ -59,7 +59,7 @@ export function AddGovernanceEventDialog({
     let cancelled = false
     listRuntimeCustomFields(token, 'governance_reviews')
       .then(fields => {
-        if (!cancelled) setCustomFields(Array.isArray(fields) ? fields.filter(field => field.show_in_detail) : [])
+        if (!cancelled) setCustomFields(Array.isArray(fields) ? fields : [])
       })
       .catch(() => {
         if (!cancelled) setCustomFields([])
