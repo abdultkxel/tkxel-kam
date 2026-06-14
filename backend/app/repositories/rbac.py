@@ -9,6 +9,7 @@ from app.rbac_catalog import permission_key
 ROLE_PERMISSION_ALIASES = {
     "delivery_stakeholder": "delivery_lead",
 }
+HIDDEN_MANAGEABLE_ROLE_SLUGS = {"super_admin"}
 
 
 class RbacRepository:
@@ -191,7 +192,7 @@ class RbacRepository:
 
     @staticmethod
     def _manageable_role_conditions(search: str | None, role_type: str) -> list:
-        conditions = []
+        conditions = [~Role.slug.in_(HIDDEN_MANAGEABLE_ROLE_SLUGS)]
         if search and search.strip():
             term = f"%{search.strip()}%"
             conditions.append(or_(Role.slug.ilike(term), Role.name.ilike(term), Role.description.ilike(term)))

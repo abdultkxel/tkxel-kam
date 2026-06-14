@@ -1,6 +1,5 @@
 import { Check, Search } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
-import { users } from '@/data/mock'
 import { useAuth } from '@/contexts/AuthContext'
 import { useCapabilities } from '@/hooks/useCapabilities'
 import { TimelineFilterState } from '@/hooks/useTimelineFilters'
@@ -86,11 +85,6 @@ export function TimelineFilters({
           <span className="text-xs font-semibold uppercase tracking-wider text-ink-secondary">Owner</span>
           <select className="tk-input" value={filters.owner} onChange={event => setFilter('owner', event.target.value)}>
             <option value="">Anyone</option>
-            {users.map(person => (
-              <option key={person.id} value={person.id}>
-                {person.name}
-              </option>
-            ))}
           </select>
         </label>
         {canSeeSensitive ? (

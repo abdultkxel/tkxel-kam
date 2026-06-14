@@ -1,11 +1,12 @@
 import * as Collapsible from '@radix-ui/react-collapsible'
 import { ChevronDown, Loader2, PencilLine, Sparkles, ThumbsDown, ThumbsUp } from 'lucide-react'
-import { useMemo, useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { toast } from 'sonner'
+import { useAuth } from '@/contexts/AuthContext'
 import { useCapabilities } from '@/hooks/useCapabilities'
 import { generateAISummary } from '@/services/aiSummary'
-import { useAISummaryStore } from '@/stores/aiSummaryStore'
+import { createTimelineNote } from '@/services/timeline'
 import { Account } from '@/types/account'
 import { GovernanceEventRecord } from '@/types/governance'
 import { Opportunity } from '@/types/opportunity'
@@ -13,7 +14,6 @@ import { AISummary, SummaryType } from '@/types/aiSummary'
 import { TimelineEntry } from '@/types/timeline'
 import { UserRole } from '@/types/user'
 import { cn } from '@/utils/cn'
-import { emitTimelineEvent } from '@/utils/emitTimelineEvent'
 import { formatRelative } from '@/utils/formatters'
 
 const ONE_HOUR = 60 * 60 * 1000
@@ -44,8 +44,6 @@ export function AIBriefCard({
   entries,
   opportunities,
   governance,
-  userId,
-  userName,
   type = 'account_brief',
 }: {
   account: Account
@@ -57,23 +55,26 @@ export function AIBriefCard({
   userName: string
   type?: SummaryType
 }) {
+  const { token } = useAuth()
   const [open, setOpen] = useState(false)
   const [loading, setLoading] = useState(false)
-  const summaries = useAISummaryStore(state => state.summaries)
-  const upsertSummary = useAISummaryStore(state => state.upsertSummary)
-  const setFeedback = useAISummaryStore(state => state.setFeedback)
-  const markEdited = useAISummaryStore(state => state.markEdited)
-  const summary = useMemo(() => summaries.find(item => item.accountId === account.id && item.type === type), [account.id, summaries, type])
+  const [summary, setSummary] = useState<AISummary | undefined>()
   const { capabilities } = useCapabilities()
   const privileged = capabilities.can_view_portfolio || capabilities.permission_keys.includes('ai:export')
+
+  useEffect(() => {
+    setSummary(undefined)
+  }, [account.id, type])
 
   async function buildSummary(force = false) {
     if (!force && isFresh(summary)) return
     setLoading(true)
-    await new Promise(resolve => window.setTimeout(resolve, 420))
-    const next = generateAISummary({ account, entries, opportunities, governance, type })
-    upsertSummary(next)
-    setLoading(false)
+    try {
+      const next = generateAISummary({ account, entries, opportunities, governance, type })
+      setSummary(next)
+    } finally {
+      setLoading(false)
+    }
   }
 
   function handleOpenChange(value: boolean) {
@@ -81,27 +82,32 @@ export function AIBriefCard({
     if (value) buildSummary(false)
   }
 
-  function editSummary() {
+  function setFeedback(_: string, feedback: 'up' | 'down') {
+    setSummary(current => current ? { ...current, feedback } : current)
+  }
+
+  async function editSummary() {
     const active = summary
     if (!active) return
-    const entry = emitTimelineEvent({
-      accountId: account.id,
-      eventType: 'manual_note',
-      module: 'ai',
-      title: 'Edited AI account brief',
-      description: active.sections.map(section => `${section.title}: ${section.body}`).join('\n\n'),
-      performedBy: userId,
-      performedByName: userName,
-      sourceRecordId: active.id,
-      sourceRecordType: 'ai_summary',
-      sourceRecordRoute: `/accounts/${account.id}?tab=timeline`,
-      tags: ['ai-summary', 'quality-review'],
-      isSensitive: false,
-      isSystemGenerated: false,
-      isImmutable: false,
-    })
-    markEdited(active.id, entry.id)
-    toast.success('Edited summary saved as a linked timeline note')
+    if (!token) {
+      toast.error('You must be logged in to save AI brief edits')
+      return
+    }
+    try {
+      const entry = await createTimelineNote(token, account.id, {
+        event_type: 'manual_note',
+        title: 'Edited AI account brief',
+        description: active.sections.map(section => `${section.title}: ${section.body}`).join('\n\n'),
+        tags: ['ai-summary', 'quality-review'],
+        mentions: [],
+        attachments: [],
+        is_sensitive: false,
+      })
+      setSummary({ ...active, editedNoteId: entry.id })
+      toast.success('Edited summary saved as a linked timeline note')
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Edited summary could not be saved')
+    }
   }
 
   return (

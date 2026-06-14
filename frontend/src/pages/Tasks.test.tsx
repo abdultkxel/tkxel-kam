@@ -3,7 +3,6 @@ import userEvent from '@testing-library/user-event'
 import { MemoryRouter } from 'react-router-dom'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { Tasks } from '@/pages/Tasks'
-import { useAccountStore } from '@/stores/accountStore'
 
 vi.mock('@/contexts/AuthContext', () => ({
   useAuth: () => ({
@@ -41,6 +40,45 @@ const account = {
   stakeholders: [],
   risks: [],
 } as const
+
+const apiAccount = {
+  id: account.id,
+  account_number: 100001,
+  name: account.name,
+  project_name: null,
+  company_url: null,
+  linkedin_url: null,
+  segment: account.segment,
+  region: 'NA',
+  lifecycle_status: account.stage,
+  risk_status: account.riskStatus,
+  commercial_value: account.arr,
+  currency: 'USD',
+  health: account.health,
+  next_governance_at: account.nextQbr,
+  updated_at: '2026-06-01T12:00:00Z',
+  primary_owner: {
+    id: 'owner-1',
+    user_id: account.ownerId,
+    user_name: account.ownerName,
+    user_email: account.ownerEmail,
+    ownership_role: 'account_manager',
+    is_primary: true,
+    is_active: true,
+  },
+  owners: [
+    {
+      id: 'owner-1',
+      user_id: account.ownerId,
+      user_name: account.ownerName,
+      user_email: account.ownerEmail,
+      ownership_role: 'account_manager',
+      is_primary: true,
+      is_active: true,
+    },
+  ],
+  governance_completeness: {},
+}
 
 const task = {
   id: 'task-1',
@@ -90,7 +128,7 @@ function page<T>(items: T[]) {
 
 describe('Tasks page backend work queue', () => {
   beforeEach(() => {
-    useAccountStore.setState({ accounts: [account] as never })
+    vi.unstubAllGlobals()
   })
 
   afterEach(() => {
@@ -106,6 +144,7 @@ describe('Tasks page backend work queue', () => {
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input)
       if (url.includes('/api/custom-fields')) return jsonResponse([])
+      if (url.includes('/api/accounts')) return jsonResponse(page([apiAccount]))
       if (url.includes('/api/tasks/task-1') && init?.method === 'PATCH') {
         expect(JSON.parse(String(init.body))).toMatchObject({ status: 'in_progress' })
         return jsonResponse({ ...task, status: 'in_progress', updated_at: '2026-06-02T12:00:00Z' })
@@ -143,6 +182,7 @@ describe('Tasks page backend work queue', () => {
     const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input)
       if (url.includes('/api/custom-fields')) return jsonResponse([])
+      if (url.includes('/api/accounts')) return jsonResponse(page([apiAccount]))
       if (url.includes('/api/tasks')) return jsonResponse(page([task]))
       return jsonResponse(page([]))
     })
@@ -170,6 +210,7 @@ describe('Tasks page backend work queue', () => {
     const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input)
       if (url.includes('/api/custom-fields')) return jsonResponse([])
+      if (url.includes('/api/accounts')) return jsonResponse(page([apiAccount]))
       if (url.includes('/api/tasks')) return jsonResponse(page([legacyTodoTask]))
       return jsonResponse(page([]))
     })
@@ -196,6 +237,7 @@ describe('Tasks page backend work queue', () => {
       vi.fn(async (input: RequestInfo | URL) => {
         const url = String(input)
         if (url.includes('/api/custom-fields')) return jsonResponse([])
+        if (url.includes('/api/accounts')) return jsonResponse(page([apiAccount]))
         if (url.includes('/api/tasks')) return jsonResponse({ detail: 'Forbidden' }, 403)
         return jsonResponse({})
       }),

@@ -2,8 +2,8 @@ import { CheckCircle2, Download, Loader2, Upload, XCircle } from 'lucide-react'
 import { ChangeEvent, useEffect, useMemo, useState } from 'react'
 import { toast } from 'sonner'
 import { useAuth } from '@/contexts/AuthContext'
+import { useAccountOptions } from '@/hooks/useAccountOptions'
 import { AccountCsvImportResponse, AccountCsvImportRow, AccountCustomFieldDefinition, importAccountsCsv, listAccountCustomFields } from '@/services/accountWorkspace'
-import { useAccountStore } from '@/stores/accountStore'
 import { cn } from '@/utils/cn'
 
 type Step = 1 | 2 | 3 | 4
@@ -79,8 +79,7 @@ function readFileText(file: File) {
 
 export function AccountCsvImport() {
   const { token } = useAuth()
-  const upsertAccount = useAccountStore(state => state.upsertAccount)
-  const existing = useAccountStore(state => state.accounts)
+  const { accounts: existing } = useAccountOptions()
   const [step, setStep] = useState<Step>(1)
   const [headers, setHeaders] = useState<string[]>([])
   const [rows, setRows] = useState<Record<string, string>[]>([])
@@ -167,9 +166,6 @@ export function AccountCsvImport() {
         duplicateMode,
         sourceFileName: fileName || 'account-import.csv',
         rows: rows.map(row => buildImportRow(row, mapping, customFields)),
-      })
-      report.results.forEach(result => {
-        if (result.account) upsertAccount(result.account)
       })
       setImportReport(report)
       const stored = report.created + report.updated

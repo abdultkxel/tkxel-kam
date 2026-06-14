@@ -84,12 +84,6 @@ export function Dashboard() {
     updateDashboardParam('am_id', value)
   }
 
-  function updatePage(nextPage: number) {
-    const next = new URLSearchParams(params)
-    next.set('page', String(Math.max(1, nextPage)))
-    setParams(next, { replace: true })
-  }
-
   function updateDashboardParam(key: string, value: string) {
     const next = new URLSearchParams(params)
     if (value) next.set(key, value)
@@ -131,7 +125,6 @@ export function Dashboard() {
       onAccountChange={updateAccountId}
       onAmChange={updateAmId}
       onSearchSubmit={submitSearch}
-      onPageChange={updatePage}
       onRefreshSummary={() => void refreshSummary()}
     />
   )
