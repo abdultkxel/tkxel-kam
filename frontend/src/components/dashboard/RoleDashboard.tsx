@@ -88,6 +88,7 @@ const knownWidgetKeys = new Set([
   'critical_actions',
   'todays_tasks',
   'tasks',
+  'onboarding_drafts',
   'stale_kyc',
   'renewal_focus',
   'am_workload',
@@ -133,6 +134,7 @@ export function RoleDashboard({
   const opportunities = widgetByKey.get('opportunities') ?? widgetByKey.get('growth')
   const forecast = widgetByKey.get('forecast_chart')
   const calendar = widgetByKey.get('governance_calendar')
+  const onboardingDrafts = visibleOnboardingDrafts(widgetByKey.get('onboarding_drafts'))
   const accountOptions = useMemo(() => collectAccountOptions(widgets), [widgets])
   const ownerOptions = useMemo(() => collectOwnerOptions(widgets), [widgets])
   const allowedFilters = dashboard?.allowed_filters ?? []
@@ -216,6 +218,7 @@ export function RoleDashboard({
               widgetByKey.get('high_risk_accounts'),
               widgetByKey.get('critical_tasks') ?? widgetByKey.get('signals'),
               taskPanel?.key === 'tasks' ? undefined : widgetByKey.get('tasks'),
+              onboardingDrafts,
               widgetByKey.get('am_workload'),
               widgetByKey.get('engagement_health'),
               widgetByKey.get('retention'),
@@ -464,6 +467,14 @@ function TaskSummaryPanel({ widget, refreshing, canRefresh, onRefresh }: { widge
       </div>
     </section>
   )
+}
+
+function visibleOnboardingDrafts(widget?: DashboardWidget) {
+  if (!widget) return undefined
+  const value = isRecord(widget.value) ? widget.value : {}
+  const readyForReview = numericValue(value.ready_for_review)
+  const total = numericValue(widget.metadata.total)
+  return widget.items.length > 0 || total > 0 || readyForReview > 0 ? widget : undefined
 }
 
 function TaskBreakdownPanel({ widget }: { widget: DashboardWidget }) {
