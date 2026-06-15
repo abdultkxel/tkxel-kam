@@ -3,6 +3,7 @@ import type { ReactNode } from 'react'
 import { useEffect, useMemo, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { toast } from 'sonner'
+import { ConfirmDialog } from '@/components/admin/ConfirmDialog'
 import { EmptyState } from '@/components/ui/EmptyState'
 import { PageHeader } from '@/components/ui/PageHeader'
 import { Skeleton } from '@/components/ui/Skeleton'
@@ -76,6 +77,8 @@ export function Onboarding() {
   const [savingDraft, setSavingDraft] = useState(false)
   const [extracting, setExtracting] = useState(false)
   const [replacingSource, setReplacingSource] = useState(false)
+  const [rejectingDraft, setRejectingDraft] = useState(false)
+  const [rejectConfirmDraft, setRejectConfirmDraft] = useState<OnboardingDraftView | null>(null)
   const [retryingDocumentId, setRetryingDocumentId] = useState('')
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
@@ -83,6 +86,7 @@ export function Onboarding() {
   const selected = drafts.find(draft => draft.id === selectedId) ?? drafts[0]
   const selectedDocs = useMemo(() => selected?.sourceDocuments ?? [], [selected])
   const assignableManagers = assignableAccountManagers(accountManagers, user, capabilities.can_assign_account_owners)
+  const draftManagerOptions = draftAccountManagerOptions(assignableManagers, selected)
   const intakeManager = assignableManagers.find(manager => manager.id === selectedManagerId)
   const selectedOwnerId = selected?.accountDraft.ownerId && selected.accountDraft.ownerId !== 'pending-owner' ? selected.accountDraft.ownerId : ''
   const selectedOwnerMissing = selected?.status === 'ready_for_review' && !selectedOwnerId
@@ -160,17 +164,13 @@ export function Onboarding() {
       toast.error('Only Excel project charter files are allowed')
       return
     }
-    if (!intakeManager) {
-      toast.error('Select an account manager before creating a draft')
-      return
-    }
     setExtracting(true)
     try {
       const draft = await createOnboardingDraftFromUpload(token, {
         files,
-        managerId: intakeManager.id,
-        managerEmail: intakeManager.email,
-        managerName: intakeManager.name,
+        managerId: intakeManager?.id,
+        managerEmail: intakeManager?.email,
+        managerName: intakeManager?.name,
       })
       setDrafts(current => [draft, ...current.filter(item => item.id !== draft.id)])
       setSelectedId(draft.id)
@@ -229,7 +229,7 @@ export function Onboarding() {
     if (!draftEdits.accountName.trim()) nextErrors.accountName = 'Account name is required'
     if (!draftEdits.projectName.trim()) nextErrors.projectName = 'Project name is required'
     if (draftEdits.linkedinUrl.trim() && !isLinkedinUrl(draftEdits.linkedinUrl)) nextErrors.linkedinUrl = 'Enter a valid LinkedIn URL'
-    if (!draftEdits.managerId || !assignableManagers.some(manager => manager.id === draftEdits.managerId)) nextErrors.managerId = 'Select an account manager'
+    if (!draftEdits.managerId || !draftManagerOptions.some(manager => manager.id === draftEdits.managerId)) nextErrors.managerId = 'Select an account manager'
     for (const engagement of selected?.engagementDrafts ?? []) {
       const edit = engagementDraftEdits[engagement.id]
       if (!edit) continue
@@ -259,7 +259,7 @@ export function Onboarding() {
 
   async function saveDraftEdits(draft: OnboardingDraftView) {
     if (!token || draft.status !== 'ready_for_review' || !validateDraftEdits()) return
-    const manager = assignableManagers.find(item => item.id === draftEdits.managerId)
+    const manager = draftManagerOptions.find(item => item.id === draftEdits.managerId)
     if (!manager) return
     setSavingDraft(true)
     try {
@@ -293,12 +293,16 @@ export function Onboarding() {
 
   async function reject(selectedDraft: OnboardingDraftView) {
     if (!token) return
+    setRejectingDraft(true)
     try {
       const rejected = await rejectOnboardingDraft(token, selectedDraft.id, 'Rejected from onboarding review.')
       setDrafts(current => current.map(item => (item.id === rejected.id ? rejected : item)))
+      setRejectConfirmDraft(null)
       toast.success('Draft rejected and retained for audit')
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Draft could not be rejected')
+    } finally {
+      setRejectingDraft(false)
     }
   }
 
@@ -320,7 +324,7 @@ export function Onboarding() {
   async function replaceSourceDocuments(selectedDraft: OnboardingDraftView) {
     if (!token) return
     if (!replacementFiles.length) {
-      toast.error('Select a replacement SOW or charter file')
+      toast.error('Select a new charter or SOW file')
       return
     }
     if (!allSupportedSourceDocuments(replacementFiles)) {
@@ -332,9 +336,9 @@ export function Onboarding() {
       const updated = await replaceOnboardingDraftSourceDocuments(token, selectedDraft.id, { files: replacementFiles })
       setDrafts(current => current.map(item => (item.id === updated.id ? updated : item)))
       setReplacementFiles([])
-      toast.success('Source document replaced and draft fields refreshed')
+      toast.success('New charter/SOW processed. Review the updated draft fields before approval.')
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : 'Source document could not be replaced')
+      toast.error(err instanceof Error ? err.message : 'New charter/SOW could not update this draft')
     } finally {
       setReplacingSource(false)
     }
@@ -348,99 +352,110 @@ export function Onboarding() {
         description="Account Managers upload Excel project charters; Account Managers and KAM Heads edit, approve, or reject the draft before records become official."
       />
 
-      <div className={cn('grid gap-5', selected ? 'xl:grid-cols-1' : 'xl:grid-cols-[360px_minmax(0,1fr)]')}>
-        {!selected ? (
-          <aside className="space-y-4">
-            <section className="tk-card p-5">
-              <div className="flex items-start gap-3">
-                <div className="flex h-11 w-11 items-center justify-center rounded-lg bg-blue-tint-20 text-brand-blue">
-                  <UploadCloud className="h-5 w-5" />
-                </div>
-                <div>
-                  <h2 className="text-base font-semibold text-ink">Upload project charter</h2>
-                  <p className="mt-1 text-sm text-ink-secondary">Upload one or more Excel project charter files. Other formats are not accepted here.</p>
+      <div className="grid gap-5 xl:grid-cols-[360px_minmax(0,1fr)]">
+        <aside className="space-y-4">
+          <section className="tk-card p-5">
+            <div className="flex items-start gap-3">
+              <div className="flex h-11 w-11 items-center justify-center rounded-lg bg-blue-tint-20 text-brand-blue">
+                <UploadCloud className="h-5 w-5" />
+              </div>
+              <div>
+                <h2 className="text-base font-semibold text-ink">Upload new charter</h2>
+                <p className="mt-1 text-sm text-ink-secondary">Upload one or more Excel project charter files. Other formats are not accepted here.</p>
+              </div>
+            </div>
+            {selected && selectedDocs.length ? (
+              <div className="mt-4 rounded-lg border border-surface-border bg-surface-secondary p-3">
+                <p className="text-[10px] font-semibold uppercase tracking-wider text-ink-secondary">Current attached file</p>
+                <div className="mt-2 space-y-2">
+                  {selectedDocs.map(document => (
+                    <div key={document.id} className="rounded-md bg-white p-2">
+                      <div className="flex items-start gap-2">
+                        <FileText className="mt-0.5 h-4 w-4 shrink-0 text-brand-blue" />
+                        <div className="min-w-0 flex-1">
+                          <p className="truncate text-xs font-semibold text-ink">{document.fileName ?? document.name}</p>
+                        </div>
+                      </div>
+                      {token ? (
+                        <button
+                          className="mt-2 inline-flex items-center gap-1 text-xs font-semibold text-brand-blue hover:underline"
+                          type="button"
+                          onClick={() => downloadOnboardingDraftDocument(token, selected.id, document).catch(err => toast.error(err instanceof Error ? err.message : 'Document could not be downloaded'))}
+                        >
+                          <Download className="h-3.5 w-3.5" />
+                          Download existing charter
+                        </button>
+                      ) : null}
+                    </div>
+                  ))}
                 </div>
               </div>
-              <label className="mt-4 flex min-h-[132px] cursor-pointer flex-col items-center justify-center rounded-lg border border-dashed border-brand-blue/40 bg-blue-tint-20 p-4 text-center">
-                <FileSearch className="h-6 w-6 text-brand-blue" />
-                <span className="mt-2 text-sm font-semibold text-ink">Select Excel charter files</span>
-                <span className="mt-1 text-xs text-ink-secondary">Only Excel project charter files are allowed: XLSX, XLSM, or XLS.</span>
-                <input
-                  type="file"
-                  multiple
-                  accept={PROJECT_CHARTER_ACCEPT}
-                  className="sr-only"
-                  onChange={event => {
-                    const selectedFiles = Array.from(event.target.files ?? [])
-                    if (!allProjectCharterFiles(selectedFiles)) {
-                      setFiles([])
-                      toast.error('Only Excel project charter files are allowed')
-                      event.currentTarget.value = ''
-                      return
-                    }
-                    setFiles(selectedFiles)
-                  }}
-                />
-              </label>
-              {files.length ? (
-                <div className="mt-3 space-y-2">
-                  {files.map(file => (
-                    <div key={`${file.name}-${file.size}`} className="flex items-center gap-2 rounded-md bg-surface-secondary p-2 text-xs font-medium text-ink-secondary">
-                      <FileText className="h-4 w-4 text-brand-blue" />
-                      <span className="min-w-0 flex-1 truncate">{file.name}</span>
-                    </div>
-                  ))}
-                </div>
-              ) : null}
-              <label className="mt-4 block space-y-1">
-                <span className="tk-label text-xs">Account Manager <span className="text-brand-orange">*</span></span>
-                <select
-                  className="tk-input"
-                  value={selectedManagerId}
-                  onChange={event => setSelectedManagerId(event.target.value)}
-                  disabled={loadingManagers}
-                >
-                  <option value="">{loadingManagers ? 'Loading account managers...' : 'Select account manager'}</option>
-                  {assignableManagers.map(manager => (
-                    <option key={manager.id} value={manager.id}>{manager.name} - {manager.email}</option>
-                  ))}
-                </select>
-              </label>
-              <button className="tk-button-primary mt-4 w-full" onClick={runDocumentExtraction} disabled={extracting || !files.length || !intakeManager}>
-                {extracting ? <Loader2 className="h-4 w-4 animate-spin" /> : <FileSearch className="h-4 w-4" />}
-                Extract from uploaded SOW
-              </button>
-            </section>
-
-            <section className="tk-card p-4">
-              <h2 className="text-sm font-semibold text-ink">Draft queue</h2>
+            ) : null}
+            <label className="mt-4 flex min-h-[132px] cursor-pointer flex-col items-center justify-center rounded-lg border border-dashed border-brand-blue/40 bg-blue-tint-20 p-4 text-center">
+              <FileSearch className="h-6 w-6 text-brand-blue" />
+              <span className="mt-2 text-sm font-semibold text-ink">Select Excel charter files</span>
+              <span className="mt-1 text-xs text-ink-secondary">Only Excel project charter files are allowed: XLSX, XLSM, or XLS.</span>
+              <input
+                type="file"
+                multiple
+                accept={PROJECT_CHARTER_ACCEPT}
+                className="sr-only"
+                onChange={event => {
+                  const selectedFiles = Array.from(event.target.files ?? [])
+                  if (!allProjectCharterFiles(selectedFiles)) {
+                    setFiles([])
+                    toast.error('Only Excel project charter files are allowed')
+                    event.currentTarget.value = ''
+                    return
+                  }
+                  setFiles(selectedFiles)
+                }}
+              />
+            </label>
+            {files.length ? (
               <div className="mt-3 space-y-2">
-                {loading ? (
-                  <>
-                    <Skeleton className="h-20 w-full" />
-                    <Skeleton className="h-20 w-full" />
-                  </>
-                ) : error ? (
-                  <div className="rounded-lg border border-rag-red/20 bg-rag-red/10 p-3 text-sm text-rag-red">{error}</div>
-                ) : drafts.length === 0 ? (
-                  <div className="rounded-lg border border-surface-border bg-surface-secondary p-3 text-sm text-ink-secondary">No onboarding drafts yet.</div>
-                ) : drafts.map(draft => (
-                  <button
-                    key={draft.id}
-                    className="w-full rounded-lg border border-surface-border bg-white p-3 text-left transition-colors hover:bg-surface-tertiary"
-                    onClick={() => setSelectedId(draft.id)}
-                  >
-                    <div className="flex items-center justify-between gap-3">
-                      <span className="text-sm font-semibold text-ink">{draft.accountDraft.name}</span>
-                      <DraftBadge status={draft.status} />
-                    </div>
-                    <p className="mt-1 text-xs text-ink-secondary">{draft.engagementDrafts.length} engagement draft | {draft.confidence}% confidence</p>
-                  </button>
+                {files.map(file => (
+                  <div key={`${file.name}-${file.size}`} className="flex items-center gap-2 rounded-md bg-surface-secondary p-2 text-xs font-medium text-ink-secondary">
+                    <FileText className="h-4 w-4 text-brand-blue" />
+                    <span className="min-w-0 flex-1 truncate">{file.name}</span>
+                  </div>
                 ))}
               </div>
-            </section>
-          </aside>
-        ) : null}
+            ) : null}
+            <button className="tk-button-primary mt-4 w-full" onClick={runDocumentExtraction} disabled={extracting || loadingManagers || !files.length}>
+              {extracting ? <Loader2 className="h-4 w-4 animate-spin" /> : <FileSearch className="h-4 w-4" />}
+              Extract from uploaded SOW
+            </button>
+          </section>
+
+          <section className="tk-card p-4">
+            <h2 className="text-sm font-semibold text-ink">Draft queue</h2>
+            <div className="mt-3 space-y-2">
+              {loading ? (
+                <>
+                  <Skeleton className="h-20 w-full" />
+                  <Skeleton className="h-20 w-full" />
+                </>
+              ) : error ? (
+                <div className="rounded-lg border border-rag-red/20 bg-rag-red/10 p-3 text-sm text-rag-red">{error}</div>
+              ) : drafts.length === 0 ? (
+                <div className="rounded-lg border border-surface-border bg-surface-secondary p-3 text-sm text-ink-secondary">No onboarding drafts yet.</div>
+              ) : drafts.map(draft => (
+                <button
+                  key={draft.id}
+                  className="w-full rounded-lg border border-surface-border bg-white p-3 text-left transition-colors hover:bg-surface-tertiary"
+                  onClick={() => setSelectedId(draft.id)}
+                >
+                  <div className="flex items-center justify-between gap-3">
+                    <span className="text-sm font-semibold text-ink">{draft.accountDraft.name}</span>
+                    <DraftBadge status={draft.status} />
+                  </div>
+                  <p className="mt-1 text-xs text-ink-secondary">{draft.engagementDrafts.length} engagement draft | {draft.confidence}% confidence</p>
+                </button>
+              ))}
+            </div>
+          </section>
+        </aside>
 
         {loading && !selected ? (
           <main className="space-y-5">
@@ -461,7 +476,7 @@ export function Onboarding() {
                   </p>
                 </div>
                 <div className="flex flex-wrap gap-2">
-                  <button className="tk-button-secondary" onClick={() => reject(selected)} disabled={!canApproveOnboarding || selected.status !== 'ready_for_review'}>
+                  <button className="tk-button-secondary" onClick={() => setRejectConfirmDraft(selected)} disabled={!canApproveOnboarding || selected.status !== 'ready_for_review'}>
                     <XCircle className="h-4 w-4" />
                     Reject
                   </button>
@@ -472,9 +487,7 @@ export function Onboarding() {
                 </div>
               </div>
 
-              <div className="mt-5 grid gap-3 md:grid-cols-4">
-                <ReviewMetric label="Confidence" value={`${selected.confidence}%`} tone="blue" />
-                <ReviewMetric label="ARR Draft" value={formatCompactCurrency(selected.accountDraft.arr)} tone="dark" />
+              <div className="mt-5 grid gap-3 md:grid-cols-2">
                 <ReviewMetric label="Engagements" value={selected.engagementDrafts.length} tone="dark" />
                 <ReviewMetric label="Missing fields" value={selected.missingFields.length} tone="orange" />
               </div>
@@ -508,8 +521,8 @@ export function Onboarding() {
                           disabled={loadingManagers || savingDraft}
                         >
                           <option value="">{loadingManagers ? 'Loading account managers...' : 'Select account manager'}</option>
-                          {assignableManagers.map(manager => (
-                            <option key={manager.id} value={manager.id}>{manager.name} - {manager.email}</option>
+                          {draftManagerOptions.map(manager => (
+                            <option key={manager.id} value={manager.id}>{accountManagerOptionLabel(manager)}</option>
                           ))}
                         </select>
                         {draftEditErrors.managerId ? <p className="text-xs text-rag-red">{draftEditErrors.managerId}</p> : null}
@@ -556,14 +569,14 @@ export function Onboarding() {
                       <div className="rounded-lg border border-dashed border-brand-blue/30 bg-blue-tint-20 p-4">
                         <label className="flex min-h-[112px] cursor-pointer flex-col items-center justify-center rounded-md border border-dashed border-brand-blue/40 bg-white p-4 text-center">
                           <UploadCloud className="h-6 w-6 text-brand-blue" />
-                          <span className="mt-2 text-sm font-semibold text-ink">Replace SOW / charter</span>
-                          <span className="mt-1 text-xs text-ink-secondary">PDF, DOCX, TXT, CSV, XLSX, XLSM, or XLS.</span>
+                          <span className="mt-2 text-sm font-semibold text-ink">Upload new charter / SOW</span>
+                          <span className="mt-1 max-w-[260px] text-xs leading-5 text-ink-secondary">Attach a new source file to refresh the draft details, then review the updated account and engagement fields.</span>
                           <input
                             type="file"
                             multiple
                             accept={SOURCE_DOCUMENT_ACCEPT}
                             className="sr-only"
-                            aria-label="Upload replacement SOW or charter"
+                            aria-label="Upload new charter or SOW"
                             onChange={event => {
                               const selectedFiles = Array.from(event.target.files ?? [])
                               if (!allSupportedSourceDocuments(selectedFiles)) {
@@ -588,7 +601,7 @@ export function Onboarding() {
                         ) : null}
                         <button className="tk-button-primary mt-3 w-full" type="button" onClick={() => void replaceSourceDocuments(selected)} disabled={replacingSource || !replacementFiles.length}>
                           {replacingSource ? <Loader2 className="h-4 w-4 animate-spin" /> : <UploadCloud className="h-4 w-4" />}
-                          Re-upload source
+                          Update draft from new file
                         </button>
                       </div>
                     ) : null}
@@ -664,26 +677,6 @@ export function Onboarding() {
               </section>
 
               <aside className="space-y-4">
-                <ReviewCard title="Source citations">
-                  {selected.sourceDocuments.some(document => document.citations.length) ? (
-                    <div className="grid gap-2">
-                      {selected.sourceDocuments.flatMap(document => document.citations.map(citation => ({ citation, document }))).map(({ citation, document }) => (
-                        <div key={citation.id} className="rounded-lg border border-blue-tint-20 bg-blue-tint-20 p-3">
-                          <div className="flex items-start justify-between gap-3">
-                            <div>
-                              <p className="text-sm font-semibold text-brand-blue">{citation.fieldKey ? formatFieldKey(citation.fieldKey) : citation.label}</p>
-                              <p className="mt-0.5 text-[11px] font-medium text-ink-secondary">{document.name} · page {citation.page}</p>
-                            </div>
-                            <span className="shrink-0 rounded-full border border-white/70 bg-white px-2 py-0.5 text-[11px] font-semibold text-brand-blue">{citation.confidence ?? document.confidence}%</span>
-                          </div>
-                          <p className="mt-2 text-xs leading-5 text-ink-secondary">{citation.excerpt}</p>
-                        </div>
-                      ))}
-                    </div>
-                  ) : (
-                    <div className="rounded-lg border border-surface-border bg-surface-secondary p-3 text-sm text-ink-secondary">No source citations were extracted yet.</div>
-                  )}
-                </ReviewCard>
                 <ReviewCard title="Review blockers">
                   <div className="space-y-3">
                     {[...selected.missingFields, ...selected.conflicts].map(item => (
@@ -704,6 +697,20 @@ export function Onboarding() {
           </main>
         ) : null}
       </div>
+      <ConfirmDialog
+        open={Boolean(rejectConfirmDraft)}
+        title="Reject this draft?"
+        description="Rejecting this draft will stop it from becoming an account and move it out of active review. The extracted data will remain only as a rejected audit record, so onboarding this customer later will require creating a new account draft."
+        confirmLabel="Reject draft"
+        busyLabel="Rejecting"
+        isBusy={rejectingDraft}
+        onOpenChange={open => {
+          if (!open && !rejectingDraft) setRejectConfirmDraft(null)
+        }}
+        onConfirm={() => {
+          if (rejectConfirmDraft) void reject(rejectConfirmDraft)
+        }}
+      />
     </div>
   )
 }
@@ -784,20 +791,22 @@ function DocumentRow({ document, onDownload, onRetry, retrying = false }: { docu
   const canRetry = Boolean(onRetry && ['failed', 'needs_review', 'ocr_required'].includes(document.extractionStatus ?? ''))
   return (
     <div className="rounded-lg border border-surface-border p-3">
-      <div className="flex items-start justify-between gap-3">
-        <div>
-          <p className="text-sm font-semibold text-ink">{document.name}</p>
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+        <div className="min-w-0">
+          <p className="text-[10px] font-semibold uppercase tracking-wider text-ink-secondary">Attached source file</p>
+          <p className="mt-1 truncate text-sm font-semibold text-ink">{document.fileName ?? document.name}</p>
           <p className="mt-1 text-xs text-ink-secondary">{document.type.replace('_', ' ')} | {document.pages} pages | {formatRelative(document.uploadedAt)}</p>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           {canRetry ? (
             <button className="tk-icon-button" type="button" onClick={onRetry} disabled={retrying} title="Retry extraction" aria-label="Retry extraction">
               {retrying ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
             </button>
           ) : null}
           {onDownload ? (
-            <button className="tk-icon-button" type="button" onClick={onDownload} title="Download source document" aria-label="Download source document">
+            <button className="tk-button-secondary" type="button" onClick={onDownload}>
               <Download className="h-4 w-4" />
+              Download for verification
             </button>
           ) : null}
         </div>
@@ -812,12 +821,6 @@ function DocumentRow({ document, onDownload, onRetry, retrying = false }: { docu
   )
 }
 
-function formatFieldKey(value: string) {
-  return value
-    .replace(/_/g, ' ')
-    .replace(/\b\w/g, letter => letter.toUpperCase())
-}
-
 function defaultAccountManagerId(managers: OnboardingAccountManager[], currentUser: { id: string; email: string }, canAssignOwners: boolean) {
   if (canAssignOwners) return ''
   const self = managers.find(manager => manager.id === currentUser.id || manager.email.toLowerCase() === currentUser.email.toLowerCase())
@@ -827,6 +830,25 @@ function defaultAccountManagerId(managers: OnboardingAccountManager[], currentUs
 function assignableAccountManagers(managers: OnboardingAccountManager[], currentUser: { id: string; email: string }, canAssignOwners: boolean) {
   if (canAssignOwners) return managers
   return managers.filter(manager => manager.id === currentUser.id || manager.email.toLowerCase() === currentUser.email.toLowerCase())
+}
+
+function draftAccountManagerOptions(managers: OnboardingAccountManager[], draft?: OnboardingDraftView) {
+  const ownerId = draft?.accountDraft.ownerId && draft.accountDraft.ownerId !== 'pending-owner' ? draft.accountDraft.ownerId : ''
+  if (!ownerId || managers.some(manager => manager.id === ownerId)) return managers
+  return [
+    {
+      id: ownerId,
+      name: draft?.accountDraft.ownerName ?? 'Assigned Account Manager',
+      email: draft?.accountDraft.ownerEmail ?? '',
+      role: 'account_manager',
+      title: 'Assigned Account Manager',
+    },
+    ...managers,
+  ]
+}
+
+function accountManagerOptionLabel(manager: OnboardingAccountManager) {
+  return manager.email ? `${manager.name} - ${manager.email}` : manager.name
 }
 
 function normalizeUrl(value: string) {

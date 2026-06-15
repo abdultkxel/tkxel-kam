@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from '@testing-library/react'
+import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { MemoryRouter } from 'react-router-dom'
 import { describe, expect, it, vi } from 'vitest'
@@ -208,6 +208,9 @@ describe('Onboarding', () => {
       if (url.pathname.endsWith('/api/onboarding/drafts/draft-am-owned/documents/upload') && method === 'POST') {
         return jsonResponse(reuploadedDraft)
       }
+      if (url.pathname.endsWith('/api/onboarding/drafts/draft-am-owned/reject') && method === 'POST') {
+        return jsonResponse({ ...reuploadedDraft, status: 'rejected' })
+      }
       if (url.pathname.endsWith('/api/onboarding/drafts')) {
         return jsonResponse({
           items: [onboardingDraft],
@@ -228,15 +231,33 @@ describe('Onboarding', () => {
     )
 
     expect(await screen.findByRole('heading', { name: 'AM Created Draft' })).toBeInTheDocument()
-    expect(screen.queryByRole('heading', { name: /upload source documents/i })).not.toBeInTheDocument()
-    expect(screen.queryByRole('heading', { name: /draft queue/i })).not.toBeInTheDocument()
+    const uploadSection = screen.getByRole('heading', { name: /upload new charter/i }).closest('section') as HTMLElement
+    expect(uploadSection).toBeInTheDocument()
+    expect(screen.queryByRole('heading', { name: /upload project charter/i })).not.toBeInTheDocument()
+    expect(within(uploadSection).getByText('original-sow.pdf')).toBeInTheDocument()
+    expect(within(uploadSection).getByRole('button', { name: /download existing charter/i })).toBeInTheDocument()
+    expect(within(uploadSection).queryByText(/download and verify this file before uploading another charter/i)).not.toBeInTheDocument()
+    expect(within(uploadSection).queryByRole('combobox')).not.toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: /draft queue/i })).toBeInTheDocument()
+    expect(screen.queryByText('ARR Draft')).not.toBeInTheDocument()
+    expect(screen.getByText('Engagements')).toBeInTheDocument()
+    expect(screen.getByText('Missing fields')).toBeInTheDocument()
+    expect(screen.queryByRole('heading', { name: /source citations/i })).not.toBeInTheDocument()
     expect(screen.getByRole('heading', { name: /sow \/ charter source/i })).toBeInTheDocument()
-    expect(screen.getByText('Original SOW')).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: /download source document/i })).toBeInTheDocument()
-    expect(screen.getByLabelText(/upload replacement sow or charter/i)).toBeInTheDocument()
+    expect(screen.getAllByText('original-sow.pdf').length).toBeGreaterThan(0)
+    expect(screen.getByRole('button', { name: /download for verification/i })).toBeInTheDocument()
+    expect(screen.getByText(/upload new charter \/ sow/i)).toBeInTheDocument()
+    expect(screen.getByLabelText(/upload new charter or sow/i)).toBeInTheDocument()
     expect(screen.getByRole('button', { name: /^reject$/i })).not.toBeDisabled()
     expect(screen.getByRole('button', { name: /approve draft/i })).not.toBeDisabled()
-    expect(await screen.findByRole('option', { name: 'Account Manager KAM - account.manager.user@tkxel.com' })).toBeInTheDocument()
+    await userEvent.click(screen.getByRole('button', { name: /^reject$/i }))
+    expect(screen.getByRole('dialog', { name: /reject this draft/i })).toBeInTheDocument()
+    expect(screen.getByText(/move it out of active review/i)).toBeInTheDocument()
+    expect(fetchMock.mock.calls.some(call => String(call[0]).endsWith('/api/onboarding/drafts/draft-am-owned/reject'))).toBe(false)
+    await userEvent.click(screen.getByRole('button', { name: /cancel/i }))
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: /reject this draft/i })).not.toBeInTheDocument())
+    await waitFor(() => expect(screen.getAllByRole('option', { name: 'Account Manager KAM - account.manager.user@tkxel.com' }).length).toBeGreaterThan(0))
+    expect(screen.getByLabelText(/assigned account manager/i)).toHaveValue('usr-am')
     await userEvent.clear(screen.getByLabelText(/account name/i))
     await userEvent.type(screen.getByLabelText(/account name/i), 'AM Edited Draft')
     await userEvent.clear(screen.getByLabelText(/engagement name/i))
@@ -277,15 +298,22 @@ describe('Onboarding', () => {
     })).toBe(true)
     expect(fetchMock.mock.calls.some(call => String(call[0]).includes('/api/onboarding/drafts'))).toBe(true)
 
-    await userEvent.upload(screen.getByLabelText(/upload replacement sow or charter/i), new File(['replacement'], 'replacement-sow.pdf', { type: 'application/pdf' }))
+    await userEvent.upload(screen.getByLabelText(/upload new charter or sow/i), new File(['replacement'], 'replacement-sow.pdf', { type: 'application/pdf' }))
     expect(screen.getByText('replacement-sow.pdf')).toBeInTheDocument()
-    await userEvent.click(screen.getByRole('button', { name: /re-upload source/i }))
+    await userEvent.click(screen.getByRole('button', { name: /update draft from new file/i }))
 
     await waitFor(() => expect(screen.getByRole('heading', { name: 'Reuploaded Draft' })).toBeInTheDocument())
-    expect(screen.getByText('Replacement SOW')).toBeInTheDocument()
+    expect(screen.getAllByText('replacement-sow.pdf').length).toBeGreaterThan(0)
     expect(fetchMock.mock.calls.some(call => {
       const [url, init] = call
       return String(url).endsWith('/api/onboarding/drafts/draft-am-owned/documents/upload') && init?.method === 'POST' && init.body instanceof FormData
     })).toBe(true)
+
+    await userEvent.click(screen.getByRole('button', { name: /^reject$/i }))
+    await userEvent.click(screen.getByRole('button', { name: /reject draft/i }))
+    await waitFor(() => expect(fetchMock.mock.calls.some(call => {
+      const [url, init] = call
+      return String(url).endsWith('/api/onboarding/drafts/draft-am-owned/reject') && init?.method === 'POST'
+    })).toBe(true))
   })
 })

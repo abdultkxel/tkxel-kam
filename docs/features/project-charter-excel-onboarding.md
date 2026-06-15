@@ -14,8 +14,11 @@ The Create Account upload flow reads Excel project charters with deterministic s
 - Account Managers can save and approve visible drafts they created or own, including drafts assigned to them by KAM/Admin users; KAM Heads retain portfolio approval rights.
 - Saving changed draft fields sends an `account_draft_updated` notification to the assigned AM and KAM Head, excluding the user who made the change.
 - Approval creates the official account and sends KAM Head a `New account onboarded` notification.
-- The side upload and draft queue rail is hidden while a draft is selected so the review screen focuses on draft details.
-- The selected draft review screen shows source document download and SOW/charter re-upload together in the left-side `SOW / charter source` section. Re-uploading replacement source files refreshes extracted account fields, citations, and the engagement draft before approval.
+- Rejecting a draft requires confirmation. The warning explains that the draft will leave active review, will not become a visible account, and onboarding the same customer later requires creating a new draft.
+- The side `Upload new charter` rail stays visible while a draft is selected, including after refresh. It shows the current attached charter/SOW with a download link and keeps account manager assignment in the draft review form.
+- The selected draft header shows only operational review counts for engagements and missing fields; Confidence and ARR Draft summary cards are not shown there.
+- The selected draft review screen shows the attached source file with a visible download-for-verification action. Its Account Manager dropdown includes the draft's assigned manager as the selected option, even when the general intake assignment list is filtered.
+- The `Upload new charter / SOW` area accepts a replacement source file and refreshes extracted account fields, citations, and the engagement draft so reviewers can re-check the draft details before approval.
 
 ## API
 
