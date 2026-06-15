@@ -19,12 +19,13 @@ Existing `delivery_stakeholder` users remain permission-compatible through a bac
 
 ## Seeded Users
 
-The basic seed creates one user for each visible role plus one hidden Super Admin:
+The basic seed creates five visible operating users plus one hidden Super Admin:
 
 - `admin@tkxel.com` / `Admin@12345` - hidden Super Admin setup user.
 - `admin.user@tkxel.com` / `User@12345`
-- `kam.head.user@tkxel.com` / `User@12345`
+- `abdul.rehman@tkxel.io` / `User@12345`
 - `account.manager.user@tkxel.com` / `User@12345`
+- `account.manager.two@tkxel.com` / `User@12345`
 - `leadership.viewer.user@tkxel.com` / `User@12345`
 
 ## Visibility Rules
@@ -55,8 +56,8 @@ Base auth policy allows `tkxel.com`, `tkxel.io`, `camp1.tkxel.com`, `camp1.tkxel
 
 After a reset, verify:
 
-- Total users in the database are 5, including hidden Super Admin.
-- Admin users API returns 4 visible users.
+- Total users in the database are 6, including hidden Super Admin.
+- Admin users API returns 5 visible users.
 - Admin roles API returns 4 visible roles.
 - `super_admin` does not appear in Admin user/role API responses.
 - Account visibility remains scoped to account/report/dashboard/analytics portfolio grants; task portfolio access alone must not unlock unrelated accounts.

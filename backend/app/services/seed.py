@@ -78,13 +78,13 @@ from app.services.notifications import NotificationsService
 from app.services.rbac import RbacService
 from app.services.users import initials_for_name, normalize_email
 
-DEFAULT_ROLE_USER_EMAIL_DOMAIN = "tkxel.com"
-DEFAULT_ROLE_USER_NAMES = {
-    "admin": "Admin",
-    "kam_head": "KAM Head",
-    "account_manager": "Account Manager",
-    "leadership_viewer": "Leadership Executive",
-}
+DEFAULT_SEEDED_ROLE_USERS = (
+    ("admin.user@tkxel.com", "admin", "Admin"),
+    ("abdul.rehman@tkxel.io", "kam_head", "KAM Head"),
+    ("leadership.viewer.user@tkxel.com", "leadership_viewer", "Leadership Executive"),
+    ("account.manager.user@tkxel.com", "account_manager", "Account Manager"),
+    ("account.manager.two@tkxel.com", "account_manager", "Account Manager Two"),
+)
 FORECAST_DEMO_ACCOUNT_ID = "forecast-demo-account"
 FORECAST_DEMO_ACCOUNT_OWNER_ID = "forecast-demo-account-owner"
 FORECAST_DEMO_ENGAGEMENT_ID = "forecast-demo-active-sow"
@@ -1439,12 +1439,13 @@ def seed_super_admin(db: Session) -> User:
 
 def seed_default_role_users(db: Session) -> list[User]:
     settings = get_settings()
+    roles_by_slug = {role.slug: role for role in DEFAULT_ROLES}
     seeded_users: list[User] = []
-    for role in DEFAULT_ROLES:
-        if role.slug == "super_admin":
+    for raw_email, role_slug, full_name in DEFAULT_SEEDED_ROLE_USERS:
+        role = roles_by_slug.get(role_slug)
+        if role is None or role.slug == "super_admin":
             continue
-        email = normalize_email(f"{role.slug.replace('_', '.')}.user@{DEFAULT_ROLE_USER_EMAIL_DOMAIN}")
-        full_name = DEFAULT_ROLE_USER_NAMES.get(role.slug, role.name.replace(" / ", " ").replace("/", " "))
+        email = normalize_email(raw_email)
         existing_user = db.scalar(select(User).where(User.email == email))
         if existing_user:
             existing_user.full_name = full_name

@@ -1244,7 +1244,7 @@ def test_sow_structured_qwen_result_is_cited_and_vendor_name_guarded(db_session:
     assert fields["stakeholders"]["missing_evidence"] == "Stakeholders were not supported by extracted SOW text."
 def test_onboarding_account_manager_candidates_are_active_account_managers(client: TestClient) -> None:
     admin_headers = auth_headers(client)
-    kam_headers = auth_headers(client, "kam.head.user@tkxel.com", "User@12345")
+    kam_headers = auth_headers(client, "abdul.rehman@tkxel.io", "User@12345")
     create_account_manager_user(client, admin_headers, "second.account.manager@tkxel.com", "Second Account Manager")
 
     response = client.get("/api/onboarding/account-managers", headers=kam_headers)
