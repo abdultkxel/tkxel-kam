@@ -321,7 +321,7 @@ function TaskKanbanBoard({ tasks, customFields, readOnly, onMove, onOpenTask }: 
                   <h3 className="truncate text-sm font-semibold text-ink">{column.label}</h3>
                   <p className="text-xs font-medium text-ink-secondary">{column.tasks.length} task{column.tasks.length === 1 ? '' : 's'}</p>
                 </div>
-                <span className={cn('inline-flex rounded-full border px-2 py-1 text-[11px] font-semibold uppercase tracking-wider', statusClass(column.status))}>{column.status.replace('_', ' ')}</span>
+                <span className={cn('inline-flex rounded-full border px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-normal', statusClass(column.status))}>{column.status.replace('_', ' ')}</span>
               </div>
               <div className="grid flex-1 content-start gap-3 p-3">
                 {column.tasks.length ? column.tasks.map(task => (
@@ -398,8 +398,8 @@ function TaskKanbanCard({ task, customFields, readOnly, onOpenTask, onDragStart,
     >
       <div className="flex items-start justify-between gap-2">
         <div className="flex min-w-0 flex-wrap items-center gap-2 pr-20">
-          <span className={cn('inline-flex rounded-full border px-2 py-1 text-[11px] font-semibold uppercase tracking-wider', priorityClass(task.priority))}>{task.priority}</span>
-          {overdue ? <span className="inline-flex rounded-full border border-rag-red/20 bg-rag-red/10 px-2 py-1 text-[11px] font-semibold uppercase tracking-wider text-rag-red">Overdue</span> : null}
+          <span className={cn('inline-flex rounded-full border px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-normal', priorityClass(task.priority))}>{task.priority}</span>
+          {overdue ? <span className="inline-flex rounded-full border border-rag-red/20 bg-rag-red/10 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-normal text-rag-red">Overdue</span> : null}
         </div>
         <div className="absolute right-2 top-2 flex items-center gap-1">
           <button type="button" className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-surface-border bg-white text-ink-secondary transition hover:border-brand-blue/40 hover:bg-blue-tint-20 hover:text-brand-blue" onClick={event => { event.stopPropagation(); onOpenTask(task.id) }} aria-label="Edit task">
@@ -415,7 +415,7 @@ function TaskKanbanCard({ task, customFields, readOnly, onOpenTask, onDragStart,
       <div className="mt-3 grid gap-2 text-xs font-medium text-ink-secondary">
         <span className="truncate">{task.owner_name}</span>
         <span className="inline-flex items-center gap-1"><CalendarClock className="h-3.5 w-3.5 text-brand-orange" />{formatDate(task.due_at)}</span>
-        <span className={cn('w-fit rounded-full border px-2 py-1 text-[11px] font-semibold uppercase tracking-wider', sourceClass(task.source_type))}>{sourceLabel(task.source_type)}</span>
+        <span className={cn('w-fit rounded-full border px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-normal', sourceClass(task.source_type))}>{sourceLabel(task.source_type)}</span>
       </div>
       <RuntimeCustomFieldValues fields={customFields} values={task.custom_field_values} variant="badges" className="mt-3" />
     </article>
