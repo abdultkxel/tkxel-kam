@@ -490,12 +490,12 @@ function TaskBreakdownPanel({ widget }: { widget: DashboardWidget }) {
         {widget.primary_route ? <Link to={widget.primary_route} className="tk-button-secondary w-fit">Open tasks <ArrowRight className="h-4 w-4" /></Link> : null}
       </div>
 
-      <div className="mt-5 grid gap-3 md:grid-cols-2">
+      <div className="mt-5 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
         {cards.map(card => (
-          <Link key={card.key} to={card.route} className="rounded-lg bg-surface-secondary p-5 transition hover:-translate-y-0.5 hover:bg-blue-tint-20/60 hover:shadow-sm">
+          <Link key={card.key} to={card.route} className="rounded-lg bg-surface-secondary p-4 transition hover:-translate-y-0.5 hover:bg-blue-tint-20/60 hover:shadow-sm">
             <p className="text-xs font-semibold uppercase tracking-wider text-ink-secondary">{card.label}</p>
-            <p className={cn('mt-4 font-display text-4xl font-bold leading-none', card.tone)}>{formatValue(card.value)}</p>
-            <p className="mt-3 text-sm font-medium text-ink-secondary">{card.detail}</p>
+            <p className={cn('mt-3 font-display text-3xl font-bold leading-none', card.tone)}>{formatValue(card.value)}</p>
+            <p className="mt-2 text-sm font-medium text-ink-secondary">{card.detail}</p>
           </Link>
         ))}
       </div>
