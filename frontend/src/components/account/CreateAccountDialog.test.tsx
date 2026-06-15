@@ -121,8 +121,21 @@ function apiDraft(status: 'ready_for_review' | 'approved' = 'ready_for_review') 
   }
 }
 
-function apiUploadExtraction() {
-  return {
+type ApiUploadExtractionFixture = {
+  account_name: string
+  project_name: string
+  company_url: string | null
+  linkedin_url: string | null
+  confidence: number
+  missing_fields: string[]
+  conflicts: string[]
+  source_citation: string
+  source_file_names: string[]
+  extraction_status: string
+}
+
+function apiUploadExtraction(overrides: Partial<ApiUploadExtractionFixture> = {}): ApiUploadExtractionFixture {
+  const extraction: ApiUploadExtractionFixture = {
     account_name: 'Acme Corp',
     project_name: 'Customer intelligence',
     company_url: 'https://acme.example.com',
@@ -130,10 +143,11 @@ function apiUploadExtraction() {
     confidence: 82,
     missing_fields: [],
     conflicts: [],
-    source_citation: 'Acme_SOW.pdf: onboarding fields inferred from extracted document text.',
-    source_file_names: ['Acme_SOW.pdf'],
+    source_citation: 'Acme_Charter.xlsx: onboarding fields inferred from extracted document text.',
+    source_file_names: ['Acme_Charter.xlsx'],
     extraction_status: 'completed',
   }
+  return { ...extraction, ...overrides }
 }
 
 function apiManagers() {
@@ -228,7 +242,7 @@ describe('CreateAccountDialog', () => {
     expect(toast.success).toHaveBeenCalledWith('Account draft created for onboarding review.')
   })
 
-  it('uploads SOW files, auto-fills fields without showing the extraction preview, and opens onboarding', async () => {
+  it('uploads Excel charter files, auto-fills fields without showing the extraction preview, and opens onboarding', async () => {
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input)
       const method = init?.method ?? 'GET'
@@ -251,7 +265,7 @@ describe('CreateAccountDialog', () => {
 
     await userEvent.click(screen.getByRole('button', { name: /create account/i }))
     await userEvent.selectOptions(await screen.findByLabelText(/account manager/i), 'usr-am')
-    await userEvent.upload(screen.getByLabelText(/upload sow or project charter/i), new File(['%PDF-1.4'], 'Acme_SOW.pdf', { type: 'application/pdf' }))
+    await userEvent.upload(screen.getByLabelText(/upload excel project charter/i), new File(['excel'], 'Acme_Charter.xlsx', { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }))
 
     expect(await screen.findByText('Details filled from the uploaded source.')).toBeInTheDocument()
     expect(screen.queryByText('SOW extraction preview')).not.toBeInTheDocument()
@@ -260,7 +274,9 @@ describe('CreateAccountDialog', () => {
     expect(screen.getByLabelText(/name of project/i)).toHaveValue('Customer intelligence')
     expect(screen.getByLabelText(/company url/i)).toHaveValue('https://acme.example.com')
     expect(screen.getByLabelText(/linkedin url/i)).toHaveValue('https://www.linkedin.com/company/acme-corp')
-    expect(fetchMock.mock.calls.some(call => String(call[0]).endsWith('/api/onboarding/uploads/extract'))).toBe(true)
+    const extractCall = fetchMock.mock.calls.find(call => String(call[0]).endsWith('/api/onboarding/uploads/extract'))
+    expect(extractCall).toBeTruthy()
+    expect((extractCall?.[1]?.body as FormData).get('use_ai')).toBe('false')
     expect(fetchMock.mock.calls.some(call => String(call[0]).endsWith('/api/onboarding/drafts/upload'))).toBe(false)
 
     await userEvent.click(screen.getByRole('button', { name: /create draft/i }))
@@ -273,7 +289,76 @@ describe('CreateAccountDialog', () => {
     expect(uploadBody.get('project_name')).toBe('Customer intelligence')
     expect(uploadBody.get('company_url')).toBe('https://acme.example.com')
     expect(uploadBody.get('linkedin_url')).toBe('https://www.linkedin.com/company/acme-corp')
+    expect(uploadBody.get('use_ai')).toBe('false')
     expect(fetchMock.mock.calls.some(call => String(call[0]).endsWith('/api/onboarding/drafts/draft-1') && call[1]?.method === 'PATCH')).toBe(false)
+  })
+
+  it('rejects non-Excel files in the account creation charter upload', async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input)
+      const method = init?.method ?? 'GET'
+      if (url.endsWith('/api/accounts/custom-fields') && method === 'GET') return jsonResponse([])
+      if (url.endsWith('/api/onboarding/account-managers') && method === 'GET') return jsonResponse(apiManagers())
+      return jsonResponse({})
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    render(
+      <MemoryRouter initialEntries={['/accounts']}>
+        <Routes>
+          <Route path="/accounts" element={<CreateAccountDialog />} />
+        </Routes>
+      </MemoryRouter>,
+    )
+
+    await userEvent.click(screen.getByRole('button', { name: /create account/i }))
+    await userEvent.upload(screen.getByLabelText(/upload excel project charter/i), new File(['%PDF-1.4'], 'Acme_SOW.pdf', { type: 'application/pdf' }), { applyAccept: false })
+
+    expect(toast.error).toHaveBeenCalledWith('Only Excel project charter files are allowed')
+    expect(fetchMock.mock.calls.some(call => String(call[0]).endsWith('/api/onboarding/uploads/extract'))).toBe(false)
+  })
+
+  it('creates a parser-backed draft from an uploaded charter even when URLs are missing', async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input)
+      const method = init?.method ?? 'GET'
+      if (url.endsWith('/api/accounts/custom-fields') && method === 'GET') return jsonResponse([])
+      if (url.endsWith('/api/onboarding/account-managers') && method === 'GET') return jsonResponse(apiManagers())
+      if (url.endsWith('/api/onboarding/uploads/extract') && method === 'POST') {
+        return jsonResponse(apiUploadExtraction({ company_url: null, linkedin_url: null }))
+      }
+      if (url.endsWith('/api/onboarding/drafts/upload') && method === 'POST') {
+        return jsonResponse({ ...apiDraft(), company_url: null, linkedin_url: null })
+      }
+      return jsonResponse({})
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    render(
+      <MemoryRouter initialEntries={['/accounts']}>
+        <Routes>
+          <Route path="/accounts" element={<CreateAccountDialog />} />
+          <Route path="/accounts/onboarding" element={<div>Onboarding review loaded</div>} />
+        </Routes>
+      </MemoryRouter>,
+    )
+
+    await userEvent.click(screen.getByRole('button', { name: /create account/i }))
+    await userEvent.selectOptions(await screen.findByLabelText(/account manager/i), 'usr-am')
+    await userEvent.upload(screen.getByLabelText(/upload excel project charter/i), new File(['excel'], 'ASAP_Charter.xlsx', { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }))
+    expect(await screen.findByText('Details filled from the uploaded source.')).toBeInTheDocument()
+    expect(screen.getByLabelText(/company url/i)).toHaveValue('')
+    expect(screen.getByLabelText(/linkedin url/i)).toHaveValue('')
+
+    await userEvent.click(screen.getByRole('button', { name: /create draft/i }))
+
+    expect(await screen.findByText('Onboarding review loaded')).toBeInTheDocument()
+    const uploadCall = fetchMock.mock.calls.find(call => String(call[0]).endsWith('/api/onboarding/drafts/upload'))
+    expect(uploadCall).toBeTruthy()
+    const uploadBody = uploadCall?.[1]?.body as FormData
+    expect(uploadBody.get('company_url')).toBeNull()
+    expect(uploadBody.get('linkedin_url')).toBeNull()
+    expect(uploadBody.get('use_ai')).toBe('false')
   })
 
   it('requires a LinkedIn URL before creating the onboarding draft', async () => {

@@ -1,5 +1,6 @@
 from collections.abc import Generator
 from datetime import datetime, timedelta, timezone
+from io import BytesIO
 import json
 import re
 
@@ -12,7 +13,7 @@ from sqlalchemy.pool import StaticPool
 from app.database import Base, get_db
 from app.config import get_settings
 from app.main import app
-from app.models import Account, AccountOwner, CustomFieldValue, DocumentExtraction, Engagement, OnboardingDraft, SourceDocument, SourceDocumentExtraction, Stakeholder
+from app.models import Account, AccountOwner, CustomFieldValue, DocumentExtraction, Engagement, EngagementImportDraft, OnboardingDraft, SourceDocument, SourceDocumentExtraction, Stakeholder
 from app.services.kyc_document_extraction import KycDocumentExtractionService
 from app.services.source_document_contract import SERVICE_LINE_LABELS, infer_service_lines_from_text
 from app.services.sow_extraction import SowExtractionService
@@ -301,6 +302,7 @@ def test_onboarding_upload_extracts_draft_from_content_not_filename(client: Test
     settings.sow_ai_extraction_enabled = False
     headers = auth_headers(client)
     owner = seeded_user(client, headers, "account_manager")
+    other_owner = create_account_manager_user(client, headers, "unrelated.source.manager@tkxel.com", "Unrelated Source Manager")
     content = b"""
 Demo document only. Not a real signed commercial agreement.
 Account Name: McDonald's Corporation
@@ -360,6 +362,12 @@ Customer data access, franchise operating model complexity, and point-of-sale in
     )
     assert download.status_code == 200
     assert b"McDonald's Corporation" in download.content
+
+    unrelated_download = client.get(
+        f"/api/onboarding/drafts/{draft['id']}/documents/{draft['source_documents'][0]['id']}/download",
+        headers=auth_headers(client, other_owner["email"], "User@12345"),
+    )
+    assert unrelated_download.status_code == 403
 
     approve_response = client.post(f"/api/onboarding/drafts/{draft['id']}/approve", headers=headers)
     assert approve_response.status_code == 200
@@ -502,6 +510,195 @@ Service Lines: Product Engineering, Cloud Integration
     assert extraction["source_file_names"] == ["misleading-document-name.txt"]
     assert db_session.query(OnboardingDraft).count() == before_drafts
     assert db_session.query(SourceDocument).count() == before_documents
+
+
+def test_onboarding_upload_extract_endpoint_maps_excel_sow_title_and_key_value_rows(client: TestClient) -> None:
+    from openpyxl import Workbook
+
+    settings = get_settings()
+    previous_ai_setting = settings.sow_ai_extraction_enabled
+    settings.sow_ai_extraction_enabled = False
+    headers = auth_headers(client)
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.title = "SOW"
+    for row in (
+        ("Cafe Zupas - Statement of Work",),
+        ("Project validation baseline prepared from tkxel delivery team",),
+        ("Company URL", "https://www.cafezupas.com"),
+        ("LinkedIn URL", "https://www.linkedin.com/company/cafe-zupas"),
+        ("Service Lines", "Product Engineering, QA Automation, API Integration"),
+        ("Contract Value", "USD 240,000"),
+        ("Start Date", "01/15/2026"),
+        ("End Date", "12/31/2026"),
+    ):
+        sheet.append(row)
+    stream = BytesIO()
+    workbook.save(stream)
+
+    try:
+        response = client.post(
+            "/api/onboarding/uploads/extract",
+            headers=headers,
+            files=[
+                (
+                    "files",
+                    (
+                        "Cafe_Zupas_SOW.xlsx",
+                        stream.getvalue(),
+                        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    ),
+                )
+            ],
+        )
+    finally:
+        settings.sow_ai_extraction_enabled = previous_ai_setting
+
+    assert response.status_code == 200
+    extraction = response.json()
+    assert extraction["account_name"] == "Cafe Zupas"
+    assert extraction["project_name"] == "Project validation baseline"
+    assert extraction["company_url"] == "https://www.cafezupas.com"
+    assert extraction["linkedin_url"] == "https://www.linkedin.com/company/cafe-zupas"
+    assert extraction["source_file_names"] == ["Cafe_Zupas_SOW.xlsx"]
+
+
+def test_create_account_charter_upload_uses_excel_parser_draft_edits_and_am_approval(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from openpyxl import Workbook
+
+    def fail_ai_call(*args, **kwargs):
+        raise AssertionError("Create Account charter upload must not call AI extraction when use_ai=false")
+
+    monkeypatch.setattr(SowExtractionService, "_call_openai", fail_ai_call)
+    monkeypatch.setattr(SowExtractionService, "_call_local_ai", fail_ai_call)
+    settings = get_settings()
+    previous_ai_setting = settings.sow_ai_extraction_enabled
+    settings.sow_ai_extraction_enabled = True
+    admin_headers = auth_headers(client)
+    owner = seeded_user(client, admin_headers, "account_manager")
+    kam_head = seeded_user(client, admin_headers, "kam_head")
+    owner_headers = auth_headers(client, owner["email"], "User@12345")
+    kam_headers = auth_headers(client, kam_head["email"], "User@12345")
+
+    workbook = Workbook()
+    project_info = workbook.active
+    project_info.title = "Project Info"
+    for row in (
+        ("Account Name", "ASAP Semiconductor"),
+        ("Account Executive", "Kamran"),
+        ("Division - Department", "Professional Services - Engineering"),
+        ("Project Kickoff Date", 46035),
+        ("Project Name", "ASAP - Bespoke CMS Project - SOW#02"),
+        ("Contract Type", "Software Development"),
+        ("Resource Agreement Type", "Fixed Price"),
+        ("Project Size (man hours)", 5600),
+    ):
+        project_info.append(row)
+    scope = workbook.create_sheet("Scope")
+    for row in (
+        ("Industry Vertical", "Airline"),
+        ("Business Domain", "ASAP needs a bespoke CMS to manage product data and vendor workflows."),
+        ("Project Domain", "Content Management"),
+        ("Project Objectives", "Build a searchable, governed CMS for internal teams and vendors."),
+        ("Invoicing Methodology", "Advance"),
+        ("Invoicing Schedule", "Shared with client spread across 36 months with Net-30 days payment terms"),
+    ):
+        scope.append(row)
+    streams = workbook.create_sheet("Streams & Compliance")
+    streams.append(("Service Stream Name", "CMS Development - Software Development"))
+    streams.append(("JIRA Project Name", "ASAP CMS"))
+    risks = workbook.create_sheet("Risks")
+    risks.append(("Risk Statement", "Mitigation Plan"))
+    risks.append(("Data Quality Issues (Duplicates / Incorrect Product Data)", "Run validation rules before migration"))
+    risks.append(("Security / Unauthorized Vendor Access", "Add role based access controls"))
+    stream = BytesIO()
+    workbook.save(stream)
+    charter_file = (
+        "ASAP_Charter.xlsx",
+        stream.getvalue(),
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    )
+
+    try:
+        preview = client.post(
+            "/api/onboarding/uploads/extract",
+            headers=admin_headers,
+            data={"use_ai": "false"},
+            files=[("files", charter_file)],
+        )
+        assert preview.status_code == 200
+        assert preview.json()["account_name"] == "ASAP Semiconductor"
+        assert preview.json()["project_name"] == "ASAP - Bespoke CMS Project - SOW#02"
+
+        stream.seek(0)
+        created = client.post(
+            "/api/onboarding/drafts/upload",
+            headers=admin_headers,
+            data={"manager_id": owner["id"], "use_ai": "false"},
+            files=[("files", charter_file)],
+        )
+    finally:
+        settings.sow_ai_extraction_enabled = previous_ai_setting
+
+    assert created.status_code == 201
+    draft = created.json()
+    assert draft["account_name"] == "ASAP Semiconductor"
+    assert draft["project_name"] == "ASAP - Bespoke CMS Project - SOW#02"
+    assert draft["company_url"] is None
+    assert draft["linkedin_url"] is None
+    assert draft["segment"] == "Airline"
+    assert "Business Domain: ASAP needs a bespoke CMS" in draft["service_context"]
+    assert "Project Size (man hours): 5600" in draft["commercial_summary"]
+    assert "Data Quality Issues" in draft["initial_notes"]
+    assert draft["engagement_drafts"][0]["service_lines"] == ["CMS Development - Software Development"]
+    assert draft["engagement_drafts"][0]["start_date"].startswith("2026-01-13")
+
+    owner_notifications = client.get("/api/notifications", headers=owner_headers, params={"trigger": "account_draft_created"})
+    assert owner_notifications.status_code == 200
+    assert any(item["source_record_id"] == draft["id"] for item in owner_notifications.json()["items"])
+    kam_created_notifications = client.get("/api/notifications", headers=kam_headers, params={"trigger": "account_draft_created"})
+    assert kam_created_notifications.status_code == 200
+    assert any(item["source_record_id"] == draft["id"] for item in kam_created_notifications.json()["items"])
+
+    edit_response = client.patch(
+        f"/api/onboarding/drafts/{draft['id']}",
+        headers=owner_headers,
+        json={
+            "company_url": "https://www.asapsemi.com",
+            "linkedin_url": "https://www.linkedin.com/company/asap-semiconductor",
+            "primary_owner_id": owner["id"],
+        },
+    )
+    assert edit_response.status_code == 200
+    assert edit_response.json()["company_url"] == "https://www.asapsemi.com"
+    kam_updated_notifications = client.get("/api/notifications", headers=kam_headers, params={"trigger": "account_draft_updated"})
+    assert kam_updated_notifications.status_code == 200
+    assert any(
+        item["source_record_id"] == draft["id"]
+        and item["title"] == "Draft updated: ASAP Semiconductor"
+        and "company URL" in item["body"]
+        and "LinkedIn URL" in item["body"]
+        for item in kam_updated_notifications.json()["items"]
+    )
+    owner_updated_notifications = client.get("/api/notifications", headers=owner_headers, params={"trigger": "account_draft_updated"})
+    assert owner_updated_notifications.status_code == 200
+    assert not any(item["source_record_id"] == draft["id"] for item in owner_updated_notifications.json()["items"])
+
+    approved = client.post(f"/api/onboarding/drafts/{draft['id']}/approve", headers=owner_headers)
+    assert approved.status_code == 200
+    assert approved.json()["status"] == "approved"
+    assert approved.json()["approved_account_id"]
+
+    kam_approved_notifications = client.get("/api/notifications", headers=kam_headers, params={"trigger": "account_draft_approved"})
+    assert kam_approved_notifications.status_code == 200
+    assert any(
+        item["source_record_id"] == approved.json()["approved_account_id"]
+        and item["title"] == "New account onboarded: ASAP Semiconductor"
+        for item in kam_approved_notifications.json()["items"]
+    )
 
 
 def test_onboarding_upload_leaves_unknown_fields_blank_instead_of_using_filename(client: TestClient) -> None:
@@ -1165,7 +1362,8 @@ def test_onboarding_validation_and_authorization_errors_are_enforced(client: Tes
 
     account_manager_headers = auth_headers(client, "account.manager.user@tkxel.com", "User@12345")
     approve_response = client.post(f"/api/onboarding/drafts/{draft_response.json()['id']}/approve", headers=account_manager_headers)
-    assert approve_response.status_code == 403
+    assert approve_response.status_code == 200
+    assert approve_response.json()["approved_account_id"]
 
 
 def test_engagement_list_endpoint_returns_items_empty_state_and_rejects_unauthorized_access(client: TestClient, db_session: Session) -> None:
@@ -1187,7 +1385,8 @@ def test_engagement_list_endpoint_returns_items_empty_state_and_rejects_unauthor
     assert page["items"][0]["id"] == created["id"]
     assert page["items"][0]["account_id"] == account_id
 
-    unauthorized_headers = auth_headers(client, "delivery.lead.user@tkxel.com", "User@12345")
+    unauthorized_user = create_account_manager_user(client, headers, "unassigned.engagement.viewer@tkxel.com", "Unassigned Engagement Viewer")
+    unauthorized_headers = auth_headers(client, unauthorized_user["email"], "User@12345")
     unauthorized_response = client.get(f"/api/accounts/{account_id}/engagements", headers=unauthorized_headers)
     assert unauthorized_response.status_code == 403
 
@@ -1246,15 +1445,26 @@ def test_engagement_create_endpoint_validates_payload_calculates_notice_and_retu
     assert negative_notice_response.status_code == 422
 
 
-def test_engagement_create_from_charter_upload_stores_source_and_creates_stakeholders(
+def test_engagement_create_from_charter_upload_creates_editable_draft_notifications_and_approval(
     client: TestClient,
     db_session: Session,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     settings = get_settings()
-    monkeypatch.setattr(settings, "sow_ai_extraction_enabled", False)
-    headers = auth_headers(client)
-    account_id, _, _ = create_approved_account(client, headers, "Charter Import Workspace")
+    monkeypatch.setattr(settings, "sow_ai_extraction_enabled", True)
+
+    def fail_ai(*args, **kwargs):
+        raise AssertionError("Engagement charter import must use deterministic document parsing, not AI extraction")
+
+    monkeypatch.setattr(SowExtractionService, "_extract_with_openai", fail_ai)
+    monkeypatch.setattr(SowExtractionService, "_extract_with_qwen", fail_ai)
+
+    admin_headers = auth_headers(client)
+    owner = seeded_user(client, admin_headers, "account_manager")
+    kam_head = seeded_user(client, admin_headers, "kam_head")
+    owner_headers = auth_headers(client, owner["email"], "User@12345")
+    kam_headers = auth_headers(client, kam_head["email"], "User@12345")
+    account_id = create_account_without_engagement(db_session, owner, "Charter Import Workspace")
     content = b"""
 Project Name: Restaurant Digital Experience Modernization
 Client: Cafe Zupas
@@ -1271,26 +1481,70 @@ Risks: POS integration dependency, holiday traffic surge
 
     response = client.post(
         f"/api/accounts/{account_id}/engagements/from-charter",
-        headers=headers,
+        headers=owner_headers,
         files={"file": ("cafe-zupas-charter.txt", content, "text/plain")},
     )
 
     assert response.status_code == 201
-    created = response.json()
-    assert created["account_id"] == account_id
-    assert created["name"] == "Restaurant Digital Experience Modernization"
-    assert created["contract_value"] == 240000
-    assert "product engineering" in {item.lower() for item in created["service_lines"]}
-    assert created["source_document_ids"]
+    draft = response.json()
+    assert draft["account_id"] == account_id
+    assert draft["status"] == "ready_for_review"
+    assert draft["name"] == "Restaurant Digital Experience Modernization"
+    assert draft["contract_value"] == 240000
+    assert "product engineering" in {item.lower() for item in draft["service_lines"]}
+    assert draft["source_document_ids"]
+    assert draft["approved_engagement_id"] is None
+    assert db_session.query(Engagement).filter(Engagement.account_id == account_id).count() == 0
+    assert db_session.get(EngagementImportDraft, draft["id"]) is not None
 
-    source_document = db_session.query(SourceDocument).filter(SourceDocument.id == created["source_document_ids"][0]).one()
+    source_document = db_session.query(SourceDocument).filter(SourceDocument.id == draft["source_document_ids"][0]).one()
     assert source_document.account_id == account_id
-    assert source_document.engagement_id == created["id"]
+    assert source_document.engagement_id is None
     assert source_document.extraction_status == "completed"
     assert db_session.query(DocumentExtraction).filter(DocumentExtraction.document_id == source_document.id).count() >= 1
-    stakeholder_names = {item.name for item in db_session.query(Stakeholder).filter(Stakeholder.engagement_id == created["id"]).all()}
+
+    list_response = client.get(f"/api/accounts/{account_id}/engagement-drafts", headers=owner_headers)
+    assert list_response.status_code == 200
+    assert list_response.json()["items"][0]["id"] == draft["id"]
+
+    kam_created_notifications = client.get("/api/notifications", headers=kam_headers, params={"trigger": "engagement_draft_created"})
+    assert kam_created_notifications.status_code == 200
+    assert any(item["source_record_id"] == draft["id"] for item in kam_created_notifications.json()["items"])
+
+    update_response = client.patch(
+        f"/api/engagement-drafts/{draft['id']}",
+        headers=owner_headers,
+        json={"name": "Reviewed Restaurant Digital Experience", "contract_value": 260000, "risks": ["POS integration dependency"]},
+    )
+    assert update_response.status_code == 200
+    updated = update_response.json()
+    assert updated["name"] == "Reviewed Restaurant Digital Experience"
+    assert updated["contract_value"] == 260000
+
+    kam_updated_notifications = client.get("/api/notifications", headers=kam_headers, params={"trigger": "engagement_draft_updated"})
+    assert kam_updated_notifications.status_code == 200
+    assert any(item["source_record_id"] == draft["id"] for item in kam_updated_notifications.json()["items"])
+
+    approve_response = client.post(f"/api/engagement-drafts/{draft['id']}/approve", headers=owner_headers)
+    assert approve_response.status_code == 200
+    approved = approve_response.json()
+    assert approved["status"] == "approved"
+    assert approved["approved_engagement_id"]
+
+    created = db_session.get(Engagement, approved["approved_engagement_id"])
+    assert created is not None
+    assert created.account_id == account_id
+    assert created.name == "Reviewed Restaurant Digital Experience"
+    assert float(created.value) == 260000
+    db_session.refresh(source_document)
+    assert source_document.engagement_id == created.id
+    stakeholder_names = {item.name for item in db_session.query(Stakeholder).filter(Stakeholder.engagement_id == created.id).all()}
     assert "Jane Sponsor" in stakeholder_names
     assert "Mark Owner" in stakeholder_names
+
+    kam_approved_notifications = client.get("/api/notifications", headers=kam_headers, params={"trigger": "engagement_draft_approved"})
+    assert kam_approved_notifications.status_code == 200
+    assert any(item["source_record_id"] == created.id for item in kam_approved_notifications.json()["items"])
 
 
 def test_engagement_detail_endpoint_returns_detail_404_and_rejects_unauthorized_access(client: TestClient) -> None:
@@ -1309,7 +1563,8 @@ def test_engagement_detail_endpoint_returns_detail_404_and_rejects_unauthorized_
     missing_response = client.get("/api/engagements/missing-engagement", headers=headers)
     assert missing_response.status_code == 404
 
-    unauthorized_headers = auth_headers(client, "delivery.lead.user@tkxel.com", "User@12345")
+    unauthorized_user = create_account_manager_user(client, headers, "unassigned.engagement.detail@tkxel.com", "Unassigned Engagement Detail")
+    unauthorized_headers = auth_headers(client, unauthorized_user["email"], "User@12345")
     unauthorized_response = client.get(f"/api/engagements/{created['id']}", headers=unauthorized_headers)
     assert unauthorized_response.status_code == 403
 
@@ -1580,7 +1835,7 @@ def test_manual_engagement_create_validation_errors(client: TestClient) -> None:
 def test_account_filters_owner_history_engagement_health_and_openapi_docs(client: TestClient) -> None:
     headers = auth_headers(client)
     account_id, owner_id, _ = create_approved_account(client, headers, "Globex Workspace")
-    ops_lead = seeded_user(client, headers, "delivery_lead")
+    ops_lead = seeded_user(client, headers, "kam_head")
 
     account_list = client.get(
         "/api/accounts",

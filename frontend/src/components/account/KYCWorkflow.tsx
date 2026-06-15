@@ -1,23 +1,38 @@
 import { CheckCircle2, ClipboardCheck, Loader2, RotateCcw, XCircle } from 'lucide-react'
 import { useState } from 'react'
 import { toast } from 'sonner'
-import { currentUser } from '@/data/mock'
-import { emit } from '@/utils/emitTimelineEvent'
+import { useAuth } from '@/contexts/AuthContext'
+import { createTimelineNote } from '@/services/timeline'
 
 export function KYCWorkflow({ accountId }: { accountId: string }) {
+  const { token } = useAuth()
   const [status, setStatus] = useState<'draft' | 'submitted' | 'approved' | 'rejected'>('submitted')
   const [loading, setLoading] = useState('')
 
   async function mutate(action: 'approved' | 'rejected' | 'submitted' | 'draft') {
+    if (!token) {
+      toast.error('You must be logged in to update KYC status')
+      return
+    }
     setLoading(action)
-    await new Promise(resolve => window.setTimeout(resolve, 450))
-    if (action === 'approved') emit.kycApproved(accountId, currentUser.id, currentUser.name)
-    if (action === 'rejected') emit.kycRejected(accountId, currentUser.id, currentUser.name, 'Missing executive sponsor confirmation.')
-    if (action === 'submitted') emit.kycSubmitted(accountId, currentUser.id, currentUser.name)
-    if (action === 'draft') emit.kycReopened(accountId, currentUser.id, currentUser.name, 'Reopened for stakeholder update.')
-    setStatus(action)
-    setLoading('')
-    toast.success('KYC status updated')
+    try {
+      const event = kycTimelineEvent(action)
+      await createTimelineNote(token, accountId, {
+        event_type: 'kyc_update',
+        title: event.title,
+        description: event.description,
+        mentions: [],
+        attachments: [],
+        tags: ['kyc-status'],
+        is_sensitive: false,
+      })
+      setStatus(action)
+      toast.success('KYC status updated')
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'KYC status could not be updated')
+    } finally {
+      setLoading('')
+    }
   }
 
   return (
@@ -73,6 +88,13 @@ export function KYCWorkflow({ accountId }: { accountId: string }) {
       </div>
     </div>
   )
+}
+
+function kycTimelineEvent(action: 'approved' | 'rejected' | 'submitted' | 'draft') {
+  if (action === 'approved') return { title: 'KYC approved', description: 'KYC submitted and approved.' }
+  if (action === 'rejected') return { title: 'KYC rejected', description: 'Missing executive sponsor confirmation.' }
+  if (action === 'draft') return { title: 'KYC reopened', description: 'Reopened for stakeholder update.' }
+  return { title: 'KYC submitted', description: 'KYC packet submitted for review.' }
 }
 
 function StatusPill({ status }: { status: 'draft' | 'submitted' | 'approved' | 'rejected' }) {

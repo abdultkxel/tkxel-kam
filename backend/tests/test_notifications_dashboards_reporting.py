@@ -212,7 +212,7 @@ def test_dashboard_digest_and_report_workflows(client: TestClient, db_session: S
     assert current_dashboard.json()["dashboard"] == "kam_head_portfolio"
     assert current_dashboard.json()["role_group"] == "admin"
     admin_keys = [item["key"] for item in current_dashboard.json()["widgets"]]
-    assert admin_keys[:6] == ["summary", "forecast_chart", "account_portfolio", "high_risk_accounts", "critical_tasks", "governance_calendar"]
+    assert admin_keys[:6] == ["summary", "forecast_chart", "high_risk_accounts", "critical_actions", "todays_tasks", "governance_calendar"]
     assert "governance" not in admin_keys
     assert "governance_cadence" not in admin_keys
     assert "health_distribution" not in admin_keys
@@ -304,6 +304,16 @@ def test_role_based_dashboard_profiles_and_reduced_direct_endpoints(client: Test
                 priority="medium",
                 created_by_id=owner["id"],
             ),
+            Task(
+                account_id=account.id,
+                title="Today customer action",
+                owner_id=owner["id"],
+                owner_name=owner["full_name"],
+                due_at=now + timedelta(hours=1),
+                status="open",
+                priority="medium",
+                created_by_id=owner["id"],
+            ),
             Signal(
                 account_id=account.id,
                 signal_type="weak_metric",
@@ -334,6 +344,7 @@ def test_role_based_dashboard_profiles_and_reduced_direct_endpoints(client: Test
     for assignment in supporting_account.owners:
         assignment.ownership_role = "supporting_am"
         assignment.is_primary = False
+    create_engagement_health_item(db_session, account, owner)
     db_session.commit()
     removed_dashboard_widgets = {
         "stale_kyc",
@@ -361,26 +372,36 @@ def test_role_based_dashboard_profiles_and_reduced_direct_endpoints(client: Test
     assert am_dashboard.json()["role_group"] == "account_manager"
     assert "leadership" not in {item["key"] for item in am_dashboard.json()["widgets"]}
     am_keys = [item["key"] for item in am_dashboard.json()["widgets"]]
-    assert am_keys == ["summary", "account_portfolio", "critical_tasks", "tasks", "opportunities", "forecast_chart", "governance_calendar"]
+    assert am_keys == ["summary", "critical_actions", "todays_tasks", "tasks", "onboarding_drafts", "opportunities", "forecast_chart", "governance_calendar"]
+    assert "account_portfolio" not in am_keys
+    assert "accounts" not in am_keys
     assert "ai_task_summary" not in am_keys
     assert removed_dashboard_widgets.isdisjoint(am_keys)
     assert "forecast_chart" in am_keys
     assert "governance_calendar" in am_keys
     summary = next(item for item in am_dashboard.json()["widgets"] if item["key"] == "summary")
-    assert [tile["label"] for tile in summary["metadata"]["tiles"]] == ["My Accounts", "At risk", "Critical tasks", "Open tasks"]
-    assert summary["value"]["open_tasks"] == 3
+    assert [tile["label"] for tile in summary["metadata"]["tiles"]] == ["My Accounts", "At risk", "Critical Actions", "Open tasks"]
+    assert summary["value"]["open_tasks"] == 4
+    assert summary["metadata"]["tiles"][2]["route"] == "/dashboard#critical-actions"
     assert summary["metadata"]["tiles"][1]["route"] == "/accounts?risk=at_risk"
     assert summary["metadata"]["tiles"][0]["route"] == "/accounts"
-    critical_tasks = next(item for item in am_dashboard.json()["widgets"] if item["key"] == "critical_tasks")
-    critical_task_titles = {item["title"] for item in critical_tasks["items"]}
-    assert "Overdue blocker" in critical_task_titles
-    assert "Critical relationship signal" not in critical_task_titles
-    assert critical_tasks["metadata"]["source_counts"]["critical_tasks"] >= 1
+    critical_actions = next(item for item in am_dashboard.json()["widgets"] if item["key"] == "critical_actions")
+    critical_action_titles = {item["title"] for item in critical_actions["items"]}
+    assert "Overdue blocker" in critical_action_titles
+    assert "Delivery Recovery SOW health dropped to critical" in critical_action_titles
+    assert "Notifications Account health is critical" in critical_action_titles
+    assert "Critical relationship signal" not in critical_action_titles
+    assert critical_actions["metadata"]["source_counts"]["critical_tasks"] >= 1
+    assert critical_actions["metadata"]["source_counts"]["health_drops"] == 1
+    todays_tasks = next(item for item in am_dashboard.json()["widgets"] if item["key"] == "todays_tasks")
+    assert todays_tasks["value"]["due_today"] == 1
+    assert {item["title"] for item in todays_tasks["items"]} == {"Today customer action"}
+    assert todays_tasks["primary_route"] == "/tasks?due=today"
     tasks = next(item for item in am_dashboard.json()["widgets"] if item["key"] == "tasks")
-    assert tasks["value"]["open"] == 2
+    assert tasks["value"]["open"] == 3
     assert tasks["value"]["in_progress"] == 1
     assert tasks["value"]["overdue"] == 1
-    assert tasks["value"]["due_this_week"] == 2
+    assert tasks["value"]["due_this_week"] == 3
     opportunities = next(item for item in am_dashboard.json()["widgets"] if item["key"] == "opportunities")
     assert opportunities["title"] == "Opportunities & pipeline"
     assert opportunities["metadata"]["masked"] is False
@@ -457,10 +478,17 @@ def test_role_based_dashboard_profiles_and_reduced_direct_endpoints(client: Test
     assert "summary" not in account_summary
 
 
-def test_delivery_lead_dashboard_and_system_role_protection(client: TestClient, db_session: Session) -> None:
+def test_removed_delivery_roles_are_not_seeded_or_authorized_as_dashboard_profiles(client: TestClient, db_session: Session) -> None:
     admin_headers = auth_headers(client)
-    owner = seeded_user(client, admin_headers, "account_manager")
-    delivery = seeded_user(client, admin_headers, "delivery_lead")
+    delivery = User(
+        email="delivery.dashboard.user@tkxel.com",
+        hashed_password=hash_password("User@12345"),
+        full_name="Delivery Dashboard User",
+        role="delivery_lead",
+        title="Delivery Lead",
+        avatar_initials="DD",
+        is_active=True,
+    )
     legacy_delivery = User(
         email="legacy.delivery.user@tkxel.com",
         hashed_password=hash_password("User@12345"),
@@ -470,73 +498,21 @@ def test_delivery_lead_dashboard_and_system_role_protection(client: TestClient, 
         avatar_initials="LD",
         is_active=True,
     )
+    db_session.add(delivery)
     db_session.add(legacy_delivery)
-    db_session.flush()
-    account = create_owned_account(db_session, owner, "delivery-dashboard-account")
-    create_engagement_health_item(db_session, account, owner, ops_lead=delivery)
-    db_session.add(
-        AccountOwner(
-            account_id=account.id,
-            user_id=delivery["id"],
-            user_name=delivery["full_name"],
-            user_email=delivery["email"],
-            ownership_role="ops_lead",
-            is_primary=False,
-            is_active=True,
-            rationale="Delivery lead assignment.",
-            created_by_id=owner["id"],
-        )
-    )
-    db_session.add(
-        AccountOwner(
-            account_id=account.id,
-            user_id=legacy_delivery.id,
-            user_name=legacy_delivery.full_name,
-            user_email=legacy_delivery.email,
-            ownership_role="delivery_stakeholder",
-            is_primary=False,
-            is_active=True,
-            rationale="Legacy delivery assignment.",
-            created_by_id=owner["id"],
-        )
-    )
-    db_session.add(
-        Task(
-            account_id=account.id,
-            title="Resolve delivery blocker",
-            owner_id=delivery["id"],
-            owner_name=delivery["full_name"],
-            due_at=datetime.now(timezone.utc) + timedelta(days=1),
-            status="open",
-            priority="critical",
-            created_by_id=owner["id"],
-        )
-    )
     db_session.commit()
 
-    delivery_headers = auth_headers(client, delivery["email"], "User@12345")
+    delivery_headers = auth_headers(client, delivery.email, "User@12345")
     dashboard = client.get("/api/dashboards/me", headers=delivery_headers)
-    assert dashboard.status_code == 200
-    body = dashboard.json()
-    assert body["dashboard"] == "delivery"
-    assert body["role_group"] == "delivery_lead"
-    widget_keys = {item["key"] for item in body["widgets"]}
-    assert {"tasks", "signals", "governance_calendar", "engagement_health"}.issubset(widget_keys)
-    assert "escalations" not in widget_keys
-    assert "decision_queue" not in widget_keys
-    assert "governance" not in widget_keys
-    engagement_health = next(item for item in body["widgets"] if item["key"] == "engagement_health")
-    assert engagement_health["items"][0]["delivery_health"] == 48
+    assert dashboard.status_code == 403
 
     legacy_headers = auth_headers(client, legacy_delivery.email, "User@12345")
     legacy_dashboard = client.get("/api/dashboards/me", headers=legacy_headers)
-    assert legacy_dashboard.status_code == 200
-    assert legacy_dashboard.json()["dashboard"] == "delivery"
-    assert legacy_dashboard.json()["role_group"] == "delivery_lead"
+    assert legacy_dashboard.status_code == 403
 
-    protected = client.delete("/api/admin/roles/delivery_lead", headers=admin_headers)
-    assert protected.status_code == 400
-    assert protected.json()["detail"] == "System roles cannot be deleted"
+    roles = client.get("/api/admin/roles", headers=admin_headers)
+    assert roles.status_code == 200
+    assert all(role["slug"] != "delivery_lead" for role in roles.json()["items"])
 
 
 def test_account_manager_cannot_configure_sla_rules(client: TestClient) -> None:

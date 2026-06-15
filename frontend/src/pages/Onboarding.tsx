@@ -9,6 +9,7 @@ import { Skeleton } from '@/components/ui/Skeleton'
 import { useAuth } from '@/contexts/AuthContext'
 import { useCapabilities } from '@/hooks/useCapabilities'
 import { useRole } from '@/hooks/useRole'
+import { ApiError } from '@/services/api'
 import {
   approveOnboardingDraft,
   createOnboardingDraftFromUpload,
@@ -25,6 +26,23 @@ import {
 import { SourceDocument } from '@/types/v3'
 import { cn } from '@/utils/cn'
 import { formatCompactCurrency, formatDate, formatRelative } from '@/utils/formatters'
+import { allProjectCharterFiles, PROJECT_CHARTER_ACCEPT } from '@/utils/projectCharterFiles'
+
+type DraftEditState = {
+  accountName: string
+  projectName: string
+  companyUrl: string
+  linkedinUrl: string
+  managerId: string
+}
+
+const emptyDraftEdits: DraftEditState = {
+  accountName: '',
+  projectName: '',
+  companyUrl: '',
+  linkedinUrl: '',
+  managerId: '',
+}
 
 export function Onboarding() {
   const user = useRole()
@@ -36,7 +54,9 @@ export function Onboarding() {
   const [accountManagers, setAccountManagers] = useState<OnboardingAccountManager[]>([])
   const [selectedManagerId, setSelectedManagerId] = useState('')
   const [loadingManagers, setLoadingManagers] = useState(false)
-  const [assignmentUpdating, setAssignmentUpdating] = useState(false)
+  const [draftEdits, setDraftEdits] = useState<DraftEditState>(emptyDraftEdits)
+  const [draftEditErrors, setDraftEditErrors] = useState<Partial<Record<keyof DraftEditState, string>>>({})
+  const [savingDraft, setSavingDraft] = useState(false)
   const [extracting, setExtracting] = useState(false)
   const [retryingDocumentId, setRetryingDocumentId] = useState('')
   const [loading, setLoading] = useState(true)
@@ -48,6 +68,19 @@ export function Onboarding() {
   const intakeManager = assignableManagers.find(manager => manager.id === selectedManagerId)
   const selectedOwnerId = selected?.accountDraft.ownerId && selected.accountDraft.ownerId !== 'pending-owner' ? selected.accountDraft.ownerId : ''
   const selectedOwnerMissing = selected?.status === 'ready_for_review' && !selectedOwnerId
+  const canApproveOnboarding = capabilities.can_approve_onboarding
+
+  useEffect(() => {
+    if (!selected) return
+    setDraftEdits({
+      accountName: selected.accountDraft.name ?? '',
+      projectName: selected.accountDraft.projectName ?? '',
+      companyUrl: selected.accountDraft.companyUrl ?? '',
+      linkedinUrl: selected.accountDraft.linkedinUrl ?? '',
+      managerId: selectedOwnerId,
+    })
+    setDraftEditErrors({})
+  }, [selected?.id, selectedOwnerId])
 
   useEffect(() => {
     if (!token) return
@@ -99,7 +132,11 @@ export function Onboarding() {
       return
     }
     if (!files.length) {
-      toast.error('Select at least one SOW, charter, or source document')
+      toast.error('Select at least one Excel project charter')
+      return
+    }
+    if (!allProjectCharterFiles(files)) {
+      toast.error('Only Excel project charter files are allowed')
       return
     }
     if (!intakeManager) {
@@ -140,23 +177,60 @@ export function Onboarding() {
     }
   }
 
-  async function assignDraftManager(draft: OnboardingDraftView, managerId: string) {
-    if (!token || !managerId) return
-    const manager = assignableManagers.find(item => item.id === managerId)
+  function updateDraftEdit(field: keyof DraftEditState, value: string) {
+    setDraftEdits(current => ({ ...current, [field]: value }))
+    setDraftEditErrors(current => ({ ...current, [field]: undefined }))
+  }
+
+  function validateDraftEdits() {
+    const nextErrors: Partial<Record<keyof DraftEditState, string>> = {}
+    if (!draftEdits.accountName.trim()) nextErrors.accountName = 'Account name is required'
+    if (!draftEdits.projectName.trim()) nextErrors.projectName = 'Project name is required'
+    if (draftEdits.linkedinUrl.trim() && !isLinkedinUrl(draftEdits.linkedinUrl)) nextErrors.linkedinUrl = 'Enter a valid LinkedIn URL'
+    if (!draftEdits.managerId || !assignableManagers.some(manager => manager.id === draftEdits.managerId)) nextErrors.managerId = 'Select an account manager'
+    setDraftEditErrors(nextErrors)
+    return Object.keys(nextErrors).length === 0
+  }
+
+  function applyDraftEditApiErrors(error: unknown) {
+    if (!(error instanceof ApiError) || !error.fieldErrors.length) return
+    const nextErrors: Partial<Record<keyof DraftEditState, string>> = {}
+    for (const fieldError of error.fieldErrors) {
+      const field = mapDraftEditApiField(fieldError.field)
+      if (field) nextErrors[field] = fieldError.message
+    }
+    setDraftEditErrors(current => ({ ...current, ...nextErrors }))
+  }
+
+  async function saveDraftEdits(draft: OnboardingDraftView) {
+    if (!token || draft.status !== 'ready_for_review' || !validateDraftEdits()) return
+    const manager = assignableManagers.find(item => item.id === draftEdits.managerId)
     if (!manager) return
-    setAssignmentUpdating(true)
+    setSavingDraft(true)
     try {
       const updated = await updateOnboardingDraft(token, draft.id, {
+        accountName: draftEdits.accountName.trim(),
+        projectName: draftEdits.projectName.trim(),
+        companyUrl: draftEdits.companyUrl.trim(),
+        linkedinUrl: draftEdits.linkedinUrl.trim(),
         managerId: manager.id,
         managerName: manager.name,
         managerEmail: manager.email,
       })
       setDrafts(current => current.map(item => (item.id === updated.id ? updated : item)))
-      toast.success('Account manager assignment updated')
+      setDraftEdits({
+        accountName: updated.accountDraft.name ?? '',
+        projectName: updated.accountDraft.projectName ?? '',
+        companyUrl: updated.accountDraft.companyUrl ?? '',
+        linkedinUrl: updated.accountDraft.linkedinUrl ?? '',
+        managerId: updated.accountDraft.ownerId && updated.accountDraft.ownerId !== 'pending-owner' ? updated.accountDraft.ownerId : '',
+      })
+      toast.success('Draft changes saved')
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : 'Assignment could not be updated')
+      applyDraftEditApiErrors(err)
+      toast.error(err instanceof Error ? err.message : 'Draft changes could not be saved')
     } finally {
-      setAssignmentUpdating(false)
+      setSavingDraft(false)
     }
   }
 
@@ -190,63 +264,73 @@ export function Onboarding() {
     <div>
       <PageHeader
         eyebrow="Accounts -> Onboarding"
-        title="Charter/SOW Intake"
-        description="KAM Head uploads project charters and SOWs, reviews AI extraction, then approves account, engagement, and KYC drafts."
+        title="Project Charter Intake"
+        description="Account Managers upload Excel project charters; Account Managers and KAM Heads edit, approve, or reject the draft before records become official."
       />
 
-      <div className="grid gap-5 xl:grid-cols-[360px_minmax(0,1fr)]">
-        <aside className="space-y-4">
-          <section className="tk-card p-5">
-            <div className="flex items-start gap-3">
-              <div className="flex h-11 w-11 items-center justify-center rounded-lg bg-blue-tint-20 text-brand-blue">
-                <UploadCloud className="h-5 w-5" />
+      <div className={cn('grid gap-5', selected ? 'xl:grid-cols-1' : 'xl:grid-cols-[360px_minmax(0,1fr)]')}>
+        {!selected ? (
+          <aside className="space-y-4">
+            <section className="tk-card p-5">
+              <div className="flex items-start gap-3">
+                <div className="flex h-11 w-11 items-center justify-center rounded-lg bg-blue-tint-20 text-brand-blue">
+                  <UploadCloud className="h-5 w-5" />
+                </div>
+                <div>
+                  <h2 className="text-base font-semibold text-ink">Upload project charter</h2>
+                  <p className="mt-1 text-sm text-ink-secondary">Upload one or more Excel project charter files. Other formats are not accepted here.</p>
+                </div>
               </div>
-              <div>
-                <h2 className="text-base font-semibold text-ink">Upload source documents</h2>
-                <p className="mt-1 text-sm text-ink-secondary">Upload one or more charters or SOWs. Draft fields are extracted from document text.</p>
-              </div>
-            </div>
-            <label className="mt-4 flex min-h-[132px] cursor-pointer flex-col items-center justify-center rounded-lg border border-dashed border-brand-blue/40 bg-blue-tint-20 p-4 text-center">
-              <FileSearch className="h-6 w-6 text-brand-blue" />
-              <span className="mt-2 text-sm font-semibold text-ink">Select charter/SOW files</span>
-              <span className="mt-1 text-xs text-ink-secondary">PDF, DOCX, TXT, and CSV files are stored and parsed for review.</span>
-              <input
-                type="file"
-                multiple
-                accept=".pdf,.doc,.docx,.txt,.csv,application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document,text/plain,text/csv"
-                className="sr-only"
-                onChange={event => setFiles(Array.from(event.target.files ?? []))}
-              />
-            </label>
-            {files.length ? (
-              <div className="mt-3 space-y-2">
-                {files.map(file => (
-                  <div key={`${file.name}-${file.size}`} className="flex items-center gap-2 rounded-md bg-surface-secondary p-2 text-xs font-medium text-ink-secondary">
-                    <FileText className="h-4 w-4 text-brand-blue" />
-                    <span className="min-w-0 flex-1 truncate">{file.name}</span>
-                  </div>
-                ))}
-              </div>
-            ) : null}
-            <label className="mt-4 block space-y-1">
-              <span className="tk-label text-xs">Account Manager <span className="text-brand-orange">*</span></span>
-              <select
-                className="tk-input"
-                value={selectedManagerId}
-                onChange={event => setSelectedManagerId(event.target.value)}
-                disabled={loadingManagers}
-              >
-                <option value="">{loadingManagers ? 'Loading account managers...' : 'Select account manager'}</option>
-                {assignableManagers.map(manager => (
-                  <option key={manager.id} value={manager.id}>{manager.name} - {manager.email}</option>
-                ))}
-              </select>
-            </label>
-            <button className="tk-button-primary mt-4 w-full" onClick={runDocumentExtraction} disabled={extracting || !files.length || !intakeManager}>
-              {extracting ? <Loader2 className="h-4 w-4 animate-spin" /> : <FileSearch className="h-4 w-4" />}
-              Extract from uploaded SOW
-            </button>
-          </section>
+              <label className="mt-4 flex min-h-[132px] cursor-pointer flex-col items-center justify-center rounded-lg border border-dashed border-brand-blue/40 bg-blue-tint-20 p-4 text-center">
+                <FileSearch className="h-6 w-6 text-brand-blue" />
+                <span className="mt-2 text-sm font-semibold text-ink">Select Excel charter files</span>
+                <span className="mt-1 text-xs text-ink-secondary">Only Excel project charter files are allowed: XLSX, XLSM, or XLS.</span>
+                <input
+                  type="file"
+                  multiple
+                  accept={PROJECT_CHARTER_ACCEPT}
+                  className="sr-only"
+                  onChange={event => {
+                    const selectedFiles = Array.from(event.target.files ?? [])
+                    if (!allProjectCharterFiles(selectedFiles)) {
+                      setFiles([])
+                      toast.error('Only Excel project charter files are allowed')
+                      event.currentTarget.value = ''
+                      return
+                    }
+                    setFiles(selectedFiles)
+                  }}
+                />
+              </label>
+              {files.length ? (
+                <div className="mt-3 space-y-2">
+                  {files.map(file => (
+                    <div key={`${file.name}-${file.size}`} className="flex items-center gap-2 rounded-md bg-surface-secondary p-2 text-xs font-medium text-ink-secondary">
+                      <FileText className="h-4 w-4 text-brand-blue" />
+                      <span className="min-w-0 flex-1 truncate">{file.name}</span>
+                    </div>
+                  ))}
+                </div>
+              ) : null}
+              <label className="mt-4 block space-y-1">
+                <span className="tk-label text-xs">Account Manager <span className="text-brand-orange">*</span></span>
+                <select
+                  className="tk-input"
+                  value={selectedManagerId}
+                  onChange={event => setSelectedManagerId(event.target.value)}
+                  disabled={loadingManagers}
+                >
+                  <option value="">{loadingManagers ? 'Loading account managers...' : 'Select account manager'}</option>
+                  {assignableManagers.map(manager => (
+                    <option key={manager.id} value={manager.id}>{manager.name} - {manager.email}</option>
+                  ))}
+                </select>
+              </label>
+              <button className="tk-button-primary mt-4 w-full" onClick={runDocumentExtraction} disabled={extracting || !files.length || !intakeManager}>
+                {extracting ? <Loader2 className="h-4 w-4 animate-spin" /> : <FileSearch className="h-4 w-4" />}
+                Extract from uploaded SOW
+              </button>
+            </section>
 
           <section className="tk-card p-4">
             <h2 className="text-sm font-semibold text-ink">Draft queue</h2>
@@ -263,7 +347,7 @@ export function Onboarding() {
               ) : drafts.map(draft => (
                 <button
                   key={draft.id}
-                  className={cn('w-full rounded-lg border p-3 text-left transition-colors', selected?.id === draft.id ? 'border-brand-blue bg-blue-tint-20' : 'border-surface-border bg-white hover:bg-surface-tertiary')}
+                  className="w-full rounded-lg border border-surface-border bg-white p-3 text-left transition-colors hover:bg-surface-tertiary"
                   onClick={() => setSelectedId(draft.id)}
                 >
                   <div className="flex items-center justify-between gap-3">
@@ -275,7 +359,8 @@ export function Onboarding() {
               ))}
             </div>
           </section>
-        </aside>
+          </aside>
+        ) : null}
 
         {loading && !selected ? (
           <main className="space-y-5">
@@ -289,18 +374,18 @@ export function Onboarding() {
             <section className="tk-card p-5">
               <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
                 <div>
-                  <p className="text-[10px] font-extrabold uppercase tracking-widest text-brand-blue">AI extraction review</p>
+                  <p className="text-[10px] font-extrabold uppercase tracking-widest text-brand-blue">Charter extraction review</p>
                   <h2 className="font-display text-3xl font-bold text-ink">{selected.accountDraft.name}</h2>
                   <p className="mt-2 max-w-3xl text-sm leading-6 text-ink-secondary">
-                    Review account, engagement, and KYC fields before any record becomes official. AI output stays draft until KAM Head approval.
+                    Review account, engagement, and KYC fields before any record becomes official. Extracted output stays draft until Account Manager or KAM Head approval.
                   </p>
                 </div>
                 <div className="flex flex-wrap gap-2">
-                  <button className="tk-button-secondary" onClick={() => reject(selected)} disabled={selected.status !== 'ready_for_review'}>
+                  <button className="tk-button-secondary" onClick={() => reject(selected)} disabled={!canApproveOnboarding || selected.status !== 'ready_for_review'}>
                     <XCircle className="h-4 w-4" />
                     Reject
                   </button>
-                  <button className="tk-button-primary" onClick={() => approve(selected)} disabled={selected.status !== 'ready_for_review' || selectedOwnerMissing}>
+                  <button className="tk-button-primary" onClick={() => approve(selected)} disabled={!canApproveOnboarding || selected.status !== 'ready_for_review' || selectedOwnerMissing}>
                     <CheckCircle2 className="h-4 w-4" />
                     Approve draft
                   </button>
@@ -318,27 +403,56 @@ export function Onboarding() {
             <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_360px]">
               <section className="space-y-4">
                 <ReviewCard title="Draft account">
-                  <label className="mb-3 block space-y-1">
-                    <span className="tk-label text-xs">Assigned Account Manager <span className="text-brand-orange">*</span></span>
-                    <select
-                      className={cn('tk-input', selectedOwnerMissing ? 'border-brand-orange focus:border-brand-orange focus:ring-brand-orange/30' : '')}
-                      value={selectedOwnerId}
-                      onChange={event => assignDraftManager(selected, event.target.value)}
-                      disabled={selected.status !== 'ready_for_review' || loadingManagers || assignmentUpdating}
+                  {selected.status === 'ready_for_review' ? (
+                    <form
+                      className="space-y-4"
+                      onSubmit={event => {
+                        event.preventDefault()
+                        void saveDraftEdits(selected)
+                      }}
                     >
-                      <option value="">{loadingManagers ? 'Loading account managers...' : 'Select account manager'}</option>
-                      {assignableManagers.map(manager => (
-                        <option key={manager.id} value={manager.id}>{manager.name} - {manager.email}</option>
-                      ))}
-                    </select>
-                    {selectedOwnerMissing ? <p className="text-xs text-brand-orange">Assign an account manager before approval.</p> : null}
-                  </label>
-                  <div className="grid gap-3 md:grid-cols-2">
-                    <Field label="Lifecycle" value={selected.accountDraft.stage} />
-                    <Field label="Segment" value={selected.accountDraft.segment} />
-                    <Field label="Owner" value={selected.accountDraft.ownerName} />
-                    <Field label="Region / tags" value={selected.accountDraft.tags.join(', ')} />
-                  </div>
+                      <div className="grid gap-3 md:grid-cols-2">
+                        <DraftTextInput label="Account name" value={draftEdits.accountName} error={draftEditErrors.accountName} onChange={value => updateDraftEdit('accountName', value)} />
+                        <DraftTextInput label="Project name" value={draftEdits.projectName} error={draftEditErrors.projectName} onChange={value => updateDraftEdit('projectName', value)} />
+                        <DraftTextInput label="Company URL" value={draftEdits.companyUrl} error={draftEditErrors.companyUrl} onChange={value => updateDraftEdit('companyUrl', value)} placeholder="https://customer.example.com" />
+                        <DraftTextInput label="LinkedIn URL" value={draftEdits.linkedinUrl} error={draftEditErrors.linkedinUrl} onChange={value => updateDraftEdit('linkedinUrl', value)} placeholder="https://www.linkedin.com/company/customer" />
+                      </div>
+                      <label className="block space-y-1">
+                        <span className={cn('tk-label text-xs', draftEditErrors.managerId ? 'text-rag-red' : '')}>
+                          Assigned Account Manager <span className="text-brand-orange">*</span>
+                        </span>
+                        <select
+                          className={cn('tk-input', (selectedOwnerMissing || draftEditErrors.managerId) ? 'border-brand-orange focus:border-brand-orange focus:ring-brand-orange/30' : '')}
+                          value={draftEdits.managerId}
+                          onChange={event => updateDraftEdit('managerId', event.target.value)}
+                          disabled={loadingManagers || savingDraft}
+                        >
+                          <option value="">{loadingManagers ? 'Loading account managers...' : 'Select account manager'}</option>
+                          {assignableManagers.map(manager => (
+                            <option key={manager.id} value={manager.id}>{manager.name} - {manager.email}</option>
+                          ))}
+                        </select>
+                        {draftEditErrors.managerId ? <p className="text-xs text-rag-red">{draftEditErrors.managerId}</p> : null}
+                        {selectedOwnerMissing ? <p className="text-xs text-brand-orange">Save an account manager before approval.</p> : null}
+                      </label>
+                      <div className="flex justify-end">
+                        <button className="tk-button-primary" type="submit" disabled={savingDraft}>
+                          {savingDraft ? <Loader2 className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4" />}
+                          Save draft changes
+                        </button>
+                      </div>
+                    </form>
+                  ) : (
+                    <div className="grid gap-3 md:grid-cols-2">
+                      <Field label="Project" value={selected.accountDraft.projectName ?? 'Not provided'} />
+                      <Field label="Company URL" value={selected.accountDraft.companyUrl ?? 'Not provided'} />
+                      <Field label="LinkedIn URL" value={selected.accountDraft.linkedinUrl ?? 'Not provided'} />
+                      <Field label="Lifecycle" value={selected.accountDraft.stage} />
+                      <Field label="Segment" value={selected.accountDraft.segment} />
+                      <Field label="Owner" value={selected.accountDraft.ownerName} />
+                      <Field label="Region / tags" value={selected.accountDraft.tags.join(', ')} />
+                    </div>
+                  )}
                 </ReviewCard>
 
                 {selected.engagementDrafts.map(engagement => (
@@ -453,6 +567,33 @@ function ReviewCard({ title, children }: { title: string; children: ReactNode })
   )
 }
 
+function DraftTextInput({
+  label,
+  value,
+  error,
+  onChange,
+  placeholder,
+}: {
+  label: string
+  value: string
+  error?: string
+  onChange: (value: string) => void
+  placeholder?: string
+}) {
+  return (
+    <label className="space-y-1">
+      <span className={cn('tk-label text-xs', error ? 'text-rag-red' : '')}>{label}</span>
+      <input
+        className={cn('tk-input', error ? 'border-rag-red focus:border-rag-red focus:ring-rag-red/30' : '')}
+        value={value}
+        onChange={event => onChange(event.target.value)}
+        placeholder={placeholder}
+      />
+      {error ? <p className="text-xs text-rag-red">{error}</p> : null}
+    </label>
+  )
+}
+
 function Field({ label, value, multiline = false }: { label: string; value: ReactNode; multiline?: boolean }) {
   return (
     <div className="rounded-lg border border-surface-border bg-white p-3">
@@ -516,4 +657,32 @@ function defaultAccountManagerId(managers: OnboardingAccountManager[], currentUs
 function assignableAccountManagers(managers: OnboardingAccountManager[], currentUser: { id: string; email: string }, canAssignOwners: boolean) {
   if (canAssignOwners) return managers
   return managers.filter(manager => manager.id === currentUser.id || manager.email.toLowerCase() === currentUser.email.toLowerCase())
+}
+
+function normalizeUrl(value: string) {
+  const trimmed = value.trim()
+  if (!trimmed) return ''
+  return /^https?:\/\//i.test(trimmed) ? trimmed : `https://${trimmed}`
+}
+
+function isLinkedinUrl(value: string) {
+  try {
+    const host = new URL(normalizeUrl(value)).hostname.toLowerCase()
+    return host === 'linkedin.com' || host.endsWith('.linkedin.com')
+  } catch {
+    return false
+  }
+}
+
+function mapDraftEditApiField(field: string): keyof DraftEditState | undefined {
+  const fieldMap: Record<string, keyof DraftEditState> = {
+    account_name: 'accountName',
+    project_name: 'projectName',
+    company_url: 'companyUrl',
+    linkedin_url: 'linkedinUrl',
+    primary_owner_id: 'managerId',
+    primary_owner_name: 'managerId',
+    primary_owner_email: 'managerId',
+  }
+  return fieldMap[field]
 }

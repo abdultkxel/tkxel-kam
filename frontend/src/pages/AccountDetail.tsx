@@ -7,15 +7,12 @@ import { PageHeader } from '@/components/ui/PageHeader'
 import { Skeleton } from '@/components/ui/Skeleton'
 import { useAuth } from '@/contexts/AuthContext'
 import { getAccount } from '@/services/accountWorkspace'
-import { useAccountStore } from '@/stores/accountStore'
 import { Account } from '@/types/account'
 
 export function AccountDetail() {
   const { id } = useParams()
   const { token } = useAuth()
-  const cachedAccount = useAccountStore(state => state.accounts.find(item => item.id === id))
-  const upsertAccount = useAccountStore(state => state.upsertAccount)
-  const [account, setAccount] = useState<Account | undefined>(cachedAccount)
+  const [account, setAccount] = useState<Account | undefined>()
   const [loading, setLoading] = useState(Boolean(id && token))
   const [error, setError] = useState('')
 
@@ -28,7 +25,6 @@ export function AccountDetail() {
       .then(nextAccount => {
         if (!active) return
         setAccount(nextAccount)
-        upsertAccount(nextAccount)
       })
       .catch(err => {
         if (!active) return
@@ -40,7 +36,7 @@ export function AccountDetail() {
     return () => {
       active = false
     }
-  }, [id, token, upsertAccount])
+  }, [id, token])
 
   if (!id) return <Navigate to="/accounts" replace />
 

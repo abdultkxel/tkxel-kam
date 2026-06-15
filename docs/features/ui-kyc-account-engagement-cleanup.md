@@ -12,7 +12,9 @@ Implements the requested placement and behavior adjustments for account onboardi
 - Account creation upload now uses the shared SOW structured extraction path with OpenAI first when configured, then local/deterministic fallback.
 - Stored uploaded SOW/charter documents remain available for KYC/RAG after the reviewed form values create the draft.
 - Account approval continues to create the default stakeholder and default KYC draft when those records do not already exist.
-- Engagement tab includes `Import Charter`, which uploads a charter/SOW file, stores the source document, extracts text/chunks, maps engagement fields, and creates stakeholders from extracted stakeholder content.
+- Engagement tab includes `Import Charter`, which uploads a charter/SOW file, stores the source document, reads it with deterministic document parsers, maps engagement fields, and creates an editable engagement draft.
+- Imported engagement drafts can be edited, saved, approved, or rejected by users who can update the account. Approval creates the official Engagement/SOW record, links the source document, and creates drafted stakeholders.
+- Engagement draft create/update notifications go to the assigned AM and KAM Head with the actor excluded; approval notifies KAM Head that a new engagement has been onboarded.
 - Engagement list/detail APIs normalize legacy seeded source links that used `route` into the public `url` field so existing demo Engagement/SOW records load correctly.
 - KYC prompt, OpenAI response, provider debug/logs, Qwen/Ollama debug output, and runtime source extraction review are visible only to `super_admin`.
 - KYC screen no longer shows the legacy `Research question`, bottom `Detailed AI description`, or right-sidebar `Review gates` sections.
@@ -27,18 +29,28 @@ Implements the requested placement and behavior adjustments for account onboardi
 
 - `POST /api/accounts/{account_id}/engagements/from-charter`
   - Accepts multipart file upload.
-  - Creates an engagement from extracted project charter/SOW fields.
-  - Stores the uploaded source document and document chunks for future KYC retrieval.
-  - Creates stakeholder rows from extracted stakeholder data.
+  - Creates an editable engagement import draft from deterministic project charter/SOW parsing.
+  - Stores the uploaded source document and document chunks for future KYC retrieval without calling AI extraction.
+- `GET /api/accounts/{account_id}/engagement-drafts`
+  - Lists pending engagement import drafts for the account.
+- `PATCH /api/engagement-drafts/{draft_id}`
+  - Saves editable draft fields and sends draft-change notifications.
+- `POST /api/engagement-drafts/{draft_id}/approve`
+  - Converts the draft into an official engagement, links source documents, creates drafted stakeholders, and sends approval/onboarding notifications.
+- `POST /api/engagement-drafts/{draft_id}/reject`
+  - Rejects the draft with a reason and notifies the draft creator/owner.
 
 ## Files Changed
 
 - `backend/app/routers/accounts.py`
+- `backend/app/routers/engagements.py`
 - `backend/app/schemas.py`
 - `backend/app/services/engagements.py`
+- `backend/app/services/notification_catalog.py`
 - `backend/app/services/onboarding.py`
 - `backend/app/services/seed.py`
 - `backend/app/services/sow_extraction.py`
+- `backend/migrations/20260614_engagement_import_drafts.sql`
 - `frontend/src/components/account/EngagementsPanel.tsx`
 - `frontend/src/components/account/KYCAgentOverview.tsx`
 - `frontend/src/components/account/KYCAssistedReview.tsx`
@@ -65,6 +77,8 @@ Implements the requested placement and behavior adjustments for account onboardi
 - Account Overview KYC agent tests cover Client Research nested values, readable source snippets, and the full-width workstream list.
 - Account Overview Health score calculator tests cover collapsed-by-default field groups, service line mapping, and expansion on demand.
 - Engagement API tests cover legacy seeded source-link normalization for Engagement/SOW list loading.
+- Engagement charter-import API tests cover deterministic parser usage, draft save notifications, approval, source-document linking, and stakeholder creation.
+- Engagement tab tests cover imported draft review actions.
 - KYC review tests were updated for super-admin-only debug panels and non-super-admin visibility.
 - Additional backend validation is covered by py_compile and targeted service/API tests.
 

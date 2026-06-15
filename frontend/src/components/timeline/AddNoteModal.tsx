@@ -8,9 +8,8 @@ import { useForm } from 'react-hook-form'
 import { toast } from 'sonner'
 import { MentionTextarea } from '@/components/collaboration/MentionTextarea'
 import { useAuth } from '@/contexts/AuthContext'
+import { useAccountOptions } from '@/hooks/useAccountOptions'
 import { useRole } from '@/hooks/useRole'
-import { useAccountStore } from '@/stores/accountStore'
-import { useNotificationStore } from '@/stores/notificationStore'
 import { createTimelineNote, getTimelineEventTypes } from '@/services/timeline'
 import { TimelineEntry, TimelineEventTypeConfig } from '@/types/timeline'
 import { cn } from '@/utils/cn'
@@ -40,8 +39,8 @@ export function AddNoteModal({ accountId, open: controlledOpen, onOpenChange, on
   const [eventTypesLoading, setEventTypesLoading] = useState(false)
   const { token } = useAuth()
   const user = useRole()
-  const accountName = useAccountStore(state => state.accounts.find(account => account.id === accountId)?.name ?? 'Account')
-  const addNotification = useNotificationStore(state => state.addNotification)
+  const { accounts } = useAccountOptions()
+  const accountName = accounts.find(account => account.id === accountId)?.name ?? 'Account'
   const [serverEventTypes, setServerEventTypes] = useState<TimelineEventTypeConfig[]>([])
   const eventTypes = useMemo(() => serverEventTypes.filter(item => item.active && fixedManualEventTypes.has(item.eventType)), [serverEventTypes])
   const open = controlledOpen ?? internalOpen
@@ -126,17 +125,6 @@ export function AddNoteModal({ accountId, open: controlledOpen, onOpenChange, on
         tags: ['manual'],
         mentions,
         attachments: values.attachmentUrl ? [{ name: 'Attachment', url: values.attachmentUrl }] : [],
-      })
-      mentions.forEach(mentionedUserId => {
-        addNotification({
-          userId: mentionedUserId,
-          trigger: 'timeline_mention',
-          sentence: `${user.name} mentioned you in a timeline note`,
-          accountId,
-          accountName,
-          contentPreview: 'You were mentioned in a timeline note. Open the account to view authorized details.',
-          route: `/accounts/${accountId}`,
-        })
       })
       toast.success('Timeline event added')
       onAdded?.(entry)

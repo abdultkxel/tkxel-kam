@@ -26,7 +26,7 @@ Adds a repeatable local/demo seed command for four realistic project accounts: C
 - Escalations and escalation updates
 - Tasks
 - Timeline entries
-- In-app notifications for Account Manager, KAM Head, Delivery Lead, Leadership, and Admin
+- In-app notifications for Account Manager, KAM Head, Leadership, and Admin
 
 ## Commands
 
@@ -47,7 +47,6 @@ Use the base seeded users from `docs/features/base-data-seeding.md`:
 - `admin.user@tkxel.com` / `User@12345`
 - `kam.head.user@tkxel.com` / `User@12345`
 - `account.manager.user@tkxel.com` / `User@12345`
-- `delivery.lead.user@tkxel.com` / `User@12345`
 - `leadership.viewer.user@tkxel.com` / `User@12345`
 
 ## Implementation Files

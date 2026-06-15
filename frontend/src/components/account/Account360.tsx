@@ -1,6 +1,5 @@
 import * as Tabs from '@radix-ui/react-tabs'
-import { AlertTriangle, BriefcaseBusiness, CalendarClock, CheckCircle2, Clock3, FileText, Loader2, RefreshCcw, Target, X } from 'lucide-react'
-import { nanoid } from 'nanoid'
+import { AlertTriangle, BriefcaseBusiness, CalendarClock, CheckCircle2, Clock3, Loader2, RefreshCcw, Target, X } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { toast } from 'sonner'
@@ -17,25 +16,20 @@ import { AIBriefCard } from '@/components/ai/AIBriefCard'
 import { OpportunityBoard } from '@/components/opportunities/OpportunityBoard'
 import { EmptyState } from '@/components/ui/EmptyState'
 import { TimelineFeed } from '@/components/timeline/TimelineFeed'
-import { HandoverSummary } from '@/components/timeline/HandoverSummary'
 import { AddOpportunityDialog, OpportunityDetailDialog, type OwnerOption } from '@/pages/Opportunities'
 import { RuntimeCustomFieldValues } from '@/components/custom-fields/RuntimeCustomFields'
 import { useAuth } from '@/contexts/AuthContext'
-import { useCapabilities } from '@/hooks/useCapabilities'
 import { useRole } from '@/hooks/useRole'
 import { RuntimeCustomField, listRuntimeCustomFields } from '@/services/contentGovernance'
 import { AlertRecord, evaluateAlerts, getAlerts, updateAlertStatus } from '@/services/alerts'
 import { recalculateAccountScore } from '@/services/scoringSignalsTasks'
 import type { ScoreRead } from '@/services/scoringSignalsTasks'
-import { useAccountStore } from '@/stores/accountStore'
+import { getAccountTimeline } from '@/services/timeline'
 import { useGovernanceStore } from '@/stores/governanceStore'
 import { useOpportunityStore } from '@/stores/opportunityStore'
-import { useScoreStore } from '@/stores/scoreStore'
-import { useTimelineStore } from '@/stores/timelineStore'
 import { useUIStore } from '@/stores/uiStore'
 import { Account } from '@/types/account'
-import { canViewTimelineEntry } from '@/types/timeline'
-import { emit } from '@/utils/emitTimelineEvent'
+import { TimelineEntry } from '@/types/timeline'
 import { formatCompactCurrency, formatCurrency, formatDate } from '@/utils/formatters'
 
 export const accountDetailTabs = ['Overview', 'Engagement', 'Stakeholders', 'KYC', 'Health', 'Stage', 'Opportunities', 'Governance', 'Education', 'Timeline', 'Notes', 'Documents'] as const
@@ -93,34 +87,24 @@ export function scoreReadToAccountHealth(score: ScoreRead, fallback: Account['he
 export function Account360({ account }: { account: Account }) {
   const { token } = useAuth()
   const user = useRole()
-  const { capabilities } = useCapabilities()
   const [searchParams, setSearchParams] = useSearchParams()
-  const [handoverOpen, setHandoverOpen] = useState(false)
   const [savingHealth, setSavingHealth] = useState(false)
   const [accountCustomFields, setAccountCustomFields] = useState<RuntimeCustomField[]>([])
   const [accountAlerts, setAccountAlerts] = useState<AlertRecord[]>([])
+  const [timelineEntries, setTimelineEntries] = useState<TimelineEntry[]>([])
+  const [currentHealth, setCurrentHealth] = useState(account.health)
   const [alertsLoading, setAlertsLoading] = useState(false)
   const [alertActionId, setAlertActionId] = useState('')
   const requestedTab = searchParams.get('tab')
   const requestedAlertId = searchParams.get('alert')
   const [activeTab, setActiveTab] = useState<AccountDetailTab>(() => resolveAccountDetailTab(requestedTab))
   const [stageWorkspaceTab, setStageWorkspaceTab] = useState<StageWorkspaceTab>(() => resolveStageWorkspaceTab(requestedTab))
-  const setHealth = useAccountStore(state => state.setHealth)
-  const addScoreSnapshot = useScoreStore(state => state.addSnapshot)
   const allOpportunities = useOpportunityStore(state => state.opportunities)
   const opportunityTypes = useOpportunityStore(state => state.types)
   const opportunities = useMemo(() => allOpportunities.filter(item => item.accountId === account.id), [account.id, allOpportunities])
   const governanceEvents = useGovernanceStore(state => state.events)
-  const entries = useTimelineStore(state => state.entries)
   const setActiveAccountId = useUIStore(state => state.setActiveAccountId)
-  const visibleEntries = useMemo(
-    () =>
-      entries
-        .filter(entry => entry.accountId === account.id)
-        .filter(entry => canViewTimelineEntry(entry, user.role, user.id, capabilities.can_view_sensitive_sources, capabilities.can_moderate_timeline))
-        .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()),
-    [account.id, capabilities.can_moderate_timeline, capabilities.can_view_sensitive_sources, entries, user.id, user.role],
-  )
+  const visibleEntries = timelineEntries
   const accountGovernance = useMemo(
     () =>
       governanceEvents
@@ -133,13 +117,12 @@ export function Account360({ account }: { account: Account }) {
     .filter(opportunity => opportunity.stage !== 'Won' && opportunity.stage !== 'Lost')
     .reduce((sum, opportunity) => sum + opportunity.estimatedValue, 0)
   const recentDecisions = visibleEntries.filter(entry => entry.eventType === 'approval_event' || entry.eventType === 'executive_event').length
-  const privileged = capabilities.can_view_portfolio || capabilities.can_update_portfolio_accounts || capabilities.can_view_sensitive_sources
   const focusedAlert = accountAlerts.find(alert => alert.id === requestedAlertId) ?? null
   const healthDimensions = [
-    { key: 'relationship', label: 'Relationship', value: account.health.relationship },
-    { key: 'usage', label: 'Usage', value: account.health.usage },
-    { key: 'delivery', label: 'Delivery', value: account.health.delivery },
-    { key: 'commercial', label: 'Commercial', value: account.health.commercial },
+    { key: 'relationship', label: 'Relationship', value: currentHealth.relationship },
+    { key: 'usage', label: 'Usage', value: currentHealth.usage },
+    { key: 'delivery', label: 'Delivery', value: currentHealth.delivery },
+    { key: 'commercial', label: 'Commercial', value: currentHealth.commercial },
   ]
   const riskTone =
     account.riskStatus === 'critical'
@@ -155,6 +138,7 @@ export function Account360({ account }: { account: Account }) {
     if (account.ownerId) options.set(account.ownerId, { id: account.ownerId, name: account.ownerName, email: account.ownerEmail })
     return Array.from(options.values()).sort((a, b) => a.name.localeCompare(b.name))
   }, [account.ownerEmail, account.ownerId, account.ownerName, user.email, user.id, user.name])
+  const displayAccount = useMemo(() => ({ ...account, health: currentHealth }), [account, currentHealth])
 
   const refreshAccountAlerts = useCallback(async () => {
     if (!token) {
@@ -175,6 +159,28 @@ export function Account360({ account }: { account: Account }) {
   useEffect(() => {
     setActiveAccountId(account.id)
   }, [account.id, setActiveAccountId])
+
+  useEffect(() => {
+    setCurrentHealth(account.health)
+  }, [account.health, account.id])
+
+  useEffect(() => {
+    if (!token) {
+      setTimelineEntries([])
+      return
+    }
+    let cancelled = false
+    getAccountTimeline(token, account.id, { page: 1, page_size: 25, direction: 'desc' })
+      .then(result => {
+        if (!cancelled) setTimelineEntries(result.items)
+      })
+      .catch(() => {
+        if (!cancelled) setTimelineEntries([])
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [account.id, token])
 
   useEffect(() => {
     if (!token) {
@@ -253,29 +259,10 @@ export function Account360({ account }: { account: Account }) {
 
   async function recalcHealth() {
     setSavingHealth(true)
-    const before = { ...account.health, scoringVersion: 'v1.3' }
     try {
       if (!token) throw new Error('You must be logged in to recalculate health')
       const score = await recalculateAccountScore(token, account.id, { trigger_source: 'account_health_tab', include_signal_evaluation: true })
-      const after = { ...scoreReadToAccountHealth(score, account.health), scoringVersion: score.metric_version }
-      setHealth(account.id, after)
-      const entry = emit.scoreChanged(account.id, user.id, user.name, before, after, score.metric_version)
-      addScoreSnapshot({
-        id: score.latest_snapshot?.id ?? `score-${nanoid(8)}`,
-        accountId: account.id,
-        timestamp: score.latest_snapshot?.calculated_at ?? entry.timestamp,
-        overall: after.overall,
-        dimensions: {
-          relationship: after.relationship,
-          usage: after.usage,
-          delivery: after.delivery,
-          commercial: after.commercial,
-        },
-        calculatorVersion: score.metric_version,
-        changedBy: user.id,
-        changedByName: score.latest_snapshot?.calculated_by_name ?? user.name,
-        triggerEntryId: entry.id,
-      })
+      setCurrentHealth(scoreReadToAccountHealth(score, currentHealth))
       await evaluateAlerts(token, { scope: 'account', account_id: account.id })
       await refreshAccountAlerts()
       toast.success('Health score recalculated')
@@ -288,7 +275,6 @@ export function Account360({ account }: { account: Account }) {
 
   async function applyCalculatorScores(summary: ScoreCalculatorSummary) {
     setSavingHealth(true)
-    const before = { ...account.health, scoringVersion: 'v1.3' }
     try {
       if (!token) throw new Error('You must be logged in to save calculator scores')
       const score = await recalculateAccountScore(token, account.id, {
@@ -300,41 +286,7 @@ export function Account360({ account }: { account: Account }) {
           evidence: summary.activityEvidence,
         },
       })
-      const after = scoreReadToAccountHealth(score, account.health)
-      const afterValue = {
-        ...after,
-        scoringVersion: score.metric_version,
-        calculatorBreakdown: {
-          relationship: summary.relationship,
-          contract: summary.contract,
-          resource: summary.resource,
-          csat: summary.csat,
-          risk: summary.risk,
-          overallLegacyScore: summary.overallLegacyScore,
-          legacyOverall: summary.legacyOverall,
-          serviceCoverage: summary.serviceCoverage,
-          selectedServiceLines: summary.selectedServiceLines,
-          activityEvidence: summary.activityEvidence,
-        },
-      }
-      setHealth(account.id, after)
-      const entry = emit.scoreChanged(account.id, user.id, user.name, before, afterValue, score.metric_version)
-      addScoreSnapshot({
-        id: score.latest_snapshot?.id ?? `score-${nanoid(8)}`,
-        accountId: account.id,
-        timestamp: score.latest_snapshot?.calculated_at ?? entry.timestamp,
-        overall: after.overall,
-        dimensions: {
-          relationship: after.relationship,
-          usage: after.usage,
-          delivery: after.delivery,
-          commercial: after.commercial,
-        },
-        calculatorVersion: score.metric_version,
-        changedBy: user.id,
-        changedByName: score.latest_snapshot?.calculated_by_name ?? user.name,
-        triggerEntryId: entry.id,
-      })
+      setCurrentHealth(scoreReadToAccountHealth(score, currentHealth))
       await evaluateAlerts(token, { scope: 'account', account_id: account.id })
       await refreshAccountAlerts()
       toast.success('Calculator scores saved')
@@ -392,12 +344,6 @@ export function Account360({ account }: { account: Account }) {
                       <span className="text-xs font-medium text-ink-secondary">Owner: {account.ownerName}</span>
                     </div>
                   </div>
-                  {privileged ? (
-                    <button className="tk-button-primary" onClick={() => setHandoverOpen(true)}>
-                      <FileText className="h-4 w-4" />
-                      Generate handover
-                    </button>
-                  ) : null}
                 </div>
               </div>
               <div className="grid gap-0 divide-y divide-surface-border md:grid-cols-3 md:divide-x md:divide-y-0">
@@ -437,13 +383,13 @@ export function Account360({ account }: { account: Account }) {
             </section>
             <section className="tk-card flex flex-col items-center justify-center p-5 text-center">
               <p className="mb-3 text-[10px] font-extrabold uppercase tracking-widest text-brand-blue">Health posture</p>
-              <HealthScoreRing value={account.health.overall} />
-              <p className="mt-4 text-sm font-semibold text-ink">Current score: {account.health.overall}/100</p>
+              <HealthScoreRing value={currentHealth.overall} />
+              <p className="mt-4 text-sm font-semibold text-ink">Current score: {currentHealth.overall}/100</p>
               <p className="mt-1 text-xs text-ink-secondary">{recentDecisions} decision events visible in this account</p>
             </section>
           </div>
           <AIBriefCard
-            account={account}
+            account={displayAccount}
             entries={visibleEntries}
             opportunities={opportunities}
             governance={governanceEvents}
@@ -470,7 +416,7 @@ export function Account360({ account }: { account: Account }) {
             <section className="tk-card p-5">
               <div className="grid gap-6 xl:grid-cols-[260px_1fr]">
                 <div className="flex flex-col items-center justify-center rounded-lg bg-surface-secondary p-5 text-center">
-                  <HealthScoreRing value={account.health.overall} size={176} />
+                  <HealthScoreRing value={currentHealth.overall} size={176} />
                   <span className={`mt-4 rounded-full border px-3 py-1 text-[11px] font-semibold uppercase tracking-wider ${riskTone}`}>
                     {account.riskStatus}
                   </span>
@@ -492,7 +438,7 @@ export function Account360({ account }: { account: Account }) {
                   </div>
 
                   <div className="mt-5 grid gap-3 sm:grid-cols-2">
-                    <HealthDimensionMeter label="Overall" value={account.health.overall} prominent />
+                    <HealthDimensionMeter label="Overall" value={currentHealth.overall} prominent />
                     {healthDimensions.map(dimension => (
                       <HealthDimensionMeter key={dimension.key} label={dimension.label} value={dimension.value} />
                     ))}
@@ -500,7 +446,7 @@ export function Account360({ account }: { account: Account }) {
                 </div>
               </div>
             </section>
-            <ScoreCalculators account={account} saving={savingHealth} onApply={applyCalculatorScores} />
+            <ScoreCalculators account={displayAccount} saving={savingHealth} onApply={applyCalculatorScores} />
             <ScoreHistoryPanel accountId={account.id} />
           </div>
         </Tabs.Content>
@@ -554,8 +500,6 @@ export function Account360({ account }: { account: Account }) {
           <TimelineFeed accountId={account.id} />
         </Tabs.Content>
       </Tabs.Root>
-
-      <HandoverSummary account={account} entries={visibleEntries} opportunities={opportunities} open={handoverOpen} onOpenChange={setHandoverOpen} />
       {focusedAlert ? <AlertDetailsDrawer alert={focusedAlert} busy={alertActionId === focusedAlert.id} onClose={closeAlertDetails} onStatus={status => setAlertStatus(focusedAlert, status)} /> : null}
     </>
   )
