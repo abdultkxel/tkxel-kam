@@ -198,11 +198,15 @@ class DashboardsService:
             self._critical_actions_widget(critical_action_items, tasks, accounts, engagement_health, data_scope="assigned_accounts", page=page, page_size=page_size),
             self._todays_tasks_widget(todays_tasks, data_scope="assigned_accounts", now=now, page=page, page_size=page_size),
             self._widget("tasks", "Tasks summary", self._task_breakdown_value(tasks, accounts, current_user.id, now), [self._task_item(task, now) for task in self._slice(tasks, page, page_size)], "assigned_accounts", {"page": page, "page_size": page_size, "total": len(tasks), "data_source": "Showing tasks assigned to you across your assigned accounts."}, primary_route="/tasks"),
-            self._widget("onboarding_drafts", "Onboarding drafts", {"ready_for_review": onboarding_draft_total}, [self._onboarding_draft_item(draft) for draft in onboarding_drafts], "assigned_accounts", {"page": page, "page_size": page_size, "total": onboarding_draft_total}, primary_route="/accounts/onboarding"),
             self._pipeline_widget(opportunities, data_scope="assigned_accounts", masked=mask_commercial, page=page, page_size=page_size),
             self._forecast_widget(opportunities, accounts, data_scope="assigned_accounts", masked=mask_commercial),
             self._governance_calendar_widget(governance, data_scope="assigned_accounts", read_only=False),
         ]
+        if onboarding_draft_total > 0:
+            widgets.insert(
+                4,
+                self._widget("onboarding_drafts", "Onboarding drafts", {"ready_for_review": onboarding_draft_total}, [self._onboarding_draft_item(draft) for draft in onboarding_drafts], "assigned_accounts", {"page": page, "page_size": page_size, "total": onboarding_draft_total}, primary_route="/accounts/onboarding"),
+            )
         return self._dashboard_read(current_user, "am_home", "AM Home", "account_manager", "assigned_accounts", widgets, read_only=False, filters=["search", "risk", "priority", "account_id"])
 
     def _build_kam_head_portfolio(

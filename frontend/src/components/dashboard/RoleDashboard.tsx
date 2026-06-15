@@ -19,7 +19,6 @@ import {
   Building2,
   CalendarCheck2,
   CalendarDays,
-  Check,
   ExternalLink,
   Filter,
   Info,
@@ -88,6 +87,7 @@ const knownWidgetKeys = new Set([
   'critical_actions',
   'todays_tasks',
   'tasks',
+  'onboarding_drafts',
   'stale_kyc',
   'renewal_focus',
   'am_workload',
@@ -133,6 +133,7 @@ export function RoleDashboard({
   const opportunities = widgetByKey.get('opportunities') ?? widgetByKey.get('growth')
   const forecast = widgetByKey.get('forecast_chart')
   const calendar = widgetByKey.get('governance_calendar')
+  const onboardingDrafts = visibleOnboardingDrafts(widgetByKey.get('onboarding_drafts'))
   const accountOptions = useMemo(() => collectAccountOptions(widgets), [widgets])
   const ownerOptions = useMemo(() => collectOwnerOptions(widgets), [widgets])
   const allowedFilters = dashboard?.allowed_filters ?? []
@@ -216,6 +217,7 @@ export function RoleDashboard({
               widgetByKey.get('high_risk_accounts'),
               widgetByKey.get('critical_tasks') ?? widgetByKey.get('signals'),
               taskPanel?.key === 'tasks' ? undefined : widgetByKey.get('tasks'),
+              onboardingDrafts,
               widgetByKey.get('am_workload'),
               widgetByKey.get('engagement_health'),
               widgetByKey.get('retention'),
@@ -232,7 +234,6 @@ export function RoleDashboard({
           {calendar && token ? (
             <GovernanceCalendarPanel
               token={token}
-              userId={userId}
               dashboardReadOnly={Boolean(dashboard?.read_only)}
               calendarWidget={calendar}
               accountOptions={accountOptions}
@@ -464,6 +465,14 @@ function TaskSummaryPanel({ widget, refreshing, canRefresh, onRefresh }: { widge
       </div>
     </section>
   )
+}
+
+function visibleOnboardingDrafts(widget?: DashboardWidget) {
+  if (!widget) return undefined
+  const value = isRecord(widget.value) ? widget.value : {}
+  const readyForReview = numericValue(value.ready_for_review)
+  const total = numericValue(widget.metadata.total)
+  return widget.items.length > 0 || total > 0 || readyForReview > 0 ? widget : undefined
 }
 
 function TaskBreakdownPanel({ widget }: { widget: DashboardWidget }) {
@@ -861,13 +870,11 @@ function RowLink({ item, valueKey, dateKey }: { item: Record<string, unknown>; v
 
 function GovernanceCalendarPanel({
   token,
-  userId,
   dashboardReadOnly,
   calendarWidget,
   accountOptions,
 }: {
   token: string
-  userId?: string
   dashboardReadOnly: boolean
   calendarWidget?: DashboardWidget
   accountOptions: AccountOption[]
@@ -876,7 +883,6 @@ function GovernanceCalendarPanel({
   const [selectedDay, setSelectedDay] = useState<Date | null>(new Date())
   const [selectedItem, setSelectedItem] = useState<GovernanceCalendarItemRecord | null>(null)
   const [accountFilter, setAccountFilter] = useState('')
-  const [mineOnly, setMineOnly] = useState(false)
   const [items, setItems] = useState<GovernanceCalendarItemRecord[]>([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
@@ -887,7 +893,6 @@ function GovernanceCalendarPanel({
     setError('')
     listGovernanceCalendarItems(token, {
       accountId: accountFilter || undefined,
-      ownerId: mineOnly && userId ? userId : undefined,
       dateFrom: startOfMonth(monthAnchor).toISOString(),
       dateTo: endOfMonth(monthAnchor).toISOString(),
       page: 1,
@@ -905,7 +910,7 @@ function GovernanceCalendarPanel({
     return () => {
       active = false
     }
-  }, [accountFilter, mineOnly, monthAnchor, token, userId])
+  }, [accountFilter, monthAnchor, token])
 
   const selectedCalendarDate = new Date()
   const days = eachDayOfInterval({ start: startOfMonth(monthAnchor), end: endOfMonth(monthAnchor) })
@@ -935,17 +940,6 @@ function GovernanceCalendarPanel({
                 <option value="">All Accounts</option>
                 {accountOptions.map(account => <option key={account.id} value={account.id}>{account.name}</option>)}
               </select>
-              <button
-                type="button"
-                className="inline-flex min-h-[44px] items-center gap-2 rounded-md border border-surface-border bg-white px-3 text-sm font-semibold text-ink transition-colors hover:bg-surface-tertiary"
-                onClick={() => setMineOnly(value => !value)}
-                aria-pressed={mineOnly}
-              >
-                <span className={cn('flex h-5 w-5 items-center justify-center rounded-sm border', mineOnly ? 'border-brand-blue bg-brand-blue text-white' : 'border-surface-border bg-white')}>
-                  {mineOnly ? <Check className="h-3 w-3" /> : null}
-                </span>
-                My accounts only
-              </button>
               <button className="tk-icon-button" type="button" onClick={() => setMonthAnchor(value => subMonths(value, 1))} aria-label="Previous month"><ArrowLeft className="h-4 w-4" /></button>
               <p className="min-w-[120px] text-center text-lg font-semibold text-ink">{format(monthAnchor, 'MMM yyyy')}</p>
               <button className="tk-icon-button" type="button" onClick={() => setMonthAnchor(value => addMonths(value, 1))} aria-label="Next month"><ArrowRight className="h-4 w-4" /></button>
