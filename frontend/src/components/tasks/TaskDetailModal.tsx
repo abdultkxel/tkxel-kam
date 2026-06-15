@@ -307,7 +307,7 @@ export function TaskDetailModal({ taskId, open, readOnly, onOpenChange, onTaskUp
                   </form>
                 </section>
 
-                <section className="grid gap-5 xl:grid-cols-[minmax(0,0.75fr)_minmax(360px,0.55fr)]">
+                <section className="grid w-full gap-5 xl:grid-cols-[minmax(0,2fr)_minmax(0,1fr)]">
                   <div className="overflow-hidden rounded-lg border border-surface-border bg-white">
                     <div className="border-b border-surface-border p-5">
                       <h2 className="text-lg font-semibold text-ink">Comments</h2>
