@@ -1,8 +1,20 @@
 # Functional Testing Report
 
 Generated: 2026-06-12
+Updated: 2026-06-15
 
 Project: KAM Intelligence Platform
+
+## 2026-06-15 UAT-Account Update
+
+| Check | Result | Notes |
+| --- | --- | --- |
+| Frontend typecheck | Pass | `npm run typecheck` completed successfully after task board and modal updates. |
+| Backend task/account compile check | Pass | `python -m py_compile backend/app/models.py backend/app/schemas.py backend/app/repositories/accounts.py backend/app/repositories/playbooks_tasks.py backend/app/routers/accounts.py backend/app/routers/playbooks_tasks.py backend/app/services/accounts.py backend/app/services/playbooks_tasks.py` completed successfully. |
+| Task board workflow | Updated | Board-only task view now removes list mode, top summary cards, visible pagination controls, and sort direction controls. |
+| Task detail workflow | Updated | Task details open in a smaller editable modal with dirty-state save gating, delete icon-only action, comments, and movement history. |
+| Task movement workflow | Updated | Drag/drop status movement requires a reason and persists the reason to task history. |
+| Assignment visibility | Updated | Task listing and account selector are scoped to the logged-in user's assigned accounts/tasks. |
 
 ## Validation Summary
 
