@@ -2033,6 +2033,7 @@ class EngagementRead(BaseModel):
 
     id: str
     account_id: str
+    account_name: str | None = None
     name: str
     description: str | None = None
     status: str
@@ -2083,7 +2084,7 @@ class EngagementPageRead(BaseModel):
 
 
 class EngagementCreateRequest(EngagementDraftRequest):
-    owner_id: str
+    owner_id: str | None = None
     service_lines: list[str] = Field(..., min_length=1)
     start_date: datetime
 
@@ -3395,7 +3396,7 @@ class StakeholderCreateRequest(BaseModel):
     @field_validator("role")
     @classmethod
     def role_is_valid(cls, value: str) -> str:
-        return validate_slug(value, "Stakeholder role")
+        return validate_short_text(value, "Stakeholder role", max_length=80)
 
     @field_validator("notes")
     @classmethod
@@ -3450,7 +3451,7 @@ class StakeholderUpdateRequest(BaseModel):
     @field_validator("role")
     @classmethod
     def role_is_valid(cls, value: str | None) -> str | None:
-        return validate_slug(value, "Stakeholder role") if value is not None else None
+        return validate_short_text(value, "Stakeholder role", max_length=80) if value is not None else None
 
     @field_validator("notes")
     @classmethod

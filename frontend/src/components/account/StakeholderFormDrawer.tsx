@@ -66,7 +66,7 @@ interface Props {
   onSaved?: () => Promise<unknown> | unknown
 }
 
-const fallbackRoleOptions: StakeholderRoleOption[] = ['executive_sponsor', 'economic_buyer', 'technical_decision_maker', 'operational_poc', 'commercial_owner', 'influencer'].map(value => ({ value, label: titleize(value) }))
+const fallbackRoleOptions: StakeholderRoleOption[] = ['Executive Sponsor', 'Economic Buyer', 'Technical Decision Maker', 'Operational POC', 'Commercial Owner', 'Influencer'].map(value => ({ value, label: value }))
 const influenceOptions: StakeholderInfluence[] = ['low', 'medium', 'high', 'critical']
 const relationshipOptions: StakeholderRelationshipStrength[] = ['unknown', 'weak', 'developing', 'strong', 'champion']
 const sentimentOptions: StakeholderSentiment[] = ['negative', 'neutral', 'positive', 'champion']
@@ -370,7 +370,7 @@ function buildPayload(form: StakeholderFormState) {
     linkedinUrl: form.linkedinUrl.trim() ? normalizeLinkedinUrl(form.linkedinUrl) : null,
     engagementId: emptyToNull(form.engagementId),
     reportsToStakeholderId: emptyToNull(form.reportsToStakeholderId),
-    role: form.role,
+    role: form.role.trim(),
     influence: form.influence,
     relationshipStrength: form.relationshipStrength,
     sentiment: form.sentiment,

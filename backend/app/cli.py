@@ -4,7 +4,7 @@ from sqlalchemy import MetaData, inspect, text
 
 from app.database import engine
 from app.database import SessionLocal, init_db
-from app.services.seed import clear_forecast_demo_data, seed_base_data, seed_demo_project_data, seed_forecast_demo_data
+from app.services.seed import clear_forecast_demo_data, seed_default_data, seed_demo_project_data, seed_forecast_demo_data
 
 
 def migrate() -> None:
@@ -15,8 +15,8 @@ def migrate() -> None:
 def seed() -> None:
     init_db()
     with SessionLocal() as db:
-        user = seed_base_data(db)
-        print(f"Seeded base roles, permissions, allowed domains, and users. Super admin: {user.email}")
+        user = seed_default_data(db)
+        print(f"Seeded default roles, permissions, users, and reference data. Super admin: {user.email}")
 
 
 def _drop_all_tables() -> None:
@@ -41,8 +41,8 @@ def reset_db() -> None:
     _drop_all_tables()
     init_db()
     with SessionLocal() as db:
-        user = seed_base_data(db)
-        print(f"Database reset complete. Seeded base roles, permissions, allowed domains, and users. Super admin: {user.email}")
+        user = seed_default_data(db)
+        print(f"Database reset complete. Seeded default roles, permissions, users, and reference data. Super admin: {user.email}")
 
 
 def seed_forecast_demo() -> None:

@@ -4,10 +4,10 @@ import type { FormEvent, InputHTMLAttributes } from 'react'
 import { useEffect, useMemo, useState } from 'react'
 import { toast } from 'sonner'
 import { FieldError } from '@/components/form/FieldError'
-import { useAuth } from '@/contexts/AuthContext'
+import { ServiceLineMultiSelect } from '@/components/account/ServiceLineMultiSelect'
+import { useServiceCatalogOptions } from '@/hooks/useServiceCatalogOptions'
 import { useCreateEngagement, useUpdateEngagement } from '@/hooks/useEngagements'
-import type { AccountOwnerView, EngagementCreatePayload, EngagementUpdatePayload } from '@/services/accountWorkspace'
-import { listAccountOwners } from '@/services/accountWorkspace'
+import type { EngagementCreatePayload, EngagementUpdatePayload } from '@/services/accountWorkspace'
 import type { Account } from '@/types/account'
 import type { EngagementCommercialStatus, EngagementDeliveryStatus, EngagementHealthStatus, EngagementRecord, EngagementRenewalRisk } from '@/types/v3'
 import { cn } from '@/utils/cn'
@@ -17,8 +17,6 @@ import type { FieldErrors } from '@/utils/formErrors'
 type EngagementFormField =
   | 'name'
   | 'description'
-  | 'ownerId'
-  | 'serviceLinesText'
   | 'startDate'
   | 'endDate'
   | 'renewalDate'
@@ -36,8 +34,7 @@ type EngagementFormField =
 interface EngagementFormState {
   name: string
   description: string
-  ownerId: string
-  serviceLinesText: string
+  serviceLines: string[]
   startDate: string
   endDate: string
   renewalDate: string
@@ -67,58 +64,34 @@ const healthStatuses: EngagementHealthStatus[] = ['green', 'amber', 'red', 'unkn
 const renewalRisks: EngagementRenewalRisk[] = ['low', 'medium', 'high', 'unknown']
 
 export function EngagementFormDialog({ account, engagement, open, onOpenChange, onSaved }: Props) {
-  const { token } = useAuth()
   const { createEngagement, isLoading: creating } = useCreateEngagement()
   const { updateEngagement, isLoading: updating } = useUpdateEngagement()
-  const [form, setForm] = useState<EngagementFormState>(() => initialForm(account, engagement))
+  const { serviceLineOptions, isLoading: loadingServiceLines, error: serviceLineCatalogError } = useServiceCatalogOptions()
+  const [form, setForm] = useState<EngagementFormState>(() => initialForm(engagement))
   const [fieldErrors, setFieldErrors] = useState<FieldErrors>({})
   const [formError, setFormError] = useState('')
-  const [owners, setOwners] = useState<AccountOwnerView[]>([])
-  const [ownersLoading, setOwnersLoading] = useState(false)
   const isEditing = Boolean(engagement)
   const isSaving = creating || updating
+  const accountManagerName = account.ownerName || engagement?.ownerName || 'Unassigned'
 
   useEffect(() => {
     if (!open) return
-    setForm(initialForm(account, engagement))
+    setForm(initialForm(engagement))
     setFieldErrors({})
     setFormError('')
   }, [account.id, account.ownerId, account.ownerName, engagement, open])
-
-  useEffect(() => {
-    if (!open || !token) return
-    let active = true
-    setOwnersLoading(true)
-    listAccountOwners(token, account.id)
-      .then(result => {
-        if (active) setOwners(result.filter(owner => owner.isActive))
-      })
-      .catch(() => {
-        if (active) setOwners([])
-      })
-      .finally(() => {
-        if (active) setOwnersLoading(false)
-      })
-    return () => {
-      active = false
-    }
-  }, [account.id, open, token])
-
-  const ownerOptions = useMemo(() => {
-    const options = new Map<string, string>()
-    owners.forEach(owner => {
-      if (owner.userId) options.set(owner.userId, ownerLabel(owner))
-    })
-    if (account.ownerId) options.set(account.ownerId, account.ownerName || 'Account owner')
-    if (engagement?.ownerId) options.set(engagement.ownerId, engagement.ownerName || 'Current owner')
-    return Array.from(options.entries()).map(([value, label]) => ({ value, label }))
-  }, [account.ownerId, account.ownerName, engagement?.ownerId, engagement?.ownerName, owners])
 
   const noticeDeadlinePreview = useMemo(() => previewNoticeDeadline(form), [form])
 
   function updateField(field: EngagementFormField, value: string) {
     setForm(current => ({ ...current, [field]: value }))
     setFieldErrors(errors => clearFieldError(errors, field))
+    setFormError('')
+  }
+
+  function updateServiceLines(serviceLines: string[]) {
+    setForm(current => ({ ...current, serviceLines }))
+    setFieldErrors(errors => clearFieldError(errors, 'serviceLines'))
     setFormError('')
   }
 
@@ -138,6 +111,14 @@ export function EngagementFormDialog({ account, engagement, open, onOpenChange, 
       await onSaved?.()
     } catch (error) {
       const nextFieldErrors = apiFieldErrors(error, fieldAliases)
+      const ownerFieldError = nextFieldErrors.ownerId
+      if (ownerFieldError) {
+        const visibleFieldErrors = { ...nextFieldErrors }
+        delete visibleFieldErrors.ownerId
+        setFieldErrors(visibleFieldErrors)
+        setFormError(ownerFieldError)
+        return
+      }
       setFieldErrors(nextFieldErrors)
       if (hasFieldErrors(nextFieldErrors)) {
         setFormError('')
@@ -172,24 +153,23 @@ export function EngagementFormDialog({ account, engagement, open, onOpenChange, 
                 <div className="space-y-5">
                   <section className="grid gap-4 rounded-lg border border-surface-border bg-white p-4 md:grid-cols-2">
                     <TextField label="Name" field="name" value={form.name} error={fieldErrors.name} onChange={updateField} required />
-                    <label className="block">
-                      <span className="tk-label">Owner <span className="text-rag-red">*</span></span>
-                      <select className={fieldClass(fieldErrors.ownerId)} value={form.ownerId} onChange={event => updateField('ownerId', event.target.value)} aria-invalid={Boolean(fieldErrors.ownerId)} disabled={ownersLoading && !ownerOptions.length}>
-                        <option value="">{ownersLoading ? 'Loading owners...' : 'Select owner'}</option>
-                        {ownerOptions.map(owner => <option key={owner.value} value={owner.value}>{owner.label}</option>)}
-                      </select>
-                      <FieldError id="engagement-owner-error" message={fieldErrors.ownerId} />
-                    </label>
+                    <ReadOnlyField label="Account Manager" value={accountManagerName} />
                     <label className="block md:col-span-2">
                       <span className="tk-label">Description</span>
                       <textarea className={fieldClass(fieldErrors.description, 'min-h-[96px] resize-y')} value={form.description} onChange={event => updateField('description', event.target.value)} aria-invalid={Boolean(fieldErrors.description)} />
                       <FieldError id="engagement-description-error" message={fieldErrors.description} />
                     </label>
-                    <label className="block md:col-span-2">
-                      <span className="tk-label">Service lines <span className="text-rag-red">*</span></span>
-                      <textarea className={fieldClass(fieldErrors.serviceLinesText, 'min-h-[84px] resize-y')} value={form.serviceLinesText} onChange={event => updateField('serviceLinesText', event.target.value)} placeholder={'Cloud\nData Engineering\nManaged Delivery'} aria-invalid={Boolean(fieldErrors.serviceLinesText)} />
-                      <FieldError id="engagement-service-lines-error" message={fieldErrors.serviceLinesText} />
-                    </label>
+                    <ServiceLineMultiSelect
+                      className="md:col-span-2"
+                      label="Service lines"
+                      selected={form.serviceLines}
+                      options={serviceLineOptions}
+                      onChange={updateServiceLines}
+                      error={fieldErrors.serviceLines}
+                      required
+                      isLoading={loadingServiceLines}
+                      catalogError={serviceLineCatalogError}
+                    />
                   </section>
 
                   <section className="grid gap-4 rounded-lg border border-surface-border bg-white p-4 md:grid-cols-3">
@@ -239,7 +219,8 @@ export function EngagementFormDialog({ account, engagement, open, onOpenChange, 
                       <h3 className="text-sm font-semibold text-ink">Form checks</h3>
                     </div>
                     <ul className="mt-3 space-y-2 text-xs leading-5 text-ink-secondary">
-                      <li>Name, owner, service lines, and start date are required.</li>
+                      <li>Name, service lines, and start date are required.</li>
+                      <li>The engagement owner is inherited from the account manager.</li>
                       <li>End date must be after start date.</li>
                       <li>Contract value and notice period cannot be negative.</li>
                       <li>Health score must be between 0 and 100.</li>
@@ -319,12 +300,22 @@ function SelectField({ label, field, value, options, error, onChange }: { label:
   )
 }
 
-function initialForm(account: Pick<Account, 'ownerId' | 'ownerName'>, engagement?: EngagementRecord | null): EngagementFormState {
+function ReadOnlyField({ label, value }: { label: string; value: string }) {
+  return (
+    <div>
+      <span className="tk-label">{label}</span>
+      <div className="tk-input mt-2 flex items-center bg-surface-secondary text-ink" aria-readonly="true">
+        {value}
+      </div>
+    </div>
+  )
+}
+
+function initialForm(engagement?: EngagementRecord | null): EngagementFormState {
   return {
     name: engagement?.name ?? '',
     description: engagement?.description ?? '',
-    ownerId: engagement?.ownerId || account.ownerId || '',
-    serviceLinesText: engagement?.serviceLines.join('\n') ?? '',
+    serviceLines: engagement?.serviceLines ?? [],
     startDate: toDateInput(engagement?.renewalTerms.startDate) || todayInput(),
     endDate: toDateInput(engagement?.renewalTerms.endDate),
     renewalDate: toDateInput(engagement?.renewalTerms.renewalDate),
@@ -343,15 +334,13 @@ function initialForm(account: Pick<Account, 'ownerId' | 'ownerName'>, engagement
 
 function validateForm(form: EngagementFormState) {
   const fieldErrors: FieldErrors = {}
-  const serviceLines = splitLines(form.serviceLinesText)
   const contractValue = Number(form.contractValue)
   const noticePeriodDays = form.noticePeriodDays === '' ? undefined : Number(form.noticePeriodDays)
   const healthScore = Number(form.healthScore)
   const sourceLinks = parseSourceLinks(form.sourceLinksText)
 
   if (!form.name.trim()) fieldErrors.name = 'Name is required'
-  if (!form.ownerId.trim()) fieldErrors.ownerId = 'Owner is required'
-  if (!serviceLines.length) fieldErrors.serviceLinesText = 'At least one service line is required'
+  if (!form.serviceLines.length) fieldErrors.serviceLines = 'At least one service line is required'
   if (!form.startDate) fieldErrors.startDate = 'Start date is required'
   if (form.startDate && form.endDate && Date.parse(form.endDate) <= Date.parse(form.startDate)) fieldErrors.endDate = 'End date must be after start date'
   if (!Number.isFinite(contractValue) || contractValue < 0) fieldErrors.contractValue = 'Contract value cannot be negative'
@@ -367,8 +356,7 @@ function buildPayload(form: EngagementFormState): EngagementCreatePayload | Enga
   return {
     name: form.name.trim(),
     description: optionalText(form.description),
-    ownerId: form.ownerId,
-    serviceLines: splitLines(form.serviceLinesText),
+    serviceLines: form.serviceLines,
     startDate: toApiDate(form.startDate),
     endDate: optionalApiDate(form.endDate),
     renewalDate: optionalApiDate(form.renewalDate),
@@ -387,13 +375,6 @@ function buildPayload(form: EngagementFormState): EngagementCreatePayload | Enga
 
 function fieldClass(error?: string, extra?: string) {
   return cn('tk-input mt-2', error && 'border-rag-red focus:border-rag-red focus:ring-rag-red/20', extra)
-}
-
-function splitLines(value: string) {
-  return value
-    .split(/\n|,/)
-    .map(item => item.trim())
-    .filter(Boolean)
 }
 
 function parseSourceLinks(value: string): { links: { title?: string | null; url: string }[]; error?: string } {
@@ -447,17 +428,13 @@ function optionalText(value: string) {
   return trimmed || null
 }
 
-function ownerLabel(owner: AccountOwnerView) {
-  return `${owner.name}${owner.ownershipRole ? ` (${titleize(owner.ownershipRole)})` : ''}`
-}
-
 function titleize(value: string) {
   return value.replace(/_/g, ' ').replace(/\b\w/g, letter => letter.toUpperCase())
 }
 
 const fieldAliases: Record<string, string> = {
   owner_id: 'ownerId',
-  service_lines: 'serviceLinesText',
+  service_lines: 'serviceLines',
   start_date: 'startDate',
   end_date: 'endDate',
   renewal_date: 'renewalDate',

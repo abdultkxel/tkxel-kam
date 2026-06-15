@@ -103,6 +103,7 @@ interface ApiSourceDocument {
 interface ApiEngagement {
   id: string
   account_id: string
+  account_name?: string | null
   name: string
   description?: string | null
   status: EngagementRecord['status']
@@ -487,7 +488,7 @@ export interface EngagementTimelineParams {
 export interface EngagementCreatePayload {
   name: string
   description?: string | null
-  ownerId: string
+  ownerId?: string | null
   opsLeadId?: string | null
   serviceLines: string[]
   sourceLinks?: EngagementSourceLink[]
@@ -1027,7 +1028,7 @@ function mapDraft(draft: ApiOnboardingDraft): OnboardingDraftView {
     risk_status: 'warning',
     commercial_value: draft.commercial_value,
     currency: draft.currency,
-    health: { overall: 45, relationship: 45, usage: 45, delivery: 45, commercial: 45 },
+    health: { overall: 0, relationship: 0, usage: 0, delivery: 0, commercial: 0 },
     has_health_score: false,
     next_governance_at: null,
     updated_at: draft.updated_at,
@@ -1253,7 +1254,7 @@ function mapEngagement(engagement: ApiEngagement, accountName: string): Engageme
   return {
     id: engagement.id,
     accountId: engagement.account_id,
-    accountName,
+    accountName: engagement.account_name ?? accountName,
     name: engagement.name,
     description: engagement.description ?? null,
     status: engagement.status,

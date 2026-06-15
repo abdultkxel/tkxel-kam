@@ -154,6 +154,38 @@ describe('Onboarding', () => {
           },
         ])
       }
+      if (url.pathname.endsWith('/api/service-catalog')) {
+        return jsonResponse({
+          items: [
+            {
+              id: 'svc-account-onboarding',
+              slug: 'account_onboarding',
+              name: 'Account onboarding',
+              category: 'Strategy',
+              description: null,
+              tags: [],
+              is_active: true,
+              display_order: 1,
+              in_use_count: 0,
+            },
+            {
+              id: 'svc-development',
+              slug: 'development',
+              name: 'Development',
+              category: 'Engineering',
+              description: null,
+              tags: [],
+              is_active: true,
+              display_order: 2,
+              in_use_count: 0,
+            },
+          ],
+          total: 2,
+          page: 1,
+          page_size: 100,
+          pages: 1,
+        })
+      }
       if (url.pathname.endsWith('/api/onboarding/drafts/draft-am-owned') && method === 'PATCH') {
         const payload = JSON.parse(String(init?.body ?? '{}'))
         return jsonResponse({
@@ -245,7 +277,7 @@ describe('Onboarding', () => {
     await userEvent.clear(screen.getByLabelText(/account name/i))
     await userEvent.type(screen.getByLabelText(/account name/i), 'AM Edited Draft')
     await userEvent.type(screen.getByLabelText(/company url/i), 'https://am-edited.example.com')
-    expect(screen.getByLabelText(/service lines/i)).toHaveValue('Account onboarding')
+    expect(screen.getByLabelText('Account onboarding')).toBeChecked()
     expect(screen.getByLabelText(/start date/i)).toHaveValue('2026-05-30')
     expect(screen.getByLabelText(/delivery status/i)).toHaveValue('active')
     await userEvent.clear(screen.getByLabelText(/engagement name/i))

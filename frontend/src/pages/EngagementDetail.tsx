@@ -232,7 +232,7 @@ function ProfileTab({ engagement, healthStatus, renewalStatus }: { engagement: E
         <div className="space-y-5 p-5">
           <DescriptionBlock title="Description" value={engagement.description || engagement.commercialContext || 'No description recorded.'} />
           <DetailGrid>
-            <Field label="Account" value={engagement.accountName || engagement.accountId} />
+            <Field label="Account" value={engagement.accountName || 'Account'} />
             <Field label="Owner" value={engagement.ownerName || 'Unassigned'} />
             <Field label="Ops lead" value={engagement.opsLeadName || 'Unassigned'} />
             <Field label="Status" value={<Badge tone={statusTone(engagement.status)}>{titleize(engagement.status)}</Badge>} />

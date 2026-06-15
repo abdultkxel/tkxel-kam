@@ -295,7 +295,7 @@ function mapOrgChart(chart: ApiStakeholderOrgChart): StakeholderOrgChart {
 }
 
 function mapStakeholderRoleOption(role: ApiStakeholderRoleConfig): StakeholderRoleOption {
-  return { value: role.slug, label: role.name }
+  return { value: role.name, label: role.name }
 }
 
 async function listAllPages<T>(basePath: string, token: string) {

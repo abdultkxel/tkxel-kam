@@ -116,8 +116,7 @@ class EngagementService:
     def create_engagement(self, account_id: str, payload: EngagementCreateRequest, current_user: User) -> EngagementRead:
         account = self._get_account_or_404(account_id)
         self.access.require_account_update(current_user, account, module="engagement_sow_management")
-        owner = self._get_active_user(payload.owner_id)
-        self.account_service._ensure_owner_is_eligible(owner, "primary_am")
+        owner = self._get_account_engagement_owner(account)
         ops_lead = self._get_optional_ops_lead(payload.ops_lead_id)
         engagement = Engagement(
             account_id=account_id,
@@ -399,6 +398,7 @@ class EngagementService:
         self.access.require_account_update(current_user, account, module="engagement_sow_management")
         before = self._engagement_audit_value(engagement)
         self._apply_updates(engagement, payload, current_user)
+        self._sync_engagement_owner_to_account(engagement, account)
         self._validate_engagement_dates(engagement)
         self._set_notice_deadline(engagement)
         after = self._engagement_audit_value(engagement)
@@ -559,6 +559,30 @@ class EngagementService:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Selected owner is inactive or does not exist")
         return user
 
+    def _get_account_engagement_owner(self, account: Account) -> User:
+        primary_owner = self.accounts.get_active_primary_owner(account.id)
+        if primary_owner is None or not primary_owner.user_id:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail={
+                    "message": "Validation failed",
+                    "errors": [
+                        {
+                            "field": "owner_id",
+                            "message": "Assign an Account Manager to this account before creating an engagement.",
+                        }
+                    ],
+                },
+            )
+        owner = self._get_active_user(primary_owner.user_id)
+        self.account_service._ensure_owner_is_eligible(owner, "primary_am")
+        return owner
+
+    def _sync_engagement_owner_to_account(self, engagement: Engagement, account: Account) -> None:
+        owner = self._get_account_engagement_owner(account)
+        engagement.owner_id = owner.id
+        engagement.owner_name = owner.full_name
+
     def _get_optional_ops_lead(self, user_id: str | None) -> User | None:
         if not user_id:
             return None
@@ -623,13 +647,14 @@ class EngagementService:
         return draft
 
     def _create_engagement_from_import_draft(self, account: Account, draft: EngagementImportDraft, current_user: User) -> Engagement:
+        owner = self._get_account_engagement_owner(account)
         engagement = Engagement(
             account_id=account.id,
             name=draft.name,
             description=draft.description,
             status="active",
-            owner_id=draft.owner_id,
-            owner_name=draft.owner_name or current_user.full_name,
+            owner_id=owner.id,
+            owner_name=owner.full_name,
             ops_lead_id=draft.ops_lead_id,
             ops_lead_name=draft.ops_lead_name,
             service_lines=list(draft.service_lines or []),
@@ -854,10 +879,7 @@ class EngagementService:
     def _apply_updates(self, engagement: Engagement, payload: EngagementUpdateRequest, current_user: User) -> None:
         updates = payload.model_dump(exclude_unset=True)
         updates.pop("notice_deadline", None)
-        if "owner_id" in updates and updates["owner_id"]:
-            owner = self._get_active_user(updates["owner_id"])
-            self.account_service._ensure_owner_is_eligible(owner, "primary_am")
-            updates["owner_name"] = owner.full_name
+        updates.pop("owner_id", None)
         if "ops_lead_id" in updates:
             ops_lead = self._get_optional_ops_lead(updates["ops_lead_id"])
             updates["ops_lead_name"] = ops_lead.full_name if ops_lead else None
@@ -920,10 +942,9 @@ class EngagementService:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Only engagement drafts ready for review can be changed")
 
     def _apply_import_draft_approval_defaults(self, account: Account, draft: EngagementImportDraft, current_user: User) -> None:
-        if not draft.owner_id:
-            primary_owner = self.accounts.get_active_primary_owner(account.id)
-            draft.owner_id = primary_owner.user_id if primary_owner and primary_owner.user_id else current_user.id
-            draft.owner_name = primary_owner.user_name if primary_owner and primary_owner.user_name else current_user.full_name
+        owner = self._get_account_engagement_owner(account)
+        draft.owner_id = owner.id
+        draft.owner_name = owner.full_name
         if not draft.service_lines:
             draft.service_lines = ["Account onboarding"]
         if draft.start_date is None:

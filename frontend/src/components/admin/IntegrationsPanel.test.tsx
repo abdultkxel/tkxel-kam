@@ -1,5 +1,4 @@
-import { render, screen, waitFor, within } from '@testing-library/react'
-import userEvent from '@testing-library/user-event'
+import { render, screen } from '@testing-library/react'
 import { describe, expect, it, vi } from 'vitest'
 import { IntegrationsPanel } from '@/components/admin/IntegrationsPanel'
 
@@ -26,11 +25,10 @@ const integrations = [
 ]
 
 describe('IntegrationsPanel', () => {
-  it('loads active admin adapters, filters moved/internal adapters, hides Google inbound sync, and triggers AI sync', async () => {
+  it('hides admin-owned adapter cards and the top-right sync refresh icon', async () => {
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input)
       if (url.endsWith('/api/admin/integrations')) return jsonResponse(integrations)
-      if (url.includes('/api/admin/settings/security-alert-email')) return jsonResponse({ administration_email: 'admin@tkxel.com' })
       if (url.includes('/api/admin/integrations/sync-logs')) return jsonResponse(page([], 0))
       if (url.includes('/api/admin/integrations/ai_llm_gateway/sync') && init?.method === 'POST') {
         return jsonResponse({ provider: 'ai_llm_gateway', status: 'connected', created: 1, updated: 0, skipped: 0, errors: 0, message: 'Synced.' })
@@ -41,28 +39,19 @@ describe('IntegrationsPanel', () => {
 
     render(<IntegrationsPanel />)
 
-    expect(await screen.findByText('Google Calendar')).toBeInTheDocument()
-    expect(screen.getByText('AI/LLM Gateway')).toBeInTheDocument()
+    expect(await screen.findByText('No admin-owned adapters')).toBeInTheDocument()
+    expect(screen.getByText('No adapters shown')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /refresh integrations/i })).not.toBeInTheDocument()
+    expect(screen.queryByTitle(/refresh integrations/i)).not.toBeInTheDocument()
+    expect(screen.queryByText('Google Calendar')).not.toBeInTheDocument()
+    expect(screen.queryByText('AI/LLM Gateway')).not.toBeInTheDocument()
     expect(screen.queryByText('Fathom')).not.toBeInTheDocument()
     expect(screen.queryByText('CSAT')).not.toBeInTheDocument()
     expect(screen.queryByText(/fathom meeting links/i)).not.toBeInTheDocument()
+    expect(screen.queryByLabelText(/administration alert email/i)).not.toBeInTheDocument()
+    expect(fetchMock).not.toHaveBeenCalledWith(expect.stringContaining('/api/admin/settings/security-alert-email'), expect.anything())
     expect(fetchMock).not.toHaveBeenCalledWith(expect.stringContaining('/api/admin/integrations/imported-items'), expect.anything())
-    const googleCard = screen.getByText('Google Calendar').closest('article')
-    expect(googleCard).not.toBeNull()
-    expect(within(googleCard as HTMLElement).queryByRole('button', { name: /sync/i })).not.toBeInTheDocument()
-
-    await userEvent.click(within(screen.getByText('AI/LLM Gateway').closest('article') as HTMLElement).getByRole('button', { name: /sync/i }))
-
-    await waitFor(() => {
-      expect(fetchMock).toHaveBeenCalledWith(expect.stringContaining('/api/admin/integrations/ai_llm_gateway/sync'), expect.objectContaining({ method: 'POST' }))
-    })
-
-    const refreshedGoogleCard = (await screen.findByText('Google Calendar')).closest('article')
-    expect(refreshedGoogleCard).not.toBeNull()
-    await userEvent.click(within(refreshedGoogleCard as HTMLElement).getByRole('button', { name: /configure/i }))
-    expect(screen.queryByLabelText(/Read Calendar ID/i)).not.toBeInTheDocument()
-    expect(screen.queryByLabelText(/Access token/i)).not.toBeInTheDocument()
-    expect(screen.getByRole('button', { name: /connect google/i })).toBeInTheDocument()
+    expect(fetchMock).not.toHaveBeenCalledWith(expect.stringContaining('/api/admin/integrations/ai_llm_gateway/sync'), expect.anything())
   })
 })
 

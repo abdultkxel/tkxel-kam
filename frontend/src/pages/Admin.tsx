@@ -1,4 +1,4 @@
-import { Activity, AlertTriangle, ArrowRight, BellRing, PlugZap, ServerCog } from 'lucide-react'
+import { Activity, AlertTriangle, ArrowRight, BellRing, ServerCog } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
@@ -11,9 +11,9 @@ import { AdminNotificationsReportingPanel } from '@/components/admin/AdminNotifi
 import { AdminOpportunityTypesPanel } from '@/components/admin/AdminOpportunityTypesPanel'
 import { AdminRelationshipPlanningPanel } from '@/components/admin/AdminRelationshipPlanningPanel'
 import { AdminRolesPanel } from '@/components/admin/AdminRolesPanel'
+import { AdminSecurityAlertEmailPanel } from '@/components/admin/AdminSecurityAlertEmailPanel'
 import { AdminUsersPanel } from '@/components/admin/AdminUsersPanel'
 import { AlertRulesPanel } from '@/components/admin/AlertRulesPanel'
-import { IntegrationsPanel } from '@/components/admin/IntegrationsPanel'
 import { RetentionJobHistory } from '@/components/admin/RetentionJobHistory'
 import { ScoringEngineBuilder } from '@/components/admin/ScoringEngineBuilder'
 import { PageHeader } from '@/components/ui/PageHeader'
@@ -21,8 +21,6 @@ import { useAuth } from '@/contexts/AuthContext'
 import { getAlerts } from '@/services/alerts'
 import { getAdminJobLogs, getAdminSystemHealth } from '@/services/adminAccess'
 import type { AdminSystemHealth } from '@/services/adminAccess'
-import { listIntegrations } from '@/services/integrations'
-import type { IntegrationConnection } from '@/services/integrations'
 import { cn } from '@/utils/cn'
 
 const adminSections = [
@@ -35,7 +33,6 @@ const adminSections = [
   { id: 'fields', label: 'Field builder' },
   { id: 'scoring', label: 'Scoring' },
   { id: 'alerts', label: 'Alert rules' },
-  { id: 'integrations', label: 'Integrations' },
   { id: 'settings', label: 'Settings' },
   { id: 'retention', label: 'Retention' },
   { id: 'audit', label: 'Audit log' },
@@ -54,7 +51,6 @@ const statusToneClass = {
 interface AdminOpsSummary {
   systemHealth: AdminSystemHealth | null
   activeAlerts: number | null
-  integrations: IntegrationConnection[] | null
   failedJobs: number | null
 }
 
@@ -70,29 +66,16 @@ function healthTone(status?: string): keyof typeof statusToneClass {
   return 'dark'
 }
 
-function hasIntegrationIssue(connection: IntegrationConnection) {
-  return connection.status === 'error' || connection.failure_count > 0 || Boolean(connection.last_error)
-}
-
-function isVisibleAdminIntegration(connection: IntegrationConnection) {
-  return connection.provider === 'google_calendar' || connection.provider === 'ai_llm_gateway'
-}
-
 export function Admin() {
   const { token } = useAuth()
   const [opsSummary, setOpsSummary] = useState<AdminOpsSummary>({
     systemHealth: null,
     activeAlerts: null,
-    integrations: null,
     failedJobs: null,
   })
   const [searchParams, setSearchParams] = useSearchParams()
   const activeSection = searchParams.get('section') ?? ''
   const highlightedSection = activeSection && adminSectionIds.has(activeSection) ? activeSection : defaultAdminSection
-  const integrations = opsSummary.integrations?.filter(isVisibleAdminIntegration) ?? null
-  const integrationIssues = integrations?.filter(hasIntegrationIssue).length ?? null
-  const connectedIntegrations = integrations?.filter(connection => connection.enabled && connection.status === 'connected').length ?? null
-  const totalIntegrations = integrations?.length ?? null
   const systemWorkersFailed = opsSummary.systemHealth?.metrics.workers_failed ?? 0
   const statusItems = [
     {
@@ -112,14 +95,6 @@ export function Admin() {
       section: 'alerts',
     },
     {
-      label: 'Integration health',
-      value: integrations === null ? '...' : integrationIssues ? String(integrationIssues) : `${connectedIntegrations}/${totalIntegrations}`,
-      detail: integrations === null ? 'Loading adapters' : integrationIssues ? 'Integration issue count' : 'Connected admin adapters',
-      icon: PlugZap,
-      tone: integrations === null ? 'dark' as const : integrationIssues ? 'red' as const : connectedIntegrations === totalIntegrations && totalIntegrations ? 'green' as const : 'orange' as const,
-      section: 'integrations',
-    },
-    {
       label: 'Failed jobs',
       value: opsSummary.failedJobs === null ? '...' : String(opsSummary.failedJobs),
       detail: opsSummary.failedJobs === null ? 'Loading workers' : 'Recent worker failures',
@@ -135,15 +110,13 @@ export function Admin() {
     Promise.all([
       getAdminSystemHealth(token).catch(() => null),
       getAlerts(token, { status: 'active', page: 1, page_size: 1 }).catch(() => null),
-      listIntegrations(token).catch(() => null),
       getAdminJobLogs(token, { status: 'failed', page: 1, page_size: 1 }).catch(() => null),
     ])
-      .then(([systemHealth, activeAlerts, integrationList, failedJobs]) => {
+      .then(([systemHealth, activeAlerts, failedJobs]) => {
         if (!active) return
         setOpsSummary({
           systemHealth,
           activeAlerts: activeAlerts?.total ?? null,
-          integrations: integrationList,
           failedJobs: failedJobs?.total ?? null,
         })
       })
@@ -170,18 +143,12 @@ export function Admin() {
       <PageHeader
         eyebrow="Administration"
         title="Admin"
-        description="Scoring, integrations, notification settings, retention, and audit controls."
+        description="Scoring, notification settings, retention, and audit controls."
         actions={(
-          <>
-            <button type="button" className="tk-button-secondary" onClick={() => chooseSection('settings')}>
-              <BellRing className="h-4 w-4" />
-              Notifications
-            </button>
-            <button type="button" className="tk-button-primary" onClick={() => chooseSection('integrations')}>
-              <PlugZap className="h-4 w-4" />
-              Integration health
-            </button>
-          </>
+          <button type="button" className="tk-button-secondary" onClick={() => chooseSection('settings')}>
+            <BellRing className="h-4 w-4" />
+            Notifications
+          </button>
         )}
       />
       <AdminStatusStrip items={statusItems} onSelect={chooseSection} />
@@ -232,15 +199,11 @@ export function Admin() {
         </div>
 
         <aside className="min-w-0 space-y-4">
-          {highlightedSection === 'integrations' ? (
-            <div id="integrations" className="scroll-mt-24">
-              <IntegrationsPanel />
-            </div>
-          ) : null}
           {highlightedSection === 'settings' ? (
             <div id="settings" className="scroll-mt-24">
               <div className="space-y-4">
                 <AllowedEmailDomainsPanel />
+                <AdminSecurityAlertEmailPanel />
                 <AdminNotificationsReportingPanel />
               </div>
             </div>
@@ -268,7 +231,7 @@ function AdminStatusStrip({
 }) {
   return (
     <section className="tk-card mb-4 overflow-hidden">
-      <div className="grid divide-y divide-surface-border md:grid-cols-2 md:divide-x md:divide-y-0 xl:grid-cols-4">
+      <div className="grid divide-y divide-surface-border md:grid-cols-2 md:divide-x md:divide-y-0 xl:grid-cols-3">
         {items.map(item => (
           <button
             key={item.label}

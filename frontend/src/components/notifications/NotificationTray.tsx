@@ -1,5 +1,5 @@
 import * as Dialog from '@radix-ui/react-dialog'
-import { Bell, Check, ExternalLink, Loader2, X } from 'lucide-react'
+import { Bell, Check, ExternalLink, Inbox, Loader2, X } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { useAuth } from '@/contexts/AuthContext'
@@ -74,6 +74,7 @@ export function NotificationTray() {
             <div>
               <p className="text-[10px] font-extrabold uppercase tracking-widest text-brand-blue">Notifications</p>
               <Dialog.Title className="text-base font-semibold text-ink">{unread} unread updates</Dialog.Title>
+              <Dialog.Description className="sr-only">Latest notifications with a link to the full notification center.</Dialog.Description>
             </div>
             <div className="flex gap-2">
               {unread ? <button type="button" className="tk-button-secondary" onClick={() => void markAllRead()}><Check className="h-4 w-4" />All read</button> : null}
@@ -121,6 +122,14 @@ export function NotificationTray() {
                 </div>
               </article>
             ))}
+          </div>
+          <div className="border-t border-surface-border p-3">
+            <Dialog.Close asChild>
+              <Link to="/notifications" className="tk-button-primary w-full justify-center">
+                <Inbox className="h-4 w-4" />
+                All Notifications
+              </Link>
+            </Dialog.Close>
           </div>
         </Dialog.Content>
       </Dialog.Portal>

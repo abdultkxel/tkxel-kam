@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from '@testing-library/react'
+import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
@@ -202,6 +202,34 @@ describe('Accounts', () => {
         !url.includes('segment=')
       )
     })).toBe(true))
+  })
+
+  it('uses success styling for Active account stage badges in cards and table rows', async () => {
+    const activeAccount = { ...account, lifecycle_status: 'Active' }
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = new URL(String(input))
+      if (url.pathname.endsWith('/api/onboarding/drafts')) return jsonResponse(draftPage())
+      return jsonResponse(paginated(1, 12, [activeAccount]))
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    render(
+      <MemoryRouter initialEntries={['/accounts']}>
+        <Routes>
+          <Route path="/accounts" element={<Accounts />} />
+          <Route path="/accounts/:id" element={<div>Account detail</div>} />
+        </Routes>
+      </MemoryRouter>,
+    )
+
+    const card = (await screen.findByText('Cafe Zupas')).closest('article')
+    expect(card).not.toBeNull()
+    expect(within(card as HTMLElement).getByText('Active')).toHaveClass('bg-rag-green/10', 'text-rag-green')
+
+    await userEvent.click(screen.getByRole('button', { name: /table view/i }))
+
+    const table = screen.getByRole('table')
+    expect(within(table).getByText('Active')).toHaveClass('bg-rag-green/10', 'text-rag-green')
   })
 
   it('ignores legacy segment query params after the segment filter removal', async () => {

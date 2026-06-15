@@ -248,11 +248,11 @@ class Account(Base):
     commercial_summary: Mapped[str | None] = mapped_column(Text, nullable=True)
     initial_notes: Mapped[str | None] = mapped_column(Text, nullable=True)
     source_citation: Mapped[str | None] = mapped_column(Text, nullable=True)
-    health_overall: Mapped[int] = mapped_column(Integer, nullable=False, default=45)
-    health_relationship: Mapped[int] = mapped_column(Integer, nullable=False, default=45)
-    health_usage: Mapped[int] = mapped_column(Integer, nullable=False, default=45)
-    health_delivery: Mapped[int] = mapped_column(Integer, nullable=False, default=45)
-    health_commercial: Mapped[int] = mapped_column(Integer, nullable=False, default=45)
+    health_overall: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    health_relationship: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    health_usage: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    health_delivery: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    health_commercial: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     next_governance_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_from_draft_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
     created_by_id: Mapped[str | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
@@ -951,6 +951,10 @@ class Engagement(Base):
     score_snapshots: Mapped[list["ScoreSnapshot"]] = relationship(back_populates="engagement")
     signals: Mapped[list["Signal"]] = relationship(back_populates="engagement")
     tasks: Mapped[list["Task"]] = relationship(back_populates="engagement")
+
+    @property
+    def account_name(self) -> str | None:
+        return self.account.name if self.account else None
 
     @property
     def source_document_ids(self) -> list[str]:

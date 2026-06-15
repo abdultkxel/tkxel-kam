@@ -3,6 +3,7 @@ import { AlertTriangle, BriefcaseBusiness, CalendarClock, CheckCircle2, Clock3, 
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { toast } from 'sonner'
+import { AccountStageBadge } from '@/components/account/AccountStageBadge'
 import { HealthScoreRing } from '@/components/account/HealthScoreRing'
 import { AccountWorkspacePanel } from '@/components/account/AccountWorkspacePanel'
 import { EngagementsPanel } from '@/components/account/EngagementsPanel'
@@ -364,7 +365,7 @@ export function Account360({ account }: { account: Account }) {
                     <p className="text-[10px] font-extrabold uppercase tracking-widest text-brand-blue">Account command center</p>
                     <h2 className="mt-1 font-display text-3xl font-bold leading-tight text-ink">{account.name}</h2>
                     <div className="mt-3 flex flex-wrap items-center gap-2">
-                      <AccountFlag label={account.stage} tone="blue" />
+                      <AccountStageBadge stage={account.stage} defaultClassName="border-blue-tint-20 bg-blue-tint-20 text-brand-blue" className="px-3 py-1" />
                       <AccountFlag label={account.riskStatus} tone={account.riskStatus === 'healthy' ? 'green' : account.riskStatus === 'warning' ? 'orange' : 'red'} />
                       <span className="text-xs font-medium text-ink-secondary">Owner: {account.ownerName}</span>
                     </div>

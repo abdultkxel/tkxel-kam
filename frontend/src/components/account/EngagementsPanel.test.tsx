@@ -1,4 +1,5 @@
 import { render, screen } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import { MemoryRouter } from 'react-router-dom'
 import { describe, expect, it, vi } from 'vitest'
 import { EngagementsPanel } from '@/components/account/EngagementsPanel'
@@ -71,6 +72,14 @@ vi.mock('@/contexts/AuthContext', () => ({
       role: 'account_manager',
       avatarInitials: 'AM',
     },
+  }),
+}))
+
+vi.mock('@/hooks/useServiceCatalogOptions', () => ({
+  useServiceCatalogOptions: () => ({
+    serviceLineOptions: ['Product Engineering', 'Development', 'UX Design'],
+    isLoading: false,
+    error: '',
   }),
 }))
 
@@ -240,5 +249,18 @@ describe('EngagementsPanel', () => {
     expect(screen.getByRole('button', { name: /save draft changes/i })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: /approve draft/i })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: /reject draft/i })).toBeInTheDocument()
+  })
+
+  it('shows the account manager as read-only in the engagement form', async () => {
+    hookState.engagements = []
+    hookState.drafts = []
+    const user = userEvent.setup()
+
+    renderPanel()
+
+    await user.click(screen.getAllByRole('button', { name: /add engagement/i })[0])
+
+    expect(screen.getAllByText('Account Manager').length).toBeGreaterThan(0)
+    expect(screen.queryByRole('combobox', { name: /owner/i })).not.toBeInTheDocument()
   })
 })

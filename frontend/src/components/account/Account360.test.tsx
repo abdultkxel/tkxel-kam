@@ -156,6 +156,14 @@ describe('Account360 account detail tabs', () => {
     expect(screen.queryByRole('button', { name: /generate handover/i })).not.toBeInTheDocument()
   })
 
+  it('uses success styling for the Active account stage badge', () => {
+    renderAccount360('/accounts/account-stage', { ...account, stage: 'Active' })
+
+    const commandCenter = screen.getByText('Account command center').closest('section')
+    expect(commandCenter).not.toBeNull()
+    expect(within(commandCenter as HTMLElement).getByText('Active')).toHaveClass('bg-rag-green/10', 'text-rag-green')
+  })
+
   it('shows account Field Builder values on the overview', async () => {
     vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input)
