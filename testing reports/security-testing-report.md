@@ -1,8 +1,20 @@
 # Security Testing Report
 
 Generated: 2026-06-12
+Updated: 2026-06-15
 
 Project: KAM Intelligence Platform
+
+## 2026-06-15 UAT-Account Update
+
+| Security area | Result | Notes |
+| --- | --- | --- |
+| Task list authorization surface | Updated | Task listing is now scoped to the logged-in user's assigned tasks and assigned account IDs. |
+| Account selector exposure | Updated | Account dropdown calls `/api/accounts` with `assigned_user_id`, covering active ownership roles for the current user. |
+| Task mutation permissions | Retained | Update/delete/evidence flows continue to use task/account authorization checks before mutation. |
+| Task movement auditability | Updated | Status movement requires a reason and records task history for later review. |
+| Backend/frontend compile checks | Pass | `python -m py_compile ...` and `npm run typecheck` passed for this update. |
+| Security regression suite | Not rerun | No full security regression, dependency audit, or penetration scan was run in this update. Existing findings below remain open unless separately remediated. |
 
 ## Issue 1: Arbitrary Local File Extraction Through Source Document `file_url`
 

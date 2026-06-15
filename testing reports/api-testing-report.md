@@ -1,8 +1,20 @@
 # API Testing Report
 
 Generated: 2026-06-12
+Updated: 2026-06-15
 
 Project: KAM Intelligence Platform
+
+## 2026-06-15 UAT-Account Update
+
+| API area | Result | Notes |
+| --- | --- | --- |
+| `/api/tasks` list scope | Updated | Service now scopes task list results to the logged-in user's assigned tasks and assigned account IDs. |
+| `/api/tasks/{task_id}` update | Updated | Status changes require `status_change_reason`; movement history is persisted for auditability. |
+| `/api/tasks/{task_id}` delete | Updated | Delete endpoint added with existing task update authorization, audit, and timeline context. |
+| `/api/tasks/{task_id}/history` | Updated | History endpoint added for immutable task movement/comment/evidence history. |
+| `/api/accounts` selector filtering | Updated | `assigned_user_id` filter added so account selectors can request all active account ownership roles for the logged-in user. |
+| Backend compile check | Pass | Task/account routers, services, repositories, models, and schemas compiled successfully with `python -m py_compile`. |
 
 ## Validation Summary
 

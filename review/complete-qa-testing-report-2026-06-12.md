@@ -1,6 +1,7 @@
 # Complete QA Testing Report
 
 Generated: 2026-06-12
+Updated: 2026-06-15
 
 Project: KAM Intelligence Platform
 
@@ -26,6 +27,16 @@ Existing review context found:
 
 - `review/security-testing-report.md`: prior Sonar run had 0 vulnerabilities, 24 unreviewed security hotspots, 10 bugs, and 0.0% imported coverage.
 - `review/performance-testing-report.md`: prior local baseline showed dashboard endpoints as the heaviest API path under light concurrency.
+
+## 2026-06-15 UAT-Account Validation Update
+
+| Check | Result | Notes |
+| --- | --- | --- |
+| Frontend typecheck | Pass | `npm run typecheck` completed successfully after task board and task detail modal changes. |
+| Backend task/account compile check | Pass | `python -m py_compile backend/app/models.py backend/app/schemas.py backend/app/repositories/accounts.py backend/app/repositories/playbooks_tasks.py backend/app/routers/accounts.py backend/app/routers/playbooks_tasks.py backend/app/services/accounts.py backend/app/services/playbooks_tasks.py` completed successfully. |
+| Task workflow coverage | Updated | Board-only task page, editable task detail modal, dirty-state close warning, delete task, drag/drop move reasons, and task history are now covered in the current report set. |
+| API authorization coverage | Updated | Task list and account selector report notes now reflect logged-in-user assignment scoping. |
+| Full regression suite | Not rerun | No full backend pytest, frontend Vitest suite, production build, security scan, or performance benchmark was rerun for this update. |
 
 ## Issues
 

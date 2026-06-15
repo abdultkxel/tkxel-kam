@@ -1,8 +1,19 @@
 # Edge Cases Testing Report
 
 Generated: 2026-06-12
+Updated: 2026-06-15
 
 Project: KAM Intelligence Platform
+
+## 2026-06-15 UAT-Account Update
+
+| Edge case | Result | Notes |
+| --- | --- | --- |
+| Unsaved task edits | Updated | Closing a dirty task detail modal now prompts before discarding changes; outside click and escape do not silently close the modal. |
+| Save button dirty state | Updated | `Save changes` is disabled until editable task fields differ from the last saved task state. |
+| Task status movement | Updated | Drag/drop movement requires a non-empty reason before saving status changes. |
+| Empty account selection during task create | Covered | Create task still requires an explicit account selection before submission. |
+| Backend/frontend compile checks | Pass | `python -m py_compile ...` and `npm run typecheck` both passed for this update. |
 
 ## Issue 1: Upload Service Reads Entire File Before Size Enforcement
 

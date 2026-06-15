@@ -2239,7 +2239,7 @@ class EngagementImportDraftRejectRequest(BaseModel):
     @field_validator("reason")
     @classmethod
     def reason_is_valid(cls, value: str) -> str:
-        return validate_optional_long_text(value, "Rejection reason", max_length=1000) or value
+        return validate_short_text(value, "Rejection reason", 1000)
 
 
 class EngagementImportDraftRead(BaseModel):
