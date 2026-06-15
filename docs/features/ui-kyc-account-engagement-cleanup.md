@@ -16,10 +16,14 @@ Implements the requested placement and behavior adjustments for account onboardi
 - Imported engagement drafts can be edited, saved, approved, or rejected by users who can update the account. Approval creates the official Engagement/SOW record, links the source document, and creates drafted stakeholders.
 - Engagement draft create/update notifications go to the assigned AM and KAM Head with the actor excluded; approval notifies KAM Head that a new engagement has been onboarded.
 - Engagement list/detail APIs normalize legacy seeded source links that used `route` into the public `url` field so existing demo Engagement/SOW records load correctly.
-- KYC prompt, OpenAI response, provider debug/logs, Qwen/Ollama debug output, and runtime source extraction review are visible only to `super_admin`.
+- KYC prompt, OpenAI response, and runtime source extraction review are visible only to `admin` and `super_admin`; Account Manager, KAM Head, and other users only see the simple `Run KYC` action.
+- Provider debug/logs and Qwen/Ollama debug output remain limited to admin users with KYC debug permission.
+- KYC prompt and review fields use native textareas that render read-only first and become editable when clicked.
+- KYC review sections no longer display confidence/completeness/source-coverage percentages.
 - KYC screen no longer shows the legacy `Research question`, bottom `Detailed AI description`, or right-sidebar `Review gates` sections.
 - Account Overview KYC Client Research now renders in a full-width readable workstream layout with nested research details and source snippets formatted as text.
-- CKEditor-backed fields render as readable text first and become editable on click.
+- Account Overview KYC workstream cards no longer display workstream or field confidence percentages.
+- KYC review no longer mounts CKEditor instances, avoiding toolbar/dropdown focus issues on the KYC screen.
 - Account listing saved views and persisted saved-filter state have been removed.
 - Account listing segment filter chips have been removed; the Accounts API request no longer forwards legacy `segment` query params from the page.
 - Account listing now uses a consolidated search, filter, sort, and view control surface with active chips, risk pills, and an explicit AM workload chip for dashboard workload links.
@@ -67,19 +71,19 @@ Implements the requested placement and behavior adjustments for account onboardi
 ## Validation And Security Notes
 
 - The backend remains authoritative for source-document extraction, account draft creation, engagement creation, stakeholder persistence, RBAC, audit, and timeline events.
-- Non-super-admin users no longer see prompt/raw-response/debug extraction surfaces on the KYC screen.
+- Non-admin users no longer see prompt/raw-response/runtime extraction surfaces on the KYC screen, but they can still run KYC through the simplified action.
 - KYC approval still calls the backend approval endpoint and records acknowledgements/change summary through existing audit behavior.
 - Direct Google/LinkedIn scraping is not introduced by this change.
 
 ## Tests
 
 - Frontend account listing tests were updated to remove saved-view assertions and cover the segment-filter removal and AM workload query behavior.
-- Account Overview KYC agent tests cover Client Research nested values, readable source snippets, and the full-width workstream list.
+- Account Overview KYC agent tests cover Client Research nested values, readable source snippets, hidden confidence percentages, and the full-width workstream list.
 - Account Overview Health score calculator tests cover collapsed-by-default field groups, service line mapping, and expansion on demand.
 - Engagement API tests cover legacy seeded source-link normalization for Engagement/SOW list loading.
 - Engagement charter-import API tests cover deterministic parser usage, draft save notifications, approval, source-document linking, and stakeholder creation.
 - Engagement tab tests cover imported draft review actions.
-- KYC review tests were updated for super-admin-only debug panels and non-super-admin visibility.
+- KYC review tests cover Admin/Super Admin prompt/source visibility, Account Manager/KAM Head simplified KYC running, read-only prompt activation on click, and hidden percentage badges.
 - Additional backend validation is covered by py_compile and targeted service/API tests.
 
 ## Follow-Ups

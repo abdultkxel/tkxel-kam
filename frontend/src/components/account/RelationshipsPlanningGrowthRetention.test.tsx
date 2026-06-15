@@ -167,7 +167,10 @@ describe('GrowthWhitespacePanel', () => {
     expect(screen.queryByText('Service 13')).not.toBeInTheDocument()
     expect(screen.getByText('Showing 1-12 of 14 services')).toBeInTheDocument()
     expect(screen.getByText(/Base fit 75 .* Account fit 89/)).toBeInTheDocument()
-    expect(screen.getByText('+6 Expansion stage')).toBeInTheDocument()
+    expect(screen.getByText('Fit 89%')).toBeInTheDocument()
+    expect(screen.getByText('Account stage: Renewal Focus')).toBeInTheDocument()
+    expect(screen.getByText('Source coverage: active')).toBeInTheDocument()
+    expect(screen.queryByText('+6 Expansion stage')).not.toBeInTheDocument()
 
     await userEvent.click(screen.getByRole('button', { name: /^next$/i }))
     const service14Card = screen.getAllByText('Service 14').map(item => item.closest('label')).find(Boolean)

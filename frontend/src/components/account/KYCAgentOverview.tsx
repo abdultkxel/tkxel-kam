@@ -327,7 +327,7 @@ export function KYCAgentOverview({ accountId, compact = false, onReview }: { acc
                           <StatusBadge status={step.status} />
                         </div>
                         <p className="mt-1 text-xs leading-5 text-ink-secondary">
-                          {outputEntries.length} research block{outputEntries.length === 1 ? '' : 's'}; {step.confidence}% confidence
+                          {outputEntries.length} research block{outputEntries.length === 1 ? '' : 's'}
                         </p>
                         {step.missing_fields.length ? (
                           <p className="mt-1 text-xs font-semibold text-brand-orange">{step.missing_fields.length} missing field{step.missing_fields.length === 1 ? '' : 's'}</p>
@@ -341,14 +341,12 @@ export function KYCAgentOverview({ accountId, compact = false, onReview }: { acc
                       <div className={cn('grid gap-3', compact ? 'grid-cols-1' : 'lg:grid-cols-2')}>
                         {outputEntries.map(([field, value]) => {
                           const citations = outputCitations(value)
-                          const confidence = outputConfidence(value)
                           const formattedValue = formatOutputValue(value) || 'No research detail has been captured for this field yet.'
                           return (
                             <div key={field} className="min-w-0 rounded-md border border-surface-border bg-white p-3">
                               <div className="flex items-center gap-2">
                                 {step.status === 'failed' ? <AlertTriangle className="h-4 w-4 text-rag-red" /> : <CheckCircle2 className="h-4 w-4 text-rag-green" />}
                                 <p className="min-w-0 break-words text-xs font-semibold uppercase tracking-wider text-ink">{formatOutputKey(field)}</p>
-                                {typeof confidence === 'number' ? <span className="ml-auto shrink-0 rounded-full bg-blue-tint-20 px-2 py-0.5 text-[10px] font-semibold text-brand-blue">{confidence}%</span> : null}
                               </div>
                               <p className="mt-2 whitespace-pre-line break-words text-sm leading-6 text-ink-secondary">{formattedValue}</p>
                               {citations.length ? (
@@ -480,12 +478,6 @@ function formatOutputValue(value: unknown): string {
       .join('\n')
   }
   return ''
-}
-
-function outputConfidence(value: unknown) {
-  if (typeof value !== 'object' || value === null || !('confidence' in value)) return null
-  const confidence = (value as { confidence?: unknown }).confidence
-  return typeof confidence === 'number' ? confidence : null
 }
 
 function outputCitations(value: unknown): KycCitation[] {

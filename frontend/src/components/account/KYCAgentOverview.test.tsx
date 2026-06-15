@@ -119,6 +119,8 @@ describe('KYCAgentOverview', () => {
     await user.click(marketResearch)
     expect(screen.getByText('Acme is tracked as an enterprise account in North America.')).toBeInTheDocument()
     expect(screen.queryByText('[object Object]')).not.toBeInTheDocument()
+    expect(screen.queryByText(/86%/)).not.toBeInTheDocument()
+    expect(screen.queryByText(/confidence/i)).not.toBeInTheDocument()
 
     await user.click(screen.getByRole('button', { name: /Refresh AI data/i }))
     await waitFor(() => expect(refreshKycAgentRun).toHaveBeenCalledWith('test-token', 'acct-1', 'run-1'))
@@ -193,6 +195,9 @@ describe('KYCAgentOverview', () => {
     expect(clientResearch).toHaveTextContent('React client portal')
     expect(clientResearch).toHaveTextContent('Approved company profile')
     expect(screen.queryByText('[object Object]')).not.toBeInTheDocument()
+    expect(clientResearch).not.toHaveTextContent('91%')
+    expect(clientResearch).not.toHaveTextContent('88%')
+    expect(clientResearch).not.toHaveTextContent('confidence')
   })
 
   it('creates the first run from the empty state', async () => {

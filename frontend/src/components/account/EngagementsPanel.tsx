@@ -532,6 +532,7 @@ function EngagementDraftReviewCard({
       <div className="mt-5 grid gap-3 lg:grid-cols-2">
         <DraftField label="Engagement name" value={form.name} onChange={value => updateField('name', value)} />
         <ServiceLineMultiSelect
+          className="lg:col-span-2"
           label="Service lines"
           selected={form.serviceLines}
           options={serviceLineOptions}

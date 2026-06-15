@@ -13,8 +13,10 @@ Implements the account-creation and KYC review workflow where uploaded SOW/chart
 - Approved KYC snapshots remain immutable. Re-running AI creates or updates drafts/run output and does not replace an approved snapshot until a KAM Head or Super Admin approves it.
 - Account approval from onboarding seeds a default stakeholder and a default source-prefilled KYC draft when those records do not already exist.
 - KYC prompt generation uses account fields, approved SOW/charter source documents, structured SOW metadata, extracted document text excerpts, and previous approved KYC snapshot context.
-- The visible KYC prompt is a compact textarea, not a rich text editor, and provider routing/fallback wording is not included in the user-facing prompt.
-- The KYC prompt, provider response/debug panels, and runtime source extraction review are now visible only to `super_admin`; standard KYC reviewers use the mapped KYC fields, draft queue, issues, and snapshot history.
+- The visible KYC prompt is a compact textarea, not a rich text editor, and provider routing/fallback wording is not included in the user-facing prompt. The prompt is read-only until an admin clicks it to edit.
+- The KYC prompt, OpenAI response, and runtime source extraction review are now visible only to `admin` and `super_admin`; Account Manager, KAM Head, and other users use a simple `Run KYC` action plus the mapped KYC fields, draft queue, issues, and snapshot history.
+- The KYC tab uses native textareas for KYC fields, AI output, logs, source extraction review, rejection notes, and restore notes so CKEditor toolbars do not open on field focus.
+- KYC review surfaces no longer show confidence/completeness/source-coverage percentages in the visible review sections.
 - The legacy KYC `Research question`, bottom `Detailed AI description`, and right-sidebar `Review gates` panels are removed from the normal KYC review surface.
 - Direct Google scraping, unofficial LinkedIn scraping, and uncredentialed ZoomInfo access remain blocked. Web enrichment must come through approved provider context such as Tavily or future approved APIs.
 
@@ -57,15 +59,15 @@ Implements the account-creation and KYC review workflow where uploaded SOW/chart
 
 - KYC tab editable prompt window:
   - `frontend/src/components/account/KYCAssistedReview.tsx`
-- Shared click-to-edit rich text behavior:
-  - `frontend/src/components/ui/RichTextEditor.tsx`
+- KYC HTML-to-text display helper:
+  - `frontend/src/utils/htmlText.ts`
 - KYC API service/types:
   - `frontend/src/services/kyc.ts`
   - `frontend/src/types/kyc.ts`
 
 ## Validation And Security Notes
 
-- KYC approval permissions remain enforced by existing KAM Head / Super Admin authorization rules.
+- KYC approval permissions remain enforced by existing backend authorization rules.
 - Sensitive KYC fields still use existing RBAC visibility.
 - AI prompts and raw responses are intentionally captured for local/demo traceability, but provider secrets are not logged.
 - OpenAI runtime failures fail the run unless fallback is explicitly enabled in environment settings.
@@ -75,7 +77,9 @@ Implements the account-creation and KYC review workflow where uploaded SOW/chart
 
 - `docker compose exec -T backend pytest -q tests/test_kyc_ai_extraction.py tests/test_account_workspace.py::test_onboarding_draft_approval_creates_account_sources_and_engagement tests/test_account_workspace.py::test_onboarding_upload_extracts_customer_from_contract_style_sow`
 - `python3 -m py_compile backend/app/services/kyc_gateway.py backend/app/services/kyc.py backend/app/services/onboarding.py backend/app/schemas.py backend/app/routers/kyc.py`
-- `npm --prefix frontend run typecheck`
+- `docker compose run --rm --no-deps frontend npm test -- KYCAssistedReview.test.tsx`
+- `docker compose run --rm --no-deps frontend npm test -- htmlText.test.ts`
+- `docker compose run --rm --no-deps frontend npm run typecheck`
 
 ## Known Follow-Ups
 

@@ -311,33 +311,37 @@ export function GrowthWhitespacePanel({ account }: { account: Account }) {
         Save coverage
       </button>
       <div className="grid gap-3 lg:grid-cols-2">
-        {recommendations.length ? recommendations.map(recommendation => (
-          <div key={recommendation.id} className="rounded-lg border border-blue-tint-20 bg-blue-tint-20 p-4">
-            <div className="flex items-start justify-between gap-3">
-              <span>
-                <span className="block text-sm font-semibold text-ink">{recommendation.targetServiceName}</span>
-                <span className="mt-1 block text-xs leading-5 text-ink-secondary">{recommendation.rationale}</span>
-                <span className="mt-2 block text-xs font-semibold text-ink-secondary">
-                  {recommendation.sourceServiceName ? `From ${recommendation.sourceServiceName} · ` : ''}Base fit {recommendation.baseFitScore} · Account fit {recommendation.accountFitScore}
-                </span>
-              </span>
-              <span className="rounded-full bg-white px-3 py-1 text-xs font-bold text-brand-blue">{recommendation.accountFitScore}%</span>
-            </div>
-            {recommendation.scoreFactors.length ? (
-              <div className="mt-3 flex flex-wrap gap-2">
-                {recommendation.scoreFactors.map(factor => (
-                  <span key={`${recommendation.id}-${factor.label}`} className="rounded-full bg-white px-2.5 py-1 text-[11px] font-semibold text-ink-secondary">
-                    {factor.value > 0 ? '+' : ''}{factor.value} {factor.label}
+        {recommendations.length ? recommendations.map(recommendation => {
+          const contextChips = growthRecommendationContext(recommendation, coverage, account.stage)
+
+          return (
+            <div key={recommendation.id} className="rounded-lg border border-blue-tint-20 bg-blue-tint-20 p-4">
+              <div className="flex items-start justify-between gap-3">
+                <span>
+                  <span className="block text-sm font-semibold text-ink">{recommendation.targetServiceName}</span>
+                  <span className="mt-1 block text-xs leading-5 text-ink-secondary">{recommendation.rationale}</span>
+                  <span className="mt-2 block text-xs font-semibold text-ink-secondary">
+                    {recommendation.sourceServiceName ? `From ${recommendation.sourceServiceName} · ` : ''}Base fit {recommendation.baseFitScore} · Account fit {recommendation.accountFitScore}
                   </span>
-                ))}
+                </span>
+                <span className="rounded-full bg-white px-3 py-1 text-xs font-bold text-brand-blue">Fit {recommendation.accountFitScore}%</span>
               </div>
-            ) : null}
-            <button type="button" className="tk-button-secondary mt-3 bg-white" disabled={recommendation.status === 'converted'} onClick={() => convertRecommendation(recommendation)}>
-              <ArrowRight className="h-4 w-4" />
-              {recommendation.status === 'converted' ? 'Converted' : 'Create opportunity'}
-            </button>
-          </div>
-        )) : <EmptyState icon={Target} heading="No recommendations yet" body="Mark at least one service active to generate adjacent-service recommendations." className="py-8 lg:col-span-2" />}
+              {contextChips.length ? (
+                <div className="mt-3 flex flex-wrap gap-2">
+                  {contextChips.map(chip => (
+                    <span key={`${recommendation.id}-${chip}`} className="rounded-full bg-white px-2.5 py-1 text-[11px] font-semibold text-ink-secondary">
+                      {chip}
+                    </span>
+                  ))}
+                </div>
+              ) : null}
+              <button type="button" className="tk-button-secondary mt-3 bg-white" disabled={recommendation.status === 'converted'} onClick={() => convertRecommendation(recommendation)}>
+                <ArrowRight className="h-4 w-4" />
+                {recommendation.status === 'converted' ? 'Converted' : 'Create opportunity'}
+              </button>
+            </div>
+          )
+        }) : <EmptyState icon={Target} heading="No recommendations yet" body="Mark at least one service active to generate adjacent-service recommendations." className="py-8 lg:col-span-2" />}
       </div>
     </PanelShell>
   )
@@ -693,6 +697,22 @@ function TextArea({ label, value, onChange }: { label: string; value: string; on
       <textarea className="tk-input min-h-[120px] resize-y" value={value} onChange={event => onChange(event.target.value)} />
     </label>
   )
+}
+
+function growthRecommendationContext(recommendation: ServiceRecommendation, coverage: Record<string, string>, accountStage?: string | null) {
+  const chips: string[] = []
+  const sourceCoverage = recommendation.sourceServiceId ? coverage[recommendation.sourceServiceId] : undefined
+  const targetCoverage = coverage[recommendation.targetServiceId]
+
+  if (accountStage) chips.push(`Account stage: ${accountStage}`)
+  if (sourceCoverage && sourceCoverage !== 'unknown') chips.push(`Source coverage: ${coverageLabel(sourceCoverage)}`)
+  if (targetCoverage && targetCoverage !== 'unknown') chips.push(`Target coverage: ${coverageLabel(targetCoverage)}`)
+
+  return chips
+}
+
+function coverageLabel(value: string) {
+  return value.replace(/_/g, ' ')
 }
 
 function splitList(value: string) {

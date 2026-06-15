@@ -39,8 +39,8 @@ import { Account } from '@/types/account'
 import { KycAgentRun, KycDraft, KycDraftStatus, KycFreshness, KycPage, KycSnapshot } from '@/types/kyc'
 import { SourceDocument } from '@/types/v3'
 import { EmptyState } from '@/components/ui/EmptyState'
-import { RichTextEditor } from '@/components/ui/RichTextEditor'
 import { cn } from '@/utils/cn'
+import { htmlToTextareaText } from '@/utils/htmlText'
 
 const DRAFT_PAGE_SIZE = 5
 const SNAPSHOT_PAGE_SIZE = 3
@@ -62,6 +62,7 @@ export function KYCAssistedReview({ account }: { account: Account }) {
   const [reviewNotes, setReviewNotes] = useState('')
   const [detailedDescription, setDetailedDescription] = useState('')
   const [kycPrompt, setKycPrompt] = useState('')
+  const [promptEditable, setPromptEditable] = useState(false)
   const [promptSourceDocumentIds, setPromptSourceDocumentIds] = useState<string[]>([])
   const [promptLoading, setPromptLoading] = useState(false)
   const [promptError, setPromptError] = useState('')
@@ -91,11 +92,8 @@ export function KYCAssistedReview({ account }: { account: Account }) {
   const lowConfidenceFields = useMemo(() => activeDraft?.fields.filter(field => !field.missing && field.confidence < 70) ?? [], [activeDraft])
   const canEditDraft = activeDraft?.status === 'ready_for_review'
   const canApproveKyc = capabilities.can_approve_kyc
-  const canReviewSources = capabilities.can_view_sensitive_sources || capabilities.permission_keys.includes('kyc:review_sources')
-  const canDebugKyc = capabilities.permission_keys.includes('kyc:debug_runs')
-  const completion = activeDraft?.completeness ?? freshness?.completeness ?? 0
-  const confidence = activeDraft?.confidence ?? freshness?.confidence ?? 0
-  const sourceCoverage = activeDraft?.source_coverage ?? freshness?.source_coverage ?? 0
+  const canUseAdminKycTools = isKycAdminRole(user?.role)
+  const canDebugKyc = canUseAdminKycTools && capabilities.permission_keys.includes('kyc:debug_runs')
   const hasInitialLoading = loading === 'initial' && !drafts
   const { sort, direction } = parseSort(sortOption)
   const sourceDocumentKey = activeDraft?.source_document_ids.join('|') ?? ''
@@ -167,10 +165,18 @@ export function KYCAssistedReview({ account }: { account: Account }) {
   }, [loadKyc])
 
   useEffect(() => {
-    if (!token) return
+    if (!token || !canUseAdminKycTools) {
+      setKycPrompt('')
+      setPromptSourceDocumentIds([])
+      setPromptError('')
+      setPromptLoading(false)
+      setPromptEditable(false)
+      return
+    }
     let active = true
     setPromptLoading(true)
     setPromptError('')
+    setPromptEditable(false)
     getKycDefaultPrompt(token, account.id)
       .then(response => {
         if (!active) return
@@ -187,7 +193,7 @@ export function KYCAssistedReview({ account }: { account: Account }) {
     return () => {
       active = false
     }
-  }, [account.id, token])
+  }, [account.id, canUseAdminKycTools, token])
 
   useEffect(() => {
     if (!latestRun || !['pending', 'running'].includes(latestRun.status)) return
@@ -213,7 +219,7 @@ export function KYCAssistedReview({ account }: { account: Account }) {
       setRejectionReason('')
       return
     }
-    setFieldValues(Object.fromEntries(activeDraft.fields.map(field => [field.key, field.value ?? ''])))
+    setFieldValues(Object.fromEntries(activeDraft.fields.map(field => [field.key, htmlToTextareaText(field.value ?? '')])))
     setAckLowConfidence(activeDraft.low_confidence_acknowledged)
     setAckConflicts(activeDraft.conflicts_acknowledged)
     setOverrideReason(activeDraft.override_reason ?? '')
@@ -224,7 +230,7 @@ export function KYCAssistedReview({ account }: { account: Account }) {
   }, [activeDraft])
 
   useEffect(() => {
-    if (!token || !activeDraft || !activeDraft.source_document_ids.length) {
+    if (!token || !activeDraft || !activeDraft.source_document_ids.length || !canUseAdminKycTools) {
       setSourceDocuments([])
       setSelectedSourceDocumentId('')
       return
@@ -246,18 +252,18 @@ export function KYCAssistedReview({ account }: { account: Account }) {
     return () => {
       active = false
     }
-  }, [account.id, activeDraft, sourceDocumentKey, token])
+  }, [account.id, activeDraft, canUseAdminKycTools, sourceDocumentKey, token])
 
   useEffect(() => {
-    if (!activeDraft) {
+    if (!activeDraft || !canUseAdminKycTools) {
       setSourceReviewHtml('')
       return
     }
     setSourceReviewHtml(buildKycRuntimeReviewHtml(activeDraft, selectedSourceDocument))
-  }, [activeDraft, selectedSourceDocument])
+  }, [activeDraft, canUseAdminKycTools, selectedSourceDocument])
 
   useEffect(() => {
-    if (!token || !selectedSourceDocument) {
+    if (!token || !selectedSourceDocument || !canUseAdminKycTools) {
       setSourcePreviewUrl('')
       setSourcePreviewError('')
       return
@@ -284,7 +290,7 @@ export function KYCAssistedReview({ account }: { account: Account }) {
       active = false
       if (objectUrl && typeof URL.revokeObjectURL === 'function') URL.revokeObjectURL(objectUrl)
     }
-  }, [account.id, selectedSourceDocument, token])
+  }, [account.id, canUseAdminKycTools, selectedSourceDocument, token])
 
   function updateField(fieldKey: string, value: string) {
     setFieldValues(values => ({ ...values, [fieldKey]: value }))
@@ -296,13 +302,16 @@ export function KYCAssistedReview({ account }: { account: Account }) {
     setFieldErrors([])
     setError(null)
     try {
-      const draft = await createKycDraft(token, account.id, {
+      const payload = {
         trigger_source: 'kyc_page',
-        source_document_ids: promptSourceDocumentIds,
-        notes: reviewNotes || undefined,
-        prompt: kycPrompt || undefined,
-      })
-      toast.success('KYC draft queued from editable prompt')
+        ...(reviewNotes ? { notes: reviewNotes } : {}),
+        ...(canUseAdminKycTools ? {
+          source_document_ids: promptSourceDocumentIds,
+          prompt: kycPrompt || undefined,
+        } : {}),
+      } as const
+      const draft = await createKycDraft(token, account.id, payload)
+      toast.success(canUseAdminKycTools ? 'KYC draft queued from editable prompt' : 'KYC draft queued')
       setDraftPage(1)
       setActiveDraftId(draft.id)
       await loadKyc('refresh')
@@ -473,7 +482,7 @@ export function KYCAssistedReview({ account }: { account: Account }) {
               </button>
               <button type="button" className="tk-button-secondary bg-white" onClick={createDraft} disabled={Boolean(loading)}>
                 {loading === 'create' ? <Loader2 className="h-4 w-4 animate-spin" /> : <PlusCircle className="h-4 w-4" />}
-                New draft
+                {canUseAdminKycTools ? 'New draft' : 'Run KYC'}
               </button>
               <button type="button" className="tk-button-secondary bg-white" onClick={saveEdits} disabled={!canEditDraft || Boolean(loading)}>
                 {loading === 'save' ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
@@ -491,15 +500,14 @@ export function KYCAssistedReview({ account }: { account: Account }) {
           </div>
         </div>
 
-        <div className="grid gap-0 divide-y divide-surface-border md:grid-cols-4 md:divide-x md:divide-y-0">
-          <KYCStat label="Completeness" value={completion} suffix="%" />
-          <KYCStat label="AI confidence" value={confidence} suffix="%" />
-          <KYCStat label="Source coverage" value={sourceCoverage} suffix="%" />
+        <div className="grid gap-0 divide-y divide-surface-border md:grid-cols-3 md:divide-x md:divide-y-0">
+          <KYCStat label="KYC fields" value={activeDraft?.fields.length ?? freshness?.required_fields_total ?? 0} />
           <KYCStat label="Missing fields" value={activeDraft?.missing_fields.length ?? freshness?.missing_fields.length ?? 0} tone={(activeDraft?.missing_fields.length ?? freshness?.missing_fields.length ?? 0) ? 'orange' : 'green'} />
+          <KYCStat label="Open issues" value={(activeDraft?.missing_fields.length ?? freshness?.missing_fields.length ?? 0) + (activeDraft?.conflicts.length ?? 0)} tone={(activeDraft?.missing_fields.length ?? freshness?.missing_fields.length ?? 0) + (activeDraft?.conflicts.length ?? 0) ? 'orange' : 'green'} />
         </div>
       </section>
 
-      {canReviewSources ? (
+      {canUseAdminKycTools ? (
       <section className="tk-card p-5">
         <div>
           <p className="text-[10px] font-extrabold uppercase tracking-widest text-brand-blue">Editable KYC prompt</p>
@@ -519,9 +527,19 @@ export function KYCAssistedReview({ account }: { account: Account }) {
             <label className="block">
               <span className="text-xs font-semibold uppercase tracking-wider text-ink-secondary">Prompt</span>
               <textarea
-                className="mt-2 h-[260px] w-full resize-none rounded-lg border border-surface-border bg-white px-3 py-2 text-sm leading-6 text-ink outline-none transition-colors placeholder:text-ink-muted focus:border-brand-blue focus:ring-2 focus:ring-brand-blue/20"
+                className={cn(
+                  'mt-2 h-[260px] w-full resize-none rounded-lg border border-surface-border px-3 py-2 text-sm leading-6 text-ink outline-none transition-colors placeholder:text-ink-muted focus:border-brand-blue focus:ring-2 focus:ring-brand-blue/20',
+                  promptEditable ? 'bg-white' : 'bg-surface-secondary',
+                )}
                 value={promptLoading ? 'Preparing source-backed KYC prompt...' : kycPrompt}
                 onChange={event => setKycPrompt(event.target.value)}
+                onClick={() => {
+                  if (!promptLoading && !loading) setPromptEditable(true)
+                }}
+                onFocus={() => {
+                  if (!promptLoading && !loading) setPromptEditable(true)
+                }}
+                readOnly={!promptEditable}
                 disabled={promptLoading || Boolean(loading)}
                 placeholder="Prompt will be prepared from account details and uploaded SOW/charter evidence."
                 aria-label="Editable KYC prompt"
@@ -544,13 +562,13 @@ export function KYCAssistedReview({ account }: { account: Account }) {
                 {openAiResponseLabel(latestRun)}
               </span>
             </div>
-            <RichTextEditor
-              value={aiGeneratedKycHtml}
+            <KycTextarea
+              value={htmlToTextareaText(aiGeneratedKycHtml)}
               onChange={() => undefined}
-              disabled
+              readOnly
               placeholder="Run KYC to show the OpenAI response and mapped KYC output here."
               ariaLabel="OpenAI KYC response"
-              editorHeight="260px"
+              height="260px"
             />
           </div>
         </div>
@@ -617,24 +635,24 @@ export function KYCAssistedReview({ account }: { account: Account }) {
               <div className="mt-3 grid gap-4 xl:grid-cols-[minmax(0,1fr)_420px]">
                 <div>
                   <p className="mb-2 text-xs font-semibold uppercase tracking-wider text-ink-secondary">Generated KYC body</p>
-                  <RichTextEditor
-                    value={aiGeneratedKycHtml}
+                  <KycTextarea
+                    value={htmlToTextareaText(aiGeneratedKycHtml)}
                     onChange={() => undefined}
-                    disabled
+                    readOnly
                     placeholder="Create or retry a KYC draft, then refresh after the AI run completes."
                     ariaLabel="Generated KYC body"
-                    editorHeight="520px"
+                    height="520px"
                   />
                 </div>
                 <aside>
                   <p className="mb-2 text-xs font-semibold uppercase tracking-wider text-ink-secondary">Prompt, response, and processing logs</p>
-                  <RichTextEditor
-                    value={aiDebugLogsHtml}
+                  <KycTextarea
+                    value={htmlToTextareaText(aiDebugLogsHtml)}
                     onChange={() => undefined}
-                    disabled
+                    readOnly
                     placeholder="Prompt and raw response logs will appear after a new KYC or web research run completes."
                     ariaLabel="AI KYC logs"
-                    editorHeight="520px"
+                    height="520px"
                   />
                 </aside>
               </div>
@@ -643,7 +661,7 @@ export function KYCAssistedReview({ account }: { account: Account }) {
         </details>
       ) : null}
 
-      {canReviewSources && activeDraft ? (
+      {canUseAdminKycTools && activeDraft ? (
         <DocumentExtractionReviewPanel
           title="Runtime source and KYC extraction review"
           eyebrow="KYC source review"
@@ -688,7 +706,7 @@ export function KYCAssistedReview({ account }: { account: Account }) {
                 icon={FileSearch}
                 heading="No KYC drafts found"
                 body="Create a source-backed KYC draft for this account."
-                action={{ label: loading === 'create' ? 'Creating...' : 'Create KYC draft', onClick: createDraft }}
+                action={{ label: loading === 'create' ? 'Creating...' : canUseAdminKycTools ? 'Create KYC draft' : 'Run KYC', onClick: createDraft }}
               />
             </section>
           ) : null}
@@ -727,14 +745,13 @@ export function KYCAssistedReview({ account }: { account: Account }) {
                           <span className="text-xs font-semibold uppercase tracking-wider text-ink-secondary">{field.label}</span>
                           {field.is_required ? <Badge tone="blue">Required</Badge> : null}
                           {field.missing || !fieldValues[field.key]?.trim() ? <Badge tone="orange">Missing</Badge> : null}
-                          {field.confidence < 70 ? <Badge tone="orange">{`${field.confidence}%`}</Badge> : <Badge tone="green">{`${field.confidence}%`}</Badge>}
                           {field.is_sensitive ? <Badge tone="blue">Restricted</Badge> : null}
                         </span>
                         <div className="mt-2">
-                          <RichTextEditor
+                          <KycTextarea
                             value={fieldValues[field.key] ?? ''}
                             onChange={value => updateField(field.key, value)}
-                            disabled={!canEditDraft}
+                            readOnly={!canEditDraft}
                             ariaLabel={field.label}
                             clickToEdit
                           />
@@ -806,7 +823,6 @@ export function KYCAssistedReview({ account }: { account: Account }) {
                 >
                   <div className="flex items-center justify-between gap-2">
                     <StatusPill status={draft.status} />
-                    <span className="text-xs font-semibold text-ink-secondary">{draft.completeness}%</span>
                   </div>
                   <p className="mt-2 text-sm font-semibold text-ink">{draft.trigger_source.replace(/_/g, ' ')}</p>
                   <p className="mt-1 text-xs text-ink-secondary">{formatDateTime(draft.created_at)}</p>
@@ -873,7 +889,6 @@ export function KYCAssistedReview({ account }: { account: Account }) {
                 <div key={snapshot.id} className="rounded-lg border border-surface-border p-3">
                   <div className="flex items-center justify-between gap-2">
                     <p className="text-sm font-semibold text-ink">Version {snapshot.version}</p>
-                    <span className="text-xs font-semibold text-ink-secondary">{snapshot.completeness}%</span>
                   </div>
                   <p className="mt-1 text-xs text-ink-secondary">Approved by {snapshot.approved_by_name}</p>
                   <p className="mt-1 text-xs text-ink-secondary">{formatDateTime(snapshot.approved_at)}</p>
@@ -904,7 +919,7 @@ export function KYCAssistedReview({ account }: { account: Account }) {
               <label className="block">
                 <span className="text-xs font-semibold uppercase tracking-wider text-ink-secondary">Rejection reason</span>
                 <div className="mt-2">
-                  <RichTextEditor value={rejectionReason} onChange={setRejectionReason} ariaLabel="Rejection reason" />
+                  <KycTextarea value={rejectionReason} onChange={setRejectionReason} ariaLabel="Rejection reason" clickToEdit rows={4} />
                 </div>
               </label>
             </div>
@@ -934,7 +949,7 @@ export function KYCAssistedReview({ account }: { account: Account }) {
               <label className="block">
                 <span className="text-xs font-semibold uppercase tracking-wider text-ink-secondary">Restore reason</span>
                 <div className="mt-2">
-                  <RichTextEditor value={restoreReason} onChange={setRestoreReason} ariaLabel="Restore reason" />
+                  <KycTextarea value={restoreReason} onChange={setRestoreReason} ariaLabel="Restore reason" clickToEdit rows={4} />
                 </div>
               </label>
             </div>
@@ -959,7 +974,6 @@ function sourceDocumentToReviewSource(document: SourceDocument): DocumentReviewS
     id: document.id,
     name: document.fileName || document.name,
     status: document.extractionStatus || document.status,
-    confidence: document.confidence,
     pages: document.pages,
   }
 }
@@ -972,9 +986,50 @@ function sourceContextSources(draft: KycDraft): DocumentReviewSource[] {
       id: typeof item.id === 'string' ? item.id : undefined,
       name: typeof item.title === 'string' ? item.title : 'Source document',
       status: typeof item.source_type === 'string' ? item.source_type : 'source',
-      confidence: typeof item.confidence === 'number' ? item.confidence : undefined,
     }]
   })
+}
+
+interface KycTextareaProps {
+  value: string
+  onChange: (value: string) => void
+  ariaLabel: string
+  placeholder?: string
+  readOnly?: boolean
+  clickToEdit?: boolean
+  rows?: number
+  height?: string
+}
+
+function KycTextarea({ value, onChange, ariaLabel, placeholder, readOnly = false, clickToEdit = false, rows = 5, height }: KycTextareaProps) {
+  const [editing, setEditing] = useState(false)
+  const isReadOnly = readOnly || (clickToEdit && !editing)
+
+  function enableEditing() {
+    if (!readOnly && clickToEdit) setEditing(true)
+  }
+
+  return (
+    <textarea
+      className={cn(
+        'tk-input w-full resize-y text-sm leading-6',
+        height && 'resize-none',
+        isReadOnly ? 'bg-surface-secondary' : 'bg-white',
+      )}
+      style={height ? { height } : undefined}
+      rows={rows}
+      value={value}
+      onChange={event => {
+        if (!isReadOnly) onChange(event.target.value)
+      }}
+      onClick={enableEditing}
+      onFocus={enableEditing}
+      readOnly={isReadOnly}
+      aria-label={ariaLabel}
+      aria-readonly={isReadOnly}
+      placeholder={placeholder}
+    />
+  )
 }
 
 function buildKycRuntimeReviewHtml(draft: KycDraft, document: SourceDocument | null) {
@@ -984,7 +1039,7 @@ function buildKycRuntimeReviewHtml(draft: KycDraft, document: SourceDocument | n
     : draft.fields
   const fields = (relatedFields.length ? relatedFields : draft.fields).slice(0, 20)
   const fieldItems = fields.map(field => (
-    `<li><strong>${escapeHtml(field.label)}</strong> · ${field.confidence}% confidence<br/>${escapeHtml(toPlainText(field.value || 'No value extracted yet.'))}</li>`
+    `<li><strong>${escapeHtml(field.label)}</strong><br/>${escapeHtml(toPlainText(field.value || 'No value extracted yet.'))}</li>`
   )).join('')
   const citations = draft.citations
     .filter(citation => !documentId || citation.source_document_id === documentId)
@@ -1001,9 +1056,8 @@ function buildKycRuntimeReviewHtml(draft: KycDraft, document: SourceDocument | n
     '<h4>KYC runtime extraction review</h4>',
     '<ul>',
     `<li><strong>Status:</strong> ${escapeHtml(draft.status.replace(/_/g, ' '))}</li>`,
-    `<li><strong>Completeness:</strong> ${draft.completeness}%</li>`,
-    `<li><strong>Confidence:</strong> ${draft.confidence}%</li>`,
-    `<li><strong>Source coverage:</strong> ${draft.source_coverage}%</li>`,
+    `<li><strong>KYC fields:</strong> ${draft.fields.length}</li>`,
+    `<li><strong>Missing fields:</strong> ${draft.missing_fields.length}</li>`,
     document ? `<li><strong>Selected source:</strong> ${escapeHtml(document.fileName || document.name)}</li>` : '',
     '</ul>',
     '<h4>Extracted KYC fields</h4>',
@@ -1028,7 +1082,7 @@ function buildAiGeneratedKycHtml(draft: KycDraft | null, latestRun: KycAgentRun 
     [
       `<h5>${escapeHtml(field.workstream_title)} - ${escapeHtml(field.label)}</h5>`,
       toPlainText(field.value || '').trim() ? richTextFromStoredKycText(field.value || '') : '<p><em>No value returned yet.</em></p>',
-      `<p><strong>Confidence:</strong> ${field.confidence}% · <strong>Status:</strong> ${field.missing ? 'Missing' : 'Populated'}${field.is_sensitive ? ' · Sensitive' : ''}</p>`,
+      `<p><strong>Status:</strong> ${field.missing ? 'Missing' : 'Populated'}${field.is_sensitive ? ' · Sensitive' : ''}</p>`,
       field.missing_evidence_note ? `<p><strong>Missing evidence:</strong> ${escapeHtml(field.missing_evidence_note)}</p>` : '',
       field.suggested_follow_up_questions?.length ? `<p><strong>Follow-up questions:</strong></p><ul>${field.suggested_follow_up_questions.map(question => `<li>${escapeHtml(question)}</li>`).join('')}</ul>` : '',
     ].filter(Boolean).join('')
@@ -1187,9 +1241,8 @@ function sourceListItem(value: unknown) {
   const record = recordValue(value)
   const label = escapeHtml(String(record.label || record.title || 'Web source'))
   const url = typeof record.url === 'string' && record.url ? ` · ${escapeHtml(record.url)}` : ''
-  const confidence = typeof record.confidence === 'number' ? ` · ${record.confidence}%` : ''
   const excerpt = typeof record.excerpt === 'string' && record.excerpt ? `<br/>${escapeHtml(record.excerpt)}` : ''
-  return `<li><strong>${label}</strong>${url}${confidence}${excerpt}</li>`
+  return `<li><strong>${label}</strong>${url}${excerpt}</li>`
 }
 
 function debugBlock(title: string, value: string) {
@@ -1223,6 +1276,10 @@ function citationText(field: KycDraft['fields'][number]) {
   if (!citation) return 'No citation attached to this field.'
   const page = citation.page_number ? `Page ${citation.page_number}: ` : ''
   return `${citation.label} - ${page}${citation.excerpt}`
+}
+
+function isKycAdminRole(role?: string | null) {
+  return role === 'admin' || role === 'super_admin'
 }
 
 function KYCStat({ label, value, suffix = '', tone = 'blue' }: { label: string; value: number; suffix?: string; tone?: 'blue' | 'green' | 'orange' }) {
