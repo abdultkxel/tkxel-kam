@@ -108,7 +108,7 @@ class GovernanceService:
         page_size: int = 10,
     ) -> GovernanceEventPageRead:
         self.access.require_module_permission(current_user, "governance_reviews", "view")
-        account_ids = None if self.access.can_view_portfolio(current_user) else self.accounts.list_account_ids_for_user(current_user.id)
+        account_ids = self.access.visible_account_ids(current_user)
         items, total = self.repository.list_events(
             account_id=account_id,
             account_ids=account_ids,
@@ -223,7 +223,23 @@ class GovernanceService:
         updates = payload.model_dump(exclude_unset=True)
         custom_values = updates.pop("custom_field_values", None)
         attendee_emails = updates.pop("attendee_emails", None)
+        next_account = None
+        if "account_id" in updates:
+            next_account_id = updates.get("account_id")
+            if not next_account_id:
+                raise field_validation_error("account_id", "Choose an account for this governance event.")
+            if next_account_id != event.account_id:
+                next_account = self.accounts.get_by_id(next_account_id)
+                if next_account is None:
+                    raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Account was not found")
+                self.access.require_account_view(current_user, next_account, module="governance_reviews")
         self._refresh_event_deduplication_key(event, updates)
+        updates.pop("account_id", None)
+        if next_account is not None:
+            event.account = next_account
+            event.account_id = next_account.id
+            if "engagement_id" not in updates:
+                event.engagement_id = None
         if "owner_id" in updates and updates["owner_id"]:
             owner = self._get_user_or_404(updates["owner_id"])
             event.owner_id = owner.id
@@ -245,9 +261,13 @@ class GovernanceService:
         elif before.get("scheduled_at") != (event.scheduled_at.isoformat() if event.scheduled_at else None):
             self._notify_governance_event(event, "governance_rescheduled", "Governance rescheduled", current_user)
         if before.get("account_id") and before.get("governance_type") and (before.get("account_id") != event.account_id or before.get("governance_type") != event.governance_type):
+            previous_account = self.accounts.get_by_id(str(before["account_id"]))
+            self._update_next_governance(previous_account)
             self._sync_next_governance_prep_task(str(before["account_id"]), str(before["governance_type"]), current_user)
         self.repository.commit()
         self._evaluate_alerts_for_account(event.account_id)
+        if before.get("account_id") and before.get("account_id") != event.account_id:
+            self._evaluate_alerts_for_account(str(before["account_id"]))
         return self._event_read(event)
 
     def delete_event(self, event_id: str, current_user: User) -> MessageResponse:

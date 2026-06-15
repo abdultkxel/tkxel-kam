@@ -42,7 +42,7 @@ Implements role-resolved dashboard behavior so users no longer see AM Home, KAM 
 - Account bulk CSV export no longer includes the dashboard-removed open-escalations column.
 - Account Manager opportunities/pipeline uses the compact reference layout with Open opps, Total value, and Stalled tiles plus data-source/stalled-signal rows. Assigned-account opportunity values are shown when `opportunity_management:view` is available; unauthorized/commercial-sensitive values remain backend-masked.
 - Dashboard top metric tiles are clickable for all roles, using backend-provided routes when present and route fallbacks by metric key otherwise.
-- Task summary tiles deep-link to `/tasks` with real module filters (`status`, `due`, `my_items`, and account query aliases). AI task summary source-count tiles also link to their source module.
+- Task summary tiles deep-link to `/tasks` with real module filters (`status`, `due`, and account query aliases). Task ownership is enforced by the backend, so dashboard task counts and links show the signed-in user's own tasks only.
 - Opportunity Open opps/Total value/Stalled tiles deep-link to `/opportunities` with persisted API filters (`open_only` and `stalled`) rather than client-only or hardcoded filtering.
 - Critical Actions is a backend widget sourced from open critical/blocked tasks, critical account health, and critical engagement health drops. Engagements with delivery health below 60 or a critical/red health status appear there without a client-side rule.
 - Today's Tasks is a backend widget sourced from active tasks whose `due_at` falls on the dashboard service's current calendar day; its primary route uses the existing Tasks due-today filter.

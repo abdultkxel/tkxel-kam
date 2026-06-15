@@ -297,7 +297,7 @@ class PlaybooksTasksService:
         self.access.require_module_permission(current_user, MODULE, "view")
         if account_id:
             self.access.require_account_view(current_user, self._get_account_or_404(account_id), module=MODULE)
-        account_ids = self.accounts.list_account_ids_for_user(current_user.id)
+        account_ids = self.access.visible_account_ids(current_user)
         owner_id = current_user.id
         items, total = self.repository.list_tasks(
             account_id=account_id,
@@ -358,12 +358,14 @@ class PlaybooksTasksService:
     def get_task(self, task_id: str, current_user: User) -> TaskRead:
         self.access.require_module_permission(current_user, MODULE, "view")
         task = self._get_task_or_404(task_id)
+        self._require_task_view(current_user, task)
         self.access.require_account_view(current_user, self._get_account_or_404(task.account_id), module=MODULE)
         return self._task_read(task)
 
     def list_task_history(self, task_id: str, current_user: User, *, page: int = 1, page_size: int = 50) -> TaskHistoryPageRead:
         self.access.require_module_permission(current_user, MODULE, "view")
         task = self._get_task_or_404(task_id)
+        self._require_task_view(current_user, task)
         self.access.require_account_view(current_user, self._get_account_or_404(task.account_id), module=MODULE)
         items, total = self.repository.list_task_history(task.id, page=page, page_size=page_size)
         return TaskHistoryPageRead(items=[TaskHistoryRead.model_validate(item) for item in items], total=total, page=page, page_size=page_size, pages=page_count(total, page_size))
@@ -513,12 +515,12 @@ class PlaybooksTasksService:
         self.access.require_module_permission(current_user, MODULE, "view")
         if account_id:
             self.access.require_account_view(current_user, self._get_account_or_404(account_id), module=MODULE)
-        account_ids = None if self.access.can_view_portfolio(current_user) else self.accounts.list_account_ids_for_user(current_user.id)
+        account_ids = self.access.visible_account_ids(current_user)
         if account_id:
             account_ids = [account_id]
         items: list[CalendarItemRead] = []
         if include_tasks:
-            tasks = self.repository.list_tasks_for_calendar(account_ids=account_ids, date_from=date_from, date_to=date_to)
+            tasks = self.repository.list_tasks_for_calendar(account_ids=account_ids, owner_id=current_user.id, date_from=date_from, date_to=date_to)
             items.extend(self._task_calendar_item(task) for task in tasks)
         if include_governance:
             events = self.repository.list_governance_events_for_calendar(account_ids=account_ids, date_from=date_from, date_to=date_to)
@@ -561,12 +563,13 @@ class PlaybooksTasksService:
 
     def _require_task_update(self, user: User, task: Task) -> None:
         self.access.require_module_permission(user, MODULE, "update")
-        if self.access.has_any_permission(user, {"tasks:update_portfolio"}) or task.owner_id == user.id:
+        self._require_task_view(user, task)
+
+    @staticmethod
+    def _require_task_view(user: User, task: Task) -> None:
+        if task.owner_id == user.id:
             return
-        account = self._get_account_or_404(task.account_id)
-        if self.access.can_update_account(user, account):
-            return
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="You cannot update this task")
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="You can only access tasks assigned to you")
 
     def _get_template_or_404(self, template_id: str) -> PlaybookTemplate:
         template = self.repository.get_template(template_id)

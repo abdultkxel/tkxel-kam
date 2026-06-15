@@ -155,7 +155,7 @@ function accountManagerDashboard() {
             { key: 'my_accounts', label: 'My Accounts', value: 5, route: '/accounts', detail: 'Assigned account portfolio.' },
             { key: 'at_risk', label: 'At risk', value: 2, route: '/accounts?risk=at_risk', detail: 'Warning and critical accounts.' },
             { key: 'critical_actions', label: 'Critical Actions', value: 4, route: '/dashboard#critical-actions', detail: 'Critical tasks and health drops.' },
-            { key: 'open_tasks', label: 'Open tasks', value: 14, route: '/tasks', detail: 'Open operational work in scope.' },
+            { key: 'open_tasks', label: 'Tasks', value: 14, route: '/tasks', detail: 'Tasks assigned to you.' },
           ],
         },
         error: null,
@@ -196,7 +196,7 @@ function accountManagerDashboard() {
         primary_route: '/tasks',
         value: { open: 14, accounts_with_open_tasks: 5, in_progress: 6, assigned_to_me: 6, overdue: 3, due_this_week: 7 },
         items: [{ id: 'task-1', title: 'Follow up on blocker', account_id: 'acc-1', account_name: 'Acme', priority: 'critical', status: 'open', due_at: '2026-06-05T10:00:00Z', route: '/tasks?account_id=acc-1' }],
-        metadata: { data_source: 'Showing tasks assigned to you across your assigned accounts.' },
+        metadata: { data_source: 'Showing tasks assigned to you only.' },
         error: null,
       },
       {
@@ -635,19 +635,19 @@ describe('Dashboard', () => {
     await screen.findByText('AM Home')
     expect(screen.getByRole('link', { name: /my accounts/i })).toHaveAttribute('href', '/accounts')
     expect(screen.getByRole('link', { name: /at risk/i })).toHaveAttribute('href', '/accounts?risk=at_risk')
-    expect(screen.getByRole('link', { name: /critical actions/i })).toHaveAttribute('href', '/dashboard#critical-actions')
+    expect(screen.getByRole('button', { name: /critical actions/i })).toBeInTheDocument()
     expect(screen.getByRole('heading', { name: 'Critical Actions' })).toBeInTheDocument()
     expect(screen.getByRole('heading', { name: "Today's Tasks" })).toBeInTheDocument()
     expect(screen.getByText('Delivery Recovery SOW health dropped to critical')).toBeInTheDocument()
     expect(screen.getByText('Today customer action')).toBeInTheDocument()
-    expect(screen.getAllByRole('link', { name: /^Open$/i }).map(link => link.getAttribute('href'))).toEqual(expect.arrayContaining(['/dashboard#critical-actions', '/tasks?due=today']))
-    expect(screen.getByText('Full task status breakdown across assigned accounts')).toBeInTheDocument()
-    expect(screen.getByText('Showing tasks assigned to you across your assigned accounts.')).toBeInTheDocument()
+    expect(screen.getAllByRole('link', { name: /^Open$/i }).map(link => link.getAttribute('href'))).toEqual(expect.arrayContaining(['/tasks?due=today']))
+    expect(screen.getByText('Your task status breakdown')).toBeInTheDocument()
+    expect(screen.getByText('Showing tasks assigned to you only.')).toBeInTheDocument()
     expect(screen.getByText('Task completion does NOT improve health scores; only underlying account data changes do.')).toBeInTheDocument()
-    expect(screen.getByRole('link', { name: /open 14 across 5 accounts/i })).toHaveAttribute('href', '/tasks?status=open')
-    expect(screen.getByRole('link', { name: /in progress 6 assigned to me/i })).toHaveAttribute('href', '/tasks?status=in_progress&my_items=true')
+    expect(screen.getByRole('link', { name: /open 14 assigned to you/i })).toHaveAttribute('href', '/tasks?status=open')
+    expect(screen.getByRole('link', { name: /in progress 6 assigned to you/i })).toHaveAttribute('href', '/tasks?status=in_progress')
     expect(screen.getByRole('link', { name: /overdue 3 needs action today/i })).toHaveAttribute('href', '/tasks?due=overdue')
-    expect(screen.getByRole('link', { name: /due this week 7 across all accounts/i })).toHaveAttribute('href', '/tasks?due=next7')
+    expect(screen.getByRole('link', { name: /due this week 7 assigned to you/i })).toHaveAttribute('href', '/tasks?due=next7')
     expect(screen.getByText('Active opportunities across assigned accounts')).toBeInTheDocument()
     expect(screen.getByText('Opportunities & pipeline')).toBeInTheDocument()
     expect(screen.getByText('Opportunity records filtered to assigned accounts; stage not Won/Lost')).toBeInTheDocument()
@@ -690,8 +690,8 @@ describe('Dashboard', () => {
     await screen.findByText('KAM Head Portfolio')
     expect(screen.getByRole('link', { name: /accounts 12/i })).toHaveAttribute('href', '/accounts')
     expect(screen.getByRole('link', { name: /at risk accounts 3/i })).toHaveAttribute('href', '/accounts?risk=at_risk')
-    expect(screen.getByRole('link', { name: /critical actions 4/i })).toHaveAttribute('href', '/dashboard#critical-actions')
-    expect(screen.getByRole('link', { name: /open tasks 6/i })).toHaveAttribute('href', '/tasks')
+    expect(screen.getByRole('button', { name: /critical actions 4/i })).toBeInTheDocument()
+    expect(screen.getAllByRole('link', { name: /tasks 6/i }).map(link => link.getAttribute('href'))).toContain('/tasks')
     expect(screen.getByRole('link', { name: /critical tasks 2/i })).toHaveAttribute('href', '/tasks?priority=critical')
     expect(screen.getByRole('link', { name: /open opps 8/i })).toHaveAttribute('href', '/opportunities?openOnly=true')
     expect(screen.getByRole('link', { name: /total value \$640/i })).toHaveAttribute('href', '/opportunities?openOnly=true')

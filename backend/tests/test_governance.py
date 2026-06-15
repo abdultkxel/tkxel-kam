@@ -11,7 +11,7 @@ from sqlalchemy.pool import StaticPool
 
 from app.database import Base, get_db
 from app.main import app
-from app.models import AuditLog, GovernanceEvent, IntegrationSyncLog, MeetingArtifact, NotificationRecord, Task, TimelineEntry, User
+from app.models import Account, AccountOwner, AuditLog, GovernanceEvent, IntegrationSyncLog, MeetingArtifact, NotificationRecord, Task, TimelineEntry, User
 from app.services.governance import GovernanceService
 from app.services.integrations import IntegrationService
 from app.services.seed import seed_default_data
@@ -406,6 +406,75 @@ def test_governance_update_cancel_and_sort_flow(client: TestClient, db_session: 
     db_session.refresh(reminder_task)
     assert reminder_task.status == "cancelled"
     assert reminder_task.skipped_reason == "Governance event was cancelled."
+
+
+def test_governance_update_can_move_event_to_visible_account(client: TestClient, db_session: Session) -> None:
+    headers = auth_headers(client)
+    source_account_id, engagement_id, owner_id = create_approved_account(client, headers, "Move Source Governance Workspace")
+    owner = db_session.get(User, owner_id)
+    assert owner is not None
+    target_account = Account(
+        name="Move Target Governance Workspace",
+        project_name="Target account governance",
+        company_url="https://governance-target.example.com",
+        lifecycle_status="Active",
+        segment="Strategic",
+        region="Global",
+        risk_status="healthy",
+        commercial_value=100000,
+        currency="USD",
+        created_by_id=owner_id,
+    )
+    db_session.add(target_account)
+    db_session.flush()
+    db_session.add(
+        AccountOwner(
+            account_id=target_account.id,
+            user_id=owner.id,
+            user_name=owner.full_name,
+            user_email=owner.email,
+            ownership_role="primary_am",
+            is_primary=True,
+            created_by_id=owner.id,
+        )
+    )
+    db_session.commit()
+
+    create_response = client.post(
+        "/api/governance-events",
+        headers=headers,
+        json=governance_payload(source_account_id, engagement_id, owner_id, scheduled_at="2026-06-15T10:00:00Z"),
+    )
+    assert create_response.status_code == 201
+    event_id = create_response.json()["id"]
+
+    update_response = client.patch(
+        f"/api/governance-events/{event_id}",
+        headers=headers,
+        json={"account_id": target_account.id, "engagement_id": None, "scheduled_at": "2026-06-18T12:00:00Z"},
+    )
+    assert update_response.status_code == 200
+    updated = update_response.json()
+    assert updated["account_id"] == target_account.id
+    assert updated["account_name"] == "Move Target Governance Workspace"
+    assert updated["engagement_id"] is None
+
+    db_session.expire_all()
+    moved_event = db_session.get(GovernanceEvent, event_id)
+    assert moved_event is not None
+    assert moved_event.account_id == target_account.id
+    assert moved_event.engagement_id is None
+    assert moved_event.deduplication_key == f"manual:{target_account.id}:QBR:2026-06-18T12:00:00+00:00"
+    reminder_task = db_session.query(Task).filter_by(source_type="governance_event", source_record_id=event_id).one()
+    assert reminder_task.account_id == target_account.id
+    assert reminder_task.engagement_id is None
+    assert reminder_task.title == "Prepare for QBR: Move Target Governance Workspace"
+    source_account = db_session.get(Account, source_account_id)
+    refreshed_target = db_session.get(Account, target_account.id)
+    assert source_account is not None
+    assert refreshed_target is not None
+    assert source_account.next_governance_at is None
+    assert refreshed_target.next_governance_at.isoformat().startswith("2026-06-18T12:00:00")
 
 
 def test_governance_prep_tasks_only_track_next_event_per_account_type(client: TestClient, db_session: Session) -> None:

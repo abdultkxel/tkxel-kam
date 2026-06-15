@@ -1,12 +1,14 @@
 import * as Dialog from '@radix-ui/react-dialog'
 import { format } from 'date-fns'
 import { Loader2, Pencil, Plus, Trash2, X } from 'lucide-react'
-import { FormEvent, useEffect, useState } from 'react'
+import { FormEvent, useEffect, useMemo, useState } from 'react'
 import { toast } from 'sonner'
 import { ApiError, ApiFieldError } from '@/services/api'
 import { useAuth } from '@/contexts/AuthContext'
 import { useGovernanceStore } from '@/stores/governanceStore'
 import { GovernanceEventRecord, GovernanceEventType } from '@/types/governance'
+import { listAccounts } from '@/services/accountWorkspace'
+import type { Account } from '@/types/account'
 
 type FieldErrors = Record<string, string>
 
@@ -29,15 +31,22 @@ export function EditGovernanceEventDialog({
   const updateEvent = useGovernanceStore(state => state.updateEvent)
   const [open, setOpen] = useState(false)
   const [saving, setSaving] = useState(false)
+  const [accounts, setAccounts] = useState<Account[]>([])
+  const [accountsLoaded, setAccountsLoaded] = useState(false)
+  const [accountsLoading, setAccountsLoading] = useState(false)
+  const [accountsError, setAccountsError] = useState('')
+  const [accountId, setAccountId] = useState(event.accountId)
   const [type, setType] = useState<GovernanceEventType>(event.type)
   const [date, setDate] = useState(toDateInput(event.date))
   const [time, setTime] = useState(toTimeInput(event.date))
   const [agenda, setAgenda] = useState(event.agenda)
   const [attendeeEmails, setAttendeeEmails] = useState<string[]>(event.attendeeEmails.length ? event.attendeeEmails : [''])
   const [fieldErrors, setFieldErrors] = useState<FieldErrors>({})
+  const selectedAccount = useMemo(() => accounts.find(item => item.id === accountId), [accountId, accounts])
 
   useEffect(() => {
     if (!open) return
+    setAccountId(event.accountId)
     setType(event.type)
     setDate(toDateInput(event.date))
     setTime(toTimeInput(event.date))
@@ -45,6 +54,39 @@ export function EditGovernanceEventDialog({
     setAttendeeEmails(event.attendeeEmails.length ? event.attendeeEmails : [''])
     setFieldErrors({})
   }, [event, open])
+
+  useEffect(() => {
+    if (!open) return
+    if (!token) {
+      setAccounts([])
+      setAccountsLoaded(true)
+      setAccountsLoading(false)
+      setAccountsError('Sign in again before loading accounts.')
+      return
+    }
+    let cancelled = false
+    setAccountsLoading(true)
+    setAccountsLoaded(false)
+    setAccountsError('')
+    listAccounts(token, new URLSearchParams({ page: '1', page_size: '500' }))
+      .then(response => {
+        if (cancelled) return
+        setAccounts(response.items)
+        setAccountsLoaded(true)
+      })
+      .catch(err => {
+        if (cancelled) return
+        setAccounts([])
+        setAccountsLoaded(true)
+        setAccountsError(err instanceof Error ? err.message : 'Accounts could not load')
+      })
+      .finally(() => {
+        if (!cancelled) setAccountsLoading(false)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [open, token])
 
   async function submit(formEvent: FormEvent) {
     formEvent.preventDefault()
@@ -56,6 +98,13 @@ export function EditGovernanceEventDialog({
     }
 
     const nextErrors: FieldErrors = {}
+    if (!accountId) {
+      nextErrors.account_id = 'Choose the account for this governance event.'
+    } else if (accountsLoading || !accountsLoaded) {
+      nextErrors.account_id = 'Wait for the account list to finish loading.'
+    } else if (!selectedAccount) {
+      nextErrors.account_id = accountsError || 'Choose an account from the available accounts.'
+    }
     if (!date || !time) nextErrors.scheduled_at = 'Choose the governance date and time.'
     if (!agenda.trim()) nextErrors.agenda = 'Add an agenda so attendees know what will be reviewed.'
     if (Object.keys(nextErrors).length) {
@@ -66,9 +115,12 @@ export function EditGovernanceEventDialog({
     setSaving(true)
     try {
       const savedEvent = await updateEvent(token, event.id, {
+        accountId,
+        engagementId: accountId === event.accountId ? event.engagementId ?? undefined : null,
         governanceType: type,
         scheduledAt: new Date(`${date}T${time}:00`).toISOString(),
         agenda: agenda.trim(),
+        ownerId: selectedAccount?.ownerId || event.ownerId || undefined,
         attendeeEmails: cleanAttendeeEmails(attendeeEmails),
       })
       toast.success('Governance event updated')
@@ -116,9 +168,16 @@ export function EditGovernanceEventDialog({
             </Dialog.Close>
           </div>
           <form onSubmit={submit} className="grid gap-4">
-            <div className="rounded-lg border border-surface-border bg-surface-secondary p-3 text-xs leading-5 text-ink-secondary">
-              Account: <span className="font-semibold text-ink">{event.accountName}</span>
-            </div>
+            <label className="space-y-1">
+              <span className="tk-label">Account</span>
+              <select className="tk-input" value={accountId} disabled={accountsLoading} onChange={item => setAccountId(item.target.value)}>
+                <option value="">{accountsLoading && !accountsLoaded ? 'Loading accounts...' : 'Choose account'}</option>
+                {accounts.map(account => <option key={account.id} value={account.id}>{account.name}</option>)}
+              </select>
+              {!accountsLoading && accountsLoaded && !accounts.length ? <p className="text-xs font-semibold text-rag-red">No backend accounts are available. Create or approve an account before scheduling governance.</p> : null}
+              {accountsError ? <p className="text-xs font-semibold text-rag-red">{accountsError}</p> : null}
+              <InlineError message={fieldErrors.account_id} />
+            </label>
             <div className="grid gap-4 sm:grid-cols-3">
               <label className="space-y-1">
                 <span className="tk-label">Event type</span>
@@ -174,7 +233,7 @@ export function EditGovernanceEventDialog({
             </div>
             <div className="flex justify-end gap-2">
               <Dialog.Close type="button" className="tk-button-secondary">Cancel</Dialog.Close>
-              <button type="submit" className="tk-button-primary" disabled={saving}>
+              <button type="submit" className="tk-button-primary" disabled={saving || accountsLoading}>
                 {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Pencil className="h-4 w-4" />}
                 Save changes
               </button>

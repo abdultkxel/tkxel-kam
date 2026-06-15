@@ -1,10 +1,11 @@
 from fastapi import HTTPException, status
 
 from app.models import Account, User
-from app.repositories.accounts import AccountRepository
+from app.repositories.accounts import AM_OWNERSHIP_ROLES, AccountRepository
 from app.repositories.rbac import RbacRepository
 
 
+ASSIGNED_SCOPE_ONLY_ROLES = {"account_manager"}
 PORTFOLIO_VIEW_PERMISSIONS = {
     "accounts:view_portfolio",
     "dashboards:view_portfolio",
@@ -31,9 +32,13 @@ class AccountAccessService:
         return any(self.rbac.role_has_permission(user.role, *permission_key.split(":", 1)) for permission_key in permission_keys)
 
     def can_view_portfolio(self, user: User) -> bool:
+        if user.role in ASSIGNED_SCOPE_ONLY_ROLES:
+            return False
         return self.has_any_permission(user, PORTFOLIO_VIEW_PERMISSIONS)
 
     def can_update_portfolio_accounts(self, user: User) -> bool:
+        if user.role in ASSIGNED_SCOPE_ONLY_ROLES:
+            return False
         return self.has_any_permission(user, PORTFOLIO_EDIT_PERMISSIONS)
 
     def can_update_assigned_accounts(self, user: User) -> bool:
@@ -51,7 +56,23 @@ class AccountAccessService:
     def can_view_account(self, user: User, account: Account) -> bool:
         if self.can_view_portfolio(user):
             return True
-        return any(owner.user_id == user.id and owner.is_active for owner in account.owners)
+        ownership_roles = self.assigned_account_view_roles(user)
+        return any(
+            owner.user_id == user.id
+            and owner.is_active
+            and (ownership_roles is None or owner.ownership_role in ownership_roles)
+            for owner in account.owners
+        )
+
+    def assigned_account_view_roles(self, user: User) -> set[str] | None:
+        if user.role == "account_manager":
+            return AM_OWNERSHIP_ROLES
+        return None
+
+    def visible_account_ids(self, user: User) -> list[str] | None:
+        if self.can_view_portfolio(user):
+            return None
+        return self.accounts.list_account_ids_for_user(user.id, ownership_roles=self.assigned_account_view_roles(user))
 
     def can_update_account(self, user: User, account: Account) -> bool:
         if self.can_update_portfolio_accounts(user):

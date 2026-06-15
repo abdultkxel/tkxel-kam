@@ -13,7 +13,7 @@ from sqlalchemy.pool import StaticPool
 from app.database import Base, get_db
 from app.config import get_settings
 from app.main import app
-from app.models import Account, AccountOwner, CustomFieldValue, DocumentExtraction, Engagement, EngagementImportDraft, OnboardingDraft, SourceDocument, SourceDocumentExtraction, Stakeholder
+from app.models import Account, AccountOwner, CustomFieldValue, DocumentExtraction, Engagement, EngagementImportDraft, OnboardingDraft, Permission, Role, RolePermission, SourceDocument, SourceDocumentExtraction, Stakeholder
 from app.services.kyc_document_extraction import KycDocumentExtractionService
 from app.services.source_document_contract import SERVICE_LINE_LABELS, infer_service_lines_from_text
 from app.services.sow_extraction import SowExtractionService
@@ -2038,6 +2038,77 @@ def test_manual_engagement_create_validation_errors(client: TestClient) -> None:
     )
     assert expired_response.status_code == 201
     assert expired_response.json()["renewal_status"] == "expired"
+
+
+def test_kam_head_sees_portfolio_and_account_manager_is_limited_to_am_assignments(client: TestClient, db_session: Session) -> None:
+    admin_headers = auth_headers(client)
+    account_manager = seeded_user(client, admin_headers, "account_manager")
+    other_manager = create_account_manager_user(client, admin_headers, "scope.other.manager@tkxel.com", "Scope Other Manager")
+    kam_head = seeded_user(client, admin_headers, "kam_head")
+
+    assigned_account_id = create_account_without_engagement(db_session, account_manager, "Assigned Account Visibility")
+    other_account_id = create_account_without_engagement(db_session, other_manager, "Other Manager Visibility")
+    ops_only_account_id = create_account_without_engagement(db_session, other_manager, "Ops Only Visibility")
+    db_session.add(
+        AccountOwner(
+            account_id=ops_only_account_id,
+            user_id=account_manager["id"],
+            user_name=account_manager["full_name"],
+            user_email=account_manager["email"],
+            ownership_role="ops_lead",
+            is_primary=False,
+            created_by_id=account_manager["id"],
+        )
+    )
+
+    role = db_session.query(Role).filter(Role.slug == "account_manager").one()
+    permission = db_session.query(Permission).filter(Permission.module == "accounts", Permission.action == "view_portfolio").one()
+    stale_grant = db_session.query(RolePermission).filter(RolePermission.role_id == role.id, RolePermission.permission_id == permission.id).one_or_none()
+    if stale_grant is None:
+        db_session.add(RolePermission(role_id=role.id, permission_id=permission.id, allowed=True))
+    else:
+        stale_grant.allowed = True
+    db_session.commit()
+
+    manager_headers = auth_headers(client, account_manager["email"], "User@12345")
+    manager_capabilities = client.get("/api/users/me/capabilities", headers=manager_headers)
+    assert manager_capabilities.status_code == 200
+    assert "accounts:view_portfolio" in manager_capabilities.json()["permission_keys"]
+    assert manager_capabilities.json()["can_view_portfolio"] is False
+
+    manager_accounts = client.get("/api/accounts", headers=manager_headers, params={"page": 1, "page_size": 500})
+    assert manager_accounts.status_code == 200
+    manager_payload = manager_accounts.json()
+    manager_account_ids = {item["id"] for item in manager_payload["items"]}
+    assert manager_payload["page_size"] == 500
+    assert manager_payload["total"] == 1
+    assert assigned_account_id in manager_account_ids
+    assert other_account_id not in manager_account_ids
+    assert ops_only_account_id not in manager_account_ids
+
+    assigned_detail = client.get(f"/api/accounts/{assigned_account_id}", headers=manager_headers)
+    assert assigned_detail.status_code == 200
+    other_detail = client.get(f"/api/accounts/{other_account_id}", headers=manager_headers)
+    assert other_detail.status_code == 403
+    ops_only_detail = client.get(f"/api/accounts/{ops_only_account_id}", headers=manager_headers)
+    assert ops_only_detail.status_code == 403
+
+    kam_headers = auth_headers(client, kam_head["email"], "User@12345")
+    kam_accounts = client.get("/api/accounts", headers=kam_headers, params={"page": 1, "page_size": 500})
+    assert kam_accounts.status_code == 200
+    kam_account_ids = {item["id"] for item in kam_accounts.json()["items"]}
+    assert {assigned_account_id, other_account_id, ops_only_account_id}.issubset(kam_account_ids)
+
+    admin_accounts = client.get("/api/accounts", headers=admin_headers, params={"page": 1, "page_size": 500})
+    assert admin_accounts.status_code == 200
+    admin_account_ids = {item["id"] for item in admin_accounts.json()["items"]}
+    assert {assigned_account_id, other_account_id, ops_only_account_id}.issubset(admin_account_ids)
+
+    leadership_headers = auth_headers(client, "leadership.viewer.user@tkxel.com", "User@12345")
+    leadership_accounts = client.get("/api/accounts", headers=leadership_headers, params={"page": 1, "page_size": 500})
+    assert leadership_accounts.status_code == 200
+    leadership_account_ids = {item["id"] for item in leadership_accounts.json()["items"]}
+    assert {assigned_account_id, other_account_id, ops_only_account_id}.issubset(leadership_account_ids)
 
 
 def test_account_filters_owner_history_engagement_health_and_openapi_docs(client: TestClient) -> None:

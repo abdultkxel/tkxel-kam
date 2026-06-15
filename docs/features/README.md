@@ -28,6 +28,8 @@ docs/features/_feature-template.md
 - [Demo Project Data Seeding](demo-project-data-seeding.md)
 - [Account Detail Tabs](account-detail-tabs.md)
 - [Account Active Stage Success Badge](account-active-stage-success-badge.md)
+- [Account Visibility Scoping](account-visibility-scoping.md)
+- [User-Owned Task Scope](user-owned-task-scope.md)
 - [Account Numeric Display ID](account-numeric-display-id.md)
 - [Account Onboarding Assignment](account-onboarding-assignment.md)
 - [Account Onboarding LinkedIn URL](account-onboarding-linkedin.md)

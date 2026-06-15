@@ -63,7 +63,7 @@ class CsatService:
             account = self._account_or_404(account_id)
             self.access.require_account_view(current_user, account, module=CSAT_MODULE)
         elif not self.access.can_view_portfolio(current_user):
-            allowed = self.accounts.list_account_ids_for_user(current_user.id)
+            allowed = self.access.visible_account_ids(current_user)
             if not allowed:
                 return CsatScorePageRead(items=[], total=0, page=page, page_size=page_size, pages=0)
             all_items, _ = self.repository.list_scores(

@@ -252,6 +252,7 @@ export function buildCreatePayload(payload: GovernanceEventCreateInput) {
 
 export function buildUpdatePayload(payload: GovernanceEventUpdateInput) {
   return {
+    account_id: payload.accountId,
     engagement_id: payload.engagementId,
     governance_type: payload.governanceType,
     scheduled_at: payload.scheduledAt,

@@ -71,7 +71,7 @@ class EscalationService:
         page_size: int = 10,
     ) -> EscalationPageRead:
         self.access.require_module_permission(current_user, "escalation_management", "view")
-        account_ids = None if self.access.can_view_portfolio(current_user) else self.accounts.list_account_ids_for_user(current_user.id)
+        account_ids = self.access.visible_account_ids(current_user)
         items, total = self.repository.list_escalations(
             account_id=account_id,
             account_ids=account_ids,

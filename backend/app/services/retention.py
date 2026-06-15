@@ -45,7 +45,7 @@ class RetentionService:
 
     def list_renewals(self, current_user: User, *, account_id: str | None = None, risk: str | None = None, owner_id: str | None = None, confidence_min: int | None = None, auto_renewal: bool | None = None, notice_from: datetime | None = None, notice_to: datetime | None = None, renewal_from: datetime | None = None, renewal_to: datetime | None = None, search: str | None = None, sort: str = "notice_deadline", direction: str = "asc", page: int = 1, page_size: int = 25) -> RenewalProfilePageRead:
         self.access.require_module_permission(current_user, RETENTION_MODULE, "view")
-        account_ids = None if self.access.can_view_portfolio(current_user) else self.accounts.list_account_ids_for_user(current_user.id)
+        account_ids = self.access.visible_account_ids(current_user)
         if account_id:
             account = self._get_account_or_404(account_id)
             self.access.require_account_view(current_user, account, module=RETENTION_MODULE)

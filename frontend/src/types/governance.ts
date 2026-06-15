@@ -107,6 +107,7 @@ export interface GovernanceEventCreateInput {
 }
 
 export interface GovernanceEventUpdateInput {
+  accountId?: string
   engagementId?: string | null
   governanceType?: GovernanceEventType
   scheduledAt?: string

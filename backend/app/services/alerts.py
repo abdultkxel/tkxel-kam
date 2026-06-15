@@ -892,7 +892,7 @@ class AlertsService:
         )
 
     def _account_scope(self, current_user: User) -> list[str] | None:
-        return None if self.access.can_view_portfolio(current_user) else self.accounts.list_account_ids_for_user(current_user.id)
+        return self.access.visible_account_ids(current_user)
 
     @staticmethod
     def _account_route(account: Account | None, alert_id: str | None = None) -> str | None:

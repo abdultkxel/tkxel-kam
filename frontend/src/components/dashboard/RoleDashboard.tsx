@@ -478,10 +478,10 @@ function visibleOnboardingDrafts(widget?: DashboardWidget) {
 function TaskBreakdownPanel({ widget }: { widget: DashboardWidget }) {
   const value = isRecord(widget.value) ? widget.value : {}
   const cards = [
-    { key: 'open', label: 'Open', value: value.open, detail: `across ${formatValue(value.accounts_with_open_tasks)} accounts`, tone: 'text-ink', route: '/tasks?status=open' },
-    { key: 'in_progress', label: 'In progress', value: value.in_progress, detail: 'assigned to me', tone: 'text-brand-blue', route: '/tasks?status=in_progress&my_items=true' },
+    { key: 'open', label: 'Open', value: value.open, detail: 'assigned to you', tone: 'text-ink', route: '/tasks?status=open' },
+    { key: 'in_progress', label: 'In progress', value: value.in_progress, detail: 'assigned to you', tone: 'text-brand-blue', route: '/tasks?status=in_progress' },
     { key: 'overdue', label: 'Overdue', value: value.overdue, detail: 'needs action today', tone: 'text-rag-red', route: '/tasks?due=overdue' },
-    { key: 'due_this_week', label: 'Due this week', value: value.due_this_week, detail: 'across all accounts', tone: 'text-brand-orange', route: '/tasks?due=next7' },
+    { key: 'due_this_week', label: 'Due this week', value: value.due_this_week, detail: 'assigned to you', tone: 'text-brand-orange', route: '/tasks?due=next7' },
   ]
 
   return (
@@ -493,10 +493,10 @@ function TaskBreakdownPanel({ widget }: { widget: DashboardWidget }) {
           </span>
           <div>
             <h2 className="text-xl font-semibold text-ink">{widget.title}</h2>
-            <p className="mt-1 text-sm leading-6 text-ink-secondary">Full task status breakdown across assigned accounts</p>
+            <p className="mt-1 text-sm leading-6 text-ink-secondary">Your task status breakdown</p>
           </div>
         </div>
-        {widget.primary_route ? <Link to={widget.primary_route} className="tk-button-secondary w-fit">Open tasks <ArrowRight className="h-4 w-4" /></Link> : null}
+        {widget.primary_route ? <Link to={widget.primary_route} className="tk-button-secondary w-fit">Tasks <ArrowRight className="h-4 w-4" /></Link> : null}
       </div>
 
       <div className="mt-5 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
@@ -1137,7 +1137,7 @@ function metricDetail(key: string, value: unknown) {
   if (key.includes('critical_tasks')) return 'Critical and blocked tasks only.'
   if (key.includes('signal')) return 'Source-backed attention items.'
   if (key.includes('governance')) return 'Scheduled governance coverage.'
-  if (key.includes('task')) return 'Open operational work in scope.'
+  if (key.includes('task')) return 'Tasks assigned to you.'
   return `${formatValue(value)} in this dashboard scope.`
 }
 
@@ -1197,12 +1197,13 @@ function getString(value: unknown): string {
 function taskDataSourceCopy(widget: DashboardWidget) {
   const value = getString(widget.metadata.data_source)
   if (!value || value.includes('owner = AM') || value.includes('assigned list')) {
-    return 'Showing tasks assigned to you across your assigned accounts.'
+    return 'Showing tasks assigned to you only.'
   }
   return value
 }
 
 function labelize(value: string) {
+  if (value === 'open_tasks') return 'Tasks'
   return value.replace(/_/g, ' ')
 }
 
