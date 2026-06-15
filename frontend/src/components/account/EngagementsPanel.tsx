@@ -1,3 +1,4 @@
+import * as Dialog from '@radix-ui/react-dialog'
 import { AlertTriangle, Archive, ArrowRight, BriefcaseBusiness, CalendarClock, CheckCircle2, FileText, Loader2, Pencil, Plus, Save, Search, ShieldCheck, Upload, UserRound, XCircle } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
@@ -40,6 +41,7 @@ export function EngagementsPanel({ account }: { account: Account }) {
   const { updateEngagementImportDraft, isLoading: savingDraft } = useUpdateEngagementImportDraft()
   const { approveEngagementImportDraft, isLoading: approvingDraft } = useApproveEngagementImportDraft()
   const { rejectEngagementImportDraft, isLoading: rejectingDraft } = useRejectEngagementImportDraft()
+  const reviewDrafts = useMemo(() => drafts.filter(draft => draft.draftStatus === 'ready_for_review'), [drafts])
 
   const ownerOptions = useMemo(() => {
     const owners = new Map<string, string>()
@@ -306,19 +308,19 @@ export function EngagementsPanel({ account }: { account: Account }) {
         <div className="space-y-3">
           <Skeleton className="h-32 w-full" />
         </div>
-      ) : drafts.length > 0 ? (
+      ) : reviewDrafts.length > 0 ? (
         <section className="tk-card overflow-hidden">
           <div className="border-b border-surface-border bg-blue-tint-20 p-5">
             <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
               <div>
                 <p className="text-[10px] font-extrabold uppercase tracking-widest text-brand-blue">Imported charter drafts</p>
-                <h3 className="mt-1 text-lg font-semibold text-ink">{drafts.length} ready for review</h3>
+                <h3 className="mt-1 text-lg font-semibold text-ink">{reviewDrafts.length} ready for review</h3>
               </div>
               <Badge tone="blue">Draft</Badge>
             </div>
           </div>
           <div className="divide-y divide-surface-border">
-            {drafts.map(draft => (
+            {reviewDrafts.map(draft => (
               <EngagementDraftReviewCard
                 key={draft.id}
                 draft={draft}
@@ -400,7 +402,6 @@ interface EngagementDraftFormState {
   commercialContext: string
   resourceDependency: string
   risks: string
-  rejectReason: string
 }
 
 function EngagementDraftReviewCard({
@@ -418,10 +419,16 @@ function EngagementDraftReviewCard({
 }) {
   const [form, setForm] = useState<EngagementDraftFormState>(() => draftToForm(draft))
   const [formError, setFormError] = useState('')
+  const [rejectOpen, setRejectOpen] = useState(false)
+  const [rejectReason, setRejectReason] = useState('')
+  const [rejectError, setRejectError] = useState('')
 
   useEffect(() => {
     setForm(draftToForm(draft))
     setFormError('')
+    setRejectOpen(false)
+    setRejectReason('')
+    setRejectError('')
   }, [draft])
 
   function updateField(field: keyof EngagementDraftFormState, value: string) {
@@ -465,12 +472,15 @@ function EngagementDraftReviewCard({
   }
 
   async function handleReject() {
-    const reason = form.rejectReason.trim()
+    const reason = rejectReason.trim()
     if (reason.length < 3) {
-      setFormError('Add a rejection reason.')
+      setRejectError('Add a rejection reason.')
       return
     }
     await onReject(draft, reason)
+    setRejectOpen(false)
+    setRejectReason('')
+    setRejectError('')
   }
 
   return (
@@ -517,7 +527,6 @@ function EngagementDraftReviewCard({
         <DraftTextarea label="Commercial context" value={form.commercialContext} onChange={value => updateField('commercialContext', value)} />
         <DraftTextarea label="Risks" value={form.risks} onChange={value => updateField('risks', value)} />
         <DraftTextarea label="Resource dependency" value={form.resourceDependency} onChange={value => updateField('resourceDependency', value)} />
-        <DraftTextarea label="Reject reason" value={form.rejectReason} onChange={value => updateField('rejectReason', value)} />
       </div>
 
       {draft.stakeholderDrafts.length > 0 ? (
@@ -535,12 +544,99 @@ function EngagementDraftReviewCard({
       ) : null}
 
       <div className="mt-4 flex justify-end">
-        <button type="button" className="tk-button-secondary bg-white text-rag-red hover:bg-rag-red/10" disabled={busy} onClick={() => void handleReject()}>
-          {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <XCircle className="h-4 w-4" />}
+        <button
+          type="button"
+          className="tk-button-secondary bg-white text-rag-red hover:bg-rag-red/10"
+          disabled={busy}
+          onClick={() => {
+            setRejectReason('')
+            setRejectError('')
+            setRejectOpen(true)
+          }}
+        >
+          <XCircle className="h-4 w-4" />
           Reject draft
         </button>
       </div>
+      <RejectEngagementDraftDialog
+        draftName={draft.name}
+        open={rejectOpen}
+        reason={rejectReason}
+        error={rejectError}
+        isBusy={busy}
+        onReasonChange={value => {
+          setRejectReason(value)
+          if (rejectError) setRejectError('')
+        }}
+        onOpenChange={value => {
+          if (!busy) setRejectOpen(value)
+        }}
+        onConfirm={() => void handleReject()}
+      />
     </article>
+  )
+}
+
+function RejectEngagementDraftDialog({
+  draftName,
+  open,
+  reason,
+  error,
+  isBusy,
+  onReasonChange,
+  onOpenChange,
+  onConfirm,
+}: {
+  draftName: string
+  open: boolean
+  reason: string
+  error: string
+  isBusy: boolean
+  onReasonChange: (value: string) => void
+  onOpenChange: (open: boolean) => void
+  onConfirm: () => void
+}) {
+  return (
+    <Dialog.Root open={open} onOpenChange={onOpenChange}>
+      <Dialog.Portal>
+        <Dialog.Overlay className="fixed inset-0 z-40 bg-ink/40" />
+        <Dialog.Content className="fixed left-1/2 top-1/2 z-50 w-[min(520px,calc(100vw-2rem))] -translate-x-1/2 -translate-y-1/2 rounded-lg border border-surface-border bg-white p-5 shadow-panel">
+          <div className="flex items-start gap-3">
+            <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-md bg-rag-red/10 text-rag-red">
+              <XCircle className="h-5 w-5" />
+            </span>
+            <div className="min-w-0">
+              <Dialog.Title className="text-base font-semibold text-ink">Reject engagement draft</Dialog.Title>
+              <Dialog.Description className="mt-2 text-sm leading-6 text-ink-secondary">
+                Add the reason for rejecting {draftName}. The draft will leave active review and stay available only as an audit record.
+              </Dialog.Description>
+            </div>
+          </div>
+
+          <label className="mt-5 block space-y-1">
+            <span className="tk-label">Rejection reason</span>
+            <textarea
+              className={cn('tk-input min-h-28 resize-y', error && 'border-rag-red focus:border-rag-red focus:ring-rag-red/30')}
+              value={reason}
+              onChange={event => onReasonChange(event.target.value)}
+              placeholder="Explain what needs to be corrected before this engagement can be approved."
+              autoFocus
+            />
+          </label>
+          {error ? <p className="mt-2 text-sm font-semibold text-rag-red">{error}</p> : null}
+
+          <div className="mt-5 flex justify-end gap-2">
+            <Dialog.Close type="button" className="tk-button-secondary bg-white" disabled={isBusy}>
+              Cancel
+            </Dialog.Close>
+            <button type="button" className="tk-button-primary bg-rag-red hover:bg-rag-red/90" onClick={onConfirm} disabled={isBusy}>
+              {isBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <XCircle className="h-4 w-4" />}
+              Reject draft
+            </button>
+          </div>
+        </Dialog.Content>
+      </Dialog.Portal>
+    </Dialog.Root>
   )
 }
 
@@ -691,7 +787,6 @@ function draftToForm(draft: EngagementImportDraftRecord): EngagementDraftFormSta
     commercialContext: draft.commercialContext === 'No commercial context recorded yet.' ? '' : draft.commercialContext,
     resourceDependency: draft.resourceDependency === 'No resource dependency recorded.' ? '' : draft.resourceDependency,
     risks: draft.risks.join('\n'),
-    rejectReason: draft.rejectionReason ?? '',
   }
 }
 

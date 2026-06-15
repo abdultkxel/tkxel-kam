@@ -244,9 +244,11 @@ class EngagementService:
     ) -> EngagementImportDraftPageRead:
         account = self._get_account_or_404(account_id)
         self.access.require_account_view(current_user, account, module="engagement_sow_management")
+        normalized_status = status_filter.strip() if isinstance(status_filter, str) and status_filter.strip() else "ready_for_review"
+        if normalized_status not in {"ready_for_review", "approved", "rejected"}:
+            normalized_status = "ready_for_review"
         conditions = [EngagementImportDraft.account_id == account.id]
-        if status_filter:
-            conditions.append(EngagementImportDraft.status == status_filter)
+        conditions.append(EngagementImportDraft.status == normalized_status)
         total = self.db.scalar(select(func.count(EngagementImportDraft.id)).where(*conditions)) or 0
         items = list(
             self.db.scalars(
