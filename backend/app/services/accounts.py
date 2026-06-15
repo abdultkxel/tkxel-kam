@@ -67,6 +67,7 @@ class AccountService:
         segment: str | None = None,
         region: str | None = None,
         risk_status: str | None = None,
+        assigned_user_id: str | None = None,
         am_id: str | None = None,
         primary_am: str | None = None,
         supporting_am: str | None = None,
@@ -83,7 +84,8 @@ class AccountService:
     ) -> AccountPageRead:
         self.access.require_module_permission(current_user, "account_overview", "view")
         if not self.access.can_view_portfolio(current_user):
-            am_id = current_user.id
+            assigned_user_id = current_user.id
+            am_id = None
         kyc_configuration = self.kyc.get_configuration()
 
         accounts, total = self.accounts.list_accounts(
@@ -92,6 +94,7 @@ class AccountService:
             segment=segment,
             region=region,
             risk_status=risk_status,
+            assigned_user_id=assigned_user_id,
             am_id=am_id,
             primary_am=primary_am,
             supporting_am=supporting_am,

@@ -58,6 +58,20 @@ export interface TaskEvidence {
   created_at: string
 }
 
+export interface TaskHistory {
+  id: string
+  task_id: string
+  event_type: string
+  previous_status?: string | null
+  new_status?: string | null
+  actor_id?: string | null
+  actor_name: string
+  reason?: string | null
+  note?: string | null
+  metadata_json?: Record<string, unknown>
+  created_at: string
+}
+
 export interface PlaybookTask {
   id: string
   account_id: string
@@ -176,12 +190,24 @@ export async function listTasks(token: string, params = new URLSearchParams()) {
   return apiRequest<Page<PlaybookTask>>(`/api/tasks${queryString(params)}`, { token })
 }
 
+export async function getTask(token: string, taskId: string) {
+  return apiRequest<PlaybookTask>(`/api/tasks/${taskId}`, { token })
+}
+
 export async function createTask(token: string, payload: Partial<PlaybookTask> & { account_id: string; owner_id: string; title: string; due_at: string; priority: TaskPriority; status: TaskStatus }) {
   return apiRequest<PlaybookTask>('/api/tasks', { method: 'POST', token, body: JSON.stringify(payload) })
 }
 
-export async function updateTask(token: string, taskId: string, payload: Partial<Pick<PlaybookTask, 'title' | 'description' | 'owner_id' | 'due_at' | 'status' | 'priority' | 'notes' | 'outcome' | 'skipped_reason' | 'success_criteria' | 'requires_evidence' | 'custom_field_values'>>) {
+export async function updateTask(token: string, taskId: string, payload: Partial<Pick<PlaybookTask, 'title' | 'description' | 'owner_id' | 'due_at' | 'status' | 'priority' | 'notes' | 'outcome' | 'skipped_reason' | 'success_criteria' | 'requires_evidence' | 'custom_field_values'>> & { status_change_reason?: string }) {
   return apiRequest<PlaybookTask>(`/api/tasks/${taskId}`, { method: 'PATCH', token, body: JSON.stringify(payload) })
+}
+
+export async function deleteTask(token: string, taskId: string) {
+  return apiRequest<{ message: string }>(`/api/tasks/${taskId}`, { method: 'DELETE', token })
+}
+
+export async function listTaskHistory(token: string, taskId: string, params = new URLSearchParams({ page: '1', page_size: '50' })) {
+  return apiRequest<Page<TaskHistory>>(`/api/tasks/${taskId}/history${queryString(params)}`, { token })
 }
 
 export async function addTaskEvidence(token: string, taskId: string, payload: { evidence_type: 'note' | 'link' | 'file'; title?: string; body?: string; url?: string; file?: File | null }) {

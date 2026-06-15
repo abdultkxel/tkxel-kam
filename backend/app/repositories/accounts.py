@@ -21,6 +21,7 @@ class AccountRepository:
         segment: str | None = None,
         region: str | None = None,
         risk_status: str | None = None,
+        assigned_user_id: str | None = None,
         am_id: str | None = None,
         primary_am: str | None = None,
         supporting_am: str | None = None,
@@ -42,6 +43,7 @@ class AccountRepository:
             segment=segment,
             region=region,
             risk_status=risk_status,
+            assigned_user_id=assigned_user_id,
             am_id=am_id,
             primary_am=primary_am,
             supporting_am=supporting_am,
@@ -319,6 +321,7 @@ class AccountRepository:
         segment: str | None,
         region: str | None,
         risk_status: str | None,
+        assigned_user_id: str | None,
         am_id: str | None,
         primary_am: str | None,
         supporting_am: str | None,
@@ -361,6 +364,13 @@ class AccountRepository:
             conditions.append(Account.risk_status.in_(("warning", "critical")))
         elif risk_status:
             conditions.append(Account.risk_status == risk_status)
+        if assigned_user_id:
+            conditions.append(
+                Account.owners.any(and_(
+                    AccountOwner.user_id == assigned_user_id,
+                    AccountOwner.is_active.is_(True),
+                ))
+            )
         if am_id:
             conditions.append(
                 Account.owners.any(and_(

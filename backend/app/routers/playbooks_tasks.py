@@ -7,6 +7,7 @@ from app.dependencies import get_current_user, get_playbooks_tasks_service
 from app.models import User
 from app.schemas import (
     CalendarItemPageRead,
+    MessageResponse,
     PlaybookExecutionRead,
     PlaybookExecutionRequest,
     PlaybookTemplateCreateRequest,
@@ -16,6 +17,7 @@ from app.schemas import (
     RecommendedPlaybookRead,
     TaskCreateRequest,
     TaskEvidenceRead,
+    TaskHistoryPageRead,
     TaskPageRead,
     TaskRead,
     TaskUpdateRequest,
@@ -104,9 +106,30 @@ def create_task(payload: TaskCreateRequest, current_user: Annotated[User, Depend
     return service.create_task(payload, current_user)
 
 
+@router.get("/tasks/{task_id}", response_model=TaskRead, summary="Get task", description="Returns a single task with evidence and Field Builder values.")
+def get_task(task_id: str, current_user: Annotated[User, Depends(get_current_user)], service: Annotated[PlaybooksTasksService, Depends(get_playbooks_tasks_service)]) -> TaskRead:
+    return service.get_task(task_id, current_user)
+
+
 @router.patch("/tasks/{task_id}", response_model=TaskRead, summary="Update task", description="Updates task details, status, owner, outcome, skip reason, completion metadata, Field Builder values, audit, and timeline entries.")
 def update_task(task_id: str, payload: TaskUpdateRequest, current_user: Annotated[User, Depends(get_current_user)], service: Annotated[PlaybooksTasksService, Depends(get_playbooks_tasks_service)]) -> TaskRead:
     return service.update_task(task_id, payload, current_user)
+
+
+@router.delete("/tasks/{task_id}", response_model=MessageResponse, summary="Delete task", description="Deletes a task after task update authorization and records audit/timeline context.")
+def delete_task(task_id: str, current_user: Annotated[User, Depends(get_current_user)], service: Annotated[PlaybooksTasksService, Depends(get_playbooks_tasks_service)]) -> MessageResponse:
+    return service.delete_task(task_id, current_user)
+
+
+@router.get("/tasks/{task_id}/history", response_model=TaskHistoryPageRead, summary="List task history", description="Returns immutable task history, including status movement reasons.")
+def list_task_history(
+    task_id: str,
+    current_user: Annotated[User, Depends(get_current_user)],
+    service: Annotated[PlaybooksTasksService, Depends(get_playbooks_tasks_service)],
+    page: Annotated[int, Query(ge=1)] = 1,
+    page_size: Annotated[int, Query(ge=1, le=100)] = 50,
+) -> TaskHistoryPageRead:
+    return service.list_task_history(task_id, current_user, page=page, page_size=page_size)
 
 
 @router.post("/tasks/{task_id}/evidence", response_model=TaskEvidenceRead, status_code=status.HTTP_201_CREATED, summary="Add task evidence", description="Adds note, link, or file evidence to a task using the existing storage adapter and writes audit/timeline history.")

@@ -5946,6 +5946,30 @@ class TaskEvidenceRead(BaseModel):
     created_at: datetime
 
 
+class TaskHistoryRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    task_id: str
+    event_type: str
+    previous_status: str | None = None
+    new_status: str | None = None
+    actor_id: str | None = None
+    actor_name: str
+    reason: str | None = None
+    note: str | None = None
+    metadata_json: dict[str, Any] = Field(default_factory=dict)
+    created_at: datetime
+
+
+class TaskHistoryPageRead(BaseModel):
+    items: list[TaskHistoryRead]
+    total: int
+    page: int
+    page_size: int
+    pages: int
+
+
 class TaskRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -6070,6 +6094,7 @@ class TaskUpdateRequest(BaseModel):
     notes: str | None = None
     outcome: str | None = None
     skipped_reason: str | None = Field(default=None, validation_alias=AliasChoices("skipped_reason", "skip_reason"))
+    status_change_reason: str | None = None
     success_criteria: list[str] | None = None
     requires_evidence: bool | None = None
     custom_field_values: dict[str, Any] | None = Field(default=None, description="Full replacement Field Builder values keyed by field_key.")
@@ -6084,7 +6109,7 @@ class TaskUpdateRequest(BaseModel):
     def status_is_valid(cls, value: str | None) -> str | None:
         return normalize_task_status(value) if value is not None else None
 
-    @field_validator("description", "notes", "outcome", "skipped_reason")
+    @field_validator("description", "notes", "outcome", "skipped_reason", "status_change_reason")
     @classmethod
     def text_is_valid(cls, value: str | None) -> str | None:
         return validate_optional_long_text(value, "Task text", 4000)
