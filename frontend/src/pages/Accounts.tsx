@@ -136,7 +136,7 @@ export function Accounts() {
   function exportCsv() {
     const rows = selectedIds.map(id => accounts.find(account => account.id === id)).filter(Boolean) as Account[]
     const csvRows = rows.map(account => {
-      return [account.name, account.stage, account.health.overall, account.arr, account.ownerName, ''].join(',')
+      return [account.name, account.stage, account.hasHealthScore ? account.health.overall : '', account.arr, account.ownerName, ''].join(',')
     })
     const blob = new Blob([['name,stage,health_score,arr,am,last_activity', ...csvRows].join('\n')], { type: 'text/csv' })
     const link = document.createElement('a')

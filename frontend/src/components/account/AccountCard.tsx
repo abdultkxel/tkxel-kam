@@ -34,13 +34,15 @@ function GhostAction({ label, icon: Icon, onClick }: { label: string; icon: type
 export function AccountCard({ account, className, style }: { account: Account; className?: string; style?: CSSProperties }) {
   const navigate = useNavigate()
   const detailPath = account.detailPath ?? `/accounts/${account.id}`
+  const isDraft = account.recordType === 'onboarding_draft'
+  const metricColumns = account.hasHealthScore ? 'sm:grid-cols-3' : 'sm:grid-cols-2'
 
   return (
     <Tooltip.Provider>
       <article style={style} className={cn('group relative tk-card p-5 transition-[border-color,box-shadow] hover:border-brand-blue/40 hover:shadow-panel', className)}>
         <div className="absolute right-3 top-3 flex items-center gap-1 opacity-100 transition-opacity duration-150 md:opacity-0 md:group-hover:opacity-100 md:group-focus-within:opacity-100">
-          <GhostAction label={account.recordType === 'onboarding_draft' ? 'Review draft' : 'View account'} icon={ExternalLink} onClick={() => navigate(detailPath)} />
-          <GhostAction label="Add note" icon={PenLine} onClick={() => navigate(`/accounts/${account.id}?tab=notes&addNote=1`)} />
+          <GhostAction label={isDraft ? 'Review draft' : 'View account'} icon={ExternalLink} onClick={() => navigate(detailPath)} />
+          {!isDraft ? <GhostAction label="Add note" icon={PenLine} onClick={() => navigate(`/accounts/${account.id}?tab=notes&addNote=1`)} /> : null}
         </div>
         <div className="pr-20">
           <p className="text-[10px] font-extrabold uppercase tracking-widest text-brand-blue">{account.segment}</p>
@@ -52,23 +54,27 @@ export function AccountCard({ account, className, style }: { account: Account; c
             {account.ownerEmail ? <span className="block truncate">{account.ownerEmail}</span> : null}
           </p>
         </div>
-        <div className="mt-5 grid grid-cols-1 gap-3 sm:grid-cols-3">
-          <div className="rounded-md bg-surface-secondary p-3">
-            <p className="text-xs text-ink-secondary">ARR</p>
-            <p className="font-display text-2xl font-bold text-ink">{formatCompactCurrency(account.arr)}</p>
+        {!isDraft ? (
+          <div className={cn('mt-5 grid grid-cols-1 gap-3', metricColumns)}>
+            <div className="rounded-md bg-surface-secondary p-3">
+              <p className="text-xs text-ink-secondary">ARR</p>
+              <p className="font-display text-2xl font-bold text-ink">{formatCompactCurrency(account.arr)}</p>
+            </div>
+            {account.hasHealthScore ? (
+              <div className="rounded-md bg-surface-secondary p-3">
+                <p className="text-xs text-ink-secondary">Health</p>
+                <p className="font-display text-2xl font-bold text-ink">{account.health.overall}</p>
+              </div>
+            ) : null}
+            <div className="rounded-md bg-surface-secondary p-3">
+              <p className="text-xs text-ink-secondary">Next QBR</p>
+              <p className="text-sm font-semibold text-ink">{formatDate(account.nextQbr)}</p>
+            </div>
           </div>
-          <div className="rounded-md bg-surface-secondary p-3">
-            <p className="text-xs text-ink-secondary">Health</p>
-            <p className="font-display text-2xl font-bold text-ink">{account.health.overall}</p>
-          </div>
-          <div className="rounded-md bg-surface-secondary p-3">
-            <p className="text-xs text-ink-secondary">Next QBR</p>
-            <p className="text-sm font-semibold text-ink">{formatDate(account.nextQbr)}</p>
-          </div>
-        </div>
+        ) : null}
         <div className="mt-4 flex flex-wrap items-center gap-2">
           <RAGBadge tone={tone[account.riskStatus]}>{account.riskStatus}</RAGBadge>
-          {account.recordType === 'onboarding_draft' ? <span className="rounded-full border border-brand-orange/30 bg-brand-orange/10 px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wider text-brand-orange">Draft</span> : null}
+          {isDraft ? <span className="rounded-full border border-brand-orange/30 bg-brand-orange/10 px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wider text-brand-orange">Draft</span> : null}
           <span className="rounded-full border border-surface-border px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wider text-ink-secondary">{account.stage}</span>
         </div>
       </article>

@@ -1,7 +1,7 @@
 import { AlertTriangle, CheckCircle2, Download, FileSearch, FileText, Loader2, RefreshCw, UploadCloud, XCircle } from 'lucide-react'
 import type { ReactNode } from 'react'
 import { useEffect, useMemo, useState } from 'react'
-import { Link } from 'react-router-dom'
+import { Link, useNavigate } from 'react-router-dom'
 import { toast } from 'sonner'
 import { EmptyState } from '@/components/ui/EmptyState'
 import { PageHeader } from '@/components/ui/PageHeader'
@@ -23,7 +23,7 @@ import {
   retryOnboardingDraftDocumentExtraction,
   updateOnboardingDraft,
 } from '@/services/accountWorkspace'
-import { SourceDocument } from '@/types/v3'
+import type { EngagementRecord, SourceDocument } from '@/types/v3'
 import { cn } from '@/utils/cn'
 import { formatCompactCurrency, formatDate, formatRelative } from '@/utils/formatters'
 import { allProjectCharterFiles, PROJECT_CHARTER_ACCEPT } from '@/utils/projectCharterFiles'
@@ -36,6 +36,18 @@ type DraftEditState = {
   managerId: string
 }
 
+type EngagementDraftEditState = {
+  id: string
+  name: string
+  value: string
+  sowEndDate: string
+  noticeDeadline: string
+  autoRenewal: string
+  confidence: string
+  opsLeadName: string
+  sourceCitation: string
+}
+
 const emptyDraftEdits: DraftEditState = {
   accountName: '',
   projectName: '',
@@ -46,6 +58,7 @@ const emptyDraftEdits: DraftEditState = {
 
 export function Onboarding() {
   const user = useRole()
+  const navigate = useNavigate()
   const { capabilities } = useCapabilities()
   const { token } = useAuth()
   const [drafts, setDrafts] = useState<OnboardingDraftView[]>([])
@@ -55,7 +68,9 @@ export function Onboarding() {
   const [selectedManagerId, setSelectedManagerId] = useState('')
   const [loadingManagers, setLoadingManagers] = useState(false)
   const [draftEdits, setDraftEdits] = useState<DraftEditState>(emptyDraftEdits)
+  const [engagementDraftEdits, setEngagementDraftEdits] = useState<Record<string, EngagementDraftEditState>>({})
   const [draftEditErrors, setDraftEditErrors] = useState<Partial<Record<keyof DraftEditState, string>>>({})
+  const [engagementDraftEditErrors, setEngagementDraftEditErrors] = useState<Record<string, Partial<Record<keyof EngagementDraftEditState, string>>>>({})
   const [savingDraft, setSavingDraft] = useState(false)
   const [extracting, setExtracting] = useState(false)
   const [retryingDocumentId, setRetryingDocumentId] = useState('')
@@ -79,7 +94,9 @@ export function Onboarding() {
       linkedinUrl: selected.accountDraft.linkedinUrl ?? '',
       managerId: selectedOwnerId,
     })
+    setEngagementDraftEdits(Object.fromEntries(selected.engagementDrafts.map(engagement => [engagement.id, engagementDraftToEditState(engagement)])))
     setDraftEditErrors({})
+    setEngagementDraftEditErrors({})
   }, [selected?.id, selectedOwnerId])
 
   useEffect(() => {
@@ -172,6 +189,9 @@ export function Onboarding() {
       const approved = await approveOnboardingDraft(token, selectedDraft.id)
       setDrafts(current => current.map(item => (item.id === approved.id ? approved : item)))
       toast.success('Draft approved and Account Overview created')
+      if (approved.approvedAccountId) {
+        navigate(`/accounts/${approved.approvedAccountId}`)
+      }
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Draft could not be approved')
     }
@@ -182,14 +202,45 @@ export function Onboarding() {
     setDraftEditErrors(current => ({ ...current, [field]: undefined }))
   }
 
+  function updateEngagementDraftEdit(engagementId: string, field: keyof EngagementDraftEditState, value: string) {
+    setEngagementDraftEdits(current => ({
+      ...current,
+      [engagementId]: {
+        ...(current[engagementId] ?? { id: engagementId }),
+        [field]: value,
+      } as EngagementDraftEditState,
+    }))
+    setEngagementDraftEditErrors(current => ({
+      ...current,
+      [engagementId]: {
+        ...current[engagementId],
+        [field]: undefined,
+      },
+    }))
+  }
+
   function validateDraftEdits() {
     const nextErrors: Partial<Record<keyof DraftEditState, string>> = {}
+    const nextEngagementErrors: Record<string, Partial<Record<keyof EngagementDraftEditState, string>>> = {}
     if (!draftEdits.accountName.trim()) nextErrors.accountName = 'Account name is required'
     if (!draftEdits.projectName.trim()) nextErrors.projectName = 'Project name is required'
     if (draftEdits.linkedinUrl.trim() && !isLinkedinUrl(draftEdits.linkedinUrl)) nextErrors.linkedinUrl = 'Enter a valid LinkedIn URL'
     if (!draftEdits.managerId || !assignableManagers.some(manager => manager.id === draftEdits.managerId)) nextErrors.managerId = 'Select an account manager'
+    for (const engagement of selected?.engagementDrafts ?? []) {
+      const edit = engagementDraftEdits[engagement.id]
+      if (!edit) continue
+      const errors: Partial<Record<keyof EngagementDraftEditState, string>> = {}
+      const value = Number(edit.value)
+      const confidence = Number(edit.confidence)
+      if (!edit.name.trim()) errors.name = 'Engagement name is required'
+      if (!edit.value.trim() || !Number.isFinite(value) || value < 0) errors.value = 'Value must be zero or greater'
+      if (!edit.confidence.trim() || !Number.isFinite(confidence) || confidence < 0 || confidence > 100) errors.confidence = 'Confidence must be between 0 and 100'
+      if (edit.sowEndDate && edit.noticeDeadline && edit.noticeDeadline > edit.sowEndDate) errors.noticeDeadline = 'Notice deadline must be on or before SOW end'
+      if (Object.keys(errors).length) nextEngagementErrors[engagement.id] = errors
+    }
     setDraftEditErrors(nextErrors)
-    return Object.keys(nextErrors).length === 0
+    setEngagementDraftEditErrors(nextEngagementErrors)
+    return Object.keys(nextErrors).length === 0 && Object.keys(nextEngagementErrors).length === 0
   }
 
   function applyDraftEditApiErrors(error: unknown) {
@@ -216,6 +267,7 @@ export function Onboarding() {
         managerId: manager.id,
         managerName: manager.name,
         managerEmail: manager.email,
+        engagementDrafts: draft.engagementDrafts.map(engagement => buildEngagementDraftUpdatePayload(engagementDraftEdits[engagement.id] ?? engagementDraftToEditState(engagement))),
       })
       setDrafts(current => current.map(item => (item.id === updated.id ? updated : item)))
       setDraftEdits({
@@ -225,6 +277,7 @@ export function Onboarding() {
         linkedinUrl: updated.accountDraft.linkedinUrl ?? '',
         managerId: updated.accountDraft.ownerId && updated.accountDraft.ownerId !== 'pending-owner' ? updated.accountDraft.ownerId : '',
       })
+      setEngagementDraftEdits(Object.fromEntries(updated.engagementDrafts.map(engagement => [engagement.id, engagementDraftToEditState(engagement)])))
       toast.success('Draft changes saved')
     } catch (err) {
       applyDraftEditApiErrors(err)
@@ -455,21 +508,62 @@ export function Onboarding() {
                   )}
                 </ReviewCard>
 
-                {selected.engagementDrafts.map(engagement => (
-                  <ReviewCard key={engagement.id} title={engagement.name}>
-                    <div className="grid gap-3 md:grid-cols-3">
-                      <Field label="Value" value={formatCompactCurrency(engagement.value)} />
-                      <Field label="SOW end" value={formatDate(engagement.renewalTerms.endDate)} />
-                      <Field label="Notice deadline" value={formatDate(engagement.renewalTerms.noticeDeadline)} />
-                      <Field label="Auto-renewal" value={engagement.renewalTerms.autoRenewal ? 'Yes' : 'No'} />
-                      <Field label="Confidence" value={`${engagement.renewalTerms.confidence}%`} />
-                      <Field label="Ops Lead" value={engagement.opsLeadName} />
-                    </div>
-                    <p className="mt-3 rounded-lg border border-brand-orange/20 bg-brand-orange/10 p-3 text-sm text-brand-orange">
-                      {engagement.renewalTerms.sourceCitation}
-                    </p>
-                  </ReviewCard>
-                ))}
+                {selected.engagementDrafts.map(engagement => {
+                  const edit = engagementDraftEdits[engagement.id] ?? engagementDraftToEditState(engagement)
+                  const errors = engagementDraftEditErrors[engagement.id] ?? {}
+                  return (
+                    <ReviewCard key={engagement.id} title={engagement.name}>
+                      {selected.status === 'ready_for_review' ? (
+                        <div className="space-y-4">
+                          <div className="grid gap-3 md:grid-cols-3">
+                            <DraftTextInput label="Engagement name" value={edit.name} error={errors.name} onChange={value => updateEngagementDraftEdit(engagement.id, 'name', value)} />
+                            <DraftTextInput label="Value" type="number" min="0" value={edit.value} error={errors.value} onChange={value => updateEngagementDraftEdit(engagement.id, 'value', value)} />
+                            <DraftTextInput label="SOW end" type="date" value={edit.sowEndDate} error={errors.sowEndDate} onChange={value => updateEngagementDraftEdit(engagement.id, 'sowEndDate', value)} />
+                            <DraftTextInput label="Notice deadline" type="date" value={edit.noticeDeadline} error={errors.noticeDeadline} onChange={value => updateEngagementDraftEdit(engagement.id, 'noticeDeadline', value)} />
+                            <label className="space-y-1">
+                              <span className="tk-label text-xs">Auto-renewal</span>
+                              <select className="tk-input" value={edit.autoRenewal} onChange={event => updateEngagementDraftEdit(engagement.id, 'autoRenewal', event.target.value)}>
+                                <option value="false">No</option>
+                                <option value="true">Yes</option>
+                              </select>
+                            </label>
+                            <DraftTextInput label="Confidence" type="number" min="0" max="100" value={edit.confidence} error={errors.confidence} onChange={value => updateEngagementDraftEdit(engagement.id, 'confidence', value)} />
+                            <DraftTextInput label="Ops Lead" value={edit.opsLeadName} error={errors.opsLeadName} onChange={value => updateEngagementDraftEdit(engagement.id, 'opsLeadName', value)} placeholder="Unassigned" />
+                          </div>
+                          <label className="block space-y-1">
+                            <span className={cn('tk-label text-xs', errors.sourceCitation ? 'text-rag-red' : '')}>Source note</span>
+                            <textarea
+                              className={cn('tk-input min-h-[104px] resize-y border-brand-orange/20 bg-brand-orange/10 text-brand-orange placeholder:text-brand-orange/70', errors.sourceCitation ? 'border-rag-red focus:border-rag-red focus:ring-rag-red/30' : '')}
+                              value={edit.sourceCitation}
+                              onChange={event => updateEngagementDraftEdit(engagement.id, 'sourceCitation', event.target.value)}
+                            />
+                            {errors.sourceCitation ? <p className="text-xs text-rag-red">{errors.sourceCitation}</p> : null}
+                          </label>
+                          <div className="flex justify-end">
+                            <button className="tk-button-secondary" type="button" onClick={() => void saveDraftEdits(selected)} disabled={savingDraft}>
+                              {savingDraft ? <Loader2 className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4" />}
+                              Save baseline changes
+                            </button>
+                          </div>
+                        </div>
+                      ) : (
+                        <>
+                          <div className="grid gap-3 md:grid-cols-3">
+                            <Field label="Value" value={formatCompactCurrency(engagement.value)} />
+                            <Field label="SOW end" value={formatOptionalDate(engagement.renewalTerms.endDate)} />
+                            <Field label="Notice deadline" value={formatOptionalDate(engagement.renewalTerms.noticeDeadline)} />
+                            <Field label="Auto-renewal" value={engagement.renewalTerms.autoRenewal ? 'Yes' : 'No'} />
+                            <Field label="Confidence" value={`${engagement.renewalTerms.confidence}%`} />
+                            <Field label="Ops Lead" value={engagement.opsLeadName} />
+                          </div>
+                          <p className="mt-3 rounded-lg border border-brand-orange/20 bg-brand-orange/10 p-3 text-sm text-brand-orange">
+                            {engagement.renewalTerms.sourceCitation}
+                          </p>
+                        </>
+                      )}
+                    </ReviewCard>
+                  )
+                })}
 
                 <ReviewCard title="Source-backed account context">
                   <div className="grid gap-3 md:grid-cols-2">
@@ -573,17 +667,26 @@ function DraftTextInput({
   error,
   onChange,
   placeholder,
+  type = 'text',
+  min,
+  max,
 }: {
   label: string
   value: string
   error?: string
   onChange: (value: string) => void
   placeholder?: string
+  type?: string
+  min?: string
+  max?: string
 }) {
   return (
     <label className="space-y-1">
       <span className={cn('tk-label text-xs', error ? 'text-rag-red' : '')}>{label}</span>
       <input
+        type={type}
+        min={min}
+        max={max}
         className={cn('tk-input', error ? 'border-rag-red focus:border-rag-red focus:ring-rag-red/30' : '')}
         value={value}
         onChange={event => onChange(event.target.value)}
@@ -623,7 +726,6 @@ function DocumentRow({ document, onDownload, onRetry, retrying = false }: { docu
               <Download className="h-4 w-4" />
             </button>
           ) : null}
-          <span className="rounded-full border border-blue-tint-20 bg-blue-tint-20 px-2 py-0.5 text-[11px] font-semibold text-brand-blue">{document.confidence}%</span>
         </div>
       </div>
       {document.extractionStatus && document.extractionStatus !== 'completed' ? (
@@ -632,12 +734,6 @@ function DocumentRow({ document, onDownload, onRetry, retrying = false }: { docu
           {document.extractionError ? ` · ${document.extractionError}` : ''}
         </p>
       ) : null}
-      {document.citations.slice(0, 1).map(citation => (
-        <p key={citation.id} className="mt-3 rounded-md bg-surface-secondary p-2 text-xs leading-5 text-ink-secondary">
-          <span className="font-semibold text-ink">{citation.fieldKey ? formatFieldKey(citation.fieldKey) : citation.label}</span>
-          {' '}· page {citation.page} · {citation.confidence ?? document.confidence}% confidence: {citation.excerpt}
-        </p>
-      ))}
     </div>
   )
 }
@@ -672,6 +768,48 @@ function isLinkedinUrl(value: string) {
   } catch {
     return false
   }
+}
+
+function engagementDraftToEditState(engagement: EngagementRecord): EngagementDraftEditState {
+  return {
+    id: engagement.id,
+    name: engagement.name,
+    value: String(engagement.value ?? 0),
+    sowEndDate: toDateInputValue(engagement.renewalTerms.endDate),
+    noticeDeadline: toDateInputValue(engagement.renewalTerms.noticeDeadline),
+    autoRenewal: engagement.renewalTerms.autoRenewal ? 'true' : 'false',
+    confidence: String(engagement.renewalTerms.confidence ?? 0),
+    opsLeadName: engagement.opsLeadName === 'Unassigned' ? '' : engagement.opsLeadName,
+    sourceCitation: engagement.renewalTerms.sourceCitation ?? '',
+  }
+}
+
+function buildEngagementDraftUpdatePayload(edit: EngagementDraftEditState) {
+  return {
+    id: edit.id,
+    name: edit.name.trim(),
+    value: Number(edit.value),
+    endDate: fromDateInputValue(edit.sowEndDate),
+    renewalDate: fromDateInputValue(edit.sowEndDate),
+    noticeDeadline: fromDateInputValue(edit.noticeDeadline),
+    autoRenewal: edit.autoRenewal === 'true',
+    confidence: Number(edit.confidence),
+    opsLeadName: edit.opsLeadName.trim() || null,
+    sourceCitation: edit.sourceCitation.trim() || null,
+  }
+}
+
+function toDateInputValue(value?: string | null) {
+  if (!value) return ''
+  return value.slice(0, 10)
+}
+
+function fromDateInputValue(value: string) {
+  return value ? `${value}T00:00:00.000Z` : null
+}
+
+function formatOptionalDate(value?: string | null) {
+  return value ? formatDate(value) : 'Not set'
 }
 
 function mapDraftEditApiField(field: string): keyof DraftEditState | undefined {

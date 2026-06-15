@@ -70,7 +70,32 @@ const onboardingDraft = {
   created_at: '2026-05-30T00:00:00Z',
   updated_at: '2026-05-30T00:00:00Z',
   source_documents: [],
-  engagement_drafts: [],
+  engagement_drafts: [
+    {
+      id: 'engagement-draft-1',
+      draft_id: 'draft-am-owned',
+      name: 'Project validation baseline',
+      owner_id: 'usr-am',
+      owner_name: 'Account Manager KAM',
+      ops_lead_id: null,
+      ops_lead_name: 'Unassigned',
+      service_lines: ['Account onboarding'],
+      value: 0,
+      currency: 'USD',
+      delivery_status: 'active',
+      start_date: '2026-05-30T00:00:00Z',
+      end_date: '2026-06-15T00:00:00Z',
+      renewal_date: '2026-06-15T00:00:00Z',
+      notice_deadline: '2026-06-15T00:00:00Z',
+      notice_period_days: 0,
+      auto_renewal: false,
+      commercial_context: 'Project validation baseline.',
+      resource_dependency: null,
+      risks: [],
+      source_citation: 'Cafe_Zupas_SOW.xlsx p1: Service scope inferred from extracted source text.',
+      confidence: 71,
+    },
+  ],
 }
 
 describe('Onboarding', () => {
@@ -91,7 +116,28 @@ describe('Onboarding', () => {
         ])
       }
       if (url.pathname.endsWith('/api/onboarding/drafts/draft-am-owned') && method === 'PATCH') {
-        return jsonResponse({ ...onboardingDraft, account_name: 'AM Edited Draft' })
+        const payload = JSON.parse(String(init?.body ?? '{}'))
+        return jsonResponse({
+          ...onboardingDraft,
+          account_name: payload.account_name ?? onboardingDraft.account_name,
+          engagement_drafts: onboardingDraft.engagement_drafts.map(engagement => {
+            const update = payload.engagement_drafts?.find((item: { id: string }) => item.id === engagement.id)
+            return update
+              ? {
+                  ...engagement,
+                  name: update.name,
+                  value: update.value,
+                  end_date: update.end_date,
+                  renewal_date: update.renewal_date,
+                  notice_deadline: update.notice_deadline,
+                  auto_renewal: update.auto_renewal,
+                  confidence: update.confidence,
+                  ops_lead_name: update.ops_lead_name,
+                  source_citation: update.source_citation,
+                }
+              : engagement
+          }),
+        })
       }
       if (url.pathname.endsWith('/api/onboarding/drafts')) {
         return jsonResponse({
@@ -120,14 +166,41 @@ describe('Onboarding', () => {
     expect(screen.getByRole('button', { name: /approve draft/i })).not.toBeDisabled()
     await userEvent.clear(screen.getByLabelText(/account name/i))
     await userEvent.type(screen.getByLabelText(/account name/i), 'AM Edited Draft')
-    await userEvent.click(screen.getByRole('button', { name: /save draft changes/i }))
+    await userEvent.clear(screen.getByLabelText(/engagement name/i))
+    await userEvent.type(screen.getByLabelText(/engagement name/i), 'Edited project validation baseline')
+    await userEvent.clear(screen.getByLabelText(/^value$/i))
+    await userEvent.type(screen.getByLabelText(/^value$/i), '25000')
+    await userEvent.clear(screen.getByLabelText(/sow end/i))
+    await userEvent.type(screen.getByLabelText(/sow end/i), '2026-09-30')
+    await userEvent.clear(screen.getByLabelText(/notice deadline/i))
+    await userEvent.type(screen.getByLabelText(/notice deadline/i), '2026-08-31')
+    await userEvent.selectOptions(screen.getByLabelText(/auto-renewal/i), 'true')
+    await userEvent.clear(screen.getByLabelText(/confidence/i))
+    await userEvent.type(screen.getByLabelText(/confidence/i), '88')
+    await userEvent.clear(screen.getByLabelText(/ops lead/i))
+    await userEvent.type(screen.getByLabelText(/ops lead/i), 'Delivery Lead')
+    await userEvent.clear(screen.getByLabelText(/source note/i))
+    await userEvent.type(screen.getByLabelText(/source note/i), 'Reviewed SOW baseline note.')
+    await userEvent.click(screen.getByRole('button', { name: /save baseline changes/i }))
 
     await waitFor(() => expect(screen.getByRole('heading', { name: 'AM Edited Draft' })).toBeInTheDocument())
+    expect(await screen.findByDisplayValue('Edited project validation baseline')).toBeInTheDocument()
     expect(fetchMock.mock.calls.some(call => {
       const [url, init] = call
       if (!String(url).endsWith('/api/onboarding/drafts/draft-am-owned') || init?.method !== 'PATCH') return false
       const payload = JSON.parse(String(init.body))
-      return payload.account_name === 'AM Edited Draft' && payload.primary_owner_id === 'usr-am'
+      const engagement = payload.engagement_drafts?.[0]
+      return payload.account_name === 'AM Edited Draft'
+        && payload.primary_owner_id === 'usr-am'
+        && engagement?.id === 'engagement-draft-1'
+        && engagement?.name === 'Edited project validation baseline'
+        && engagement?.value === 25000
+        && engagement?.end_date === '2026-09-30T00:00:00.000Z'
+        && engagement?.notice_deadline === '2026-08-31T00:00:00.000Z'
+        && engagement?.auto_renewal === true
+        && engagement?.confidence === 88
+        && engagement?.ops_lead_name === 'Delivery Lead'
+        && engagement?.source_citation === 'Reviewed SOW baseline note.'
     })).toBe(true)
     expect(fetchMock.mock.calls.some(call => String(call[0]).includes('/api/onboarding/drafts'))).toBe(true)
   })

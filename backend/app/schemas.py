@@ -1718,6 +1718,77 @@ class AccountCsvImportRequest(BaseModel):
         return optional_text(value, "Source file name", max_length=220)
 
 
+class EngagementDraftUpdateRequest(BaseModel):
+    id: str
+    name: str | None = None
+    owner_id: str | None = None
+    owner_name: str | None = None
+    ops_lead_id: str | None = None
+    ops_lead_name: str | None = None
+    service_lines: list[str] | None = None
+    value: float | None = None
+    currency: str | None = None
+    delivery_status: DeliveryStatus | None = None
+    start_date: datetime | None = None
+    end_date: datetime | None = None
+    renewal_date: datetime | None = None
+    notice_deadline: datetime | None = None
+    notice_period_days: int | None = None
+    auto_renewal: bool | None = None
+    commercial_context: str | None = None
+    resource_dependency: str | None = None
+    risks: list[str] | None = None
+    source_citation: str | None = None
+    confidence: int | None = None
+
+    @field_validator("name")
+    @classmethod
+    def name_is_valid(cls, value: str | None) -> str | None:
+        return validate_short_text(value, "Engagement name") if value is not None else None
+
+    @field_validator("owner_name", "ops_lead_name")
+    @classmethod
+    def person_name_is_valid(cls, value: str | None) -> str | None:
+        return optional_text(value, "Owner name", max_length=160)
+
+    @field_validator("service_lines")
+    @classmethod
+    def service_lines_are_valid(cls, value: list[str] | None) -> list[str] | None:
+        return [validate_short_text(item, "Service line", 120) for item in value] if value is not None else None
+
+    @field_validator("value")
+    @classmethod
+    def value_is_valid(cls, value: float | None) -> float | None:
+        return validate_non_negative(value, "Engagement value") if value is not None else None
+
+    @field_validator("currency")
+    @classmethod
+    def currency_is_valid(cls, value: str | None) -> str | None:
+        return validate_currency(value) if value is not None else None
+
+    @field_validator("commercial_context", "resource_dependency", "source_citation")
+    @classmethod
+    def optional_long_text_is_valid(cls, value: str | None) -> str | None:
+        return validate_optional_long_text(value, "Engagement text")
+
+    @field_validator("risks")
+    @classmethod
+    def risks_are_valid(cls, value: list[str] | None) -> list[str] | None:
+        return [validate_short_text(item, "Risk", 500) for item in value] if value is not None else None
+
+    @field_validator("confidence")
+    @classmethod
+    def confidence_is_valid(cls, value: int | None) -> int | None:
+        return validate_percent(value, "Confidence") if value is not None else None
+
+    @field_validator("notice_period_days")
+    @classmethod
+    def notice_period_is_valid(cls, value: int | None) -> int | None:
+        if value is not None and value < 0:
+            raise ValueError("Notice period must be zero or greater.")
+        return value
+
+
 class OnboardingDraftUpdateRequest(BaseModel):
     account_name: str | None = None
     project_name: str | None = None
@@ -1738,6 +1809,7 @@ class OnboardingDraftUpdateRequest(BaseModel):
     missing_fields: list[str] | None = None
     conflicts: list[str] | None = None
     source_citation: str | None = None
+    engagement_drafts: list[EngagementDraftUpdateRequest] | None = None
 
     @field_validator("account_name", "segment")
     @classmethod
@@ -1894,6 +1966,7 @@ class AccountRead(BaseModel):
     initial_notes: str | None = None
     source_citation: str | None = None
     health: HealthScoreRead
+    has_health_score: bool = False
     next_governance_at: datetime | None = None
     created_from_draft_id: str | None = None
     created_at: datetime

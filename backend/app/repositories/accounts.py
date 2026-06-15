@@ -84,7 +84,7 @@ class AccountRepository:
             self.db.scalars(
                 select(Account)
                 .where(*conditions)
-                .options(selectinload(Account.owners), selectinload(Account.engagements), selectinload(Account.kyc_snapshots))
+                .options(selectinload(Account.owners), selectinload(Account.engagements), selectinload(Account.kyc_snapshots), selectinload(Account.score_snapshots))
                 .order_by(order_column, Account.name)
                 .offset((page - 1) * page_size)
                 .limit(page_size)
@@ -100,6 +100,7 @@ class AccountRepository:
                 selectinload(Account.owners),
                 selectinload(Account.engagements),
                 selectinload(Account.kyc_snapshots),
+                selectinload(Account.score_snapshots),
                 selectinload(Account.source_documents).selectinload(SourceDocument.citations),
             )
         )

@@ -790,6 +790,7 @@ class AccountService:
                 delivery=account.health_delivery,
                 commercial=account.health_commercial,
             ),
+            has_health_score=self._has_health_score(account),
             next_governance_at=account.next_governance_at,
             created_from_draft_id=account.created_from_draft_id,
             created_at=account.created_at,
@@ -804,6 +805,10 @@ class AccountService:
             },
             custom_field_values=self._account_custom_field_values(account),
         )
+
+    @staticmethod
+    def _has_health_score(account: Account) -> bool:
+        return any(snapshot.scope == "account" for snapshot in account.score_snapshots)
 
     def _account_custom_field_values(self, account: Account) -> dict[str, object]:
         return {

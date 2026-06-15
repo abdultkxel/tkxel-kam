@@ -68,12 +68,12 @@ def _definition(trigger: str, workflow: str, recipients: str, priority: str, act
 
 
 NOTIFICATION_TRIGGER_DEFINITIONS = [
-    _definition("account_draft_created", "account_onboarding", "account_approvers", "high", "Review draft", "A new account draft is ready for approval."),
-    _definition("account_draft_updated", "account_onboarding", "draft_owner_approvers", "medium", "Review draft", "An account onboarding draft was updated."),
+    _definition("account_draft_created", "account_onboarding", "kam_heads_ams_leadership", "high", "Review draft", "A new account draft is ready for approval."),
+    _definition("account_draft_updated", "account_onboarding", "kam_heads_ams_leadership", "medium", "Review draft", "An account onboarding draft was updated."),
     _definition("account_draft_rejected", "account_onboarding", "draft_creator_owner", "high", "Fix draft"),
     _definition("account_draft_approved", "account_onboarding", "draft_creator_owner", "medium", "Open account"),
     _definition("account_draft_linked_existing", "account_onboarding", "draft_creator_owner", "medium", "Open linked account"),
-    _definition("account_duplicate_detected", "account_onboarding", "draft_creator_approvers", "high", "Resolve duplicate"),
+    _definition("account_duplicate_detected", "account_onboarding", "kam_heads_ams_leadership", "high", "Resolve duplicate"),
     _definition("account_owner_assigned", "account_ownership", "new_owner", "medium", "Open account"),
     _definition("account_owner_changed", "account_ownership", "new_previous_owner", "medium", "Review handover"),
     _definition("account_owner_removed", "account_ownership", "account_admins_previous_owner", "high", "Assign owner"),

@@ -296,6 +296,63 @@ def test_onboarding_draft_approval_creates_account_sources_and_engagement(client
     assert rollup["contributions"] == []
 
 
+def test_onboarding_draft_update_edits_engagement_baseline_before_approval(client: TestClient) -> None:
+    headers = auth_headers(client)
+    owner = seeded_user(client, headers, "account_manager")
+
+    create_response = client.post("/api/onboarding/drafts", headers=headers, json=draft_payload("Editable Baseline Account", owner["id"]))
+    assert create_response.status_code == 201
+    draft = create_response.json()
+    engagement_id = draft["engagement_drafts"][0]["id"]
+    end_date = iso_days_from_now(180)
+    notice_deadline = iso_days_from_now(120)
+
+    update_response = client.patch(
+        f"/api/onboarding/drafts/{draft['id']}",
+        headers=headers,
+        json={
+            "engagement_drafts": [
+                {
+                    "id": engagement_id,
+                    "name": "Reviewed project validation baseline",
+                    "value": 225000,
+                    "end_date": end_date,
+                    "renewal_date": end_date,
+                    "notice_deadline": notice_deadline,
+                    "auto_renewal": True,
+                    "confidence": 91,
+                    "ops_lead_name": "Delivery Lead Review",
+                    "source_citation": "Reviewed baseline from SOW p2.",
+                }
+            ]
+        },
+    )
+    assert update_response.status_code == 200
+    updated_engagement = update_response.json()["engagement_drafts"][0]
+    assert updated_engagement["name"] == "Reviewed project validation baseline"
+    assert updated_engagement["value"] == 225000
+    assert updated_engagement["notice_deadline"].startswith(notice_deadline[:10])
+    assert updated_engagement["auto_renewal"] is True
+    assert updated_engagement["confidence"] == 91
+    assert updated_engagement["ops_lead_name"] == "Delivery Lead Review"
+    assert updated_engagement["source_citation"] == "Reviewed baseline from SOW p2."
+
+    approve_response = client.post(f"/api/onboarding/drafts/{draft['id']}/approve", headers=headers)
+    assert approve_response.status_code == 200
+    account_id = approve_response.json()["approved_account_id"]
+    engagement_response = client.get(f"/api/accounts/{account_id}/engagements", headers=headers)
+    assert engagement_response.status_code == 200
+    engagement = engagement_response.json()["items"][0]
+    assert engagement["name"] == "Reviewed project validation baseline"
+    assert engagement["value"] == 225000
+    assert engagement["end_date"].startswith(end_date[:10])
+    assert engagement["notice_deadline"].startswith(notice_deadline[:10])
+    assert engagement["auto_renewal"] is True
+    assert engagement["delivery_health"] == 91
+    assert engagement["ops_lead_name"] == "Delivery Lead Review"
+    assert engagement["source_citation"] == "Reviewed baseline from SOW p2."
+
+
 def test_onboarding_upload_extracts_draft_from_content_not_filename(client: TestClient) -> None:
     settings = get_settings()
     previous_ai_setting = settings.sow_ai_extraction_enabled

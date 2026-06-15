@@ -62,6 +62,7 @@ from app.services.user_management import page_count
 
 
 ACCOUNT_FIELD_MODULES = list(ACCOUNT_CUSTOM_FIELD_MODULES)
+DRAFT_CHANGE_NOTIFICATION_ROLES = {"account_manager", "kam_head", "leadership_viewer", "leadership"}
 
 
 class OnboardingService:
@@ -445,6 +446,7 @@ class OnboardingService:
         before = self._draft_audit_value(draft)
         before_notification = self._draft_update_notification_value(draft)
         updates = payload.model_dump(exclude_unset=True)
+        engagement_updates = updates.pop("engagement_drafts", None)
         if "primary_owner_id" in updates or "primary_owner_email" in updates:
             owner = self._resolve_owner_from_values(
                 updates.get("primary_owner_id"),
@@ -461,6 +463,8 @@ class OnboardingService:
                 updates["primary_owner_email"] = None
         for field, value in updates.items():
             setattr(draft, field, value)
+        if engagement_updates is not None:
+            self._update_engagement_drafts(draft, engagement_updates)
         changed_labels = self._draft_update_changed_labels(before_notification, self._draft_update_notification_value(draft))
         self.audit.log(
             module="account_onboarding_workspace",
@@ -475,6 +479,52 @@ class OnboardingService:
             self._notify_draft_updated(draft, current_user, changed_labels)
         self.onboarding.commit()
         return OnboardingDraftRead.model_validate(self._get_draft_or_404(draft.id))
+
+    def _update_engagement_drafts(self, draft: OnboardingDraft, engagement_updates: list[dict]) -> None:
+        by_id = {engagement.id: engagement for engagement in draft.engagement_drafts}
+        for index, update in enumerate(engagement_updates):
+            engagement_id = update.get("id")
+            engagement = by_id.get(engagement_id)
+            if engagement is None:
+                self._raise_draft_validation(
+                    f"Engagement draft {engagement_id or 'unknown'} was not found on this onboarding draft.",
+                    f"engagement_drafts.{index}.id",
+                )
+
+            owner = self._get_user_if_active(update.get("owner_id")) if "owner_id" in update else None
+            ops_lead = self._get_user_if_active(update.get("ops_lead_id")) if "ops_lead_id" in update else None
+            for field, value in update.items():
+                if field == "id":
+                    continue
+                if field == "owner_id":
+                    engagement.owner_id = owner.id if owner else value
+                    if owner:
+                        engagement.owner_name = owner.full_name
+                    continue
+                if field == "ops_lead_id":
+                    engagement.ops_lead_id = ops_lead.id if ops_lead else value
+                    if ops_lead:
+                        engagement.ops_lead_name = ops_lead.full_name
+                    continue
+                if field in {"service_lines", "risks"} and value is not None:
+                    value = list(value)
+                setattr(engagement, field, value)
+
+            if (
+                engagement.start_date
+                and engagement.end_date
+                and engagement.end_date.replace(tzinfo=None).date() < engagement.start_date.replace(tzinfo=None).date()
+            ):
+                self._raise_draft_validation(
+                    "Engagement end date must be after start date.",
+                    f"engagement_drafts.{index}.end_date",
+                )
+            if "notice_deadline" not in update and any(field in update for field in {"renewal_date", "end_date", "notice_period_days"}):
+                engagement.notice_deadline = calculate_notice_deadline(
+                    engagement.renewal_date,
+                    engagement.end_date,
+                    engagement.notice_period_days,
+                )
 
     def approve_draft(self, draft_id: str, current_user: User) -> OnboardingDraftRead:
         draft = self._get_draft_or_404(draft_id)
@@ -1318,7 +1368,8 @@ class OnboardingService:
             if engagement.renewal_date is None and engagement.end_date is not None:
                 engagement.renewal_date = engagement.end_date
                 applied.append({"field": f"{prefix}.renewal_date", "value": engagement.renewal_date.isoformat()})
-            engagement.notice_deadline = calculate_notice_deadline(engagement.renewal_date, engagement.end_date, engagement.notice_period_days)
+            if engagement.notice_deadline is None:
+                engagement.notice_deadline = calculate_notice_deadline(engagement.renewal_date, engagement.end_date, engagement.notice_period_days)
         if not applied:
             return
         self.audit.log(
@@ -1896,7 +1947,7 @@ class OnboardingService:
         return text or None
 
     def _notify_draft_created(self, draft: OnboardingDraft, current_user: User) -> None:
-        recipients = self._draft_creation_recipients(draft, exclude_user_id=current_user.id)
+        recipients = self._draft_creation_recipients(draft)
         trigger = "account_duplicate_detected" if draft.duplicate_account_id else "account_draft_created"
         title = f"Draft account ready: {draft.account_name}"
         body = f"{current_user.full_name} created a draft account that needs approval."
@@ -1918,7 +1969,7 @@ class OnboardingService:
             )
 
     def _notify_draft_updated(self, draft: OnboardingDraft, actor: User, changed_labels: list[str]) -> None:
-        recipients = self._draft_update_recipients(draft, exclude_user_id=actor.id)
+        recipients = self._draft_update_recipients(draft)
         fields = ", ".join(changed_labels[:6])
         suffix = " and more" if len(changed_labels) > 6 else ""
         body = f"{actor.full_name} saved changes to {fields}{suffix}."
@@ -2005,20 +2056,14 @@ class OnboardingService:
             )
 
     def _draft_creation_recipients(self, draft: OnboardingDraft, *, exclude_user_id: str | None = None) -> list[User]:
-        return self._unique_users(
-            [
-                *self._draft_owner_recipients(draft, exclude_user_id=exclude_user_id),
-                *self._kam_head_recipients(exclude_user_id=exclude_user_id),
-            ],
-            exclude_user_id=exclude_user_id,
-        )
+        return self._draft_change_broadcast_recipients(exclude_user_id=exclude_user_id)
 
     def _draft_update_recipients(self, draft: OnboardingDraft, *, exclude_user_id: str | None = None) -> list[User]:
+        return self._draft_change_broadcast_recipients(exclude_user_id=exclude_user_id)
+
+    def _draft_change_broadcast_recipients(self, *, exclude_user_id: str | None = None) -> list[User]:
         return self._unique_users(
-            [
-                *self._draft_assigned_owner_recipients(draft, exclude_user_id=exclude_user_id),
-                *self._kam_head_recipients(exclude_user_id=exclude_user_id),
-            ],
+            self.accounts.list_active_users_by_roles(DRAFT_CHANGE_NOTIFICATION_ROLES),
             exclude_user_id=exclude_user_id,
         )
 
@@ -2161,6 +2206,13 @@ class OnboardingService:
 
     @staticmethod
     def _raise_owner_validation(message: str, field: str = "primary_owner_id") -> None:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={"message": "Validation failed", "errors": [{"field": field, "message": message}]},
+        )
+
+    @staticmethod
+    def _raise_draft_validation(message: str, field: str) -> None:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail={"message": "Validation failed", "errors": [{"field": field, "message": message}]},
@@ -2319,7 +2371,7 @@ class OnboardingService:
             start_date=draft.start_date,
             end_date=draft.end_date,
             renewal_date=draft.renewal_date,
-            notice_deadline=calculate_notice_deadline(draft.renewal_date, draft.end_date, draft.notice_period_days),
+            notice_deadline=draft.notice_deadline or calculate_notice_deadline(draft.renewal_date, draft.end_date, draft.notice_period_days),
             notice_period_days=draft.notice_period_days,
             auto_renewal=draft.auto_renewal,
             commercial_context=draft.commercial_context,
@@ -2548,7 +2600,7 @@ class OnboardingService:
 
     @staticmethod
     def _official_lifecycle_for_draft(lifecycle_status: str) -> str:
-        return "Onboarding" if lifecycle_status == "Draft" else lifecycle_status
+        return "Active" if lifecycle_status in {"Draft", "Onboarding"} else lifecycle_status
 
     @staticmethod
     def _draft_audit_value(draft: OnboardingDraft) -> dict:
@@ -2578,7 +2630,29 @@ class OnboardingService:
             "primary_owner_id": draft.primary_owner_id,
             "primary_owner_name": draft.primary_owner_name,
             "primary_owner_email": draft.primary_owner_email,
+            "engagement_drafts": [OnboardingService._engagement_draft_notification_value(engagement) for engagement in draft.engagement_drafts],
         }
+
+    @staticmethod
+    def _engagement_draft_notification_value(engagement: OnboardingDraftEngagement) -> dict:
+        return {
+            "id": engagement.id,
+            "name": engagement.name,
+            "value": float(engagement.value or 0),
+            "end_date": OnboardingService._datetime_notification_value(engagement.end_date),
+            "renewal_date": OnboardingService._datetime_notification_value(engagement.renewal_date),
+            "notice_deadline": OnboardingService._datetime_notification_value(engagement.notice_deadline),
+            "notice_period_days": engagement.notice_period_days,
+            "auto_renewal": engagement.auto_renewal,
+            "confidence": engagement.confidence,
+            "ops_lead_id": engagement.ops_lead_id,
+            "ops_lead_name": engagement.ops_lead_name,
+            "source_citation": engagement.source_citation,
+        }
+
+    @staticmethod
+    def _datetime_notification_value(value: datetime | None) -> str | None:
+        return value.isoformat() if value else None
 
     @staticmethod
     def _draft_update_changed_labels(before: dict, after: dict) -> list[str]:
@@ -2595,6 +2669,7 @@ class OnboardingService:
             "initial_notes": "initial notes",
             "commercial_value": "commercial value",
             "currency": "currency",
+            "engagement_drafts": "project validation baseline",
         }
         changed = [label for key, label in labels_by_key.items() if before.get(key) != after.get(key)]
         owner_keys = ("primary_owner_id", "primary_owner_name", "primary_owner_email")
