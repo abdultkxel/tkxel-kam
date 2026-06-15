@@ -44,12 +44,9 @@ export function Tasks() {
   const [priority, setPriority] = useState(() => searchParams.get('priority') ?? '')
   const [sourceType, setSourceType] = useState(() => searchParams.get('sourceType') ?? searchParams.get('source_type') ?? '')
   const [due, setDue] = useState<DueFilter>(() => dueFilterParam(searchParams.get('due')))
-  const [direction, setDirection] = useState<'asc' | 'desc'>('asc')
-  const [page, setPage] = useState(1)
   const [total, setTotal] = useState(0)
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null)
   const readOnly = !capabilities.can_manage_tasks_portfolio && !capabilities.permission_keys.includes('tasks:update_own')
-  const pageSize = 10
 
   useEffect(() => {
     setSearch(searchParams.get('search') ?? '')
@@ -58,7 +55,6 @@ export function Tasks() {
     setPriority(searchParams.get('priority') ?? '')
     setSourceType(searchParams.get('sourceType') ?? searchParams.get('source_type') ?? '')
     setDue(dueFilterParam(searchParams.get('due')))
-    setPage(positivePage(searchParams.get('page')))
   }, [searchParams])
 
   useEffect(() => {
@@ -84,7 +80,7 @@ export function Tasks() {
     let cancelled = false
     setLoading(true)
     setError('')
-    const params = new URLSearchParams({ page: String(page), page_size: String(pageSize), sort: 'due_at', direction })
+    const params = new URLSearchParams({ page: '1', page_size: '100', sort: 'due_at', direction: 'asc' })
     if (search) params.set('search', search)
     if (accountId) params.set('account_id', accountId)
     if (status) params.set('status', status)
@@ -108,7 +104,7 @@ export function Tasks() {
     return () => {
       cancelled = true
     }
-  }, [accountId, direction, due, page, priority, search, sourceType, status, token])
+  }, [accountId, due, priority, search, sourceType, status, token])
 
   useEffect(() => {
     if (!token) return
@@ -124,7 +120,6 @@ export function Tasks() {
     setPriority('')
     setSourceType('')
     setDue('all')
-    setPage(1)
   }
 
   function upsertTask(task: PlaybookTask) {
@@ -170,11 +165,11 @@ export function Tasks() {
         <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-7">
           <label className="space-y-1 xl:col-span-2">
             <span className="tk-label text-xs">Search</span>
-            <input className="tk-input" value={search} onChange={event => { setSearch(event.target.value); setPage(1) }} placeholder="Search title, notes, evidence, owner" />
+            <input className="tk-input" value={search} onChange={event => setSearch(event.target.value)} placeholder="Search title, notes, evidence, owner" />
           </label>
           <label className="space-y-1">
             <span className="tk-label text-xs">Account</span>
-            <select className="tk-input" value={accountId} onChange={event => { setAccountId(event.target.value); setPage(1) }}>
+            <select className="tk-input" value={accountId} onChange={event => setAccountId(event.target.value)}>
               <option value="">All accounts</option>
               {accounts.map(account => <option key={account.id} value={account.id}>{account.name}</option>)}
             </select>
@@ -182,7 +177,7 @@ export function Tasks() {
           </label>
           <label className="space-y-1">
             <span className="tk-label text-xs">Status</span>
-            <select className="tk-input" value={status} onChange={event => { setStatus(event.target.value); setPage(1) }}>
+            <select className="tk-input" value={status} onChange={event => setStatus(event.target.value)}>
               <option value="">Any status</option>
               <option value="open">Open</option>
               <option value="in_progress">In progress</option>
@@ -193,7 +188,7 @@ export function Tasks() {
           </label>
           <label className="space-y-1">
             <span className="tk-label text-xs">Priority</span>
-            <select className="tk-input" value={priority} onChange={event => { setPriority(event.target.value); setPage(1) }}>
+            <select className="tk-input" value={priority} onChange={event => setPriority(event.target.value)}>
               <option value="">Any priority</option>
               <option value="urgent">Urgent</option>
               <option value="high">High</option>
@@ -203,7 +198,7 @@ export function Tasks() {
           </label>
           <label className="space-y-1">
             <span className="tk-label text-xs">Due</span>
-            <select className="tk-input" value={due} onChange={event => { setDue(event.target.value as DueFilter); setPage(1) }}>
+            <select className="tk-input" value={due} onChange={event => setDue(event.target.value as DueFilter)}>
               <option value="all">Any date</option>
               <option value="overdue">Overdue</option>
               <option value="today">Today</option>
@@ -212,7 +207,7 @@ export function Tasks() {
           </label>
           <label className="space-y-1">
             <span className="tk-label text-xs">Source</span>
-            <select className="tk-input" value={sourceType} onChange={event => { setSourceType(event.target.value); setPage(1) }}>
+            <select className="tk-input" value={sourceType} onChange={event => setSourceType(event.target.value)}>
               <option value="">Any source</option>
               <option value="playbook">Playbook</option>
               <option value="manual">Manual</option>
@@ -233,12 +228,6 @@ export function Tasks() {
           </div>
           <div className="flex flex-wrap gap-2">
             <CreateTaskDialog token={token} accounts={accounts} currentUserId={user.id} readOnly={readOnly} customFields={customFields} onCreated={task => setTasks(items => [normalizeTaskForWorkspace(task), ...items])} />
-            <select className="tk-input w-auto" value={direction} onChange={event => setDirection(event.target.value as typeof direction)} aria-label="Task sort direction">
-              <option value="asc">Ascending</option>
-              <option value="desc">Descending</option>
-            </select>
-            <button className="tk-button-secondary" disabled={page <= 1} onClick={() => setPage(value => Math.max(1, value - 1))}>Previous</button>
-            <button className="tk-button-secondary" disabled={page * pageSize >= total} onClick={() => setPage(value => value + 1)}>Next</button>
           </div>
         </div>
 
@@ -590,10 +579,6 @@ function dueRange(due: DueFilter) {
 
 function dueFilterParam(value: string | null): DueFilter {
   return value === 'overdue' || value === 'today' || value === 'next7' ? value : 'all'
-}
-
-function positivePage(value: string | null): number {
-  return Math.max(1, Number(value ?? '1') || 1)
 }
 
 function normalizeTaskForWorkspace(task: PlaybookTask): PlaybookTask {
