@@ -11,6 +11,9 @@ Growth and Retention remain available as two internal tabs inside Stage. The pre
 - In scope:
   - Account detail tab order: Overview, Engagement, Stakeholders, KYC, Health, Stage, Opportunities, Governance, Education, Timeline, Notes, Documents.
   - Account overview command center without the Generate handover button.
+  - Account overview AI Brief that synthesizes local account/timeline/opportunity/governance data and can save the generated text as a timeline note.
+  - Engagement owner assignment follows the account's active primary Account Manager and is read-only in the engagement form.
+  - Engagement profile shows the linked account name rather than the raw account id.
   - Legacy deep links for `engagements`, `stakeholders`, `growth`, `retention`, `renewal`, and `planning`.
   - Stage tab renders existing Growth whitespace and Retention plan panels as two internal tabs.
 - Out of scope:
@@ -33,10 +36,10 @@ Users open an account detail page and see the reduced Account 360 tab set with S
 ## Backend Plan
 
 - Routers: No backend route changes.
-- Services: No service changes.
+- Services: Engagement create/update and import approval resolve owner from the account's active primary Account Manager.
 - Repositories: No repository changes.
-- Schemas/validation: No schema changes.
-- Helpers: No backend helpers.
+- Schemas/validation: Engagement create accepts omitted `owner_id`; backend assigns the account primary Account Manager. Engagement responses include `account_name` for display.
+- Helpers: Engagement service helper resolves the active primary Account Manager and returns a field-level error when missing.
 
 ## API Documentation
 
@@ -60,6 +63,8 @@ Users open an account detail page and see the reduced Account 360 tab set with S
   - Reuse existing account, stakeholder, opportunity, governance, timeline, growth whitespace, and retention plan stores/services.
 - Form behavior:
   - Existing Growth and Retention forms keep their current validation and backend error behavior.
+  - The AI Brief `Edit summary` action stores the generated summary as an editable timeline note rather than changing account master data.
+  - The Engagement/SOW form displays Account Manager as read-only and does not submit owner changes.
 - Backend error display:
   - Existing Growth and Retention panels continue showing their own API errors.
 
@@ -71,9 +76,12 @@ Users open an account detail page and see the reduced Account 360 tab set with S
 
 ## Tests
 
-- Backend unit/API tests: Not required; no backend behavior changed.
+- Backend unit/API tests:
+  - `backend/tests/test_account_workspace.py`
 - Frontend unit/component tests:
   - `frontend/src/components/account/Account360.test.tsx`
+  - `frontend/src/components/account/EngagementsPanel.test.tsx`
+  - `frontend/src/pages/EngagementDetail.test.tsx`
 - Edge cases:
   - Removed standalone tab names do not render as Account 360 tabs.
   - Stakeholders renders as a standalone Account 360 tab.
@@ -84,7 +92,10 @@ Users open an account detail page and see the reduced Account 360 tab set with S
 ## Linting And Quality
 
 - Lint/typecheck commands:
+  - `docker compose run --rm backend pytest tests/test_account_workspace.py -k engagement`
   - `docker compose run --rm --no-deps frontend npm test -- Account360.test.tsx`
+  - `docker compose run --rm --no-deps frontend npm test -- EngagementsPanel.test.tsx`
+  - `docker compose run --rm --no-deps frontend npm test -- EngagementDetail.test.tsx`
   - `docker compose run --rm --no-deps frontend npm run typecheck`
 - Known code smells or tradeoffs:
   - Renewal-related domain models and APIs remain because engagement renewal data is still used by retention, governance, scoring, and notifications.

@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { toast } from 'sonner'
 import { EngagementFormDialog } from '@/components/account/EngagementFormDialog'
+import { ServiceLineMultiSelect } from '@/components/account/ServiceLineMultiSelect'
 import { ConfirmDialog } from '@/components/admin/ConfirmDialog'
 import { EmptyState } from '@/components/ui/EmptyState'
 import { FilterBar } from '@/components/ui/FilterBar'
@@ -11,6 +12,7 @@ import { Skeleton } from '@/components/ui/Skeleton'
 import { SortableTable } from '@/components/ui/SortableTable'
 import type { Column } from '@/components/ui/SortableTable'
 import { useApproveEngagementImportDraft, useArchiveEngagement, useCreateEngagementFromCharter, useEngagementImportDrafts, useEngagements, useRejectEngagementImportDraft, useUpdateEngagementImportDraft } from '@/hooks/useEngagements'
+import { useServiceCatalogOptions } from '@/hooks/useServiceCatalogOptions'
 import type { EngagementImportDraftRecord, EngagementUpdatePayload } from '@/services/accountWorkspace'
 import type { Account } from '@/types/account'
 import type { EngagementHealthStatus, EngagementRecord, EngagementRenewalRisk, EngagementRenewalStatus, EngagementStatus } from '@/types/v3'
@@ -41,6 +43,7 @@ export function EngagementsPanel({ account }: { account: Account }) {
   const { updateEngagementImportDraft, isLoading: savingDraft } = useUpdateEngagementImportDraft()
   const { approveEngagementImportDraft, isLoading: approvingDraft } = useApproveEngagementImportDraft()
   const { rejectEngagementImportDraft, isLoading: rejectingDraft } = useRejectEngagementImportDraft()
+  const { serviceLineOptions, isLoading: loadingServiceLines, error: serviceLineCatalogError } = useServiceCatalogOptions()
   const reviewDrafts = useMemo(() => drafts.filter(draft => draft.draftStatus === 'ready_for_review'), [drafts])
 
   const ownerOptions = useMemo(() => {
@@ -325,6 +328,9 @@ export function EngagementsPanel({ account }: { account: Account }) {
                 key={draft.id}
                 draft={draft}
                 busy={draftBusy}
+                serviceLineOptions={serviceLineOptions}
+                loadingServiceLines={loadingServiceLines}
+                serviceLineCatalogError={serviceLineCatalogError}
                 onSave={saveDraft}
                 onApprove={approveDraft}
                 onReject={rejectDraft}
@@ -393,7 +399,7 @@ export function EngagementsPanel({ account }: { account: Account }) {
 
 interface EngagementDraftFormState {
   name: string
-  serviceLines: string
+  serviceLines: string[]
   value: string
   startDate: string
   endDate: string
@@ -407,12 +413,18 @@ interface EngagementDraftFormState {
 function EngagementDraftReviewCard({
   draft,
   busy,
+  serviceLineOptions,
+  loadingServiceLines,
+  serviceLineCatalogError,
   onSave,
   onApprove,
   onReject,
 }: {
   draft: EngagementImportDraftRecord
   busy: boolean
+  serviceLineOptions: string[]
+  loadingServiceLines: boolean
+  serviceLineCatalogError: string
   onSave: (draft: EngagementImportDraftRecord, payload: EngagementUpdatePayload) => Promise<void>
   onApprove: (draft: EngagementImportDraftRecord) => Promise<void>
   onReject: (draft: EngagementImportDraftRecord, reason: string) => Promise<void>
@@ -431,8 +443,13 @@ function EngagementDraftReviewCard({
     setRejectError('')
   }, [draft])
 
-  function updateField(field: keyof EngagementDraftFormState, value: string) {
+  function updateField(field: Exclude<keyof EngagementDraftFormState, 'serviceLines'>, value: string) {
     setForm(current => ({ ...current, [field]: value }))
+    if (formError) setFormError('')
+  }
+
+  function updateServiceLines(serviceLines: string[]) {
+    setForm(current => ({ ...current, serviceLines }))
     if (formError) setFormError('')
   }
 
@@ -440,7 +457,7 @@ function EngagementDraftReviewCard({
     const value = Number(form.value || 0)
     return {
       name: form.name.trim(),
-      serviceLines: splitList(form.serviceLines),
+      serviceLines: form.serviceLines,
       contractValue: Number.isFinite(value) ? value : 0,
       startDate: dateInputToIso(form.startDate) ?? undefined,
       endDate: dateInputToIso(form.endDate),
@@ -457,7 +474,7 @@ function EngagementDraftReviewCard({
       setFormError('Engagement name is required.')
       return false
     }
-    if (splitList(form.serviceLines).length === 0) {
+    if (form.serviceLines.length === 0) {
       setFormError('Add at least one service line.')
       return false
     }
@@ -514,7 +531,15 @@ function EngagementDraftReviewCard({
 
       <div className="mt-5 grid gap-3 lg:grid-cols-2">
         <DraftField label="Engagement name" value={form.name} onChange={value => updateField('name', value)} />
-        <DraftField label="Service lines" value={form.serviceLines} onChange={value => updateField('serviceLines', value)} />
+        <ServiceLineMultiSelect
+          label="Service lines"
+          selected={form.serviceLines}
+          options={serviceLineOptions}
+          onChange={updateServiceLines}
+          required
+          isLoading={loadingServiceLines}
+          catalogError={serviceLineCatalogError}
+        />
         <DraftField label="Contract value" value={form.value} type="number" onChange={value => updateField('value', value)} />
         <DraftField label="Notice period days" value={form.noticePeriodDays} type="number" onChange={value => updateField('noticePeriodDays', value)} />
         <DraftField label="Start date" value={form.startDate} type="date" onChange={value => updateField('startDate', value)} />
@@ -778,7 +803,7 @@ function isUrgentRenewalStatus(status: EngagementRenewalStatus) {
 function draftToForm(draft: EngagementImportDraftRecord): EngagementDraftFormState {
   return {
     name: draft.name,
-    serviceLines: draft.serviceLines.join(', '),
+    serviceLines: draft.serviceLines,
     value: String(draft.contractValue ?? draft.value ?? 0),
     startDate: isoToDateInput(draft.renewalTerms.startDate),
     endDate: isoToDateInput(draft.renewalTerms.endDate),

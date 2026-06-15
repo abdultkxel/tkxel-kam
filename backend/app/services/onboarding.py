@@ -577,6 +577,7 @@ class OnboardingService:
             setattr(draft, field, value)
         if engagement_updates is not None:
             self._update_engagement_drafts(draft, engagement_updates)
+        self._refresh_editable_missing_fields(draft)
         changed_labels = self._draft_update_changed_labels(before_notification, self._draft_update_notification_value(draft))
         self.audit.log(
             module="account_onboarding_workspace",
@@ -637,6 +638,35 @@ class OnboardingService:
                     engagement.end_date,
                     engagement.notice_period_days,
                 )
+
+    def _refresh_editable_missing_fields(self, draft: OnboardingDraft) -> None:
+        draft.missing_fields = [
+            field for field in list(draft.missing_fields or [])
+            if not self._editable_missing_field_is_resolved(draft, field)
+        ]
+
+    @staticmethod
+    def _editable_missing_field_is_resolved(draft: OnboardingDraft, field: str) -> bool:
+        if "Account name was not found" in field:
+            return bool(draft.account_name)
+        if "Project name was not found" in field:
+            return bool(draft.project_name)
+        if "Company website was not found" in field:
+            return bool(draft.company_url)
+        if "Service lines were not found" in field or "Service lines were not supported" in field:
+            return bool(draft.engagement_drafts) and all(bool(engagement.service_lines) for engagement in draft.engagement_drafts)
+        if "Commercial value was not found" in field or "Commercial value was not supported" in field:
+            return bool(draft.engagement_drafts) and all(float(engagement.value or 0) > 0 for engagement in draft.engagement_drafts)
+        if "Engagement start date was not found" in field or "Start date was not supported" in field:
+            return bool(draft.engagement_drafts) and all(bool(engagement.start_date) for engagement in draft.engagement_drafts)
+        if "Engagement end date was not found" in field or "End date was not supported" in field:
+            return bool(draft.engagement_drafts) and all(bool(engagement.end_date) for engagement in draft.engagement_drafts)
+        if "Renewal notice period was not found" in field or "Notice period was not supported" in field:
+            return bool(draft.engagement_drafts) and all(
+                engagement.notice_period_days is not None or engagement.notice_deadline is not None
+                for engagement in draft.engagement_drafts
+            )
+        return False
 
     def approve_draft(self, draft_id: str, current_user: User) -> OnboardingDraftRead:
         draft = self._get_draft_or_404(draft_id)
@@ -2464,15 +2494,14 @@ class OnboardingService:
         return owner
 
     def _create_engagement(self, account: Account, draft: OnboardingDraftEngagement, primary_owner: User, current_user: User) -> Engagement:
-        owner = self._get_user_if_active(draft.owner_id) or primary_owner
         ops_lead = self._get_user_if_active(draft.ops_lead_id)
-        self.account_service._ensure_owner_is_eligible(owner, "primary_am")
+        self.account_service._ensure_owner_is_eligible(primary_owner, "primary_am")
         engagement = Engagement(
             account_id=account.id,
             name=draft.name,
-            status="draft",
-            owner_id=owner.id,
-            owner_name=owner.full_name,
+            status="active" if account.lifecycle_status == "Active" else "draft",
+            owner_id=primary_owner.id,
+            owner_name=primary_owner.full_name,
             ops_lead_id=ops_lead.id if ops_lead else draft.ops_lead_id,
             ops_lead_name=ops_lead.full_name if ops_lead else draft.ops_lead_name,
             service_lines=list(draft.service_lines),
@@ -2750,7 +2779,10 @@ class OnboardingService:
         return {
             "id": engagement.id,
             "name": engagement.name,
+            "service_lines": list(engagement.service_lines or []),
             "value": float(engagement.value or 0),
+            "delivery_status": engagement.delivery_status,
+            "start_date": OnboardingService._datetime_notification_value(engagement.start_date),
             "end_date": OnboardingService._datetime_notification_value(engagement.end_date),
             "renewal_date": OnboardingService._datetime_notification_value(engagement.renewal_date),
             "notice_deadline": OnboardingService._datetime_notification_value(engagement.notice_deadline),

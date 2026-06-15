@@ -85,7 +85,7 @@ def stakeholder_payload(**overrides) -> StakeholderCreateRequest:
         "email": "mina.sponsor@example.com",
         "phone": "+1 555 0199",
         "linkedin_url": "https://www.linkedin.com/in/mina-sponsor",
-        "role": "executive_sponsor",
+        "role": "Executive Sponsor",
         "influence": "critical",
         "relationship_strength": "strong",
         "sentiment": "positive",
@@ -141,7 +141,7 @@ def test_create_update_and_archive_stakeholder_emit_timeline_events(db_session: 
 
     created = service.create(account.id, stakeholder_payload(), kam)
     assert created.name == "Mina Sponsor"
-    assert created.role == "executive_sponsor"
+    assert created.role == "Executive Sponsor"
     assert created.linkedin_url == "https://www.linkedin.com/in/mina-sponsor"
     assert created.sensitive_fields_redacted is False
 
@@ -150,6 +150,7 @@ def test_create_update_and_archive_stakeholder_emit_timeline_events(db_session: 
         StakeholderUpdateRequest(
             sentiment="neutral",
             relationship_strength="developing",
+            role="Board Sponsor",
             linkedin_url="https://www.linkedin.com/in/mina-renamed",
             notes="Sponsor wants clearer delivery proof.",
         ),
@@ -157,6 +158,7 @@ def test_create_update_and_archive_stakeholder_emit_timeline_events(db_session: 
     )
     assert updated.sentiment == "neutral"
     assert updated.relationship_strength == "developing"
+    assert updated.role == "Board Sponsor"
     assert updated.linkedin_url == "https://www.linkedin.com/in/mina-renamed"
 
     archived = service.delete(created.id, kam)
@@ -453,7 +455,7 @@ def test_org_chart_redacts_sensitive_identity_fields_for_unauthorized_viewer(db_
     assert node.name == "Sensitive Stakeholder"
     assert node.title is None
     assert node.linkedin_url is None
-    assert node.role == "executive_sponsor"
+    assert node.role == "Executive Sponsor"
     assert node.sensitive_fields_redacted is True
 
 

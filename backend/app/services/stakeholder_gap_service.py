@@ -104,7 +104,7 @@ class StakeholderGapService:
         latest_interaction_at: datetime | None,
         now: datetime,
     ) -> list[DetectedStakeholderGap]:
-        roles = {stakeholder.role for stakeholder in active_stakeholders}
+        roles = self._role_lookup(active_stakeholders)
         influences = {stakeholder.influence for stakeholder in active_stakeholders}
         gaps: list[DetectedStakeholderGap] = []
         rules = self.config.list_active_rules()
@@ -206,17 +206,18 @@ class StakeholderGapService:
         now: datetime,
     ) -> DetectedStakeholderGap | None:
         condition_type = condition.get("type")
-        roles = {stakeholder.role for stakeholder in active_stakeholders}
+        roles = self._role_lookup(active_stakeholders)
         influences = {stakeholder.influence for stakeholder in active_stakeholders}
         evidence = self._coverage_evidence(account_id, active_stakeholders)
         if condition_type == "missing_role":
             role = condition.get("role")
-            if role and role not in roles:
+            if role and not roles.intersection(self._role_value_keys(str(role))):
                 return DetectedStakeholderGap(rule_key=rule_key, severity=severity, title=title, description=description, evidence={**evidence, "missing_role": role})
             return None
         if condition_type == "missing_any_role":
-            required_roles = set(condition.get("roles") or [])
-            if required_roles and not roles.intersection(required_roles):
+            required_roles = {str(role) for role in condition.get("roles") or []}
+            required_role_keys = {key for role in required_roles for key in self._role_value_keys(role)}
+            if required_role_keys and not roles.intersection(required_role_keys):
                 return DetectedStakeholderGap(rule_key=rule_key, severity=severity, title=title, description=description, evidence={**evidence, "required_roles": sorted(required_roles)})
             return None
         if condition_type == "max_active_stakeholders":
@@ -260,6 +261,15 @@ class StakeholderGapService:
             "active_roles": sorted({stakeholder.role for stakeholder in active_stakeholders}),
             "stakeholders": [self._stakeholder_evidence(stakeholder) for stakeholder in active_stakeholders],
         }
+
+    @classmethod
+    def _role_lookup(cls, stakeholders: list[Stakeholder]) -> set[str]:
+        return {key for stakeholder in stakeholders for key in cls._role_value_keys(stakeholder.role)}
+
+    @staticmethod
+    def _role_value_keys(value: str) -> set[str]:
+        normalized = "_".join("".join(char.lower() if char.isalnum() else " " for char in value).split())
+        return {value, normalized} if normalized else {value}
 
     @staticmethod
     def _stakeholder_evidence(stakeholder: Stakeholder) -> dict:

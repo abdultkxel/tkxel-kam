@@ -1,12 +1,6 @@
 import type { Page } from '@/services/accountWorkspace'
 
-export type StakeholderRole =
-  | 'executive_sponsor'
-  | 'economic_buyer'
-  | 'technical_decision_maker'
-  | 'operational_poc'
-  | 'commercial_owner'
-  | 'influencer'
+export type StakeholderRole = string
 
 export type StakeholderInfluence = 'low' | 'medium' | 'high' | 'critical'
 export type StakeholderRelationshipStrength = 'unknown' | 'weak' | 'developing' | 'strong' | 'champion'
@@ -18,7 +12,7 @@ export type StakeholderGapSeverity = 'low' | 'medium' | 'high' | 'critical' | Cu
 export type StakeholderGapStatus = 'open' | 'resolved' | CustomStakeholderValue
 
 export interface StakeholderRoleOption {
-  value: StakeholderRole | CustomStakeholderValue
+  value: string
   label: string
 }
 

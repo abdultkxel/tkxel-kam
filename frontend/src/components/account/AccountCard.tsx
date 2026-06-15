@@ -2,6 +2,7 @@ import * as Tooltip from '@radix-ui/react-tooltip'
 import { ExternalLink, PenLine } from 'lucide-react'
 import { CSSProperties } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
+import { AccountStageBadge } from '@/components/account/AccountStageBadge'
 import { RAGBadge } from '@/components/ui/RAGBadge'
 import { Account } from '@/types/account'
 import { cn } from '@/utils/cn'
@@ -75,7 +76,7 @@ export function AccountCard({ account, className, style }: { account: Account; c
         <div className="mt-4 flex flex-wrap items-center gap-2">
           <RAGBadge tone={tone[account.riskStatus]}>{account.riskStatus}</RAGBadge>
           {isDraft ? <span className="rounded-full border border-brand-orange/30 bg-brand-orange/10 px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wider text-brand-orange">Draft</span> : null}
-          <span className="rounded-full border border-surface-border px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wider text-ink-secondary">{account.stage}</span>
+          <AccountStageBadge stage={account.stage} />
         </div>
       </article>
     </Tooltip.Provider>

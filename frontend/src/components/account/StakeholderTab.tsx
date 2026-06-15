@@ -30,7 +30,7 @@ import { cn } from '@/utils/cn'
 
 type BadgeTone = 'green' | 'amber' | 'red' | 'blue' | 'gray' | 'purple'
 
-const fallbackRoleOptions: StakeholderRoleOption[] = ['executive_sponsor', 'economic_buyer', 'technical_decision_maker', 'operational_poc', 'commercial_owner', 'influencer'].map(value => ({ value, label: titleize(value) }))
+const fallbackRoleOptions: StakeholderRoleOption[] = ['Executive Sponsor', 'Economic Buyer', 'Technical Decision Maker', 'Operational POC', 'Commercial Owner', 'Influencer'].map(value => ({ value, label: value }))
 const statusOptions: StakeholderStatus[] = ['active', 'inactive', 'left_company', 'do_not_contact']
 const sentimentOptions: StakeholderSentiment[] = ['negative', 'neutral', 'positive', 'champion']
 const relationshipScore: Record<string, number> = { unknown: 0, weak: 1, developing: 2, strong: 3, champion: 4 }
@@ -79,7 +79,7 @@ export function StakeholderTab({ account }: { account: Account }) {
 
   const activeStakeholders = summaryStakeholders.filter(stakeholder => stakeholder.status === 'active')
   const averageRelationship = averageRelationshipStrength(activeStakeholders)
-  const executiveSponsors = activeStakeholders.filter(stakeholder => stakeholder.role === 'executive_sponsor').length
+  const executiveSponsors = activeStakeholders.filter(stakeholder => roleKey(stakeholder.role) === 'executive_sponsor').length
   const selectedStakeholder = selectedStakeholderId
     ? summaryStakeholders.find(stakeholder => stakeholder.id === selectedStakeholderId) ?? stakeholders.find(stakeholder => stakeholder.id === selectedStakeholderId) ?? null
     : null
@@ -463,9 +463,10 @@ function averageRelationshipStrength(stakeholders: Stakeholder[]) {
 }
 
 function roleTone(role: string): BadgeTone {
-  if (role === 'executive_sponsor') return 'purple'
-  if (role === 'economic_buyer' || role === 'commercial_owner') return 'blue'
-  if (role === 'technical_decision_maker') return 'green'
+  const key = roleKey(role)
+  if (key === 'executive_sponsor') return 'purple'
+  if (key === 'economic_buyer' || key === 'commercial_owner') return 'blue'
+  if (key === 'technical_decision_maker') return 'green'
   return 'gray'
 }
 
@@ -504,4 +505,8 @@ function formatDate(value: string) {
 
 function titleize(value: string) {
   return value.replace(/_/g, ' ').replace(/\b\w/g, letter => letter.toUpperCase())
+}
+
+function roleKey(value: string) {
+  return value.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '')
 }

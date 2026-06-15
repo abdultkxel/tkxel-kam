@@ -72,9 +72,32 @@ describe('NotificationTray', () => {
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1))
     await userEvent.click(screen.getByRole('button', { name: /notifications/i }))
 
-    expect(await screen.findByText('Fathom integration failure')).toBeInTheDocument()
+    const latestNotification = await screen.findByText('Fathom integration failure')
+    const allNotificationsLink = screen.getByRole('link', { name: /all notifications/i })
+    expect(latestNotification).toBeInTheDocument()
+    expect(allNotificationsLink).toHaveAttribute('href', '/notifications')
+    expect(Boolean(latestNotification.compareDocumentPosition(allNotificationsLink) & Node.DOCUMENT_POSITION_FOLLOWING)).toBe(true)
     expect(screen.getByText(/1 unread updates/i)).toBeInTheDocument()
     expect(fetchMock).toHaveBeenCalledTimes(2)
+  })
+
+  it('shows the all notifications button when the latest list is empty', async () => {
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input)
+      if (!url.includes('/api/notifications')) return jsonResponse({})
+      return jsonResponse({ latest: [], total_count: 0, unread_count: 0 })
+    }))
+
+    render(
+      <MemoryRouter>
+        <NotificationTray />
+      </MemoryRouter>,
+    )
+
+    await userEvent.click(await screen.findByRole('button', { name: /^notifications$/i }))
+
+    expect(await screen.findByText('No notifications.')).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: /all notifications/i })).toHaveAttribute('href', '/notifications')
   })
 
   it('shows the unread notification count on the topbar bell', async () => {

@@ -103,6 +103,7 @@ interface ApiSourceDocument {
 interface ApiEngagement {
   id: string
   account_id: string
+  account_name?: string | null
   name: string
   description?: string | null
   status: EngagementRecord['status']
@@ -229,7 +230,7 @@ interface ApiDraftEngagement {
   service_lines: string[]
   value: number
   currency: string
-  delivery_status: string
+  delivery_status: EngagementDeliveryStatus
   start_date?: string | null
   end_date?: string | null
   renewal_date?: string | null
@@ -265,6 +266,7 @@ interface ApiOnboardingDraft {
   created_by_name: string
   approved_account_id?: string | null
   created_at: string
+  updated_at: string
   source_documents: ApiSourceDocument[]
   engagement_drafts: ApiDraftEngagement[]
 }
@@ -303,6 +305,7 @@ export interface OnboardingDraftView {
   id: string
   status: ApiOnboardingDraft['status']
   createdAt: string
+  updatedAt: string
   createdByName: string
   accountDraft: Account
   engagementDrafts: EngagementRecord[]
@@ -366,7 +369,10 @@ export interface UpdateOnboardingDraftPayload {
 export interface OnboardingEngagementDraftUpdatePayload {
   id: string
   name?: string
+  serviceLines?: string[]
   value?: number
+  deliveryStatus?: EngagementDeliveryStatus | null
+  startDate?: string | null
   endDate?: string | null
   renewalDate?: string | null
   noticeDeadline?: string | null
@@ -482,7 +488,7 @@ export interface EngagementTimelineParams {
 export interface EngagementCreatePayload {
   name: string
   description?: string | null
-  ownerId: string
+  ownerId?: string | null
   opsLeadId?: string | null
   serviceLines: string[]
   sourceLinks?: EngagementSourceLink[]
@@ -952,7 +958,10 @@ function buildDraftUpdatePayload(payload: UpdateOnboardingDraftPayload) {
 function buildOnboardingEngagementDraftUpdatePayload(payload: OnboardingEngagementDraftUpdatePayload) {
   const body: Record<string, unknown> = { id: payload.id }
   setIfDefined(body, 'name', payload.name)
+  setIfDefined(body, 'service_lines', payload.serviceLines)
   setIfDefined(body, 'value', payload.value)
+  setIfDefined(body, 'delivery_status', payload.deliveryStatus)
+  setIfDefined(body, 'start_date', payload.startDate)
   setIfDefined(body, 'end_date', payload.endDate)
   setIfDefined(body, 'renewal_date', payload.renewalDate)
   setIfDefined(body, 'notice_deadline', payload.noticeDeadline)
@@ -1019,10 +1028,10 @@ function mapDraft(draft: ApiOnboardingDraft): OnboardingDraftView {
     risk_status: 'warning',
     commercial_value: draft.commercial_value,
     currency: draft.currency,
-    health: { overall: 45, relationship: 45, usage: 45, delivery: 45, commercial: 45 },
+    health: { overall: 0, relationship: 0, usage: 0, delivery: 0, commercial: 0 },
     has_health_score: false,
     next_governance_at: null,
-    updated_at: draft.created_at,
+    updated_at: draft.updated_at,
     primary_owner: draft.primary_owner_name
       ? {
           id: draft.primary_owner_id ?? 'pending-owner',
@@ -1043,6 +1052,7 @@ function mapDraft(draft: ApiOnboardingDraft): OnboardingDraftView {
     id: draft.id,
     status: draft.status,
     createdAt: draft.created_at,
+    updatedAt: draft.updated_at,
     createdByName: draft.created_by_name,
     accountDraft: account,
     engagementDrafts: draft.engagement_drafts.map(item => mapDraftEngagement(item, draft)),
@@ -1135,6 +1145,7 @@ function mapDraftEngagement(engagement: ApiDraftEngagement, draft: ApiOnboarding
     opsLeadName: engagement.ops_lead_name ?? 'Unassigned',
     serviceLines: engagement.service_lines,
     value: Number(engagement.value ?? 0),
+    deliveryStatus: engagement.delivery_status,
     deliveryHealth: engagement.confidence,
     resourceDependency: engagement.resource_dependency ?? 'No resource dependency recorded.',
     commercialContext: engagement.commercial_context ?? 'No commercial context recorded yet.',
@@ -1243,7 +1254,7 @@ function mapEngagement(engagement: ApiEngagement, accountName: string): Engageme
   return {
     id: engagement.id,
     accountId: engagement.account_id,
-    accountName,
+    accountName: engagement.account_name ?? accountName,
     name: engagement.name,
     description: engagement.description ?? null,
     status: engagement.status,

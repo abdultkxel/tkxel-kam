@@ -1,34 +1,33 @@
-import { AlertTriangle, CheckCircle2, Download, FileSearch, FileText, Loader2, RefreshCw, UploadCloud, XCircle } from 'lucide-react'
+import { AlertTriangle, CheckCircle2, Download, FileSearch, FileText, Loader2, UploadCloud, XCircle } from 'lucide-react'
 import type { ReactNode } from 'react'
 import { useEffect, useMemo, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { toast } from 'sonner'
 import { ConfirmDialog } from '@/components/admin/ConfirmDialog'
+import { ServiceLineMultiSelect } from '@/components/account/ServiceLineMultiSelect'
 import { EmptyState } from '@/components/ui/EmptyState'
 import { PageHeader } from '@/components/ui/PageHeader'
 import { Skeleton } from '@/components/ui/Skeleton'
 import { useAuth } from '@/contexts/AuthContext'
 import { useCapabilities } from '@/hooks/useCapabilities'
 import { useRole } from '@/hooks/useRole'
+import { useServiceCatalogOptions } from '@/hooks/useServiceCatalogOptions'
 import { ApiError } from '@/services/api'
 import {
   approveOnboardingDraft,
   createOnboardingDraftFromUpload,
   downloadOnboardingDraftDocument,
-  getOnboardingDraft,
   listOnboardingAccountManagers,
   listOnboardingDrafts,
   OnboardingAccountManager,
   OnboardingDraftView,
   rejectOnboardingDraft,
-  replaceOnboardingDraftSourceDocuments,
-  retryOnboardingDraftDocumentExtraction,
   updateOnboardingDraft,
 } from '@/services/accountWorkspace'
-import type { EngagementRecord, SourceDocument } from '@/types/v3'
+import type { EngagementDeliveryStatus, EngagementRecord } from '@/types/v3'
 import { cn } from '@/utils/cn'
-import { formatCompactCurrency, formatDate, formatRelative } from '@/utils/formatters'
-import { allProjectCharterFiles, allSupportedSourceDocuments, PROJECT_CHARTER_ACCEPT, SOURCE_DOCUMENT_ACCEPT } from '@/utils/projectCharterFiles'
+import { formatCompactCurrency, formatDate } from '@/utils/formatters'
+import { allProjectCharterFiles, PROJECT_CHARTER_ACCEPT } from '@/utils/projectCharterFiles'
 
 type DraftEditState = {
   accountName: string
@@ -41,14 +40,19 @@ type DraftEditState = {
 type EngagementDraftEditState = {
   id: string
   name: string
+  serviceLines: string[]
   value: string
+  startDate: string
   sowEndDate: string
   noticeDeadline: string
+  deliveryStatus: string
   autoRenewal: string
   confidence: string
   opsLeadName: string
   sourceCitation: string
 }
+
+const deliveryStatusOptions: EngagementDeliveryStatus[] = ['not_started', 'planned', 'active', 'watch', 'blocked', 'at_risk', 'completed']
 
 const emptyDraftEdits: DraftEditState = {
   accountName: '',
@@ -63,10 +67,10 @@ export function Onboarding() {
   const navigate = useNavigate()
   const { capabilities } = useCapabilities()
   const { token } = useAuth()
+  const { serviceLineOptions, isLoading: loadingServiceLines, error: serviceLineCatalogError } = useServiceCatalogOptions()
   const [drafts, setDrafts] = useState<OnboardingDraftView[]>([])
   const [selectedId, setSelectedId] = useState('')
   const [files, setFiles] = useState<File[]>([])
-  const [replacementFiles, setReplacementFiles] = useState<File[]>([])
   const [accountManagers, setAccountManagers] = useState<OnboardingAccountManager[]>([])
   const [selectedManagerId, setSelectedManagerId] = useState('')
   const [loadingManagers, setLoadingManagers] = useState(false)
@@ -76,10 +80,8 @@ export function Onboarding() {
   const [engagementDraftEditErrors, setEngagementDraftEditErrors] = useState<Record<string, Partial<Record<keyof EngagementDraftEditState, string>>>>({})
   const [savingDraft, setSavingDraft] = useState(false)
   const [extracting, setExtracting] = useState(false)
-  const [replacingSource, setReplacingSource] = useState(false)
   const [rejectingDraft, setRejectingDraft] = useState(false)
   const [rejectConfirmDraft, setRejectConfirmDraft] = useState<OnboardingDraftView | null>(null)
-  const [retryingDocumentId, setRetryingDocumentId] = useState('')
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
 
@@ -104,7 +106,6 @@ export function Onboarding() {
     setEngagementDraftEdits(Object.fromEntries(selected.engagementDrafts.map(engagement => [engagement.id, engagementDraftToEditState(engagement)])))
     setDraftEditErrors({})
     setEngagementDraftEditErrors({})
-    setReplacementFiles([])
   }, [selected?.id, selectedOwnerId])
 
   useEffect(() => {
@@ -206,7 +207,7 @@ export function Onboarding() {
     setDraftEditErrors(current => ({ ...current, [field]: undefined }))
   }
 
-  function updateEngagementDraftEdit(engagementId: string, field: keyof EngagementDraftEditState, value: string) {
+  function updateEngagementDraftEdit<K extends keyof EngagementDraftEditState>(engagementId: string, field: K, value: EngagementDraftEditState[K]) {
     setEngagementDraftEdits(current => ({
       ...current,
       [engagementId]: {
@@ -237,7 +238,10 @@ export function Onboarding() {
       const value = Number(edit.value)
       const confidence = Number(edit.confidence)
       if (!edit.name.trim()) errors.name = 'Engagement name is required'
+      if (!edit.serviceLines.length) errors.serviceLines = 'Add at least one service line'
       if (!edit.value.trim() || !Number.isFinite(value) || value < 0) errors.value = 'Value must be zero or greater'
+      if (!edit.startDate) errors.startDate = 'Start date is required'
+      if (!deliveryStatusOptions.includes(edit.deliveryStatus as EngagementDeliveryStatus)) errors.deliveryStatus = 'Select a delivery status'
       if (!edit.confidence.trim() || !Number.isFinite(confidence) || confidence < 0 || confidence > 100) errors.confidence = 'Confidence must be between 0 and 100'
       if (edit.sowEndDate && edit.noticeDeadline && edit.noticeDeadline > edit.sowEndDate) errors.noticeDeadline = 'Notice deadline must be on or before SOW end'
       if (Object.keys(errors).length) nextEngagementErrors[engagement.id] = errors
@@ -303,44 +307,6 @@ export function Onboarding() {
       toast.error(err instanceof Error ? err.message : 'Draft could not be rejected')
     } finally {
       setRejectingDraft(false)
-    }
-  }
-
-  async function retryDocumentExtraction(selectedDraft: OnboardingDraftView, document: SourceDocument) {
-    if (!token) return
-    setRetryingDocumentId(document.id)
-    try {
-      await retryOnboardingDraftDocumentExtraction(token, selectedDraft.id, document.id, true)
-      const refreshed = await getOnboardingDraft(token, selectedDraft.id)
-      setDrafts(current => current.map(item => (item.id === refreshed.id ? refreshed : item)))
-      toast.success('Source extraction retried')
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : 'Source extraction could not be retried')
-    } finally {
-      setRetryingDocumentId('')
-    }
-  }
-
-  async function replaceSourceDocuments(selectedDraft: OnboardingDraftView) {
-    if (!token) return
-    if (!replacementFiles.length) {
-      toast.error('Select a new charter or SOW file')
-      return
-    }
-    if (!allSupportedSourceDocuments(replacementFiles)) {
-      toast.error('Only PDF, DOCX, TXT, CSV, or Excel source files are allowed')
-      return
-    }
-    setReplacingSource(true)
-    try {
-      const updated = await replaceOnboardingDraftSourceDocuments(token, selectedDraft.id, { files: replacementFiles })
-      setDrafts(current => current.map(item => (item.id === updated.id ? updated : item)))
-      setReplacementFiles([])
-      toast.success('New charter/SOW processed. Review the updated draft fields before approval.')
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : 'New charter/SOW could not update this draft')
-    } finally {
-      setReplacingSource(false)
     }
   }
 
@@ -482,7 +448,7 @@ export function Onboarding() {
                   </button>
                   <button className="tk-button-primary" onClick={() => approve(selected)} disabled={!canApproveOnboarding || selected.status !== 'ready_for_review' || selectedOwnerMissing}>
                     <CheckCircle2 className="h-4 w-4" />
-                    Approve draft
+                    Approve
                   </button>
                 </div>
               </div>
@@ -548,66 +514,6 @@ export function Onboarding() {
                   )}
                 </ReviewCard>
 
-                <ReviewCard title="SOW / charter source">
-                  <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(260px,340px)]">
-                    <div className="space-y-2">
-                      {selectedDocs.length ? (
-                        selectedDocs.map(document => (
-                          <DocumentRow
-                            key={document.id}
-                            document={document}
-                            onDownload={token ? () => downloadOnboardingDraftDocument(token, selected.id, document).catch(err => toast.error(err instanceof Error ? err.message : 'Document could not be downloaded')) : undefined}
-                            onRetry={token && selected.status === 'ready_for_review' ? () => retryDocumentExtraction(selected, document) : undefined}
-                            retrying={retryingDocumentId === document.id}
-                          />
-                        ))
-                      ) : (
-                        <div className="rounded-lg border border-surface-border bg-surface-secondary p-3 text-sm text-ink-secondary">No source document is attached to this draft.</div>
-                      )}
-                    </div>
-                    {selected.status === 'ready_for_review' ? (
-                      <div className="rounded-lg border border-dashed border-brand-blue/30 bg-blue-tint-20 p-4">
-                        <label className="flex min-h-[112px] cursor-pointer flex-col items-center justify-center rounded-md border border-dashed border-brand-blue/40 bg-white p-4 text-center">
-                          <UploadCloud className="h-6 w-6 text-brand-blue" />
-                          <span className="mt-2 text-sm font-semibold text-ink">Upload new charter / SOW</span>
-                          <span className="mt-1 max-w-[260px] text-xs leading-5 text-ink-secondary">Attach a new source file to refresh the draft details, then review the updated account and engagement fields.</span>
-                          <input
-                            type="file"
-                            multiple
-                            accept={SOURCE_DOCUMENT_ACCEPT}
-                            className="sr-only"
-                            aria-label="Upload new charter or SOW"
-                            onChange={event => {
-                              const selectedFiles = Array.from(event.target.files ?? [])
-                              if (!allSupportedSourceDocuments(selectedFiles)) {
-                                setReplacementFiles([])
-                                toast.error('Only PDF, DOCX, TXT, CSV, or Excel source files are allowed')
-                                event.currentTarget.value = ''
-                                return
-                              }
-                              setReplacementFiles(selectedFiles)
-                            }}
-                          />
-                        </label>
-                        {replacementFiles.length ? (
-                          <div className="mt-3 space-y-2">
-                            {replacementFiles.map(file => (
-                              <div key={`${file.name}-${file.size}`} className="flex items-center gap-2 rounded-md bg-white p-2 text-xs font-medium text-ink-secondary">
-                                <FileText className="h-4 w-4 text-brand-blue" />
-                                <span className="min-w-0 flex-1 truncate">{file.name}</span>
-                              </div>
-                            ))}
-                          </div>
-                        ) : null}
-                        <button className="tk-button-primary mt-3 w-full" type="button" onClick={() => void replaceSourceDocuments(selected)} disabled={replacingSource || !replacementFiles.length}>
-                          {replacingSource ? <Loader2 className="h-4 w-4 animate-spin" /> : <UploadCloud className="h-4 w-4" />}
-                          Update draft from new file
-                        </button>
-                      </div>
-                    ) : null}
-                  </div>
-                </ReviewCard>
-
                 {selected.engagementDrafts.map(engagement => {
                   const edit = engagementDraftEdits[engagement.id] ?? engagementDraftToEditState(engagement)
                   const errors = engagementDraftEditErrors[engagement.id] ?? {}
@@ -617,9 +523,34 @@ export function Onboarding() {
                         <div className="space-y-4">
                           <div className="grid gap-3 md:grid-cols-3">
                             <DraftTextInput label="Engagement name" value={edit.name} error={errors.name} onChange={value => updateEngagementDraftEdit(engagement.id, 'name', value)} />
+                            <ServiceLineMultiSelect
+                              label="Service lines"
+                              selected={edit.serviceLines}
+                              options={serviceLineOptions}
+                              onChange={value => updateEngagementDraftEdit(engagement.id, 'serviceLines', value)}
+                              error={errors.serviceLines}
+                              required
+                              isLoading={loadingServiceLines}
+                              catalogError={serviceLineCatalogError}
+                            />
                             <DraftTextInput label="Value" type="number" min="0" value={edit.value} error={errors.value} onChange={value => updateEngagementDraftEdit(engagement.id, 'value', value)} />
+                            <DraftTextInput label="Start date" type="date" value={edit.startDate} error={errors.startDate} onChange={value => updateEngagementDraftEdit(engagement.id, 'startDate', value)} />
                             <DraftTextInput label="SOW end" type="date" value={edit.sowEndDate} error={errors.sowEndDate} onChange={value => updateEngagementDraftEdit(engagement.id, 'sowEndDate', value)} />
                             <DraftTextInput label="Notice deadline" type="date" value={edit.noticeDeadline} error={errors.noticeDeadline} onChange={value => updateEngagementDraftEdit(engagement.id, 'noticeDeadline', value)} />
+                            <label className="space-y-1">
+                              <span className={cn('tk-label text-xs', errors.deliveryStatus ? 'text-rag-red' : '')}>Delivery status</span>
+                              <select
+                                className={cn('tk-input', errors.deliveryStatus ? 'border-rag-red focus:border-rag-red focus:ring-rag-red/30' : '')}
+                                value={edit.deliveryStatus}
+                                onChange={event => updateEngagementDraftEdit(engagement.id, 'deliveryStatus', event.target.value)}
+                              >
+                                <option value="">Select status</option>
+                                {deliveryStatusOptions.map(status => (
+                                  <option key={status} value={status}>{formatDeliveryStatus(status)}</option>
+                                ))}
+                              </select>
+                              {errors.deliveryStatus ? <p className="text-xs text-rag-red">{errors.deliveryStatus}</p> : null}
+                            </label>
                             <label className="space-y-1">
                               <span className="tk-label text-xs">Auto-renewal</span>
                               <select className="tk-input" value={edit.autoRenewal} onChange={event => updateEngagementDraftEdit(engagement.id, 'autoRenewal', event.target.value)}>
@@ -649,9 +580,12 @@ export function Onboarding() {
                       ) : (
                         <>
                           <div className="grid gap-3 md:grid-cols-3">
+                            <Field label="Service lines" value={engagement.serviceLines.join(', ') || 'Not provided'} />
                             <Field label="Value" value={formatCompactCurrency(engagement.value)} />
+                            <Field label="Start date" value={formatOptionalDate(engagement.renewalTerms.startDate)} />
                             <Field label="SOW end" value={formatOptionalDate(engagement.renewalTerms.endDate)} />
                             <Field label="Notice deadline" value={formatOptionalDate(engagement.renewalTerms.noticeDeadline)} />
+                            <Field label="Delivery status" value={formatDeliveryStatus(engagement.deliveryStatus ?? 'Not provided')} />
                             <Field label="Auto-renewal" value={engagement.renewalTerms.autoRenewal ? 'Yes' : 'No'} />
                             <Field label="Confidence" value={`${engagement.renewalTerms.confidence}%`} />
                             <Field label="Ops Lead" value={engagement.opsLeadName} />
@@ -667,11 +601,9 @@ export function Onboarding() {
 
                 <ReviewCard title="Source-backed account context">
                   <div className="grid gap-3 md:grid-cols-2">
-                    <Field label="Project" value={selected.accountDraft.projectName ?? 'Not provided'} />
-                    <Field label="Company URL" value={selected.accountDraft.companyUrl ?? 'Not provided'} />
-                    <Field label="LinkedIn URL" value={selected.accountDraft.linkedinUrl ?? 'Not provided'} />
-                    <Field label="Evidence" value={selected.sourceDocuments[0]?.citations[0]?.excerpt ?? 'No citation excerpt recorded'} multiline />
                     <Field label="Created by" value={selected.createdByName} />
+                    <Field label="Created at" value={formatDate(selected.createdAt)} />
+                    <Field label="Last updated at" value={formatDate(selected.updatedAt)} />
                   </div>
                 </ReviewCard>
               </section>
@@ -679,12 +611,16 @@ export function Onboarding() {
               <aside className="space-y-4">
                 <ReviewCard title="Review blockers">
                   <div className="space-y-3">
-                    {[...selected.missingFields, ...selected.conflicts].map(item => (
-                      <div key={item} className="flex gap-2 rounded-lg border border-brand-orange/20 bg-brand-orange/10 p-3 text-sm text-brand-orange">
-                        <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
-                        {item}
-                      </div>
-                    ))}
+                    {[...selected.missingFields, ...selected.conflicts].length ? (
+                      [...selected.missingFields, ...selected.conflicts].map(item => (
+                        <div key={item} className="flex gap-2 rounded-lg border border-brand-orange/20 bg-brand-orange/10 p-3 text-sm text-brand-orange">
+                          <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+                          {item}
+                        </div>
+                      ))
+                    ) : (
+                      <div className="rounded-lg border border-surface-border bg-surface-secondary p-3 text-sm text-ink-secondary">No review blockers.</div>
+                    )}
                   </div>
                 </ReviewCard>
                 {selected.status === 'approved' ? (
@@ -787,40 +723,6 @@ function Field({ label, value, multiline = false }: { label: string; value: Reac
   )
 }
 
-function DocumentRow({ document, onDownload, onRetry, retrying = false }: { document: SourceDocument; onDownload?: () => void; onRetry?: () => void; retrying?: boolean }) {
-  const canRetry = Boolean(onRetry && ['failed', 'needs_review', 'ocr_required'].includes(document.extractionStatus ?? ''))
-  return (
-    <div className="rounded-lg border border-surface-border p-3">
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-        <div className="min-w-0">
-          <p className="text-[10px] font-semibold uppercase tracking-wider text-ink-secondary">Attached source file</p>
-          <p className="mt-1 truncate text-sm font-semibold text-ink">{document.fileName ?? document.name}</p>
-          <p className="mt-1 text-xs text-ink-secondary">{document.type.replace('_', ' ')} | {document.pages} pages | {formatRelative(document.uploadedAt)}</p>
-        </div>
-        <div className="flex flex-wrap items-center gap-2">
-          {canRetry ? (
-            <button className="tk-icon-button" type="button" onClick={onRetry} disabled={retrying} title="Retry extraction" aria-label="Retry extraction">
-              {retrying ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
-            </button>
-          ) : null}
-          {onDownload ? (
-            <button className="tk-button-secondary" type="button" onClick={onDownload}>
-              <Download className="h-4 w-4" />
-              Download for verification
-            </button>
-          ) : null}
-        </div>
-      </div>
-      {document.extractionStatus && document.extractionStatus !== 'completed' ? (
-        <p className="mt-2 rounded-md bg-surface-secondary p-2 text-xs font-medium text-ink-secondary">
-          Extraction status: {document.extractionStatus.replace(/_/g, ' ')}
-          {document.extractionError ? ` · ${document.extractionError}` : ''}
-        </p>
-      ) : null}
-    </div>
-  )
-}
-
 function defaultAccountManagerId(managers: OnboardingAccountManager[], currentUser: { id: string; email: string }, canAssignOwners: boolean) {
   if (canAssignOwners) return ''
   const self = managers.find(manager => manager.id === currentUser.id || manager.email.toLowerCase() === currentUser.email.toLowerCase())
@@ -851,6 +753,10 @@ function accountManagerOptionLabel(manager: OnboardingAccountManager) {
   return manager.email ? `${manager.name} - ${manager.email}` : manager.name
 }
 
+function formatDeliveryStatus(value: string) {
+  return value.replace(/_/g, ' ').replace(/\b\w/g, letter => letter.toUpperCase())
+}
+
 function normalizeUrl(value: string) {
   const trimmed = value.trim()
   if (!trimmed) return ''
@@ -870,9 +776,12 @@ function engagementDraftToEditState(engagement: EngagementRecord): EngagementDra
   return {
     id: engagement.id,
     name: engagement.name,
+    serviceLines: engagement.serviceLines,
     value: String(engagement.value ?? 0),
+    startDate: toDateInputValue(engagement.renewalTerms.startDate),
     sowEndDate: toDateInputValue(engagement.renewalTerms.endDate),
     noticeDeadline: toDateInputValue(engagement.renewalTerms.noticeDeadline),
+    deliveryStatus: engagement.deliveryStatus ?? '',
     autoRenewal: engagement.renewalTerms.autoRenewal ? 'true' : 'false',
     confidence: String(engagement.renewalTerms.confidence ?? 0),
     opsLeadName: engagement.opsLeadName === 'Unassigned' ? '' : engagement.opsLeadName,
@@ -884,7 +793,10 @@ function buildEngagementDraftUpdatePayload(edit: EngagementDraftEditState) {
   return {
     id: edit.id,
     name: edit.name.trim(),
+    serviceLines: edit.serviceLines,
     value: Number(edit.value),
+    startDate: fromDateInputValue(edit.startDate),
+    deliveryStatus: edit.deliveryStatus as EngagementDeliveryStatus,
     endDate: fromDateInputValue(edit.sowEndDate),
     renewalDate: fromDateInputValue(edit.sowEndDate),
     noticeDeadline: fromDateInputValue(edit.noticeDeadline),

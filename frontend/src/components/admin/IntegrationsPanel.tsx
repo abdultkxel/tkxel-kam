@@ -14,13 +14,10 @@ import {
   IntegrationSyncLog,
   listIntegrationLogs,
   listIntegrations,
-  readSecurityAlertSettings,
   retryIntegration,
-  SecurityAlertSettings,
   syncIntegration,
   testIntegration,
   updateIntegration,
-  updateSecurityAlertSettings,
 } from '@/services/integrations'
 import { cn } from '@/utils/cn'
 import { formatRelative } from '@/utils/formatters'
@@ -47,7 +44,7 @@ interface ConfigState {
   autoCreateTaggedEvents: boolean
 }
 
-const visibleProviders = new Set<IntegrationProvider>(['google_calendar', 'ai_llm_gateway'])
+const visibleProviders = new Set<IntegrationProvider>()
 
 const providerHelp: Partial<Record<IntegrationProvider, string>> = {
   google_calendar: 'Outbound governance events',
@@ -257,13 +254,10 @@ function ConfigDrawer({
 export function IntegrationsPanel() {
   const { token } = useAuth()
   const [connections, setConnections] = useState<IntegrationConnection[]>([])
-  const [settings, setSettings] = useState<SecurityAlertSettings | null>(null)
-  const [alertEmail, setAlertEmail] = useState('')
   const [selected, setSelected] = useState<IntegrationConnection | null>(null)
   const [logs, setLogs] = useState<IntegrationSyncLog[]>([])
   const [loading, setLoading] = useState(true)
   const [loadingLogs, setLoadingLogs] = useState(false)
-  const [savingAlertEmail, setSavingAlertEmail] = useState(false)
   const [error, setError] = useState('')
   const [action, setAction] = useState('')
 
@@ -288,13 +282,8 @@ export function IntegrationsPanel() {
     setLoading(true)
     setError('')
     try {
-      const [integrationList, alertSettings] = await Promise.all([
-        listIntegrations(token),
-        readSecurityAlertSettings(token),
-      ])
+      const integrationList = await listIntegrations(token)
       setConnections(integrationList.filter(isVisibleAdminConnection))
-      setSettings(alertSettings)
-      setAlertEmail(alertSettings.administration_email)
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Integrations could not load')
     } finally {
@@ -332,43 +321,25 @@ export function IntegrationsPanel() {
     }
   }
 
-  async function saveAlertEmail(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault()
-    if (!token) return
-    setSavingAlertEmail(true)
-    try {
-      const saved = await updateSecurityAlertSettings(token, alertEmail)
-      setSettings(saved)
-      setAlertEmail(saved.administration_email)
-      toast.success('Alert email saved')
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : 'Alert email could not be saved')
-    } finally {
-      setSavingAlertEmail(false)
-    }
-  }
-
   return (
     <section className="rounded-lg border border-surface-border bg-white p-5 shadow-card">
       <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
         <div>
           <p className="text-[10px] font-extrabold uppercase tracking-widest text-brand-blue">External Integrations</p>
           <h2 className="text-base font-semibold text-ink">Admin-owned adapters</h2>
-          <p className="mt-1 text-sm text-ink-secondary">{connectedCount}/{connections.length || 2} connected</p>
+          <p className="mt-1 text-sm text-ink-secondary">{connections.length ? `${connectedCount}/${connections.length} connected` : 'No adapters shown'}</p>
         </div>
-        <button className="tk-icon-button" type="button" onClick={() => void load()} title="Refresh integrations">
-          <RefreshCcw className="h-4 w-4" />
-        </button>
       </div>
 
       {loading ? (
-        <div className="grid gap-3 sm:grid-cols-2">
-          {[0, 1].map(item => <div key={item} className="h-36 animate-pulse rounded-lg border border-surface-border bg-surface-secondary" />)}
+        <div className="flex items-center gap-2 rounded-lg border border-surface-border bg-surface-secondary p-4 text-sm text-ink-secondary">
+          <Loader2 className="h-4 w-4 animate-spin text-brand-blue" />
+          Loading admin-owned adapters
         </div>
       ) : null}
 
       {!loading && error ? <EmptyState icon={AlertTriangle} heading="Integrations could not load" body={error} action={{ label: 'Retry', onClick: () => void load() }} className="py-8" /> : null}
-      {!loading && !error && !connections.length ? <EmptyState icon={Settings} heading="No admin-owned adapters" body="Google Calendar and AI/LLM Gateway adapters are seeded when the backend starts." className="py-8" /> : null}
+      {!loading && !error && !connections.length ? <EmptyState icon={Settings} heading="No admin-owned adapters" body="No admin-owned adapters are currently shown in this workspace." className="py-8" /> : null}
 
       {!loading && !error && connections.length ? (
         <div className="grid gap-3 lg:grid-cols-2">
@@ -417,20 +388,6 @@ export function IntegrationsPanel() {
           ))}
         </div>
       ) : null}
-
-      <form className="mt-5 rounded-lg border border-surface-border p-4" onSubmit={saveAlertEmail} noValidate>
-        <div className="grid gap-3 sm:grid-cols-[1fr_auto] sm:items-end">
-          <label className="block">
-            <span className="tk-label">Administration alert email</span>
-            <input className="tk-input mt-2" value={alertEmail} onChange={event => setAlertEmail(event.target.value)} type="email" />
-          </label>
-          <button className="tk-button-primary" type="submit" disabled={savingAlertEmail}>
-            {savingAlertEmail ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
-            Save
-          </button>
-        </div>
-        {settings?.updated_by_name ? <p className="mt-2 text-xs text-ink-secondary">Updated by {settings.updated_by_name}</p> : null}
-      </form>
 
       <ConfigDrawer config={selected} logs={logs} loadingLogs={loadingLogs} open={Boolean(selected)} onOpenChange={open => !open && setSelected(null)} onSaved={replaceConnection} />
     </section>

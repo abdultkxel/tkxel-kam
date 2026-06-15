@@ -13,8 +13,8 @@ const mockCapabilities = vi.hoisted(() => ({
   can_update_portfolio_accounts: false,
 }))
 const configuredRoleOptions = vi.hoisted(() => [
-  { value: 'innovation_sponsor', label: 'Innovation Sponsor' },
-  { value: 'technical_advisor', label: 'Technical Advisor' },
+  { value: 'Innovation Sponsor', label: 'Innovation Sponsor' },
+  { value: 'Technical Advisor', label: 'Technical Advisor' },
 ])
 
 const stakeholder = vi.hoisted<Stakeholder>(() => ({
@@ -28,7 +28,7 @@ const stakeholder = vi.hoisted<Stakeholder>(() => ({
   email: 'jane@example.com',
   phone: null,
   linkedinUrl: 'https://www.linkedin.com/in/jane-sponsor',
-  role: 'executive_sponsor',
+  role: 'Executive Sponsor',
   influence: 'high',
   relationshipStrength: 'strong',
   sentiment: 'positive',

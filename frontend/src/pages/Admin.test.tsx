@@ -21,43 +21,6 @@ const roles = [
   },
 ]
 
-const integrations = [
-  {
-    id: 'int-google',
-    provider: 'google_calendar',
-    name: 'Google Calendar',
-    enabled: true,
-    status: 'connected',
-    auth_type: 'oauth',
-    settings_json: {},
-    credential_status: { configured: true },
-    scopes: [],
-    last_test_status: 'success',
-    failure_count: 0,
-    last_synced_at: '2026-06-13T10:00:00Z',
-    last_error: null,
-    created_at: '2026-06-13T00:00:00Z',
-    updated_at: '2026-06-13T00:00:00Z',
-  },
-  {
-    id: 'int-ai',
-    provider: 'ai_llm_gateway',
-    name: 'AI/LLM Gateway',
-    enabled: true,
-    status: 'error',
-    auth_type: 'api_key',
-    settings_json: {},
-    credential_status: { configured: false },
-    scopes: [],
-    last_test_status: 'failed',
-    failure_count: 1,
-    last_synced_at: null,
-    last_error: 'Health check failed',
-    created_at: '2026-06-13T00:00:00Z',
-    updated_at: '2026-06-13T00:00:00Z',
-  },
-]
-
 function jsonResponse(body: unknown) {
   return new Response(JSON.stringify(body), {
     status: 200,
@@ -89,7 +52,6 @@ describe('Admin', () => {
       if (url.includes('/api/admin/error-logs')) return jsonResponse(paginated([]))
       if (url.includes('/api/admin/integrations/sync-logs')) return jsonResponse(paginated([]))
       if (url.includes('/api/admin/integrations/imported-items')) return jsonResponse(paginated([]))
-      if (url.endsWith('/api/admin/integrations')) return jsonResponse(integrations)
       if (url.includes('/api/admin/notification-defaults')) return jsonResponse({ items: [] })
       if (url.includes('/api/admin/notification-scheduler/runs')) return jsonResponse(paginated([]))
       if (url.includes('/api/admin/sla-rules')) return jsonResponse(paginated([]))
@@ -130,12 +92,9 @@ describe('Admin', () => {
 
     expect(await screen.findByRole('button', { name: /open system health details/i })).toHaveTextContent('Healthy')
     expect(screen.getByRole('button', { name: /open active alerts details/i })).toHaveTextContent('2')
-    expect(screen.getByRole('button', { name: /open integration health details/i })).toHaveTextContent('1')
     expect(screen.getByRole('button', { name: /open failed jobs details/i })).toHaveTextContent('1')
+    expect(screen.queryByRole('button', { name: /open integration health details/i })).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: /open email triggers details/i })).not.toBeInTheDocument()
-
-    await user.click(screen.getByRole('button', { name: /open integration health details/i }))
-    expect(await screen.findByText(/external integrations/i)).toBeInTheDocument()
 
     await user.click(screen.getByRole('button', { name: /open active alerts details/i }))
     expect(await screen.findByRole('heading', { name: /^Alert Rules$/i })).toBeInTheDocument()
@@ -145,6 +104,42 @@ describe('Admin', () => {
 
     await user.click(screen.getByRole('button', { name: /open failed jobs details/i }))
     expect(await screen.findByText(/recent jobs/i)).toBeInTheDocument()
+  })
+
+  it('removes Admin Integrations entry points and keeps alert email under Settings', async () => {
+    stubAdminFetch()
+
+    render(
+      <MemoryRouter initialEntries={['/admin?section=settings']}>
+        <Admin />
+      </MemoryRouter>,
+    )
+
+    const allowedDomains = await screen.findByRole('heading', { name: /allowed email domains/i })
+    const alertEmail = await screen.findByLabelText(/administration alert email/i)
+    expect(alertEmail).toHaveValue('admin@tkxel.com')
+    expect(screen.queryByRole('tab', { name: /^integrations$/i })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /^integration health$/i })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /open integration health details/i })).not.toBeInTheDocument()
+
+    const alertEmailSection = alertEmail.closest('section')
+    expect(alertEmailSection).not.toBeNull()
+    expect(Boolean(allowedDomains.compareDocumentPosition(alertEmailSection!) & Node.DOCUMENT_POSITION_FOLLOWING)).toBe(true)
+    expect(vi.mocked(fetch).mock.calls.some(([input]) => String(input).endsWith('/api/admin/integrations'))).toBe(false)
+  })
+
+  it('removes the retired Admin Integrations tab and falls back to Users', async () => {
+    stubAdminFetch()
+
+    render(
+      <MemoryRouter initialEntries={['/admin?section=integrations']}>
+        <Admin />
+      </MemoryRouter>,
+    )
+
+    expect(await screen.findByText('Users Management')).toBeInTheDocument()
+    expect(screen.queryByRole('tab', { name: /^integrations$/i })).not.toBeInTheDocument()
+    expect(screen.queryByText(/external integrations/i)).not.toBeInTheDocument()
   })
 
   it('removes the Admin Timeline tab, status tile, and type editor', async () => {

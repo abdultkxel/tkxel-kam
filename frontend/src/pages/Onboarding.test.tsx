@@ -51,7 +51,7 @@ const onboardingDraft = {
   extraction_status: 'completed',
   account_name: 'AM Created Draft',
   project_name: 'Customer onboarding launch',
-  company_url: 'https://am-created.example.com',
+  company_url: null,
   linkedin_url: 'https://www.linkedin.com/company/am-created',
   lifecycle_status: 'Draft',
   segment: 'Growth',
@@ -62,7 +62,7 @@ const onboardingDraft = {
   primary_owner_name: 'Account Manager KAM',
   primary_owner_email: 'account.manager.user@tkxel.com',
   confidence: 82,
-  missing_fields: [],
+  missing_fields: ['Company website was not found in the uploaded source text.'],
   conflicts: [],
   source_citation: 'Uploaded SOW p1: source-backed intake.',
   created_by_name: 'Account Manager KAM',
@@ -137,33 +137,6 @@ const onboardingDraft = {
   ],
 }
 
-const reuploadedDraft = {
-  ...onboardingDraft,
-  account_name: 'Reuploaded Draft',
-  project_name: 'Replacement SOW Review',
-  source_documents: [
-    {
-      ...onboardingDraft.source_documents[0],
-      id: 'source-replacement',
-      title: 'Replacement SOW',
-      file_name: 'replacement-sow.pdf',
-      checksum_sha256: 'replacement-checksum',
-      extracted_text: 'Replacement uploaded SOW content.',
-      citations: [
-        {
-          id: 'citation-replacement',
-          source_document_id: 'source-replacement',
-          label: 'Replacement SOW: Account name',
-          page_number: 1,
-          excerpt: 'Reuploaded Draft',
-          field_key: 'account_name',
-          confidence: 84,
-        },
-      ],
-    },
-  ],
-}
-
 describe('Onboarding', () => {
   it('shows AM-created drafts and saves editable draft fields through the API', async () => {
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -181,18 +154,56 @@ describe('Onboarding', () => {
           },
         ])
       }
+      if (url.pathname.endsWith('/api/service-catalog')) {
+        return jsonResponse({
+          items: [
+            {
+              id: 'svc-account-onboarding',
+              slug: 'account_onboarding',
+              name: 'Account onboarding',
+              category: 'Strategy',
+              description: null,
+              tags: [],
+              is_active: true,
+              display_order: 1,
+              in_use_count: 0,
+            },
+            {
+              id: 'svc-development',
+              slug: 'development',
+              name: 'Development',
+              category: 'Engineering',
+              description: null,
+              tags: [],
+              is_active: true,
+              display_order: 2,
+              in_use_count: 0,
+            },
+          ],
+          total: 2,
+          page: 1,
+          page_size: 100,
+          pages: 1,
+        })
+      }
       if (url.pathname.endsWith('/api/onboarding/drafts/draft-am-owned') && method === 'PATCH') {
         const payload = JSON.parse(String(init?.body ?? '{}'))
         return jsonResponse({
           ...onboardingDraft,
           account_name: payload.account_name ?? onboardingDraft.account_name,
+          company_url: payload.company_url ?? onboardingDraft.company_url,
+          updated_at: '2026-05-31T00:00:00Z',
+          missing_fields: payload.company_url ? [] : onboardingDraft.missing_fields,
           engagement_drafts: onboardingDraft.engagement_drafts.map(engagement => {
             const update = payload.engagement_drafts?.find((item: { id: string }) => item.id === engagement.id)
             return update
               ? {
                   ...engagement,
                   name: update.name,
+                  service_lines: update.service_lines,
                   value: update.value,
+                  delivery_status: update.delivery_status,
+                  start_date: update.start_date,
                   end_date: update.end_date,
                   renewal_date: update.renewal_date,
                   notice_deadline: update.notice_deadline,
@@ -205,11 +216,8 @@ describe('Onboarding', () => {
           }),
         })
       }
-      if (url.pathname.endsWith('/api/onboarding/drafts/draft-am-owned/documents/upload') && method === 'POST') {
-        return jsonResponse(reuploadedDraft)
-      }
       if (url.pathname.endsWith('/api/onboarding/drafts/draft-am-owned/reject') && method === 'POST') {
-        return jsonResponse({ ...reuploadedDraft, status: 'rejected' })
+        return jsonResponse({ ...onboardingDraft, account_name: 'AM Edited Draft', status: 'rejected' })
       }
       if (url.pathname.endsWith('/api/onboarding/drafts')) {
         return jsonResponse({
@@ -242,14 +250,22 @@ describe('Onboarding', () => {
     expect(screen.queryByText('ARR Draft')).not.toBeInTheDocument()
     expect(screen.getByText('Engagements')).toBeInTheDocument()
     expect(screen.getByText('Missing fields')).toBeInTheDocument()
+    expect(screen.getByText('Company website was not found in the uploaded source text.')).toBeInTheDocument()
     expect(screen.queryByRole('heading', { name: /source citations/i })).not.toBeInTheDocument()
-    expect(screen.getByRole('heading', { name: /sow \/ charter source/i })).toBeInTheDocument()
+    expect(screen.queryByRole('heading', { name: /sow \/ charter source/i })).not.toBeInTheDocument()
     expect(screen.getAllByText('original-sow.pdf').length).toBeGreaterThan(0)
-    expect(screen.getByRole('button', { name: /download for verification/i })).toBeInTheDocument()
-    expect(screen.getByText(/upload new charter \/ sow/i)).toBeInTheDocument()
-    expect(screen.getByLabelText(/upload new charter or sow/i)).toBeInTheDocument()
+    const contextSection = screen.getByRole('heading', { name: /source-backed account context/i }).closest('section') as HTMLElement
+    expect(within(contextSection).getByText('Created by')).toBeInTheDocument()
+    expect(within(contextSection).getByText('Account Manager KAM')).toBeInTheDocument()
+    expect(within(contextSection).getByText('Created at')).toBeInTheDocument()
+    expect(within(contextSection).getByText('Last updated at')).toBeInTheDocument()
+    expect(within(contextSection).getAllByText('May 30, 2026')).toHaveLength(2)
+    expect(within(contextSection).queryByText('Project')).not.toBeInTheDocument()
+    expect(within(contextSection).queryByText('Company URL')).not.toBeInTheDocument()
+    expect(within(contextSection).queryByText('LinkedIn URL')).not.toBeInTheDocument()
+    expect(within(contextSection).queryByText('Evidence')).not.toBeInTheDocument()
     expect(screen.getByRole('button', { name: /^reject$/i })).not.toBeDisabled()
-    expect(screen.getByRole('button', { name: /approve draft/i })).not.toBeDisabled()
+    expect(screen.getByRole('button', { name: /^approve$/i })).not.toBeDisabled()
     await userEvent.click(screen.getByRole('button', { name: /^reject$/i }))
     expect(screen.getByRole('dialog', { name: /reject this draft/i })).toBeInTheDocument()
     expect(screen.getByText(/move it out of active review/i)).toBeInTheDocument()
@@ -260,6 +276,10 @@ describe('Onboarding', () => {
     expect(screen.getByLabelText(/assigned account manager/i)).toHaveValue('usr-am')
     await userEvent.clear(screen.getByLabelText(/account name/i))
     await userEvent.type(screen.getByLabelText(/account name/i), 'AM Edited Draft')
+    await userEvent.type(screen.getByLabelText(/company url/i), 'https://am-edited.example.com')
+    expect(screen.getByLabelText('Account onboarding')).toBeChecked()
+    expect(screen.getByLabelText(/start date/i)).toHaveValue('2026-05-30')
+    expect(screen.getByLabelText(/delivery status/i)).toHaveValue('active')
     await userEvent.clear(screen.getByLabelText(/engagement name/i))
     await userEvent.type(screen.getByLabelText(/engagement name/i), 'Edited project validation baseline')
     await userEvent.clear(screen.getByLabelText(/^value$/i))
@@ -279,16 +299,22 @@ describe('Onboarding', () => {
 
     await waitFor(() => expect(screen.getByRole('heading', { name: 'AM Edited Draft' })).toBeInTheDocument())
     expect(await screen.findByDisplayValue('Edited project validation baseline')).toBeInTheDocument()
+    expect(screen.queryByText('Company website was not found in the uploaded source text.')).not.toBeInTheDocument()
+    expect(screen.getByText('No review blockers.')).toBeInTheDocument()
     expect(fetchMock.mock.calls.some(call => {
       const [url, init] = call
       if (!String(url).endsWith('/api/onboarding/drafts/draft-am-owned') || init?.method !== 'PATCH') return false
       const payload = JSON.parse(String(init.body))
       const engagement = payload.engagement_drafts?.[0]
       return payload.account_name === 'AM Edited Draft'
+        && payload.company_url === 'https://am-edited.example.com'
         && payload.primary_owner_id === 'usr-am'
         && engagement?.id === 'engagement-draft-1'
         && engagement?.name === 'Edited project validation baseline'
+        && engagement?.service_lines?.[0] === 'Account onboarding'
         && engagement?.value === 25000
+        && engagement?.delivery_status === 'active'
+        && engagement?.start_date === '2026-05-30T00:00:00.000Z'
         && engagement?.end_date === '2026-09-30T00:00:00.000Z'
         && engagement?.notice_deadline === '2026-08-31T00:00:00.000Z'
         && engagement?.auto_renewal === true
@@ -297,17 +323,6 @@ describe('Onboarding', () => {
         && engagement?.source_citation === 'Reviewed SOW baseline note.'
     })).toBe(true)
     expect(fetchMock.mock.calls.some(call => String(call[0]).includes('/api/onboarding/drafts'))).toBe(true)
-
-    await userEvent.upload(screen.getByLabelText(/upload new charter or sow/i), new File(['replacement'], 'replacement-sow.pdf', { type: 'application/pdf' }))
-    expect(screen.getByText('replacement-sow.pdf')).toBeInTheDocument()
-    await userEvent.click(screen.getByRole('button', { name: /update draft from new file/i }))
-
-    await waitFor(() => expect(screen.getByRole('heading', { name: 'Reuploaded Draft' })).toBeInTheDocument())
-    expect(screen.getAllByText('replacement-sow.pdf').length).toBeGreaterThan(0)
-    expect(fetchMock.mock.calls.some(call => {
-      const [url, init] = call
-      return String(url).endsWith('/api/onboarding/drafts/draft-am-owned/documents/upload') && init?.method === 'POST' && init.body instanceof FormData
-    })).toBe(true)
 
     await userEvent.click(screen.getByRole('button', { name: /^reject$/i }))
     await userEvent.click(screen.getByRole('button', { name: /reject draft/i }))

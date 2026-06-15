@@ -282,18 +282,23 @@ def test_onboarding_draft_approval_creates_account_sources_and_engagement(client
     overview = overview_response.json()
     assert overview["account"]["name"] == "Northwind Workspace"
     assert overview["account"]["linkedin_url"] == "https://www.linkedin.com/company/customer-example"
-    assert overview["account"]["lifecycle_status"] == "Onboarding"
+    assert overview["account"]["lifecycle_status"] == "Active"
     assert overview["account"]["primary_owner"]["user_id"] == owner["id"]
+    assert overview["account"]["has_health_score"] is False
+    assert overview["account"]["health"] == {"overall": 0, "relationship": 0, "usage": 0, "delivery": 0, "commercial": 0}
     assert overview["engagements"]["total"] == 1
     assert overview["engagements"]["items"][0]["name"] == "Customer intelligence modernization"
-    assert overview["engagements"]["items"][0]["status"] == "draft"
+    assert overview["engagements"]["items"][0]["status"] == "active"
     assert overview["attachments"]["total"] == 1
 
     rollup_response = client.get(f"/api/accounts/{account_id}/health/rollup", headers=headers)
     assert rollup_response.status_code == 200
     rollup = rollup_response.json()
-    assert rollup["metric_version"] == "account-rollup-v1"
-    assert rollup["contributions"] == []
+    assert rollup["metric_version"] == "engagement-health-rollup-adapter-v1"
+    assert rollup["overall"] == 0
+    assert rollup["contributions"][0]["name"] == "Customer intelligence modernization"
+    assert rollup["contributions"][0]["score"] == 82
+    assert rollup["contributions"][0]["scoring_status"] == "pending_scoring_engine"
 
 
 def test_onboarding_draft_update_edits_engagement_baseline_before_approval(client: TestClient) -> None:
@@ -1414,6 +1419,62 @@ def test_onboarding_approval_requires_at_least_one_engagement_draft(client: Test
     assert error["message"] == "At least one engagement is required before approval."
 
 
+def test_onboarding_update_clears_editable_missing_field_blockers(client: TestClient) -> None:
+    headers = auth_headers(client)
+    owner = seeded_user(client, headers, "account_manager")
+    payload = draft_payload("Editable Missing Fields Workspace", owner["id"])
+    payload["company_url"] = None
+    payload["missing_fields"] = [
+        "Company website was not found in the uploaded source text.",
+        "Service lines were not found in the uploaded source text.",
+        "Service lines were not supported by extracted SOW text.",
+        "Commercial value was not found in the uploaded source text.",
+        "Commercial value was not supported by extracted SOW text.",
+        "Engagement start date was not found in the uploaded source text.",
+        "Start date was not supported by extracted SOW text.",
+        "Engagement end date was not found in the uploaded source text.",
+        "End date was not supported by extracted SOW text.",
+        "Renewal notice period was not found in the uploaded source text.",
+        "Notice period was not supported by extracted SOW text.",
+    ]
+    payload["engagement_drafts"][0]["service_lines"] = []
+    payload["engagement_drafts"][0]["value"] = 0
+    payload["engagement_drafts"][0]["start_date"] = None
+    payload["engagement_drafts"][0]["end_date"] = None
+    payload["engagement_drafts"][0]["notice_deadline"] = None
+    payload["engagement_drafts"][0]["notice_period_days"] = None
+
+    create_response = client.post("/api/onboarding/drafts", headers=headers, json=payload)
+    assert create_response.status_code == 201
+    draft = create_response.json()
+    assert len(draft["missing_fields"]) == 11
+
+    update_response = client.patch(
+        f"/api/onboarding/drafts/{draft['id']}",
+        headers=headers,
+        json={
+            "company_url": "https://editable-missing-fields.example.com",
+            "engagement_drafts": [
+                {
+                    "id": draft["engagement_drafts"][0]["id"],
+                    "service_lines": ["Development"],
+                    "value": 50000,
+                    "start_date": iso_days_from_now(0),
+                    "end_date": iso_days_from_now(120),
+                    "notice_deadline": iso_days_from_now(90),
+                }
+            ],
+        },
+    )
+
+    assert update_response.status_code == 200
+    updated = update_response.json()
+    assert updated["company_url"] == "https://editable-missing-fields.example.com"
+    assert updated["engagement_drafts"][0]["service_lines"] == ["Development"]
+    assert updated["engagement_drafts"][0]["value"] == 50000
+    assert updated["missing_fields"] == []
+
+
 def test_onboarding_drafts_are_visible_to_assigned_manager_not_unrelated_managers(client: TestClient) -> None:
     admin_headers = auth_headers(client)
     owner = seeded_user(client, admin_headers, "account_manager")
@@ -1533,19 +1594,31 @@ def test_engagement_list_normalizes_legacy_source_link_routes(client: TestClient
 def test_engagement_create_endpoint_validates_payload_calculates_notice_and_returns_shape(client: TestClient) -> None:
     headers = auth_headers(client)
     account_id, owner_id, _ = create_approved_account(client, headers, "Engagement Create API Workspace")
+    spoofed_owner = create_account_manager_user(client, headers, "spoofed.engagement.owner@tkxel.com", "Spoofed Engagement Owner")
 
-    create_response = client.post(f"/api/accounts/{account_id}/engagements", headers=headers, json=engagement_payload(owner_id))
+    create_payload = engagement_payload(owner_id)
+    create_payload.pop("owner_id")
+    create_response = client.post(f"/api/accounts/{account_id}/engagements", headers=headers, json=create_payload)
     assert create_response.status_code == 201
     created = create_response.json()
     assert ENGAGEMENT_RESPONSE_FIELDS.issubset(created.keys())
     assert created["account_id"] == account_id
     assert created["name"] == "Strategic SOW QA"
+    assert created["owner_id"] == owner_id
     assert created["contract_value"] == 87500
     assert created["health_score"] == 82
     assert created["source_links"][0]["url"] == "https://customer.example.com/sow"
     assert created["notice_deadline"].startswith(date_days_from_now(45))
     assert created["days_to_expiry"] == 120
     assert created["renewal_status"] == "upcoming_notice_window"
+
+    spoofed_owner_response = client.post(
+        f"/api/accounts/{account_id}/engagements",
+        headers=headers,
+        json=engagement_payload(spoofed_owner["id"], name="Spoofed owner attempt"),
+    )
+    assert spoofed_owner_response.status_code == 201
+    assert spoofed_owner_response.json()["owner_id"] == owner_id
 
     missing_name = engagement_payload(owner_id)
     missing_name.pop("name")
@@ -1583,6 +1656,7 @@ def test_engagement_create_from_charter_upload_creates_editable_draft_notificati
 
     admin_headers = auth_headers(client)
     owner = seeded_user(client, admin_headers, "account_manager")
+    other_owner = create_account_manager_user(client, admin_headers, "charter.other.owner@tkxel.com", "Charter Other Owner")
     kam_head = seeded_user(client, admin_headers, "kam_head")
     owner_headers = auth_headers(client, owner["email"], "User@12345")
     kam_headers = auth_headers(client, kam_head["email"], "User@12345")
@@ -1636,11 +1710,17 @@ Risks: POS integration dependency, holiday traffic surge
     update_response = client.patch(
         f"/api/engagement-drafts/{draft['id']}",
         headers=owner_headers,
-        json={"name": "Reviewed Restaurant Digital Experience", "contract_value": 260000, "risks": ["POS integration dependency"]},
+        json={
+            "name": "Reviewed Restaurant Digital Experience",
+            "owner_id": other_owner["id"],
+            "contract_value": 260000,
+            "risks": ["POS integration dependency"],
+        },
     )
     assert update_response.status_code == 200
     updated = update_response.json()
     assert updated["name"] == "Reviewed Restaurant Digital Experience"
+    assert updated["owner_id"] == other_owner["id"]
     assert updated["contract_value"] == 260000
 
     kam_updated_notifications = client.get("/api/notifications", headers=kam_headers, params={"trigger": "engagement_draft_updated"})
@@ -1657,6 +1737,8 @@ Risks: POS integration dependency, holiday traffic surge
     assert created is not None
     assert created.account_id == account_id
     assert created.name == "Reviewed Restaurant Digital Experience"
+    assert created.owner_id == owner["id"]
+    assert created.owner_name == owner["full_name"]
     assert float(created.value) == 260000
     db_session.refresh(source_document)
     assert source_document.engagement_id == created.id
@@ -1680,6 +1762,7 @@ def test_engagement_detail_endpoint_returns_detail_404_and_rejects_unauthorized_
     assert ENGAGEMENT_RESPONSE_FIELDS.issubset(detail.keys())
     assert detail["id"] == created["id"]
     assert detail["account_id"] == account_id
+    assert detail["account_name"] == "Engagement Detail API Workspace"
     assert detail["name"] == "Endpoint detail coverage"
 
     missing_response = client.get("/api/engagements/missing-engagement", headers=headers)
@@ -1694,6 +1777,7 @@ def test_engagement_detail_endpoint_returns_detail_404_and_rejects_unauthorized_
 def test_engagement_patch_endpoint_updates_recalculates_notice_and_validates_payload(client: TestClient) -> None:
     headers = auth_headers(client)
     account_id, owner_id, _ = create_approved_account(client, headers, "Engagement Patch API Workspace")
+    spoofed_owner = create_account_manager_user(client, headers, "patch.spoofed.owner@tkxel.com", "Patch Spoofed Owner")
     created = create_engagement_for_account(client, headers, account_id, owner_id, name="Endpoint patch coverage")
 
     update_response = client.patch(
@@ -1702,6 +1786,7 @@ def test_engagement_patch_endpoint_updates_recalculates_notice_and_validates_pay
         json={
             "name": "Endpoint patch updated",
             "description": "Updated description",
+            "owner_id": spoofed_owner["id"],
             "service_lines": ["Cloud", "Data"],
             "contract_value": 99000,
             "currency": "EUR",
@@ -1723,6 +1808,7 @@ def test_engagement_patch_endpoint_updates_recalculates_notice_and_validates_pay
     assert ENGAGEMENT_RESPONSE_FIELDS.issubset(updated.keys())
     assert updated["name"] == "Endpoint patch updated"
     assert updated["description"] == "Updated description"
+    assert updated["owner_id"] == owner_id
     assert updated["service_lines"] == ["Cloud", "Data"]
     assert updated["contract_value"] == 99000
     assert updated["currency"] == "EUR"
