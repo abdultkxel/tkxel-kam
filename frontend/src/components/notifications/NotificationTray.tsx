@@ -12,6 +12,8 @@ export function NotificationTray() {
   const [unread, setUnread] = useState(0)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
+  const unreadLabel = unread > 99 ? '99+' : String(unread)
+  const notificationLabel = unread ? `Notifications, ${unread} unread` : 'Notifications'
 
   function loadSummary(activeRef?: { active: boolean }) {
     if (!token) return
@@ -54,11 +56,15 @@ export function NotificationTray() {
   }
 
   return (
-    <Dialog.Root onOpenChange={open => { if (open) loadSummary() }}>
-      <Dialog.Trigger asChild>
-        <button className="tk-icon-button relative" aria-label="Notifications">
+      <Dialog.Root onOpenChange={open => { if (open) loadSummary() }}>
+        <Dialog.Trigger asChild>
+        <button className="tk-icon-button relative" aria-label={notificationLabel}>
           <Bell className="h-5 w-5" />
-          {unread ? <span className="absolute right-2 top-2 h-2 w-2 rounded-full bg-brand-orange" /> : null}
+          {unread ? (
+            <span className="absolute -right-1 -top-1 flex h-5 min-w-5 items-center justify-center rounded-full border-2 border-white bg-brand-orange px-1 text-[10px] font-extrabold leading-none text-white">
+              {unreadLabel}
+            </span>
+          ) : null}
         </button>
       </Dialog.Trigger>
       <Dialog.Portal>

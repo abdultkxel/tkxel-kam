@@ -210,53 +210,7 @@ class OnboardingService:
         resolved_manager_name = primary_owner.full_name if primary_owner else manager_name
         resolved_manager_email = primary_owner.email if primary_owner else manager_email
 
-        storage = ContentStorageService()
-        extraction_service = KycDocumentExtractionService(self.onboarding.db)
-        documents: list[SourceDocument] = []
-        extracted_parts: list[str] = []
-        structured_extractions: list[dict] = []
-        stored_files_to_cleanup: list[str] = []
-        try:
-            for upload in uploads:
-                stored = await storage.save_upload(upload)
-                stored_files_to_cleanup.append(stored.file_path)
-                checksum = self.account_service.file_checksum_for_upload(stored.file_path)
-                document = SourceDocument(
-                    title=self._title_from_file(stored.file_name),
-                    source_type=self._source_type_from_file(stored.file_name),
-                    file_name=stored.file_name,
-                    file_url=stored.file_path,
-                    storage_backend=stored.storage_backend,
-                    storage_path=stored.file_path,
-                    mime_type=stored.mime_type,
-                    size_bytes=stored.size_bytes,
-                    checksum_sha256=checksum,
-                    uploaded_by_id=current_user.id,
-                    uploaded_by_name=current_user.full_name,
-                    extraction_status="queued",
-                    confidence=75,
-                    pages=0,
-                    is_sensitive=False,
-                )
-                self.accounts.add_attachment(document)
-                extraction = extraction_service.extract_document(document, force=True)
-                if extraction.status == "completed":
-                    extraction_service.chunk_document(document, extraction=extraction, force=True)
-                    structured = SowExtractionService(self.onboarding.db).extract_structured_fields(document, extraction, allow_ai=use_ai)
-                    structured_extractions.append(structured.fields)
-                    extracted_text = extraction.raw_text or extraction.normalized_text
-                    if extracted_text:
-                        extracted_parts.append(f"Source: {stored.file_name}\n{extracted_text}")
-                else:
-                    document.extraction_status = extraction.status
-                documents.append(document)
-        except HTTPException:
-            for path in stored_files_to_cleanup:
-                storage.delete_stored_file(path)
-            self.onboarding.db.rollback()
-            raise
-
-        combined_text = "\n\n".join(extracted_parts)
+        documents, combined_text, structured_extractions = await self._save_uploaded_source_documents(uploads, current_user, use_ai=use_ai)
         inferred = self._infer_uploaded_draft_fields(
             combined_text,
             documents,
@@ -339,6 +293,102 @@ class OnboardingService:
         )
         self._notify_draft_created(draft, current_user)
         self.onboarding.commit()
+        return OnboardingDraftRead.model_validate(self._get_draft_or_404(draft.id))
+
+    async def replace_draft_source_documents(
+        self,
+        draft_id: str,
+        uploads: list[UploadFile],
+        current_user: User,
+        *,
+        use_ai: bool = True,
+    ) -> OnboardingDraftRead:
+        draft = self._get_draft_or_404(draft_id)
+        self.access.require_module_permission(current_user, "account_onboarding_workspace", "update")
+        self._ensure_draft_visible(draft, current_user)
+        self._ensure_open_draft(draft)
+        if not uploads:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="At least one replacement SOW, charter, or source document is required")
+        if len(uploads) > 10:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="At most 10 source documents can be uploaded for one onboarding draft")
+
+        before = self._draft_audit_value(draft)
+        before_notification = self._draft_update_notification_value(draft)
+        old_documents = list(draft.source_documents)
+        old_document_paths = [path for path in (self._stored_file_path(document) for document in old_documents) if path is not None]
+        documents, combined_text, structured_extractions = await self._save_uploaded_source_documents(uploads, current_user, use_ai=use_ai)
+        inferred = self._infer_uploaded_draft_fields(
+            combined_text,
+            documents,
+            structured_extractions=structured_extractions,
+            manager_name=draft.primary_owner_name,
+            manager_email=draft.primary_owner_email,
+            current_user=current_user,
+        )
+        duplicate = self._find_duplicate_account(inferred["account_name"], inferred["company_url"])
+        conflicts = list(inferred["conflicts"])
+        if duplicate:
+            conflicts.append(f"Possible duplicate account: {duplicate.name}")
+
+        for document in old_documents:
+            self.onboarding.db.delete(document)
+        for engagement in list(draft.engagement_drafts):
+            self.onboarding.db.delete(engagement)
+        self.onboarding.db.flush()
+
+        draft.account_name = inferred["account_name"]
+        draft.project_name = inferred["project_name"]
+        draft.company_url = inferred["company_url"]
+        draft.linkedin_url = inferred["linkedin_url"]
+        draft.lifecycle_status = ONBOARDING_DRAFT_LIFECYCLE_DEFAULT
+        draft.segment = inferred["segment"]
+        draft.region = inferred["region"]
+        draft.service_context = inferred["service_context"]
+        draft.commercial_summary = inferred["commercial_summary"]
+        draft.initial_notes = inferred["initial_notes"]
+        draft.commercial_value = inferred["commercial_value"]
+        draft.currency = inferred["currency"]
+        draft.confidence = inferred["confidence"]
+        draft.missing_fields = self._missing_fields_after_submitted_values(
+            inferred["missing_fields"],
+            account_name=inferred["account_name"],
+            project_name=inferred["project_name"],
+            company_url=inferred["company_url"],
+        )
+        draft.conflicts = conflicts
+        draft.duplicate_account_id = duplicate.id if duplicate else None
+        draft.source_citation = inferred["source_citation"]
+        draft.extraction_status = "completed" if combined_text.strip() else "needs_review"
+
+        for document in documents:
+            document.draft_id = draft.id
+            self._add_inferred_citations(document, combined_text, inferred)
+            self._notify_uploaded_source_status(draft, document, current_user)
+        self._add_uploaded_engagement_draft(
+            draft,
+            {
+                **inferred,
+                "primary_owner_name": draft.primary_owner_name or inferred["primary_owner_name"],
+                "primary_owner_email": draft.primary_owner_email or inferred["primary_owner_email"],
+            },
+        )
+
+        self.audit.log(
+            module="account_onboarding_workspace",
+            action="draft_source_documents_replace",
+            entity_type="onboarding_draft",
+            entity_id=draft.id,
+            actor=current_user,
+            before_value={**before, "source_documents": [{"id": item.id, "file_name": item.file_name} for item in old_documents]},
+            after_value={**self._draft_audit_value(draft), "source_documents": [{"id": item.id, "file_name": item.file_name} for item in documents]},
+        )
+        changed_labels = self._draft_update_changed_labels(before_notification, self._draft_update_notification_value(draft))
+        if changed_labels:
+            self._notify_draft_updated(draft, current_user, changed_labels)
+        self.onboarding.commit()
+        storage = ContentStorageService()
+        for path in old_document_paths:
+            storage.delete_stored_file(str(path))
         return OnboardingDraftRead.model_validate(self._get_draft_or_404(draft.id))
 
     async def extract_fields_from_uploads(
@@ -436,6 +486,68 @@ class OnboardingService:
             source_file_names=[document.file_name or document.title for document in documents],
             extraction_status="completed" if combined_text.strip() else "needs_review",
         )
+
+    async def _save_uploaded_source_documents(
+        self,
+        uploads: list[UploadFile],
+        current_user: User,
+        *,
+        use_ai: bool,
+    ) -> tuple[list[SourceDocument], str, list[dict]]:
+        storage = ContentStorageService()
+        extraction_service = KycDocumentExtractionService(self.onboarding.db)
+        documents: list[SourceDocument] = []
+        extracted_parts: list[str] = []
+        structured_extractions: list[dict] = []
+        stored_files_to_cleanup: list[str] = []
+        try:
+            for upload in uploads:
+                stored = await storage.save_upload(upload)
+                stored_files_to_cleanup.append(stored.file_path)
+                checksum = self.account_service.file_checksum_for_upload(stored.file_path)
+                document = SourceDocument(
+                    title=self._title_from_file(stored.file_name),
+                    source_type=self._source_type_from_file(stored.file_name),
+                    file_name=stored.file_name,
+                    file_url=stored.file_path,
+                    storage_backend=stored.storage_backend,
+                    storage_path=stored.file_path,
+                    mime_type=stored.mime_type,
+                    size_bytes=stored.size_bytes,
+                    checksum_sha256=checksum,
+                    uploaded_by_id=current_user.id,
+                    uploaded_by_name=current_user.full_name,
+                    extraction_status="queued",
+                    confidence=75,
+                    pages=0,
+                    is_sensitive=False,
+                )
+                self.accounts.add_attachment(document)
+                extraction = extraction_service.extract_document(document, force=True)
+                if extraction.status == "completed":
+                    extraction_service.chunk_document(document, extraction=extraction, force=True)
+                    structured = SowExtractionService(self.onboarding.db).extract_structured_fields(document, extraction, allow_ai=use_ai)
+                    structured_extractions.append(structured.fields)
+                    extracted_text = extraction.raw_text or extraction.normalized_text
+                    if extracted_text:
+                        extracted_parts.append(f"Source: {stored.file_name}\n{extracted_text}")
+                else:
+                    document.extraction_status = extraction.status
+                documents.append(document)
+        except HTTPException:
+            for path in stored_files_to_cleanup:
+                storage.delete_stored_file(path)
+            self.onboarding.db.rollback()
+            raise
+        except Exception as exc:
+            for path in stored_files_to_cleanup:
+                storage.delete_stored_file(path)
+            self.onboarding.db.rollback()
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Source document extraction failed: {str(exc)[:300]}",
+            ) from exc
+        return documents, "\n\n".join(extracted_parts), structured_extractions
 
     def update_draft(self, draft_id: str, payload: OnboardingDraftUpdateRequest, current_user: User) -> OnboardingDraftRead:
         draft = self._get_draft_or_404(draft_id)
@@ -1896,7 +2008,7 @@ class OnboardingService:
         return text or None
 
     def _notify_draft_created(self, draft: OnboardingDraft, current_user: User) -> None:
-        recipients = self._draft_creation_recipients(draft, exclude_user_id=current_user.id)
+        recipients = self._draft_creation_recipients(draft, actor_user_id=current_user.id)
         trigger = "account_duplicate_detected" if draft.duplicate_account_id else "account_draft_created"
         title = f"Draft account ready: {draft.account_name}"
         body = f"{current_user.full_name} created a draft account that needs approval."
@@ -2004,13 +2116,12 @@ class OnboardingService:
                 dedupe_scope=f"review:{document.updated_at.isoformat() if document.updated_at else document.id}",
             )
 
-    def _draft_creation_recipients(self, draft: OnboardingDraft, *, exclude_user_id: str | None = None) -> list[User]:
+    def _draft_creation_recipients(self, draft: OnboardingDraft, *, actor_user_id: str | None = None) -> list[User]:
         return self._unique_users(
             [
-                *self._draft_owner_recipients(draft, exclude_user_id=exclude_user_id),
-                *self._kam_head_recipients(exclude_user_id=exclude_user_id),
+                *self._draft_owner_recipients(draft, exclude_user_id=actor_user_id),
+                *self._kam_head_recipients(),
             ],
-            exclude_user_id=exclude_user_id,
         )
 
     def _draft_update_recipients(self, draft: OnboardingDraft, *, exclude_user_id: str | None = None) -> list[User]:
