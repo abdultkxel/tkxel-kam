@@ -2,10 +2,8 @@ import { Calculator, Save } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
 import { toast } from 'sonner'
 import { useAuth } from '@/contexts/AuthContext'
-import { useRole } from '@/hooks/useRole'
+import { useAccountOptions } from '@/hooks/useAccountOptions'
 import { createScoringMetric, listScoringMetrics, publishScoringMetric, ScoringMetric, updateScoringMetric } from '@/services/scoringSignalsTasks'
-import { useAccountStore } from '@/stores/accountStore'
-import { emitTimelineEvent } from '@/utils/emitTimelineEvent'
 
 type Dimension = 'relationship' | 'usage' | 'delivery' | 'commercial'
 
@@ -29,8 +27,7 @@ function weightedScore(health: Record<Dimension, number>, weights: Record<Dimens
 
 export function ScoringEngineBuilder() {
   const { token } = useAuth()
-  const user = useRole()
-  const accounts = useAccountStore(state => state.accounts)
+  const { accounts } = useAccountOptions()
   const [weights, setWeights] = useState<Record<Dimension, number>>({ relationship: 30, usage: 25, delivery: 25, commercial: 20 })
   const [thresholds, setThresholds] = useState({ green: 75, amber: 60, red: 45 })
   const [metrics, setMetrics] = useState<ScoringMetric[]>([])
@@ -107,23 +104,6 @@ export function ScoringEngineBuilder() {
         await publishScoringMetric(token, metric.id)
       }
       await loadMetrics()
-      accounts.forEach(account => {
-        emitTimelineEvent({
-          accountId: account.id,
-          eventType: 'calculator_change',
-          module: 'scoring',
-          title: 'Scoring calculator published',
-          description: 'Admin published scoring calculator v1.4 after previewing portfolio impact.',
-          performedBy: user.id,
-          performedByName: user.name,
-          beforeValue: { calculatorVersion: 'v1.3' },
-          afterValue: { calculatorVersion: 'v1.4', weights, thresholds },
-          tags: ['scoring-builder', 'calculator-v1.4'],
-          isSensitive: false,
-          isSystemGenerated: true,
-          isImmutable: true,
-        })
-      })
       toast.success('Scoring metrics published')
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Unable to publish scoring metrics'

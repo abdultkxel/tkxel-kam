@@ -1,6 +1,5 @@
 import { create } from 'zustand'
 import { nanoid } from 'nanoid'
-import { currentUser, users } from '@/data/mock'
 import { NotificationPreference, NotificationPreferenceMode, NotificationRecord, NotificationTrigger, EmailDigestMode } from '@/types/notification'
 
 const triggers: NotificationTrigger[] = [
@@ -33,35 +32,19 @@ const defaultPreferences: NotificationPreference[] = triggers.map(trigger => ({
 }))
 
 export const useNotificationStore = create<NotificationStore>((set, get) => ({
-  notifications: [
-    {
-      id: 'notif-001',
-      trigger: 'handover_requested',
-      userId: currentUser.id,
-      avatarInitials: currentUser.avatarInitials,
-      sentence: 'Ali Khan requested a handover summary review',
-      accountId: 'amd-001',
-      accountName: 'Signal',
-      contentPreview: 'Expansion handover is ready for leadership review.',
-      route: '/accounts/amd-001',
-      read: false,
-      timestamp: new Date(Date.now() - 35 * 60 * 1000).toISOString(),
-      emailQueued: false,
-    },
-  ],
+  notifications: [],
   preferences: defaultPreferences,
   digest: 'immediate',
   addNotification: notification => {
     const preference = get().preferences.find(item => item.trigger === notification.trigger)
     if (preference?.mode === 'off') return
     if (notification.sourceKey && get().notifications.some(item => item.trigger === notification.trigger && item.userId === notification.userId && item.sourceKey === notification.sourceKey)) return
-    const target = users.find(user => user.id === notification.userId)
     set(state => ({
       notifications: [
         {
           ...notification,
           id: nanoid(),
-          avatarInitials: target?.avatarInitials ?? currentUser.avatarInitials,
+          avatarInitials: '@',
           timestamp: new Date().toISOString(),
           read: false,
           emailQueued: preference?.mode === 'in_app_email',

@@ -1,5 +1,4 @@
 import { create } from 'zustand'
-import { governanceEvents } from '@/data/mock'
 import {
   completeGovernanceEvent,
   createGovernanceEvent,
@@ -37,7 +36,7 @@ interface GovernanceStore {
 }
 
 export const useGovernanceStore = create<GovernanceStore>(set => ({
-  events: governanceEvents,
+  events: [],
   loading: false,
   error: '',
   loaded: false,

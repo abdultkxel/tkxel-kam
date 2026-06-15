@@ -694,6 +694,7 @@ ACCOUNT_MANAGER_ACCESS = _keys(
     "onboarding:create_draft",
     "onboarding:update_draft",
     "onboarding:delete_draft",
+    "onboarding:approve_draft",
     "engagements:view",
     "engagements:create",
     "engagements:update",

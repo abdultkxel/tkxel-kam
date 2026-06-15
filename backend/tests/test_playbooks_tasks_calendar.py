@@ -51,7 +51,7 @@ def seeded_user(session: Session, role: str) -> User:
 
 def seed_account_and_engagement(session: Session) -> None:
     owner = seeded_user(session, "account_manager")
-    ops = seeded_user(session, "delivery_lead")
+    ops = seeded_user(session, "kam_head")
     account = Account(
         id="account-playbook",
         name="Playbook Customer",

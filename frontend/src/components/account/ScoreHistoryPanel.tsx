@@ -3,7 +3,6 @@ import { useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { useAuth } from '@/contexts/AuthContext'
 import { listScoreSnapshots } from '@/services/scoringSignalsTasks'
-import { useScoreStore } from '@/stores/scoreStore'
 import { ScoreSnapshot } from '@/types/account'
 import { cn } from '@/utils/cn'
 import { formatDate, formatRelative } from '@/utils/formatters'
@@ -15,13 +14,12 @@ function rowDelta(a: number, b: number) {
 
 export function ScoreHistoryPanel({ accountId }: { accountId: string }) {
   const { token } = useAuth()
-  const snapshots = useScoreStore(state => state.snapshots)
   const [remoteSnapshots, setRemoteSnapshots] = useState<ScoreSnapshot[]>([])
   const [loading, setLoading] = useState(Boolean(token))
   const [error, setError] = useState('')
   const accountSnapshots = useMemo(
-    () => (remoteSnapshots.length ? remoteSnapshots : snapshots.filter(snapshot => snapshot.accountId === accountId)).sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()),
-    [accountId, remoteSnapshots, snapshots],
+    () => remoteSnapshots.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()),
+    [remoteSnapshots],
   )
   const [selected, setSelected] = useState<string[]>([])
   const compare = selected.map(id => accountSnapshots.find(snapshot => snapshot.id === id)).filter(Boolean) as ScoreSnapshot[]

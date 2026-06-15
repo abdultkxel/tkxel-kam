@@ -5,32 +5,37 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { Accounts } from '@/pages/Accounts'
 import { useAccountStore } from '@/stores/accountStore'
 
+const mockedAuth = vi.hoisted(() => ({
+  user: {
+    id: 'usr-admin',
+    name: 'KAM Super Admin',
+    email: 'admin@tkxel.com',
+    role: 'super_admin',
+    avatarInitials: 'KA',
+  },
+  capabilities: {
+    permission_keys: ['accounts:view_portfolio', 'accounts:assign_owner', 'onboarding:view_all', 'onboarding:approve_draft'],
+    can_access_admin: true,
+    can_view_portfolio: true,
+    can_update_assigned_accounts: true,
+    can_update_portfolio_accounts: true,
+    can_assign_account_owners: true,
+    can_approve_onboarding: true,
+    can_view_sensitive_sources: true,
+    can_manage_sensitive_sources: true,
+    can_approve_kyc: true,
+    can_moderate_timeline: true,
+    can_export_reports: true,
+    can_configure_playbooks: true,
+    can_manage_tasks_portfolio: true,
+  },
+}))
+
 vi.mock('@/contexts/AuthContext', () => ({
   useAuth: () => ({
     token: 'test-token',
-    user: {
-      id: 'usr-admin',
-      name: 'KAM Super Admin',
-      email: 'admin@tkxel.com',
-      role: 'super_admin',
-      avatarInitials: 'KA',
-    },
-    capabilities: {
-      permission_keys: ['accounts:view_portfolio', 'accounts:assign_owner', 'onboarding:view_all', 'onboarding:approve_draft'],
-      can_access_admin: true,
-      can_view_portfolio: true,
-      can_update_assigned_accounts: true,
-      can_update_portfolio_accounts: true,
-      can_assign_account_owners: true,
-      can_approve_onboarding: true,
-      can_view_sensitive_sources: true,
-      can_manage_sensitive_sources: true,
-      can_approve_kyc: true,
-      can_moderate_timeline: true,
-      can_export_reports: true,
-      can_configure_playbooks: true,
-      can_manage_tasks_portfolio: true,
-    },
+    user: mockedAuth.user,
+    capabilities: mockedAuth.capabilities,
   }),
 }))
 
@@ -125,6 +130,29 @@ function draftPage(items = [] as typeof onboardingDraft[]) {
 describe('Accounts', () => {
   beforeEach(() => {
     window.localStorage.clear()
+    Object.assign(mockedAuth.user, {
+      id: 'usr-admin',
+      name: 'KAM Super Admin',
+      email: 'admin@tkxel.com',
+      role: 'super_admin',
+      avatarInitials: 'KA',
+    })
+    Object.assign(mockedAuth.capabilities, {
+      permission_keys: ['accounts:view_portfolio', 'accounts:assign_owner', 'onboarding:view_all', 'onboarding:approve_draft'],
+      can_access_admin: true,
+      can_view_portfolio: true,
+      can_update_assigned_accounts: true,
+      can_update_portfolio_accounts: true,
+      can_assign_account_owners: true,
+      can_approve_onboarding: true,
+      can_view_sensitive_sources: true,
+      can_manage_sensitive_sources: true,
+      can_approve_kyc: true,
+      can_moderate_timeline: true,
+      can_export_reports: true,
+      can_configure_playbooks: true,
+      can_manage_tasks_portfolio: true,
+    })
     useAccountStore.setState({
       segmentTags: ['Strategic', 'Enterprise', 'Growth', 'APAC', 'Tier-1'],
     })
@@ -274,6 +302,55 @@ describe('Accounts', () => {
   })
 
   it('shows ready-for-review onboarding drafts in the account list for portfolio reviewers', async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = new URL(String(input))
+      if (url.pathname.endsWith('/api/onboarding/drafts')) return jsonResponse(draftPage([onboardingDraft]))
+      return jsonResponse(paginated(1, 12, []))
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    render(
+      <MemoryRouter initialEntries={['/accounts']}>
+        <Routes>
+          <Route path="/accounts" element={<Accounts />} />
+          <Route path="/accounts/onboarding" element={<div>Onboarding review loaded</div>} />
+        </Routes>
+      </MemoryRouter>,
+    )
+
+    await userEvent.click(await screen.findByText('Draft Workspace'))
+
+    expect(await screen.findByText('Onboarding review loaded')).toBeInTheDocument()
+    expect(fetchMock.mock.calls.some(call => {
+      const url = String(call[0])
+      return url.includes('/api/onboarding/drafts') && url.includes('status=ready_for_review')
+    })).toBe(true)
+  })
+
+  it('shows ready-for-review onboarding drafts in the account list for account managers who created drafts', async () => {
+    Object.assign(mockedAuth.user, {
+      id: 'usr-am',
+      name: 'Account Manager KAM',
+      email: 'account.manager.user@tkxel.com',
+      role: 'account_manager',
+      avatarInitials: 'AM',
+    })
+    Object.assign(mockedAuth.capabilities, {
+      permission_keys: ['accounts:view_assigned', 'onboarding:view_assigned', 'onboarding:create_draft'],
+      can_access_admin: false,
+      can_view_portfolio: false,
+      can_update_assigned_accounts: true,
+      can_update_portfolio_accounts: false,
+      can_assign_account_owners: false,
+      can_approve_onboarding: false,
+      can_view_sensitive_sources: false,
+      can_manage_sensitive_sources: false,
+      can_approve_kyc: false,
+      can_moderate_timeline: false,
+      can_export_reports: false,
+      can_configure_playbooks: false,
+      can_manage_tasks_portfolio: false,
+    })
     const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
       const url = new URL(String(input))
       if (url.pathname.endsWith('/api/onboarding/drafts')) return jsonResponse(draftPage([onboardingDraft]))

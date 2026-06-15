@@ -1,123 +1,81 @@
 import { addDays } from 'date-fns'
 import { CheckCircle2, FileSearch, FileText, Loader2, UploadCloud } from 'lucide-react'
-import { useMemo, useState } from 'react'
+import { useState } from 'react'
 import { toast } from 'sonner'
 import { useAuth } from '@/contexts/AuthContext'
-import { useRole } from '@/hooks/useRole'
 import { uploadAccountAttachment } from '@/services/accountWorkspace'
 import { createKycDraft } from '@/services/kyc'
-import { useScoreActivityStore } from '@/stores/scoreActivityStore'
-import { useV3Store } from '@/stores/v3Store'
+import { createTask } from '@/services/playbooksTasks'
 import { Account } from '@/types/account'
-import { ScoreActivityTask } from '@/types/scoreActivity'
 import { KycDraft } from '@/types/kyc'
 import { SourceDocument } from '@/types/v3'
-import { emitTimelineEvent } from '@/utils/emitTimelineEvent'
 import { formatRelative } from '@/utils/formatters'
 
 export function KYCIntakeFlow({ account }: { account: Account }) {
-  const user = useRole()
   const { token } = useAuth()
-  const drafts = useV3Store(state => state.onboardingDrafts)
-  const addAccountKycIntakeDraft = useV3Store(state => state.addAccountKycIntakeDraft)
-  const addTask = useScoreActivityStore(state => state.addTask)
   const [selectedFiles, setSelectedFiles] = useState<File[]>([])
   const [extracting, setExtracting] = useState(false)
   const [latestBackendDraft, setLatestBackendDraft] = useState<KycDraft | null>(null)
   const [latestUploadedDocuments, setLatestUploadedDocuments] = useState<SourceDocument[]>([])
   const [error, setError] = useState<string | null>(null)
-  const accountDrafts = useMemo(
-    () =>
-      drafts
-        .filter(draft => draft.accountDraft.id === account.id || draft.kycDraft.accountId === account.id)
-        .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()),
-    [account.id, drafts],
-  )
-  const latestDraft = accountDrafts[0]
 
   async function runIntake() {
     if (!selectedFiles.length) {
       setError('Select at least one charter, SOW, or supporting document before running AI intake.')
       return
     }
+    if (!token) {
+      setError('You must be signed in to run AI intake.')
+      return
+    }
     const names = selectedFiles.map(file => file.name)
     setExtracting(true)
     setError(null)
-    let draftId = ''
     let sourceDocuments: SourceDocument[] = []
     try {
-      if (token) {
-        const uploaded: SourceDocument[] = []
-        for (const file of selectedFiles) {
-          uploaded.push(
-            await uploadAccountAttachment(token, account.id, {
-              file,
-              title: file.name,
-              extractNow: true,
-            }),
-          )
-        }
-        sourceDocuments = uploaded
-        setLatestUploadedDocuments(uploaded)
-        const draft = await createKycDraft(token, account.id, {
-          trigger_source: 'source_documents',
-          source_document_ids: uploaded.map(document => document.id),
-          notes: `Charter/SOW intake uploaded from stored source documents: ${names.join(', ')}`,
-        })
-        setLatestBackendDraft(draft)
-        draftId = draft.id
-      } else {
-        await new Promise(resolve => window.setTimeout(resolve, 800))
-        draftId = addAccountKycIntakeDraft(account, names, user.name)
+      const uploaded: SourceDocument[] = []
+      for (const file of selectedFiles) {
+        uploaded.push(
+          await uploadAccountAttachment(token, account.id, {
+            file,
+            title: file.name,
+            extractNow: true,
+          }),
+        )
       }
+      sourceDocuments = uploaded
+      setLatestUploadedDocuments(uploaded)
+      const draft = await createKycDraft(token, account.id, {
+        trigger_source: 'source_documents',
+        source_document_ids: uploaded.map(document => document.id),
+        notes: `Charter/SOW intake uploaded from stored source documents: ${names.join(', ')}`,
+      })
+      setLatestBackendDraft(draft)
+      await createTask(token, {
+        account_id: account.id,
+        owner_id: account.ownerId,
+        title: 'Update KYC from new charter/SOW intake',
+        description: 'AI agent created a new source-backed KYC draft. Review extracted fields, citations, missing items, and renewal terms before approval.',
+        due_at: addDays(new Date(), 2).toISOString(),
+        status: 'open',
+        priority: 'high',
+        source_type: 'kyc_draft',
+        source_record_id: draft.id,
+        notes: `Created from AI intake draft ${draft.id} using ${names.join(', ')}. Source documents: ${sourceDocuments.map(document => document.id).join(', ')}`,
+      })
     } catch (requestError) {
       setError(requestError instanceof Error ? requestError.message : 'KYC intake failed')
       setExtracting(false)
       return
     }
-    const task: ScoreActivityTask = {
-      id: `sat-kyc-${account.id}-${Date.now()}`,
-      templateId: 'ai-kyc-intake',
-      accountId: account.id,
-      accountName: account.name,
-      ownerId: account.ownerId,
-      ownerName: account.ownerName,
-      calculatorId: 'risk',
-      criterionId: 'kyc_agent_refresh',
-      title: 'Update KYC from new charter/SOW intake',
-      description: 'AI agent created a new source-backed KYC draft. Review extracted fields, citations, missing items, and renewal terms before approval.',
-      dueDate: addDays(new Date(), 2).toISOString(),
-      status: 'open',
-      priority: 'high',
-      workflowLane: 'due_soon',
-      evidenceNote: `Created from AI intake draft ${draftId} using ${names.join(', ')}.`,
-      createdAt: new Date().toISOString(),
-    }
-    addTask(task)
-    emitTimelineEvent({
-      accountId: account.id,
-      eventType: 'manual_note',
-      module: 'activity',
-      title: 'KYC update task created from charter/SOW intake',
-      description: `${task.title}. Owner: ${task.ownerName}.`,
-      performedBy: user.id,
-      performedByName: user.name,
-      sourceRecordId: task.id,
-      sourceRecordType: 'score_activity_task',
-      sourceRecordRoute: `/accounts/${account.id}?tab=kyc`,
-      metadata: { taskId: task.id, draftId, sourceDocuments: sourceDocuments.map(document => document.id), sourceDocumentNames: names },
-      isSensitive: false,
-      isSystemGenerated: true,
-      isImmutable: false,
-    })
     setExtracting(false)
     setSelectedFiles([])
     toast.success('AI intake added and KYC update task created')
   }
 
-  const latestStatus = latestBackendDraft?.status ?? latestDraft?.status
-  const latestConfidence = latestBackendDraft?.confidence ?? latestDraft?.confidence
-  const latestCreatedAt = latestBackendDraft?.created_at ?? latestDraft?.createdAt
+  const latestStatus = latestBackendDraft?.status
+  const latestConfidence = latestBackendDraft?.confidence
+  const latestCreatedAt = latestBackendDraft?.created_at
 
   return (
     <section className="tk-card overflow-hidden">

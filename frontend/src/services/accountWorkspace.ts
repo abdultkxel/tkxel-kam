@@ -143,6 +143,61 @@ interface ApiEngagement {
   source_documents?: ApiSourceDocument[]
 }
 
+interface ApiEngagementImportDraft {
+  id: string
+  account_id: string
+  source_document_id?: string | null
+  source_document_ids?: string[]
+  status: 'ready_for_review' | 'approved' | 'rejected'
+  name: string
+  description?: string | null
+  owner_id?: string | null
+  owner_name?: string | null
+  ops_lead_id?: string | null
+  ops_lead_name?: string | null
+  service_lines: string[]
+  source_links?: EngagementSourceLink[]
+  value?: number
+  contract_value?: number
+  currency: string
+  delivery_status: EngagementDeliveryStatus
+  commercial_status?: EngagementCommercialStatus
+  delivery_health?: number
+  health_score?: number
+  health_status?: EngagementHealthStatus
+  renewal_risk?: EngagementRenewalRisk
+  start_date?: string | null
+  end_date?: string | null
+  renewal_date?: string | null
+  notice_deadline?: string | null
+  notice_period_days?: number | null
+  days_to_expiry?: number | null
+  renewal_status?: EngagementRenewalStatus | null
+  auto_renewal: boolean
+  commercial_context?: string | null
+  resource_dependency?: string | null
+  resource_dependency_notes?: string | null
+  risks: string[]
+  stakeholder_drafts?: { name?: string | null; title?: string | null; email?: string | null }[]
+  source_citation?: string | null
+  confidence: number
+  missing_fields: string[]
+  created_by_id?: string | null
+  created_by_name: string
+  updated_by_id?: string | null
+  updated_by_name?: string | null
+  approved_by_id?: string | null
+  approved_by_name?: string | null
+  rejected_by_id?: string | null
+  rejected_by_name?: string | null
+  rejection_reason?: string | null
+  approved_engagement_id?: string | null
+  created_at: string
+  updated_at: string
+  decided_at?: string | null
+  source_documents?: ApiSourceDocument[]
+}
+
 interface ApiTimelineEvent {
   id: string
   account_id: string
@@ -292,6 +347,7 @@ export interface CreateDraftFromUploadPayload {
   managerId?: string
   managerEmail?: string
   managerName?: string
+  useAi?: boolean
 }
 
 export interface UpdateOnboardingDraftPayload {
@@ -465,6 +521,17 @@ export interface EngagementUpdatePayload {
   sourceCitation?: string | null
 }
 
+export interface EngagementImportDraftRecord extends EngagementRecord {
+  draftStatus: ApiEngagementImportDraft['status']
+  confidence: number
+  missingFields: string[]
+  sourceDocuments: SourceDocument[]
+  stakeholderDrafts: { name?: string | null; title?: string | null; email?: string | null }[]
+  createdByName: string
+  approvedEngagementId?: string | null
+  rejectionReason?: string | null
+}
+
 export async function listAccounts(token: string, params: URLSearchParams) {
   const query = params.toString()
   const page = await apiRequest<Page<ApiAccount>>(`/api/accounts${query ? `?${query}` : ''}`, { token })
@@ -546,6 +613,7 @@ export async function createOnboardingDraftFromUpload(token: string, payload: Cr
   if (payload.managerId?.trim()) body.append('manager_id', payload.managerId.trim())
   if (payload.managerName?.trim()) body.append('manager_name', payload.managerName.trim())
   if (payload.managerEmail?.trim()) body.append('manager_email', payload.managerEmail.trim())
+  if (payload.useAi !== undefined) body.append('use_ai', String(payload.useAi))
   return mapDraft(
     await apiRequest<ApiOnboardingDraft>('/api/onboarding/drafts/upload', {
       method: 'POST',
@@ -561,6 +629,7 @@ export async function extractOnboardingUploadFields(token: string, payload: Crea
   if (payload.linkedinUrl?.trim()) body.append('linkedin_url', normalizeUrl(payload.linkedinUrl.trim()))
   if (payload.managerName?.trim()) body.append('manager_name', payload.managerName.trim())
   if (payload.managerEmail?.trim()) body.append('manager_email', payload.managerEmail.trim())
+  if (payload.useAi !== undefined) body.append('use_ai', String(payload.useAi))
   return mapUploadExtraction(
     await apiRequest<ApiOnboardingUploadExtraction>('/api/onboarding/uploads/extract', {
       method: 'POST',
@@ -644,6 +713,12 @@ export async function listEngagements(token: string, accountId: string, params: 
   return { ...page, items: page.items.map(item => mapEngagement(item, '')) }
 }
 
+export async function listEngagementImportDrafts(token: string, accountId: string, params: URLSearchParams = new URLSearchParams()) {
+  const query = params.toString()
+  const page = await apiRequest<Page<ApiEngagementImportDraft>>(`/api/accounts/${accountId}/engagement-drafts${query ? `?${query}` : ''}`, { token })
+  return { ...page, items: page.items.map(mapEngagementImportDraft) }
+}
+
 export async function getEngagement(token: string, engagementId: string) {
   return mapEngagement(await apiRequest<ApiEngagement>(`/api/engagements/${engagementId}`, { token }), '')
 }
@@ -662,13 +737,41 @@ export async function createEngagement(token: string, accountId: string, payload
 export async function createEngagementFromCharter(token: string, accountId: string, file: File) {
   const body = new FormData()
   body.append('file', file)
-  return mapEngagement(
-    await apiRequest<ApiEngagement>(`/api/accounts/${accountId}/engagements/from-charter`, {
+  return mapEngagementImportDraft(
+    await apiRequest<ApiEngagementImportDraft>(`/api/accounts/${accountId}/engagements/from-charter`, {
       method: 'POST',
       token,
       body,
     }),
-    '',
+  )
+}
+
+export async function updateEngagementImportDraft(token: string, draftId: string, payload: EngagementUpdatePayload) {
+  return mapEngagementImportDraft(
+    await apiRequest<ApiEngagementImportDraft>(`/api/engagement-drafts/${draftId}`, {
+      method: 'PATCH',
+      token,
+      body: JSON.stringify(buildEngagementPayload(payload)),
+    }),
+  )
+}
+
+export async function approveEngagementImportDraft(token: string, draftId: string) {
+  return mapEngagementImportDraft(
+    await apiRequest<ApiEngagementImportDraft>(`/api/engagement-drafts/${draftId}/approve`, {
+      method: 'POST',
+      token,
+    }),
+  )
+}
+
+export async function rejectEngagementImportDraft(token: string, draftId: string, reason: string) {
+  return mapEngagementImportDraft(
+    await apiRequest<ApiEngagementImportDraft>(`/api/engagement-drafts/${draftId}/reject`, {
+      method: 'POST',
+      token,
+      body: JSON.stringify({ reason }),
+    }),
   )
 }
 
@@ -1007,6 +1110,78 @@ function mapDraftEngagement(engagement: ApiDraftEngagement, draft: ApiOnboarding
       sourceDocumentId: draft.source_documents[0]?.id ?? '',
       sourceCitation: engagement.source_citation ?? draft.source_citation ?? 'No source citation recorded.',
     },
+  }
+}
+
+function mapEngagementImportDraft(draft: ApiEngagementImportDraft): EngagementImportDraftRecord {
+  const rawEndDate = draft.end_date ?? null
+  const rawRenewalDate = draft.renewal_date ?? null
+  const rawNoticeDeadline = draft.notice_deadline ?? null
+  const sourceDocuments = draft.source_documents ?? []
+  const sourceDocumentIds = draft.source_document_ids ?? sourceDocuments.map(document => document.id)
+  const startDate = draft.start_date ?? draft.created_at
+  const contractValue = Number(draft.contract_value ?? draft.value ?? 0)
+  const healthScore = Number(draft.health_score ?? draft.delivery_health ?? draft.confidence ?? 0)
+  const daysToExpiry = draft.days_to_expiry === undefined ? (rawEndDate ? daysUntil(rawEndDate) : Number.NaN) : draft.days_to_expiry ?? Number.NaN
+  const renewalStatus = draft.renewal_status ?? computeRenewalStatus(rawEndDate, rawRenewalDate, rawNoticeDeadline)
+  return {
+    id: draft.id,
+    accountId: draft.account_id,
+    accountName: '',
+    name: draft.name,
+    description: draft.description ?? null,
+    status: 'draft',
+    ownerId: draft.owner_id ?? '',
+    ownerName: draft.owner_name ?? 'Unassigned',
+    opsLeadId: draft.ops_lead_id ?? '',
+    opsLeadName: draft.ops_lead_name ?? 'Unassigned',
+    serviceLines: draft.service_lines,
+    value: contractValue,
+    contractValue,
+    currency: draft.currency,
+    deliveryStatus: draft.delivery_status,
+    commercialStatus: draft.commercial_status,
+    deliveryHealth: healthScore,
+    healthScore,
+    healthStatus: draft.health_status,
+    renewalRisk: draft.renewal_risk,
+    renewalStatus,
+    resourceDependency: draft.resource_dependency_notes ?? draft.resource_dependency ?? 'No resource dependency recorded.',
+    resourceDependencyNotes: draft.resource_dependency_notes ?? draft.resource_dependency ?? null,
+    commercialContext: draft.commercial_context ?? 'No commercial context recorded yet.',
+    risks: draft.risks,
+    sourceDocumentIds,
+    sourceLinks: draft.source_links ?? [],
+    sourceCitation: draft.source_citation ?? null,
+    createdById: draft.created_by_id ?? null,
+    updatedById: draft.updated_by_id ?? null,
+    createdBy: draft.created_by_name,
+    updatedBy: draft.updated_by_name ?? null,
+    createdAt: draft.created_at,
+    updatedAt: draft.updated_at,
+    renewalTerms: {
+      startDate,
+      endDate: rawEndDate ?? '',
+      renewalDate: rawRenewalDate ?? rawEndDate ?? '',
+      noticeDeadline: rawNoticeDeadline ?? '',
+      noticePeriodDays: draft.notice_period_days ?? 0,
+      autoRenewal: draft.auto_renewal,
+      commercialExposure: contractValue,
+      daysToExpiry,
+      renewalStatus,
+      riskStatus: healthScore < 60 ? 'critical' : healthScore < 75 ? 'warning' : 'healthy',
+      confidence: draft.confidence,
+      sourceDocumentId: sourceDocumentIds[0] ?? '',
+      sourceCitation: draft.source_citation ?? 'No source citation recorded.',
+    },
+    draftStatus: draft.status,
+    confidence: draft.confidence,
+    missingFields: draft.missing_fields,
+    sourceDocuments: sourceDocuments.map(mapSourceDocument),
+    stakeholderDrafts: draft.stakeholder_drafts ?? [],
+    createdByName: draft.created_by_name,
+    approvedEngagementId: draft.approved_engagement_id,
+    rejectionReason: draft.rejection_reason,
   }
 }
 

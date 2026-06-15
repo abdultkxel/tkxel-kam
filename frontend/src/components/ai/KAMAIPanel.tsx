@@ -124,7 +124,7 @@ export function KAMAIPanel() {
         setActiveSession(detail)
         setScopes(detail.scope_json.length ? detail.scope_json : DEFAULT_SCOPES)
       } else if (!aiAutoSubmitRequest) {
-        const detail = await createKamAiChatSession(token, { title: 'New KAM AI chat', account_id: activeAccountId === 'amd-001' ? undefined : activeAccountId, scopes: DEFAULT_SCOPES })
+        const detail = await createKamAiChatSession(token, { title: 'New KAM AI chat', account_id: accountIdForPayload(activeAccountId), scopes: DEFAULT_SCOPES })
         setActiveSession(detail)
         setSessions([detail])
       }
@@ -260,7 +260,7 @@ export function KAMAIPanel() {
   }
 
   function accountIdForPayload(accountId = activeAccountId) {
-    return accountId === 'amd-001' ? undefined : accountId
+    return accountId || undefined
   }
 
   function toggleScope(scope: string) {

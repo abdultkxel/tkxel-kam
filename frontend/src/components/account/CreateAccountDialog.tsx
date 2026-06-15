@@ -1,5 +1,5 @@
 import * as Dialog from '@radix-ui/react-dialog'
-import { Building2, FileText, Globe2, Linkedin, Loader2, Plus, Sparkles, Upload, UserRound, X } from 'lucide-react'
+import { Building2, CheckCircle2, FileText, Globe2, Linkedin, Loader2, Plus, Upload, UserRound, X } from 'lucide-react'
 import { FormEvent, forwardRef, useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { toast } from 'sonner'
@@ -18,6 +18,7 @@ import {
   OnboardingUploadExtractionView,
 } from '@/services/accountWorkspace'
 import { cn } from '@/utils/cn'
+import { allProjectCharterFiles, PROJECT_CHARTER_ACCEPT } from '@/utils/projectCharterFiles'
 
 type CreateAccountField = 'accountName' | 'projectName' | 'companyUrl' | 'linkedinUrl' | 'managerId'
 
@@ -97,11 +98,12 @@ export function CreateAccountDialog({ label = 'Create account' }: { label?: stri
   function validate() {
     const nextErrors: Partial<Record<CreateAccountField, string>> = {}
     const nextCustomErrors: Record<string, string> = {}
+    const hasSourceUpload = files.length > 0
     if (!accountName.trim()) nextErrors.accountName = 'Account name is required'
     if (!projectName.trim()) nextErrors.projectName = 'Project name is required'
-    if (!companyUrl.trim()) nextErrors.companyUrl = 'Company URL is required'
-    if (!linkedinUrl.trim()) nextErrors.linkedinUrl = 'LinkedIn URL is required'
-    else if (!isLinkedinUrl(linkedinUrl)) nextErrors.linkedinUrl = 'Enter a valid LinkedIn URL'
+    if (!hasSourceUpload && !companyUrl.trim()) nextErrors.companyUrl = 'Company URL is required'
+    if (!hasSourceUpload && !linkedinUrl.trim()) nextErrors.linkedinUrl = 'LinkedIn URL is required'
+    else if (linkedinUrl.trim() && !isLinkedinUrl(linkedinUrl)) nextErrors.linkedinUrl = 'Enter a valid LinkedIn URL'
     if (!managerId || !selectedManager) nextErrors.managerId = 'Select an account manager'
     for (const field of customFields) {
       const value = customValues[field.field_key]
@@ -128,7 +130,11 @@ export function CreateAccountDialog({ label = 'Create account' }: { label?: stri
       return null
     }
     if (!selectedFiles.length) {
-      toast.error('Select at least one SOW, charter, or source document')
+      toast.error('Select at least one Excel project charter')
+      return null
+    }
+    if (!allProjectCharterFiles(selectedFiles)) {
+      toast.error('Only Excel project charter files are allowed')
       return null
     }
     setExtracting(true)
@@ -138,13 +144,14 @@ export function CreateAccountDialog({ label = 'Create account' }: { label?: stri
         linkedinUrl: normalizeLinkedinUrl(linkedinUrl),
         managerEmail: selectedManager?.email,
         managerName: selectedManager?.name,
+        useAi: false,
       })
       setUploadedExtraction(extraction)
       applyExtractedUploadDetails(extraction)
-      toast.success('SOW/charter details filled from the uploaded document')
+      toast.success('Project charter details filled from the uploaded document')
       return extraction
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : 'SOW/charter extraction failed')
+      toast.error(error instanceof Error ? error.message : 'Project charter extraction failed')
       return null
     } finally {
       setExtracting(false)
@@ -175,6 +182,7 @@ export function CreateAccountDialog({ label = 'Create account' }: { label?: stri
           managerId: selectedManager.id,
           managerEmail: selectedManager.email,
           managerName: selectedManager.name,
+          useAi: false,
         })
         setOpen(false)
         toast.success('Extracted account draft saved for onboarding review.')
@@ -275,9 +283,9 @@ export function CreateAccountDialog({ label = 'Create account' }: { label?: stri
           <div className="sticky top-0 z-10 flex items-start justify-between gap-4 border-b border-surface-border bg-white p-5">
             <div>
               <p className="text-[10px] font-extrabold uppercase tracking-widest text-brand-blue">Account create flow</p>
-              <Dialog.Title className="font-display text-2xl font-bold text-ink">Create account from SOW/charter</Dialog.Title>
+              <Dialog.Title className="font-display text-2xl font-bold text-ink">Create account from project charter</Dialog.Title>
               <Dialog.Description className="mt-1 text-sm text-ink-secondary">
-                Upload source documents to prefill the form. This step creates an onboarding draft; approval creates the official account and engagement.
+                Upload an Excel project charter to prefill the form. This step creates an onboarding draft; approval creates the official account and engagement.
               </Dialog.Description>
             </div>
             <Dialog.Close className="tk-icon-button" aria-label="Close account create flow">
@@ -289,15 +297,23 @@ export function CreateAccountDialog({ label = 'Create account' }: { label?: stri
             <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_260px]">
               <label className="flex min-h-[132px] cursor-pointer flex-col items-center justify-center rounded-lg border border-dashed border-brand-blue/40 bg-white p-4 text-center transition-colors hover:bg-blue-tint-20">
                 <Upload className="h-6 w-6 text-brand-blue" />
-                <span className="mt-2 text-sm font-semibold text-ink">Upload SOW or project charter</span>
-                <span className="mt-1 text-xs text-ink-secondary">PDF, DOCX, text, CSV, and Excel files are uploaded, stored, read, and used to fill the fields below.</span>
+                <span className="mt-2 text-sm font-semibold text-ink">Upload Excel project charter</span>
+                <span className="mt-1 text-xs text-ink-secondary">Only Excel project charter files are allowed here: XLSX, XLSM, or XLS.</span>
                 <input
                   type="file"
                   multiple
                   className="sr-only"
-                  accept=".pdf,.docx,.txt,.csv,.xlsx,.xlsm,.xls"
+                  accept={PROJECT_CHARTER_ACCEPT}
                   onChange={event => {
                     const selectedFiles = Array.from(event.target.files ?? [])
+                    if (!allProjectCharterFiles(selectedFiles)) {
+                      setFiles([])
+                      setSelectedFileName('')
+                      setUploadedExtraction(null)
+                      toast.error('Only Excel project charter files are allowed')
+                      event.currentTarget.value = ''
+                      return
+                    }
                     setFiles(selectedFiles)
                     setSelectedFileName(selectedFiles[0]?.name ?? '')
                     setUploadedExtraction(null)
@@ -351,8 +367,8 @@ export function CreateAccountDialog({ label = 'Create account' }: { label?: stri
             <div className="grid gap-4 md:grid-cols-2">
               <RequiredInput ref={refs.accountName} label="Name of Account" value={accountName} error={errors.accountName} onChange={value => updateField('accountName', value)} placeholder="Signal" icon={Building2} />
               <RequiredInput ref={refs.projectName} label="Name of Project" value={projectName} error={errors.projectName} onChange={value => updateField('projectName', value)} placeholder="Predictive analytics modernization" icon={FileText} />
-              <RequiredInput ref={refs.companyUrl} label="Company URL" value={companyUrl} error={errors.companyUrl} onChange={value => updateField('companyUrl', value)} placeholder="https://signal.example.com" icon={Globe2} />
-              <RequiredInput ref={refs.linkedinUrl} label="LinkedIn URL" value={linkedinUrl} error={errors.linkedinUrl} onChange={value => updateField('linkedinUrl', value)} placeholder="https://www.linkedin.com/company/signal" icon={Linkedin} />
+              <RequiredInput ref={refs.companyUrl} label="Company URL" value={companyUrl} error={errors.companyUrl} onChange={value => updateField('companyUrl', value)} placeholder="https://signal.example.com" icon={Globe2} required={!files.length} />
+              <RequiredInput ref={refs.linkedinUrl} label="LinkedIn URL" value={linkedinUrl} error={errors.linkedinUrl} onChange={value => updateField('linkedinUrl', value)} placeholder="https://www.linkedin.com/company/signal" icon={Linkedin} required={!files.length} />
               <AccountManagerSelect
                 ref={refs.managerId}
                 value={managerId}
@@ -390,11 +406,11 @@ export function CreateAccountDialog({ label = 'Create account' }: { label?: stri
 
             <div className="mt-5 rounded-lg border border-blue-tint-20 bg-blue-tint-20 p-4">
               <div className="flex items-start gap-3">
-                <Sparkles className="mt-0.5 h-5 w-5 shrink-0 text-brand-blue" />
+                <CheckCircle2 className="mt-0.5 h-5 w-5 shrink-0 text-brand-blue" />
                 <div>
                   <h3 className="text-sm font-semibold text-ink">Approval creates the official account</h3>
                   <p className="mt-1 text-sm leading-6 text-ink-secondary">
-                    SOW and charter uploads help fill account intake fields here. Review and approve this draft from Onboarding before it becomes an active account.
+                    SOW and charter uploads are read with the document parser to fill account intake fields here. Review and approve this draft from Onboarding before it becomes an active account.
                   </p>
                 </div>
               </div>
@@ -423,6 +439,7 @@ type RequiredInputProps = {
   icon: typeof Building2
   list?: string
   className?: string
+  required?: boolean
 }
 
 type AccountManagerSelectProps = {
@@ -477,11 +494,12 @@ const RequiredInput = forwardRef<HTMLInputElement, RequiredInputProps>(function 
   icon: Icon,
   list,
   className,
+  required = true,
 }, ref) {
   return (
     <label className={cn('space-y-1', className)}>
       <span className={cn('tk-label flex items-center gap-1 text-xs', error ? 'text-rag-red' : '')}>
-        {label} <span className="text-brand-orange">*</span>
+        {label} {required ? <span className="text-brand-orange">*</span> : null}
       </span>
       <div className="relative">
         <Icon className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-ink-tertiary" />

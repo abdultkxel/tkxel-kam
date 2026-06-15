@@ -22,6 +22,7 @@ docs/features/_feature-template.md
 - [KYC Ollama Output And Debug Sidebar](kyc-ollama-output-debug-sidebar.md)
 - [KYC OpenAI Prompt And Onboarding Defaults](kyc-openai-prompt-onboarding.md)
 - [SOW Upload Field Auto-Fill](sow-extracted-text-review.md)
+- [Project Charter Excel Onboarding](project-charter-excel-onboarding.md)
 - [Local Qwen AI KYC Phase 5-10](local-qwen-ai-kyc-phase-5-to-10.md)
 - [Base Data Seeding](base-data-seeding.md)
 - [Demo Project Data Seeding](demo-project-data-seeding.md)
@@ -45,6 +46,7 @@ docs/features/_feature-template.md
 - [KAM AI Chat Sessions And Vector Search](kam-ai-chat-sessions-vector-search.md)
 - [UI Design Quality Tooling](ui-design-quality-tooling.md)
 - [UI KYC, Account, And Engagement Cleanup](ui-kyc-account-engagement-cleanup.md)
+- [API-Backed Demo Runtime Data](api-backed-demo-runtime-data.md)
 - [Scoring, Signals, Playbooks, and Tasks](scoring-signals-playbooks-and-tasks.md)
 - [Timeline And Handover](timeline-and-handover.md)
 
