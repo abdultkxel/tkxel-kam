@@ -397,9 +397,9 @@ function TaskKanbanCard({ task, customFields, readOnly, onOpenTask, onDragStart,
       onDragEnd={onDragEnd}
     >
       <div className="flex items-start justify-between gap-2">
-        <div className="flex min-w-0 flex-wrap items-center gap-2 pr-20">
-          <span className={cn('inline-flex rounded-full border px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-normal', priorityClass(task.priority))}>{task.priority}</span>
-          {overdue ? <span className="inline-flex rounded-full border border-rag-red/20 bg-rag-red/10 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-normal text-rag-red">Overdue</span> : null}
+        <div className="flex min-w-0 flex-nowrap items-center gap-1 pr-16">
+          <span className={cn('inline-flex shrink-0 rounded-full border px-1 py-0.5 text-[8px] font-semibold uppercase tracking-normal', priorityClass(task.priority))}>{task.priority}</span>
+          {overdue ? <span className="inline-flex shrink-0 rounded-full border border-rag-red/20 bg-rag-red/10 px-1 py-0.5 text-[8px] font-semibold uppercase tracking-normal text-rag-red">Overdue</span> : null}
         </div>
         <div className="absolute right-2 top-2 flex items-center gap-1">
           <button type="button" className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-surface-border bg-white text-ink-secondary transition hover:border-brand-blue/40 hover:bg-blue-tint-20 hover:text-brand-blue" onClick={event => { event.stopPropagation(); onOpenTask(task.id) }} aria-label="Edit task">
