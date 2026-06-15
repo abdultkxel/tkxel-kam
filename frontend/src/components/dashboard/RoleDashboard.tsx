@@ -137,6 +137,21 @@ export function RoleDashboard({
   const ownerOptions = useMemo(() => collectOwnerOptions(widgets), [widgets])
   const allowedFilters = dashboard?.allowed_filters ?? []
   const fallbackWidgets = widgets.filter(widget => !knownWidgetKeys.has(widget.key))
+  const [highlightCriticalActions, setHighlightCriticalActions] = useState(false)
+
+  function focusCriticalActions() {
+    setHighlightCriticalActions(true)
+    window.requestAnimationFrame(() => {
+      document.getElementById('critical-actions')?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+    })
+    window.history.replaceState(null, '', '#critical-actions')
+  }
+
+  useEffect(() => {
+    if (!highlightCriticalActions) return undefined
+    const timeout = window.setTimeout(() => setHighlightCriticalActions(false), 1800)
+    return () => window.clearTimeout(timeout)
+  }, [highlightCriticalActions])
 
   return (
     <div className="space-y-5">
@@ -144,7 +159,6 @@ export function RoleDashboard({
         title={dashboard?.display_name ?? 'Dashboard'}
         userName={userName}
         roleGroup={dashboard?.role_group}
-        dataScope={dashboard?.data_scope}
         readOnly={Boolean(dashboard?.read_only)}
         canRefreshSummary={canRefreshSummary}
         refreshingSummary={refreshingSummary}
@@ -172,11 +186,11 @@ export function RoleDashboard({
 
       {!loading && !error && widgets.length ? (
         <>
-          <MetricGrid summary={summary} />
+          <MetricGrid summary={summary} onCriticalActionsClick={focusCriticalActions} />
 
           {(criticalActions || todaysTasks) ? (
             <section className="grid gap-4 xl:grid-cols-2">
-              {criticalActions ? <WidgetListPanel widget={criticalActions} /> : null}
+              {criticalActions ? <WidgetListPanel widget={criticalActions} highlighted={highlightCriticalActions} /> : null}
               {todaysTasks ? <WidgetListPanel widget={todaysTasks} /> : null}
             </section>
           ) : null}
@@ -234,7 +248,6 @@ function DashboardHeader({
   title,
   userName,
   roleGroup,
-  dataScope,
   readOnly,
   canRefreshSummary,
   refreshingSummary,
@@ -243,7 +256,6 @@ function DashboardHeader({
   title: string
   userName: string
   roleGroup?: string | null
-  dataScope?: string
   readOnly: boolean
   canRefreshSummary: boolean
   refreshingSummary: boolean
@@ -257,7 +269,6 @@ function DashboardHeader({
         <div className="mt-2 flex flex-wrap items-center gap-2 text-base text-ink-secondary">
           <span>Welcome back, {userName}</span>
           {roleGroup ? <span className="rounded-full bg-surface-tertiary px-3 py-1 text-xs font-semibold text-brand-blue-dark">{roleGroup.replace(/_/g, ' ')}</span> : null}
-          {dataScope ? <span className="rounded-full bg-white/80 px-3 py-1 text-xs font-semibold text-ink-secondary">{dataScope.replace(/_/g, ' ')}</span> : null}
           {readOnly ? <span className="rounded-full border border-surface-border bg-white/80 px-3 py-1 text-xs font-semibold text-ink-secondary">Read only</span> : null}
         </div>
       </div>
@@ -335,7 +346,7 @@ function DashboardControls({
   )
 }
 
-function MetricGrid({ summary }: { summary?: DashboardWidget }) {
+function MetricGrid({ summary, onCriticalActionsClick }: { summary?: DashboardWidget; onCriticalActionsClick: () => void }) {
   const value = isRecord(summary?.value) ? summary.value : {}
   const metadataTiles = Array.isArray(summary?.metadata.tiles) ? summary.metadata.tiles.filter(isRecord) : []
   const metrics = metadataTiles.length
@@ -359,6 +370,7 @@ function MetricGrid({ summary }: { summary?: DashboardWidget }) {
     <section className="grid auto-rows-fr gap-4 md:grid-cols-2 xl:grid-cols-4">
       {metrics.map((metric, index) => {
         const key = metric.key || metric.label
+        const isCriticalActions = isCriticalActionsKey(key)
         const tone = metricTone(key, index)
         const Icon = metricIcon(key)
         const content = (
@@ -381,6 +393,13 @@ function MetricGrid({ summary }: { summary?: DashboardWidget }) {
             <p className="mt-4 line-clamp-2 text-sm leading-5 text-ink-secondary">{metric.detail || metricDetail(key, metric.value)}</p>
           </>
         )
+        if (isCriticalActions) {
+          return (
+            <button key={key} type="button" onClick={onCriticalActionsClick} className={cn('tk-card flex min-h-[152px] flex-col justify-between p-5 text-left animate-fade-in transition hover:-translate-y-0.5 hover:border-brand-blue/40 hover:shadow-md', staggerClass(index))}>
+              {content}
+            </button>
+          )
+        }
         return metric.route ? (
           <Link key={key} to={metric.route} className={cn('tk-card flex min-h-[152px] flex-col justify-between p-5 animate-fade-in transition hover:-translate-y-0.5 hover:border-brand-blue/40 hover:shadow-md', staggerClass(index))}>
             {content}
@@ -775,17 +794,18 @@ function ForecastMetric({ label, value }: { label: string; value: string }) {
   )
 }
 
-function WidgetListPanel({ widget }: { widget: DashboardWidget }) {
+function WidgetListPanel({ widget, highlighted = false }: { widget: DashboardWidget; highlighted?: boolean }) {
   const value = isRecord(widget.value) ? widget.value : {}
   const sectionId = widget.key === 'critical_actions' ? 'critical-actions' : widget.key === 'todays_tasks' ? 'todays-tasks' : undefined
+  const primaryRoute = widget.key === 'critical_actions' ? '' : getString(widget.primary_route)
   return (
-    <section id={sectionId} className="tk-card scroll-mt-24 overflow-hidden">
+    <section id={sectionId} className={cn('tk-card scroll-mt-24 overflow-hidden transition-[border-color,box-shadow] duration-300', highlighted ? 'border-brand-blue/70 shadow-md ring-2 ring-brand-blue/40' : '')}>
       <div className="flex flex-col gap-3 border-b border-surface-border p-5 sm:flex-row sm:items-start sm:justify-between">
         <div className="min-w-0">
           <h2 className="text-lg font-semibold text-ink">{widget.title}</h2>
           {widget.metadata.masked ? <p className="mt-1 text-xs font-medium text-ink-secondary">Sensitive values are masked.</p> : null}
         </div>
-        {widget.primary_route ? <Link className="tk-button-secondary w-fit px-3 text-xs" to={widget.primary_route}>Open <ExternalLink className="h-4 w-4" /></Link> : null}
+        {primaryRoute ? <Link className="tk-button-secondary w-fit px-3 text-xs" to={primaryRoute}>Open <ExternalLink className="h-4 w-4" /></Link> : null}
       </div>
       {widget.error ? <div className="m-4 rounded-md border border-rag-red/20 bg-rag-red/10 p-3 text-sm text-rag-red">{widget.error}</div> : null}
       {Object.keys(value).length ? (
@@ -1088,6 +1108,10 @@ function staggerClass(index: number) {
 
 function metricFormatter(key: string) {
   return key.includes('value') || key.includes('revenue') || key.includes('pipeline') ? formatCompactCurrency : undefined
+}
+
+function isCriticalActionsKey(key: string) {
+  return key.toLowerCase().replace(/\s+/g, '_').includes('critical_actions')
 }
 
 function dashboardMetricRoute(key: string) {

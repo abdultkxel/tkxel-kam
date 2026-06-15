@@ -2663,6 +2663,7 @@ class Task(Base):
     engagement: Mapped[Engagement | None] = relationship()
     playbook_execution: Mapped[PlaybookExecution | None] = relationship(back_populates="tasks")
     evidence: Mapped[list["TaskEvidence"]] = relationship(back_populates="task", cascade="all, delete-orphan")
+    history: Mapped[list["TaskHistory"]] = relationship(back_populates="task", cascade="all, delete-orphan")
 
 
 class TaskEvidence(Base):
@@ -2684,6 +2685,24 @@ class TaskEvidence(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utc_now)
 
     task: Mapped[Task] = relationship(back_populates="evidence")
+
+
+class TaskHistory(Base):
+    __tablename__ = "task_history"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid4()))
+    task_id: Mapped[str] = mapped_column(ForeignKey("tasks.id", ondelete="CASCADE"), index=True, nullable=False)
+    event_type: Mapped[str] = mapped_column(String(80), index=True, nullable=False)
+    previous_status: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    new_status: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    actor_id: Mapped[str | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    actor_name: Mapped[str] = mapped_column(String(160), nullable=False)
+    reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    note: Mapped[str | None] = mapped_column(Text, nullable=True)
+    metadata_json: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True, nullable=False, default=utc_now)
+
+    task: Mapped[Task] = relationship(back_populates="history")
 
 
 class UserIntegrationConnection(Base):

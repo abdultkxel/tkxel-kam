@@ -17,6 +17,7 @@ from app.models import (
     PlaybookTemplateActivity,
     Task,
     TaskEvidence,
+    TaskHistory,
     User,
 )
 from app.repositories.accounts import AccountRepository
@@ -40,6 +41,8 @@ from app.schemas import (
     RecommendedPlaybookRead,
     TaskCreateRequest,
     TaskEvidenceRead,
+    TaskHistoryPageRead,
+    TaskHistoryRead,
     TaskPageRead,
     TaskRead,
     TaskUpdateRequest,
@@ -264,6 +267,7 @@ class PlaybooksTasksService:
                 updated_by_id=current_user.id,
             )
             self.repository.save_task(task)
+            self._add_task_history(task, "created", None, task.status, current_user, reason="Created from playbook execution")
             generated_count += 1
         self._write_timeline(account.id, engagement.id if engagement else None, current_user, "playbook_executed", f"Playbook executed: {template.name}", f"{generated_count} task(s) generated from template version {template.version}.", execution.id, "playbook_execution")
         self.audit.log(module=MODULE, action="execute_playbook", entity_type="playbook_execution", entity_id=execution.id, actor=current_user, after_value=self._execution_snapshot(execution))
@@ -293,7 +297,8 @@ class PlaybooksTasksService:
         self.access.require_module_permission(current_user, MODULE, "view")
         if account_id:
             self.access.require_account_view(current_user, self._get_account_or_404(account_id), module=MODULE)
-        account_ids = None if self.access.can_view_portfolio(current_user) else self.accounts.list_account_ids_for_user(current_user.id)
+        account_ids = self.accounts.list_account_ids_for_user(current_user.id)
+        owner_id = current_user.id
         items, total = self.repository.list_tasks(
             account_id=account_id,
             account_ids=account_ids,
@@ -341,6 +346,7 @@ class PlaybooksTasksService:
             updated_by_id=current_user.id,
         )
         self.repository.save_task(task)
+        self._add_task_history(task, "created", None, task.status, current_user, reason="Manual task created")
         self.custom_fields.save_record_values(TASK_FIELD_MODULE, task.id, payload.custom_field_values, current_user, audit_module=TASK_FIELD_MODULE)
         self._write_timeline(account.id, task.engagement_id, current_user, "task_created", f"Task created: {task.title}", task.description or "Task created.", task.id, "task")
         self.audit.log(module=MODULE, action="create_task", entity_type="task", entity_id=task.id, actor=current_user, after_value=self._task_snapshot(task))
@@ -349,12 +355,33 @@ class PlaybooksTasksService:
         self._evaluate_alerts_for_account(account.id)
         return self._task_read(task)
 
+    def get_task(self, task_id: str, current_user: User) -> TaskRead:
+        self.access.require_module_permission(current_user, MODULE, "view")
+        task = self._get_task_or_404(task_id)
+        self.access.require_account_view(current_user, self._get_account_or_404(task.account_id), module=MODULE)
+        return self._task_read(task)
+
+    def list_task_history(self, task_id: str, current_user: User, *, page: int = 1, page_size: int = 50) -> TaskHistoryPageRead:
+        self.access.require_module_permission(current_user, MODULE, "view")
+        task = self._get_task_or_404(task_id)
+        self.access.require_account_view(current_user, self._get_account_or_404(task.account_id), module=MODULE)
+        items, total = self.repository.list_task_history(task.id, page=page, page_size=page_size)
+        return TaskHistoryPageRead(items=[TaskHistoryRead.model_validate(item) for item in items], total=total, page=page, page_size=page_size, pages=page_count(total, page_size))
+
     def update_task(self, task_id: str, payload: TaskUpdateRequest, current_user: User) -> TaskRead:
         task = self._get_task_or_404(task_id)
         self._require_task_update(current_user, task)
         before = self._task_snapshot(task)
         updates = payload.model_dump(exclude_unset=True)
         custom_values = updates.pop("custom_field_values", None)
+        status_change_reason = updates.pop("status_change_reason", None)
+        previous_status = task.status
+        next_status = updates.get("status")
+        status_will_change = next_status is not None and next_status != previous_status
+        if status_will_change:
+            status_change_reason = (status_change_reason or "").strip()
+            if not status_change_reason:
+                raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="A reason is required when moving a task")
         if "owner_id" in updates and updates["owner_id"]:
             owner = self._get_user_or_404(updates.pop("owner_id"))
             task.owner_id = owner.id
@@ -373,6 +400,8 @@ class PlaybooksTasksService:
             self._sync_source_action_item_from_task(task, current_user)
         if custom_values is not None:
             self.custom_fields.replace_record_values(TASK_FIELD_MODULE, task.id, custom_values, current_user, audit_module=TASK_FIELD_MODULE)
+        if status_will_change:
+            self._add_task_history(task, "status_change", previous_status, task.status, current_user, reason=status_change_reason)
         if task.status in {"done", "cancelled"}:
             action = "task_completed" if task.status == "done" else "task_cancelled"
             self._write_timeline(task.account_id, task.engagement_id, current_user, action, f"Task {task.status}: {task.title}", task.outcome or task.skipped_reason or task.notes or "Task status changed.", task.id, "task", before=before, after=self._task_snapshot(task))
@@ -383,6 +412,20 @@ class PlaybooksTasksService:
         self.repository.commit()
         self._evaluate_alerts_for_account(task.account_id)
         return self._task_read(task)
+
+    def delete_task(self, task_id: str, current_user: User) -> MessageResponse:
+        task = self._get_task_or_404(task_id)
+        self._require_task_update(current_user, task)
+        before = self._task_snapshot(task)
+        title = task.title
+        account_id = task.account_id
+        engagement_id = task.engagement_id
+        self._write_timeline(account_id, engagement_id, current_user, "task_deleted", f"Task deleted: {title}", "Task was deleted.", task.id, "task", before=before)
+        self.audit.log(module=MODULE, action="delete_task", entity_type="task", entity_id=task.id, actor=current_user, before_value=before)
+        self.repository.delete_task(task)
+        self.repository.commit()
+        self._evaluate_alerts_for_account(account_id)
+        return MessageResponse(message="Task deleted")
 
     def _sync_source_action_item_from_task(self, task: Task, current_user: User) -> None:
         if task.status != "done" or not task.source_record_id:
@@ -444,6 +487,7 @@ class PlaybooksTasksService:
             created_by_name=current_user.full_name,
         )
         self.repository.add_evidence(evidence)
+        self._add_task_history(task, "comment_added" if evidence_type == "note" else "evidence_added", task.status, task.status, current_user, reason=body or title or evidence.file_name or "Task evidence added")
         self._write_timeline(task.account_id, task.engagement_id, current_user, "task_evidence", f"Evidence added: {task.title}", body or title or evidence.file_name or "Task evidence added.", task.id, "task")
         self.audit.log(module=MODULE, action="add_evidence", entity_type="task_evidence", entity_id=evidence.id, actor=current_user, after_value={"task_id": task.id, "evidence_type": evidence_type})
         self.repository.commit()
@@ -591,6 +635,22 @@ class PlaybooksTasksService:
 
     def _task_read(self, task: Task) -> TaskRead:
         return TaskRead.model_validate(task).model_copy(update={"custom_field_values": self.custom_fields.record_values(TASK_FIELD_MODULE, task.id)})
+
+    def _add_task_history(self, task: Task, event_type: str, previous_status: str | None, new_status: str | None, current_user: User, *, reason: str | None = None) -> TaskHistory:
+        cleaned_reason = reason.strip() if isinstance(reason, str) else None
+        return self.repository.add_history(
+            TaskHistory(
+                task_id=task.id,
+                event_type=event_type,
+                previous_status=previous_status,
+                new_status=new_status,
+                actor_id=current_user.id,
+                actor_name=current_user.full_name,
+                reason=cleaned_reason,
+                note=cleaned_reason,
+                metadata_json={},
+            )
+        )
 
     @staticmethod
     def _slug_from_name(name: str) -> str:

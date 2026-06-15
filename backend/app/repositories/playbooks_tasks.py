@@ -13,6 +13,7 @@ from app.models import (
     PlaybookTemplateActivity,
     Task,
     TaskEvidence,
+    TaskHistory,
     User,
 )
 
@@ -179,17 +180,39 @@ class PlaybooksTasksRepository:
         )
 
     def get_task(self, task_id: str) -> Task | None:
-        return self.db.scalar(select(Task).where(Task.id == task_id).options(selectinload(Task.evidence), selectinload(Task.account), selectinload(Task.engagement)))
+        return self.db.scalar(select(Task).where(Task.id == task_id).options(selectinload(Task.evidence), selectinload(Task.history), selectinload(Task.account), selectinload(Task.engagement)))
 
     def save_task(self, task: Task) -> Task:
         self.db.add(task)
         self.db.flush()
         return task
 
+    def delete_task(self, task: Task) -> None:
+        self.db.delete(task)
+        self.db.flush()
+
     def add_evidence(self, evidence: TaskEvidence) -> TaskEvidence:
         self.db.add(evidence)
         self.db.flush()
         return evidence
+
+    def add_history(self, history: TaskHistory) -> TaskHistory:
+        self.db.add(history)
+        self.db.flush()
+        return history
+
+    def list_task_history(self, task_id: str, *, page: int = 1, page_size: int = 50) -> tuple[list[TaskHistory], int]:
+        total = self.db.scalar(select(func.count(TaskHistory.id)).where(TaskHistory.task_id == task_id)) or 0
+        items = list(
+            self.db.scalars(
+                select(TaskHistory)
+                .where(TaskHistory.task_id == task_id)
+                .order_by(TaskHistory.created_at.desc())
+                .offset((page - 1) * page_size)
+                .limit(page_size)
+            )
+        )
+        return items, total
 
     def list_governance_events_for_calendar(self, *, account_ids: list[str] | None, date_from: datetime | None, date_to: datetime | None) -> list[GovernanceEvent]:
         conditions = []
