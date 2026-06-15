@@ -101,7 +101,7 @@ class OpportunityService:
         page_size: int = 25,
     ) -> OpportunityPageRead:
         self.access.require_module_permission(current_user, OPPORTUNITY_MODULE, "view")
-        account_ids = None if self.access.can_view_portfolio(current_user) else self.accounts.list_account_ids_for_user(current_user.id)
+        account_ids = self.access.visible_account_ids(current_user)
         if stage:
             self._ensure_active_stage(stage)
         items, total = self.repository.list_opportunities(

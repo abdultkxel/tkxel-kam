@@ -12,7 +12,7 @@ Governance records capture QBRs, SteerCos, monthly reviews, and executive review
 - Governance prep tasks are generated from governance events, but only the next active event per account/governance type has an open prep task.
 - Governance prep task due dates are set three business days before the event; recurring schedules generate multiple governance events without flooding Tasks.
 - Governance prep task titles are action-oriented, for example `Prepare for QBR: Account Name`, and descriptions explain that prep is due three business days before the event.
-- Editing uses `PATCH /api/governance-events/{event_id}` and updates event type, schedule, agenda, and attendee emails through the central frontend service/store layer.
+- Editing uses `PATCH /api/governance-events/{event_id}` and updates the selected account, event type, schedule, agenda, and attendee emails through the central frontend service/store layer.
 - Deleting uses `DELETE /api/governance-events/{event_id}` and removes the event from list/detail surfaces after the backend authorizes the update.
 
 ## Backend Behavior
@@ -23,12 +23,15 @@ Governance records capture QBRs, SteerCos, monthly reviews, and executive review
 - Delete cancels linked governance reminder tasks and governance action-item tasks before removing the event.
 - Delete writes a governance timeline entry, logs a `governance_reviews` audit record, removes Field Builder values for the governance record, and refreshes the account next-governance rollup.
 - Update refreshes the governance event deduplication key when account, type, or schedule changes so edited records keep the same duplicate protection as newly created events.
+- Create/edit account selectors use `GET /api/accounts?page_size=500`; the accounts API remains role-scoped so account managers receive only assigned accounts while KAM Head, admin, and leadership portfolio users receive the full visible account list.
+- Moving an event to another account validates visibility on the target account, refreshes the old and new account next-governance rollups, and moves the linked prep task to the selected account.
 - The notification/reporting worker evaluates due governance reminders and queues the existing `governance_reminder` trigger when the next prep task enters its three-business-day window.
 
 ## Frontend Behavior
 
 - Service/store: `frontend/src/services/governance.ts`, `frontend/src/stores/governanceStore.ts`
 - Shared edit dialog: `frontend/src/components/governance/EditGovernanceEventDialog.tsx`
+- The shared create/edit dialogs render an account dropdown fed by the role-scoped accounts API.
 - Delete/action wrapper: `frontend/src/components/governance/GovernanceEventActions.tsx`
 - Admin recurrence panel: `frontend/src/components/admin/AdminGovernancePanel.tsx`
 - Admin recurrence list resolves account-scoped rules to visible account names in each row.
@@ -46,13 +49,14 @@ Governance records capture QBRs, SteerCos, monthly reviews, and executive review
 
 - Backend: `backend/tests/test_governance.py`
   - Update flow refreshes event deduplication keys after schedule/type edits.
+  - Update flow can move an event to another visible account and refreshes prep task/account rollup state.
   - Delete flow removes the governance event, cancels linked tasks, and writes audit coverage.
   - Prep-task flow keeps one open governance prep task per account/type and advances to the next event after completion.
   - Reminder scheduler queues one `governance_reminder` notification per due event.
   - OpenAPI exposes the delete route summary.
 - Frontend: `frontend/src/services/governance.test.ts`, `frontend/src/components/governance/GovernanceEventActions.test.tsx`, `frontend/src/components/admin/AdminGovernancePanel.test.tsx`
   - Service tests cover update payload mapping and DELETE API wiring.
-  - Component tests cover populated edit submission and delete confirmation.
+  - Component tests cover populated edit submission, account selector updates, and delete confirmation.
   - Admin panel test covers recurrence rendering with account names and without the integrations card or integrations API load.
 
 ## Handoff Notes

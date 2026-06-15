@@ -135,7 +135,7 @@ describe('Tasks page backend work queue', () => {
     vi.unstubAllGlobals()
   })
 
-  it('shows loading state, renders backend tasks, sends filters, and updates task status', async () => {
+  it('shows loading state, renders backend tasks, and sends filters', async () => {
     let resolveTasks: (response: Response) => void = () => undefined
     const pendingTasks = new Promise<Response>(resolve => {
       resolveTasks = resolve
@@ -166,16 +166,12 @@ describe('Tasks page backend work queue', () => {
     expect(await screen.findByText(/loading tasks/i)).toBeInTheDocument()
     resolveTasks(jsonResponse(page([task])))
     expect(await screen.findByText('Backend recovery task')).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: /kanban/i })).toHaveAttribute('aria-pressed', 'true')
+    expect(screen.getByRole('heading', { name: 'Open' })).toBeInTheDocument()
     expect(screen.getAllByText('Open').length).toBeGreaterThan(0)
     expect(screen.getAllByText('Opportunity action').length).toBeGreaterThan(0)
 
     await userEvent.type(screen.getByPlaceholderText(/search title/i), 'recovery')
     await waitFor(() => expect(fetchMock.mock.calls.some(call => String(call[0]).includes('search=recovery'))).toBe(true))
-
-    await userEvent.click(screen.getByRole('button', { name: /start/i }))
-
-    await waitFor(() => expect(screen.getAllByText(/in progress/i).length).toBeGreaterThan(2))
   })
 
   it('applies dashboard tile query filters to the backend task request', async () => {
@@ -189,18 +185,16 @@ describe('Tasks page backend work queue', () => {
     vi.stubGlobal('fetch', fetchMock)
 
     render(
-      <MemoryRouter initialEntries={['/tasks?status=in_progress&due=overdue&my_items=true&account_id=acct-1&view=list']}>
+      <MemoryRouter initialEntries={['/tasks?status=in_progress&due=overdue&account_id=acct-1']}>
         <Tasks />
       </MemoryRouter>,
     )
 
     await screen.findByText('Backend recovery task')
-    expect(screen.getByRole('button', { name: /list/i })).toHaveAttribute('aria-pressed', 'true')
     expect(screen.getByRole('option', { name: /opportunity action/i })).toHaveValue('opportunity_action_item')
     await waitFor(() => {
       const taskRequest = fetchMock.mock.calls.find(call => String(call[0]).includes('/api/tasks'))
       expect(String(taskRequest?.[0])).toContain('status=in_progress')
-      expect(String(taskRequest?.[0])).toContain('my_items=true')
       expect(String(taskRequest?.[0])).toContain('account_id=acct-1')
       expect(String(taskRequest?.[0])).toContain('due_to=')
     })

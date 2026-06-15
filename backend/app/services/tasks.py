@@ -189,7 +189,8 @@ class TaskService:
         page_size: int = 25,
     ) -> TaskPageRead:
         self.access.require_module_permission(current_user, TASKS_MODULE, "view")
-        account_ids = None if self.access.can_view_portfolio(current_user) else self.accounts.list_account_ids_for_user(current_user.id)
+        account_ids = self.access.visible_account_ids(current_user)
+        owner_id = current_user.id
         items, total = self.repository.list_tasks(
             account_id=account_id,
             account_ids=account_ids,
@@ -336,11 +337,11 @@ class TaskService:
         page_size: int = 100,
     ) -> UnifiedCalendarPageRead:
         self.access.require_module_permission(current_user, TASKS_MODULE, "view")
-        account_ids = None if self.access.can_view_portfolio(current_user) else self.accounts.list_account_ids_for_user(current_user.id)
+        account_ids = self.access.visible_account_ids(current_user)
         tasks, _ = self.repository.list_tasks(
             account_id=account_id,
             account_ids=account_ids,
-            owner_id=owner_id,
+            owner_id=current_user.id,
             due_from=date_from,
             due_to=date_to,
             page=1,
@@ -663,11 +664,9 @@ class TaskService:
 
     def _require_task_update(self, current_user: User, account: Account, task: Task) -> None:
         self.access.require_module_permission(current_user, TASKS_MODULE, "update")
-        if self.access.has_any_permission(current_user, {"tasks:update_portfolio", "tasks:delete"}):
-            return
         if task.owner_id == current_user.id:
             return
-        self.access.require_account_update(current_user, account, module=TASKS_MODULE)
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="You can only access tasks assigned to you")
 
     def _validate_engagement(self, account_id: str, engagement_id: str | None) -> Engagement | None:
         if engagement_id is None:

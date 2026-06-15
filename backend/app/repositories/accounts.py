@@ -22,6 +22,7 @@ class AccountRepository:
         region: str | None = None,
         risk_status: str | None = None,
         assigned_user_id: str | None = None,
+        assigned_ownership_roles: set[str] | None = None,
         am_id: str | None = None,
         primary_am: str | None = None,
         supporting_am: str | None = None,
@@ -44,6 +45,7 @@ class AccountRepository:
             region=region,
             risk_status=risk_status,
             assigned_user_id=assigned_user_id,
+            assigned_ownership_roles=assigned_ownership_roles,
             am_id=am_id,
             primary_am=primary_am,
             supporting_am=supporting_am,
@@ -141,11 +143,17 @@ class AccountRepository:
             )
         )
 
-    def list_account_ids_for_user(self, user_id: str) -> list[str]:
+    def list_account_ids_for_user(self, user_id: str, ownership_roles: set[str] | None = None) -> list[str]:
+        conditions = [
+            AccountOwner.user_id == user_id,
+            AccountOwner.is_active.is_(True),
+        ]
+        if ownership_roles:
+            conditions.append(AccountOwner.ownership_role.in_(ownership_roles))
         return list(
             self.db.scalars(
                 select(AccountOwner.account_id)
-                .where(AccountOwner.user_id == user_id, AccountOwner.is_active.is_(True))
+                .where(*conditions)
                 .distinct()
             )
         )
@@ -322,6 +330,7 @@ class AccountRepository:
         region: str | None,
         risk_status: str | None,
         assigned_user_id: str | None,
+        assigned_ownership_roles: set[str] | None,
         am_id: str | None,
         primary_am: str | None,
         supporting_am: str | None,
@@ -365,11 +374,14 @@ class AccountRepository:
         elif risk_status:
             conditions.append(Account.risk_status == risk_status)
         if assigned_user_id:
+            ownership_conditions = [
+                AccountOwner.user_id == assigned_user_id,
+                AccountOwner.is_active.is_(True),
+            ]
+            if assigned_ownership_roles:
+                ownership_conditions.append(AccountOwner.ownership_role.in_(assigned_ownership_roles))
             conditions.append(
-                Account.owners.any(and_(
-                    AccountOwner.user_id == assigned_user_id,
-                    AccountOwner.is_active.is_(True),
-                ))
+                Account.owners.any(and_(*ownership_conditions))
             )
         if am_id:
             conditions.append(

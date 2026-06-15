@@ -142,7 +142,7 @@ class SignalsService:
         page_size: int = 25,
     ) -> SignalPageRead:
         self.access.require_module_permission(current_user, SIGNALS_MODULE, "view")
-        account_ids = None if self.access.can_view_portfolio(current_user) else self.accounts.list_account_ids_for_user(current_user.id)
+        account_ids = self.access.visible_account_ids(current_user)
         items, total = self.repository.list_signals(
             account_id=account_id,
             account_ids=account_ids,
@@ -948,7 +948,7 @@ class SignalsService:
             return [account]
         if self.access.can_view_portfolio(current_user):
             return list(self.db.scalars(select(Account).where(Account.archived_at.is_(None)).order_by(Account.name)))
-        account_ids = self.accounts.list_account_ids_for_user(current_user.id)
+        account_ids = self.access.visible_account_ids(current_user)
         if not account_ids:
             return []
         return list(self.db.scalars(select(Account).where(Account.id.in_(account_ids), Account.archived_at.is_(None)).order_by(Account.name)))

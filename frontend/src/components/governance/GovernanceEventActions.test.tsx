@@ -6,6 +6,7 @@ import type { GovernanceEventRecord } from '@/types/governance'
 
 const updateEventMock = vi.hoisted(() => vi.fn())
 const deleteEventMock = vi.hoisted(() => vi.fn())
+const listAccountsMock = vi.hoisted(() => vi.fn())
 const toastSuccessMock = vi.hoisted(() => vi.fn())
 const toastErrorMock = vi.hoisted(() => vi.fn())
 
@@ -18,6 +19,10 @@ vi.mock('@/stores/governanceStore', () => ({
     updateEvent: updateEventMock,
     deleteEvent: deleteEventMock,
   }),
+}))
+
+vi.mock('@/services/accountWorkspace', () => ({
+  listAccounts: listAccountsMock,
 }))
 
 vi.mock('sonner', () => ({
@@ -53,6 +58,17 @@ describe('GovernanceEventActions', () => {
   beforeEach(() => {
     updateEventMock.mockReset()
     deleteEventMock.mockReset()
+    listAccountsMock.mockReset()
+    listAccountsMock.mockResolvedValue({
+      items: [
+        { id: 'acc-1', name: 'Signal Account', ownerId: 'usr-1' },
+        { id: 'acc-2', name: 'Portfolio Account', ownerId: 'usr-2' },
+      ],
+      total: 2,
+      page: 1,
+      page_size: 500,
+      pages: 1,
+    })
     toastSuccessMock.mockReset()
     toastErrorMock.mockReset()
   })
@@ -63,14 +79,19 @@ describe('GovernanceEventActions', () => {
 
     await userEvent.click(screen.getByRole('button', { name: /edit qbr governance event/i }))
     expect(screen.getByDisplayValue('Review delivery health.')).toBeInTheDocument()
+    await screen.findByRole('option', { name: 'Portfolio Account' })
 
+    await userEvent.selectOptions(screen.getByLabelText(/account/i), 'acc-2')
     await userEvent.clear(screen.getByLabelText(/agenda/i))
     await userEvent.type(screen.getByLabelText(/agenda/i), 'Updated governance agenda.')
     await userEvent.click(screen.getByRole('button', { name: /save changes/i }))
 
     await waitFor(() => expect(updateEventMock).toHaveBeenCalled())
     expect(updateEventMock).toHaveBeenCalledWith('test-token', 'gov-1', expect.objectContaining({
+      accountId: 'acc-2',
+      engagementId: null,
       governanceType: 'QBR',
+      ownerId: 'usr-2',
       agenda: 'Updated governance agenda.',
       attendeeEmails: ['client@example.com'],
     }))

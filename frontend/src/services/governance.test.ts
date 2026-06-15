@@ -58,11 +58,13 @@ describe('governance service mapping', () => {
 
   it('builds update payloads with editable governance fields', () => {
     expect(buildUpdatePayload({
+      accountId: 'acc-2',
       governanceType: 'SteerCo',
       scheduledAt: '2026-06-18T12:00:00Z',
       agenda: 'Updated SteerCo agenda.',
       attendeeEmails: ['Client@Example.com', 'client@example.com', 'delivery@example.com'],
     })).toMatchObject({
+      account_id: 'acc-2',
       governance_type: 'SteerCo',
       scheduled_at: '2026-06-18T12:00:00Z',
       agenda: 'Updated SteerCo agenda.',

@@ -5,6 +5,8 @@ from app.rbac_catalog import ALL_CATALOG_KEYS, PERMISSIONS
 from app.repositories.rbac import RbacRepository
 from app.schemas import UserCapabilitiesRead
 
+ASSIGNED_SCOPE_ONLY_ROLES = {"account_manager"}
+
 
 class CapabilityService:
     def __init__(self, db: Session, rbac: RbacRepository | None = None) -> None:
@@ -24,6 +26,7 @@ class CapabilityService:
     def read_for_user(self, user: User) -> UserCapabilitiesRead:
         keys = self.permission_keys_for(user)
         ordered_keys = [permission.key for permission in PERMISSIONS if permission.key in keys]
+        assigned_scope_only = user.role in ASSIGNED_SCOPE_ONLY_ROLES
         return UserCapabilitiesRead(
             permission_keys=ordered_keys,
             can_access_admin=self._has_any_key(
@@ -50,9 +53,9 @@ class CapabilityService:
                     "analytics:view_portfolio",
                     "tasks:view_portfolio",
                 },
-            ),
+            ) and not assigned_scope_only,
             can_update_assigned_accounts=self._has_any_key(keys, {"accounts:update_profile_assigned"}),
-            can_update_portfolio_accounts=self._has_any_key(keys, {"accounts:update_profile_portfolio", "accounts:update_lifecycle"}),
+            can_update_portfolio_accounts=self._has_any_key(keys, {"accounts:update_profile_portfolio", "accounts:update_lifecycle"}) and not assigned_scope_only,
             can_assign_account_owners=self._has_any_key(keys, {"account_ownership:assign_owner", "onboarding:assign_owner"}),
             can_approve_onboarding=self._has_any_key(keys, {"onboarding:approve_draft", "onboarding:reject_draft", "onboarding:link_existing_account"}),
             can_view_sensitive_sources=self._has_any_key(

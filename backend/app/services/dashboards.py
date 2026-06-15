@@ -59,7 +59,7 @@ class DashboardsService:
 
         account_ids = self._account_scope(current_user)
         portfolio_scope = self.access.can_view_portfolio(current_user)
-        tasks = self.repository.list_open_tasks(account_ids=account_ids, owner_id=None if portfolio_scope else current_user.id, limit=100)
+        tasks = self.repository.list_open_tasks(account_ids=account_ids, owner_id=current_user.id, limit=100)
         signals = self.repository.list_open_signals(account_ids=account_ids, owner_id=None if portfolio_scope else current_user.id, limit=100)
         return TaskSummaryRefreshRead(widget=self._task_summary_widget(tasks, signals, data_scope="assigned_accounts"))
 
@@ -152,15 +152,7 @@ class DashboardsService:
         accounts = self.repository.list_accounts(account_ids=account_ids, search=search, limit=100)
         scoped_ids = [account.id for account in accounts]
         owner_id = None if self.access.can_view_portfolio(current_user) else current_user.id
-        if self.access.can_view_portfolio(current_user):
-            tasks = self.repository.list_open_tasks(account_ids=scoped_ids, limit=100)
-        else:
-            tasks = self._dedupe_by_id(
-                [
-                    *self.repository.list_open_tasks(owner_id=current_user.id, limit=100),
-                    *self.repository.list_open_tasks(account_ids=scoped_ids, limit=100),
-                ]
-            )
+        tasks = self.repository.list_open_tasks(account_ids=scoped_ids, owner_id=current_user.id, limit=100)
         if priority:
             tasks = [task for task in tasks if task.priority == priority]
         opportunities = self.repository.list_open_opportunities(account_ids=scoped_ids, owner_id=owner_id, limit=100)
@@ -190,14 +182,14 @@ class DashboardsService:
                         {"key": "my_accounts", "label": "My Accounts", "value": len(accounts), "route": "/accounts", "detail": "Assigned account portfolio."},
                         {"key": "at_risk", "label": "At risk", "value": len(at_risk), "route": "/accounts?risk=at_risk", "detail": "Warning and critical accounts."},
                         {"key": "critical_actions", "label": "Critical Actions", "value": len(critical_action_items), "route": "/dashboard#critical-actions", "detail": "Critical tasks and health drops."},
-                        {"key": "open_tasks", "label": "Open tasks", "value": len(tasks), "route": "/tasks", "detail": "Open operational work in scope."},
+                        {"key": "open_tasks", "label": "Tasks", "value": len(tasks), "route": "/tasks", "detail": "Tasks assigned to you."},
                     ]
                 },
                 primary_route="/dashboard",
             ),
             self._critical_actions_widget(critical_action_items, tasks, accounts, engagement_health, data_scope="assigned_accounts", page=page, page_size=page_size),
             self._todays_tasks_widget(todays_tasks, data_scope="assigned_accounts", now=now, page=page, page_size=page_size),
-            self._widget("tasks", "Tasks summary", self._task_breakdown_value(tasks, accounts, current_user.id, now), [self._task_item(task, now) for task in self._slice(tasks, page, page_size)], "assigned_accounts", {"page": page, "page_size": page_size, "total": len(tasks), "data_source": "Showing tasks assigned to you across your assigned accounts."}, primary_route="/tasks"),
+            self._widget("tasks", "Tasks summary", self._task_breakdown_value(tasks, accounts, current_user.id, now), [self._task_item(task, now) for task in self._slice(tasks, page, page_size)], "assigned_accounts", {"page": page, "page_size": page_size, "total": len(tasks), "data_source": "Showing tasks assigned to you only."}, primary_route="/tasks"),
             self._pipeline_widget(opportunities, data_scope="assigned_accounts", masked=mask_commercial, page=page, page_size=page_size),
             self._forecast_widget(opportunities, accounts, data_scope="assigned_accounts", masked=mask_commercial),
             self._governance_calendar_widget(governance, data_scope="assigned_accounts", read_only=False),
@@ -232,7 +224,7 @@ class DashboardsService:
             account_ids = [account_id] if account_ids is None or account_id in account_ids else []
         accounts = self.repository.list_accounts(account_ids=account_ids, search=search, segment=segment, region=region, lifecycle_status=lifecycle_status, risk=risk, limit=200)
         scoped_ids = [account.id for account in accounts]
-        tasks = self.repository.list_open_tasks(account_ids=scoped_ids, limit=200)
+        tasks = self.repository.list_open_tasks(account_ids=scoped_ids, owner_id=current_user.id, limit=200)
         opportunities = self.repository.list_open_opportunities(account_ids=scoped_ids, limit=200)
         governance = self.repository.list_governance_events(account_ids=scoped_ids, limit=200)
         engagement_health = self.repository.list_engagement_health_items(account_ids=scoped_ids, limit=100)
@@ -290,9 +282,7 @@ class DashboardsService:
             scoped_ids = [account_id] if account_id in scoped_ids else []
         accounts = self.repository.list_accounts(account_ids=scoped_ids, search=search, risk=risk, limit=100)
         account_ids = [account.id for account in accounts]
-        direct_tasks = self.repository.list_open_tasks(owner_id=current_user.id, limit=100)
-        account_tasks = self.repository.list_open_tasks(account_ids=account_ids, limit=100)
-        tasks = self._dedupe_by_id([*direct_tasks, *account_tasks])
+        tasks = self.repository.list_open_tasks(account_ids=account_ids, owner_id=current_user.id, limit=100)
         signals = self.repository.list_open_signals(account_ids=account_ids, limit=100)
         governance = self.repository.list_governance_events(account_ids=account_ids, limit=100)
         engagement_health = self.repository.list_engagement_health_items(account_ids=account_ids, limit=100)
@@ -323,7 +313,7 @@ class DashboardsService:
         engagement_health: list = []
         now = self.repository.now()
         if self._can(current_user, "playbooks_tasks_calendar", "view"):
-            tasks = self.repository.list_open_tasks(account_ids=scoped_ids, owner_id=None if self.access.can_view_portfolio(current_user) else current_user.id, limit=100)
+            tasks = self.repository.list_open_tasks(account_ids=scoped_ids, owner_id=current_user.id, limit=100)
             widgets.append(self._widget("tasks", "Tasks summary", None, [self._task_item(task, now) for task in self._slice(tasks, page, page_size)], "rbac", {"total": len(tasks)}, primary_route="/tasks"))
         if self._can(current_user, "signals_attention", "view"):
             signals = self.repository.list_open_signals(account_ids=scoped_ids, owner_id=None if self.access.can_view_portfolio(current_user) else current_user.id, limit=100)
@@ -481,7 +471,7 @@ class DashboardsService:
             "AI Task Summary",
             {
                 "headline": headline,
-                "narrative": f"{len(tasks)} active tasks and {len(signals)} open signals were reviewed across your authorized accounts.",
+                "narrative": f"{len(tasks)} tasks assigned to you and {len(signals)} open signals were reviewed across your authorized accounts.",
                 "top_blockers": blockers[:5],
                 "recommended_focus": focus,
                 "source_counts": {"tasks": len(tasks), "signals": len(signals)},

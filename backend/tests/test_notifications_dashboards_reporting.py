@@ -108,6 +108,51 @@ def create_engagement_health_item(db_session: Session, account: Account, owner: 
     return engagement
 
 
+def test_dashboard_task_counts_use_signed_in_owner_only(client: TestClient, db_session: Session) -> None:
+    admin_headers = auth_headers(client)
+    owner = seeded_user(client, admin_headers, "account_manager")
+    admin_user = seeded_user(client, admin_headers, "admin")
+    account = create_owned_account(db_session, owner, "owner-task-dashboard-account")
+    now = datetime.now(timezone.utc)
+    db_session.add_all(
+        [
+            Task(
+                account_id=account.id,
+                title="Owner dashboard task",
+                owner_id=owner["id"],
+                owner_name=owner["full_name"],
+                due_at=now + timedelta(days=1),
+                status="open",
+                priority="medium",
+                created_by_id=owner["id"],
+            ),
+            Task(
+                account_id=account.id,
+                title="Other user dashboard task",
+                owner_id=admin_user["id"],
+                owner_name=admin_user["full_name"],
+                due_at=now + timedelta(days=2),
+                status="open",
+                priority="medium",
+                created_by_id=admin_user["id"],
+            ),
+        ]
+    )
+    db_session.commit()
+
+    owner_headers = auth_headers(client, owner["email"], "User@12345")
+    response = client.get("/api/dashboards/me", headers=owner_headers, params={"account_id": account.id, "page_size": 10})
+
+    assert response.status_code == 200
+    widgets = response.json()["widgets"]
+    summary = next(item for item in widgets if item["key"] == "summary")
+    assert summary["value"]["open_tasks"] == 1
+    assert next(tile for tile in summary["metadata"]["tiles"] if tile["key"] == "open_tasks")["label"] == "Tasks"
+    tasks = next(item for item in widgets if item["key"] == "tasks")
+    assert tasks["metadata"]["total"] == 1
+    assert {item["title"] for item in tasks["items"]} == {"Owner dashboard task"}
+
+
 def test_notification_preferences_validation_pagination_and_read(client: TestClient, db_session: Session) -> None:
     headers = auth_headers(client)
     preferences = client.get("/api/users/me/notification-preferences", headers=headers)
@@ -270,6 +315,7 @@ def test_dashboard_digest_and_report_workflows(client: TestClient, db_session: S
 def test_role_based_dashboard_profiles_and_reduced_direct_endpoints(client: TestClient, db_session: Session) -> None:
     admin_headers = auth_headers(client)
     owner = seeded_user(client, admin_headers, "account_manager")
+    admin_user = seeded_user(client, admin_headers, "admin")
     account = create_owned_account(db_session, owner, "role-dashboard-account")
     now = datetime.now(timezone.utc)
     db_session.add_all(
@@ -313,6 +359,16 @@ def test_role_based_dashboard_profiles_and_reduced_direct_endpoints(client: Test
                 status="open",
                 priority="medium",
                 created_by_id=owner["id"],
+            ),
+            Task(
+                account_id=account.id,
+                title="Admin portfolio task",
+                owner_id=admin_user["id"],
+                owner_name=admin_user["full_name"],
+                due_at=now + timedelta(days=4),
+                status="open",
+                priority="medium",
+                created_by_id=admin_user["id"],
             ),
             Signal(
                 account_id=account.id,
@@ -372,7 +428,7 @@ def test_role_based_dashboard_profiles_and_reduced_direct_endpoints(client: Test
     assert am_dashboard.json()["role_group"] == "account_manager"
     assert "leadership" not in {item["key"] for item in am_dashboard.json()["widgets"]}
     am_keys = [item["key"] for item in am_dashboard.json()["widgets"]]
-    assert am_keys == ["summary", "critical_actions", "todays_tasks", "tasks", "onboarding_drafts", "opportunities", "forecast_chart", "governance_calendar"]
+    assert am_keys == ["summary", "critical_actions", "todays_tasks", "tasks", "opportunities", "forecast_chart", "governance_calendar"]
     assert "account_portfolio" not in am_keys
     assert "accounts" not in am_keys
     assert "ai_task_summary" not in am_keys
@@ -380,7 +436,7 @@ def test_role_based_dashboard_profiles_and_reduced_direct_endpoints(client: Test
     assert "forecast_chart" in am_keys
     assert "governance_calendar" in am_keys
     summary = next(item for item in am_dashboard.json()["widgets"] if item["key"] == "summary")
-    assert [tile["label"] for tile in summary["metadata"]["tiles"]] == ["My Accounts", "At risk", "Critical Actions", "Open tasks"]
+    assert [tile["label"] for tile in summary["metadata"]["tiles"]] == ["My Accounts", "At risk", "Critical Actions", "Tasks"]
     assert summary["value"]["open_tasks"] == 4
     assert summary["metadata"]["tiles"][2]["route"] == "/dashboard#critical-actions"
     assert summary["metadata"]["tiles"][1]["route"] == "/accounts?risk=at_risk"

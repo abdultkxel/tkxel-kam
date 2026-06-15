@@ -86,7 +86,7 @@ def list_accounts(
     sort: Annotated[AccountSort, Query(description="Sort column.")] = "name",
     direction: Annotated[Direction, Query(description="Sort direction.")] = "asc",
     page: Annotated[int, Query(ge=1, description="One-based page number.")] = 1,
-    page_size: Annotated[int, Query(ge=1, le=100, description="Number of accounts per page.")] = 10,
+    page_size: Annotated[int, Query(ge=1, le=500, description="Number of accounts per page.")] = 10,
 ) -> AccountPageRead:
     return service.list_accounts(
         current_user,

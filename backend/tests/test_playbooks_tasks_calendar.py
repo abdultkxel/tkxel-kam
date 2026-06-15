@@ -298,8 +298,8 @@ def test_playbooks_tasks_authorization_and_validation(client: TestClient, db_ses
 
 
 def test_open_task_filter_includes_legacy_todo_tasks(client: TestClient, db_session: Session) -> None:
-    headers = auth_headers(client)
     owner = seeded_user(db_session, "account_manager")
+    headers = auth_headers(client, owner.email, "User@12345")
     db_session.add(
         Task(
             account_id="account-playbook",
@@ -320,6 +320,68 @@ def test_open_task_filter_includes_legacy_todo_tasks(client: TestClient, db_sess
     assert response.json()["total"] == 1
     assert response.json()["items"][0]["title"] == "Legacy todo dashboard task"
     assert response.json()["items"][0]["status"] == "todo"
+
+
+def test_task_module_and_calendar_are_scoped_to_signed_in_owner(client: TestClient, db_session: Session) -> None:
+    owner = seeded_user(db_session, "account_manager")
+    admin = seeded_user(db_session, "admin")
+    now = datetime.now(timezone.utc)
+    owner_task = Task(
+        account_id="account-playbook",
+        title="Owner renewal action",
+        owner_id=owner.id,
+        owner_name=owner.full_name,
+        due_at=now + timedelta(days=1),
+        status="open",
+        priority="high",
+        source_type="manual",
+        created_by_id=owner.id,
+    )
+    admin_task = Task(
+        account_id="account-playbook",
+        title="Admin-only task",
+        owner_id=admin.id,
+        owner_name=admin.full_name,
+        due_at=now + timedelta(days=2),
+        status="open",
+        priority="medium",
+        source_type="manual",
+        created_by_id=admin.id,
+    )
+    db_session.add_all([owner_task, admin_task])
+    db_session.commit()
+
+    owner_headers = auth_headers(client, owner.email, "User@12345")
+    admin_headers = auth_headers(client, admin.email, "User@12345")
+
+    owner_list = client.get("/api/tasks", headers=owner_headers, params={"owner_id": admin.id, "page": 1, "page_size": 10})
+    assert owner_list.status_code == 200
+    assert owner_list.json()["total"] == 1
+    assert {item["title"] for item in owner_list.json()["items"]} == {"Owner renewal action"}
+
+    admin_list = client.get("/api/tasks", headers=admin_headers, params={"owner_id": owner.id, "page": 1, "page_size": 10})
+    assert admin_list.status_code == 200
+    assert admin_list.json()["total"] == 1
+    assert {item["title"] for item in admin_list.json()["items"]} == {"Admin-only task"}
+
+    blocked_detail = client.get(f"/api/tasks/{admin_task.id}", headers=owner_headers)
+    assert blocked_detail.status_code == 403
+
+    calendar = client.get(
+        "/api/calendar/items",
+        headers=owner_headers,
+        params={
+            "account_id": "account-playbook",
+            "date_from": now.isoformat(),
+            "date_to": (now + timedelta(days=7)).isoformat(),
+            "include_tasks": True,
+            "include_governance": False,
+            "include_renewals": False,
+        },
+    )
+    assert calendar.status_code == 200
+    task_titles = {item["title"] for item in calendar.json()["items"] if item["kind"] == "task"}
+    assert task_titles == {"Owner renewal action"}
 
 
 def test_playbook_operations_follow_granular_permissions(client: TestClient, db_session: Session) -> None:

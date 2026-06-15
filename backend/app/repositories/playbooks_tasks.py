@@ -161,10 +161,13 @@ class PlaybooksTasksRepository:
         account_ids: list[str] | None,
         date_from: datetime | None,
         date_to: datetime | None,
+        owner_id: str | None = None,
     ) -> list[Task]:
         conditions = []
         if account_ids is not None:
             conditions.append(Task.account_id.in_(account_ids) if account_ids else False)
+        if owner_id:
+            conditions.append(Task.owner_id == owner_id)
         if date_from:
             conditions.append(Task.due_at >= date_from)
         if date_to:
