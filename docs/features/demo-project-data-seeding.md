@@ -45,8 +45,9 @@ docker compose run --rm backend python -m app.cli seed-demo-projects
 Use the base seeded users from `docs/features/base-data-seeding.md`:
 
 - `admin.user@tkxel.com` / `User@12345`
-- `kam.head.user@tkxel.com` / `User@12345`
+- `abdul.rehman@tkxel.io` / `User@12345`
 - `account.manager.user@tkxel.com` / `User@12345`
+- `account.manager.two@tkxel.com` / `User@12345`
 - `leadership.viewer.user@tkxel.com` / `User@12345`
 
 ## Implementation Files

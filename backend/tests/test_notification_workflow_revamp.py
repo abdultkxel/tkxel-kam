@@ -307,6 +307,30 @@ def test_account_draft_create_and_approval_outcome_notifications() -> None:
         assert owner_notifications.json()["items"][0]["action_label"] == "Open account"
 
 
+def test_kam_head_receives_draft_ready_notification_when_creating_draft_for_am() -> None:
+    for client, db_session in _client_with_db():
+        admin_headers = auth_headers(client)
+        owner = seeded_user(client, admin_headers, "account_manager")
+        kam_head = seeded_user(client, admin_headers, "kam_head")
+        kam_headers = auth_headers(client, kam_head["email"], "User@12345")
+        owner_headers = auth_headers(client, owner["email"], "User@12345")
+
+        draft = client.post("/api/onboarding/drafts", headers=kam_headers, json=draft_payload("KAM Created Draft Corp", owner["id"]))
+        assert draft.status_code == 201
+
+        kam_notifications = client.get("/api/notifications", headers=kam_headers, params={"trigger": "account_draft_created"})
+        assert kam_notifications.status_code == 200
+        assert any(
+            item["source_record_id"] == draft.json()["id"]
+            and item["title"] == "Draft account ready: KAM Created Draft Corp"
+            for item in kam_notifications.json()["items"]
+        )
+
+        owner_notifications = client.get("/api/notifications", headers=owner_headers, params={"trigger": "account_draft_created"})
+        assert owner_notifications.status_code == 200
+        assert any(item["source_record_id"] == draft.json()["id"] for item in owner_notifications.json()["items"])
+
+
 def test_task_creation_notifies_assignee() -> None:
     for client, db_session in _client_with_db():
         admin_headers = auth_headers(client)

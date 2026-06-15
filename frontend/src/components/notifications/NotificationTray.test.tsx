@@ -76,4 +76,38 @@ describe('NotificationTray', () => {
     expect(screen.getByText(/1 unread updates/i)).toBeInTheDocument()
     expect(fetchMock).toHaveBeenCalledTimes(2)
   })
+
+  it('shows the unread notification count on the topbar bell', async () => {
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input)
+      if (!url.includes('/api/notifications')) return jsonResponse({})
+      return jsonResponse({ latest: [], total_count: 42, unread_count: 42 })
+    }))
+
+    render(
+      <MemoryRouter>
+        <NotificationTray />
+      </MemoryRouter>,
+    )
+
+    expect(await screen.findByRole('button', { name: /notifications, 42 unread/i })).toBeInTheDocument()
+    expect(screen.getByText('42')).toBeInTheDocument()
+  })
+
+  it('caps the unread topbar count after 99 notifications', async () => {
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input)
+      if (!url.includes('/api/notifications')) return jsonResponse({})
+      return jsonResponse({ latest: [], total_count: 126, unread_count: 126 })
+    }))
+
+    render(
+      <MemoryRouter>
+        <NotificationTray />
+      </MemoryRouter>,
+    )
+
+    expect(await screen.findByRole('button', { name: /notifications, 126 unread/i })).toBeInTheDocument()
+    expect(screen.getByText('99+')).toBeInTheDocument()
+  })
 })

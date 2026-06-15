@@ -237,6 +237,31 @@ def download_draft_document(
 
 
 @router.post(
+    "/drafts/{draft_id}/documents/upload",
+    response_model=OnboardingDraftRead,
+    summary="Replace onboarding draft source documents",
+    description=(
+        "Uploads replacement SOW or charter files for an onboarding draft that is still ready for review. "
+        "The stored source documents, citations, extracted account fields, and engagement draft are refreshed from the new upload."
+    ),
+    responses={
+        400: {"description": "No file was supplied, the file is unsupported, or the draft cannot be changed in its current status."},
+        401: {"description": "Missing, invalid, or expired bearer token."},
+        403: {"description": "Authenticated user cannot update this onboarding draft."},
+        404: {"description": "Onboarding draft was not found."},
+    },
+)
+async def replace_draft_source_documents(
+    draft_id: str,
+    current_user: Annotated[User, Depends(get_current_user)],
+    service: Annotated[OnboardingService, Depends(get_onboarding_service)],
+    files: Annotated[list[UploadFile], File(description="One or more replacement PDF, DOCX, TXT, CSV, XLSX, or XLS source documents.")],
+    use_ai: Annotated[bool, Form(description="Whether SOW AI enrichment may run after deterministic document parsing.")] = True,
+) -> OnboardingDraftRead:
+    return await service.replace_draft_source_documents(draft_id, files, current_user, use_ai=use_ai)
+
+
+@router.post(
     "/drafts/{draft_id}/documents/{document_id}/extract",
     response_model=SourceDocumentExtractionRead,
     summary="Retry onboarding source extraction",

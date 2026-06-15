@@ -325,7 +325,7 @@ def test_open_task_filter_includes_legacy_todo_tasks(client: TestClient, db_sess
 def test_playbook_operations_follow_granular_permissions(client: TestClient, db_session: Session) -> None:
     super_admin_headers = auth_headers(client)
     admin_headers = auth_headers(client, "admin.user@tkxel.com", "User@12345")
-    kam_head_headers = auth_headers(client, "kam.head.user@tkxel.com", "User@12345")
+    kam_head_headers = auth_headers(client, "abdul.rehman@tkxel.io", "User@12345")
     owner_headers = auth_headers(client, "account.manager.user@tkxel.com", "User@12345")
     viewer_headers = auth_headers(client, "leadership.viewer.user@tkxel.com", "User@12345")
     owner = seeded_user(db_session, "account_manager")
