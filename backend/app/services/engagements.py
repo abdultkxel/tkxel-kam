@@ -3,10 +3,9 @@ import re
 from datetime import date, datetime, timedelta, timezone
 
 from fastapi import HTTPException, UploadFile, status
-from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from app.models import Account, Engagement, EngagementHealthSnapshot, EngagementImportDraft, SourceDocument, Stakeholder, User
+from app.models import Account, Engagement, EngagementHealthSnapshot, SourceDocument, Stakeholder, User
 from app.repositories.accounts import AccountRepository
 from app.repositories.audit import AuditRepository
 from app.repositories.engagements import EngagementRepository
@@ -17,10 +16,6 @@ from app.schemas import (
     EngagementCreateRequest,
     EngagementHealthPageRead,
     EngagementHealthRead,
-    EngagementImportDraftPageRead,
-    EngagementImportDraftRead,
-    EngagementImportDraftRejectRequest,
-    EngagementImportDraftUpdateRequest,
     EngagementPageRead,
     EngagementRead,
     EngagementUpdateRequest,
@@ -176,7 +171,7 @@ class EngagementService:
         self._evaluate_alerts_for_account(account.id)
         return EngagementRead.model_validate(engagement)
 
-    async def create_engagement_from_charter(self, account_id: str, upload: UploadFile, current_user: User) -> EngagementImportDraftRead:
+    async def create_engagement_from_charter(self, account_id: str, upload: UploadFile, current_user: User) -> EngagementRead:
         account = self._get_account_or_404(account_id)
         self.access.require_account_update(current_user, account, module="engagement_sow_management")
         if not upload.filename:
@@ -208,22 +203,37 @@ class EngagementService:
             extraction = extraction_service.extract_document(document, force=True)
             if extraction.status == "completed":
                 extraction_service.chunk_document(document, extraction=extraction, force=True)
-                structured = SowExtractionService(self.accounts.db).extract_structured_fields(document, extraction, allow_ai=False)
+                structured = SowExtractionService(self.accounts.db).extract_structured_fields(document, extraction, allow_ai=True)
             else:
                 structured = SowExtractionService(self.accounts.db).extract_structured_fields_from_text("", source_name=stored.file_name, allow_ai=False)
             text = extraction.raw_text or extraction.normalized_text or ""
-            draft = self._engagement_import_draft_from_structured_charter(account, document, structured.fields, text, current_user)
+            engagement = self._engagement_from_structured_charter(account, document, structured.fields, text, current_user)
+            document.engagement_id = engagement.id
+            self._create_stakeholders_from_charter(account, engagement, structured.fields, current_user)
+            self._add_health_snapshot(engagement, current_user, is_dirty=False)
+            self._notify_account_health_impacted_by_engagement_change(account, engagement, current_user)
             self.audit.log(
                 module="engagement_sow_management",
-                action="engagement_draft_create_from_charter",
-                entity_type="engagement_import_draft",
-                entity_id=draft.id,
+                action="engagement_create_from_charter",
+                entity_type="engagement",
+                entity_id=engagement.id,
                 actor=current_user,
-                after_value={**self._engagement_import_draft_audit_value(draft), "source_document_id": document.id, "extraction_status": extraction.status, "structured_provider": structured.provider},
+                after_value={**self._engagement_audit_value(engagement), "source_document_id": document.id, "extraction_status": extraction.status},
             )
-            self._notify_engagement_import_draft_created(account, draft, current_user)
+            self._add_engagement_timeline_event(
+                account,
+                engagement,
+                current_user,
+                event_type="engagement_created",
+                title=f"Engagement created from charter: {engagement.name}",
+                description=f"Engagement and stakeholder draft records were mapped from {stored.file_name}.",
+                new_value=self._engagement_audit_value(engagement),
+                metadata={"source_document_id": document.id, "extraction_status": extraction.status},
+            )
+            self._notify_engagement_created(account, engagement, current_user)
             self.engagements.commit()
-            return EngagementImportDraftRead.model_validate(self._get_import_draft_or_404(draft.id))
+            self._evaluate_alerts_for_account(account.id)
+            return EngagementRead.model_validate(engagement)
         except HTTPException:
             self.accounts.db.rollback()
             storage.delete_stored_file(stored.file_path)
@@ -232,130 +242,6 @@ class EngagementService:
             self.accounts.db.rollback()
             storage.delete_stored_file(stored.file_path)
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Project charter import failed: {str(exc)[:300]}") from exc
-
-    def list_import_drafts_for_account(
-        self,
-        account_id: str,
-        current_user: User,
-        *,
-        status_filter: str | None = "ready_for_review",
-        page: int = 1,
-        page_size: int = 20,
-    ) -> EngagementImportDraftPageRead:
-        account = self._get_account_or_404(account_id)
-        self.access.require_account_view(current_user, account, module="engagement_sow_management")
-        conditions = [EngagementImportDraft.account_id == account.id]
-        if status_filter:
-            conditions.append(EngagementImportDraft.status == status_filter)
-        total = self.db.scalar(select(func.count(EngagementImportDraft.id)).where(*conditions)) or 0
-        items = list(
-            self.db.scalars(
-                select(EngagementImportDraft)
-                .where(*conditions)
-                .order_by(EngagementImportDraft.updated_at.desc(), EngagementImportDraft.created_at.desc())
-                .offset((page - 1) * page_size)
-                .limit(page_size)
-            )
-        )
-        return EngagementImportDraftPageRead(
-            items=[EngagementImportDraftRead.model_validate(item) for item in items],
-            total=total,
-            page=page,
-            page_size=page_size,
-            pages=page_count(total, page_size),
-        )
-
-    def update_import_draft(self, draft_id: str, payload: EngagementImportDraftUpdateRequest, current_user: User) -> EngagementImportDraftRead:
-        draft = self._get_import_draft_or_404(draft_id)
-        account = self._get_account_or_404(draft.account_id)
-        self.access.require_account_update(current_user, account, module="engagement_sow_management")
-        self._ensure_open_import_draft(draft)
-        before = self._engagement_import_draft_audit_value(draft)
-        self._apply_import_draft_updates(draft, payload, current_user)
-        self._validate_import_draft_dates(draft)
-        self._set_import_draft_notice_deadline(draft)
-        after = self._engagement_import_draft_audit_value(draft)
-        changed_fields = self._important_field_changes(before, after)
-        self.audit.log(
-            module="engagement_sow_management",
-            action="engagement_draft_update",
-            entity_type="engagement_import_draft",
-            entity_id=draft.id,
-            actor=current_user,
-            before_value=before,
-            after_value=after,
-        )
-        if changed_fields:
-            self._notify_engagement_import_draft_updated(account, draft, current_user, changed_fields)
-        self.engagements.commit()
-        return EngagementImportDraftRead.model_validate(self._get_import_draft_or_404(draft.id))
-
-    def approve_import_draft(self, draft_id: str, current_user: User) -> EngagementImportDraftRead:
-        draft = self._get_import_draft_or_404(draft_id)
-        account = self._get_account_or_404(draft.account_id)
-        self.access.require_account_update(current_user, account, module="engagement_sow_management")
-        self._ensure_open_import_draft(draft)
-        self._apply_import_draft_approval_defaults(account, draft, current_user)
-        self._validate_import_draft_for_approval(draft)
-        engagement = self._create_engagement_from_import_draft(account, draft, current_user)
-        if draft.source_document:
-            draft.source_document.engagement_id = engagement.id
-        self._create_stakeholders_from_import_draft(account, engagement, draft, current_user)
-        self._add_health_snapshot(engagement, current_user, is_dirty=False)
-        self._notify_account_health_impacted_by_engagement_change(account, engagement, current_user)
-        draft.status = "approved"
-        draft.approved_by_id = current_user.id
-        draft.approved_by_name = current_user.full_name
-        draft.approved_engagement_id = engagement.id
-        draft.decided_at = datetime.now(timezone.utc)
-        self.audit.log(
-            module="engagement_sow_management",
-            action="engagement_draft_approve",
-            entity_type="engagement_import_draft",
-            entity_id=draft.id,
-            actor=current_user,
-            after_value={**self._engagement_import_draft_audit_value(draft), "approved_engagement_id": engagement.id},
-        )
-        self._add_engagement_timeline_event(
-            account,
-            engagement,
-            current_user,
-            event_type="engagement_created",
-            title=f"Engagement approved from charter: {engagement.name}",
-            description="An imported charter draft was approved and converted into an engagement.",
-            new_value=self._engagement_audit_value(engagement),
-            metadata={"engagement_import_draft_id": draft.id, "source_document_id": draft.source_document_id},
-        )
-        self._notify_engagement_import_draft_outcome(account, draft, current_user, "engagement_draft_approved", f"Engagement draft approved: {draft.name}", f"{current_user.full_name} approved the imported engagement draft.")
-        self._notify_engagement_created(account, engagement, current_user)
-        self._notify_engagement_onboarded(account, draft, engagement, current_user)
-        self.engagements.commit()
-        self._evaluate_alerts_for_account(account.id)
-        return EngagementImportDraftRead.model_validate(self._get_import_draft_or_404(draft.id))
-
-    def reject_import_draft(self, draft_id: str, payload: EngagementImportDraftRejectRequest, current_user: User) -> EngagementImportDraftRead:
-        draft = self._get_import_draft_or_404(draft_id)
-        account = self._get_account_or_404(draft.account_id)
-        self.access.require_account_update(current_user, account, module="engagement_sow_management")
-        self._ensure_open_import_draft(draft)
-        draft.status = "rejected"
-        draft.rejected_by_id = current_user.id
-        draft.rejected_by_name = current_user.full_name
-        draft.rejection_reason = payload.reason
-        draft.decided_at = datetime.now(timezone.utc)
-        self.audit.log(
-            module="engagement_sow_management",
-            action="engagement_draft_reject",
-            entity_type="engagement_import_draft",
-            entity_id=draft.id,
-            actor=current_user,
-            before_value={"status": "ready_for_review"},
-            after_value={"status": draft.status, "rejection_reason": payload.reason},
-            reason=payload.reason,
-        )
-        self._notify_engagement_import_draft_outcome(account, draft, current_user, "engagement_draft_rejected", f"Engagement draft rejected: {draft.name}", payload.reason)
-        self.engagements.commit()
-        return EngagementImportDraftRead.model_validate(self._get_import_draft_or_404(draft.id))
 
     def get_engagement(self, engagement_id: str, current_user: User) -> EngagementRead:
         engagement = self._get_engagement_or_404(engagement_id)
@@ -547,12 +433,6 @@ class EngagementService:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Engagement was not found")
         return engagement
 
-    def _get_import_draft_or_404(self, draft_id: str) -> EngagementImportDraft:
-        draft = self.db.get(EngagementImportDraft, draft_id)
-        if draft is None:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Engagement import draft was not found")
-        return draft
-
     def _get_active_user(self, user_id: str) -> User:
         user = self.accounts.get_user(user_id)
         if user is None or not user.is_active:
@@ -566,7 +446,7 @@ class EngagementService:
         self.account_service._ensure_owner_is_eligible(user, "ops_lead")
         return user
 
-    def _engagement_import_draft_from_structured_charter(self, account: Account, document: SourceDocument, fields: dict, text: str, current_user: User) -> EngagementImportDraft:
+    def _engagement_from_structured_charter(self, account: Account, document: SourceDocument, fields: dict, text: str, current_user: User) -> Engagement:
         primary_owner = self.accounts.get_active_primary_owner(account.id)
         owner_id = primary_owner.user_id if primary_owner and primary_owner.user_id else current_user.id
         owner_name = primary_owner.user_name if primary_owner and primary_owner.user_name else current_user.full_name
@@ -581,12 +461,11 @@ class EngagementService:
         name = self._extract_label(text, ["Project Name", "Engagement Name", "Program Name", "Charter Title", "Project Charter"]) or self._document_title(document.file_name or document.title)
         if not name or name.lower() in {"project charter", "charter"}:
             name = f"{account.name} Engagement"
-        draft = EngagementImportDraft(
+        engagement = Engagement(
             account_id=account.id,
-            source_document_id=document.id,
-            status="ready_for_review",
             name=name[:180],
             description="\n".join(deliverables[:12])[:4000] if deliverables else None,
+            status="active",
             owner_id=owner_id,
             owner_name=owner_name,
             service_lines=service_lines,
@@ -607,50 +486,7 @@ class EngagementService:
             commercial_context=self._commercial_context(commercial_value, currency, renewal_terms, self._field_text(fields, "notice_period")),
             resource_dependency=self._resource_dependency(risks),
             risks=risks,
-            stakeholder_drafts=self._stakeholder_drafts_from_fields(fields),
             source_citation=f"{document.file_name or document.title}: engagement mapped from extracted project charter content.",
-            confidence=self._structured_confidence(fields),
-            missing_fields=self._engagement_import_missing_fields(fields, name, service_lines, start_date),
-            created_by_id=current_user.id,
-            created_by_name=current_user.full_name,
-            updated_by_id=current_user.id,
-            updated_by_name=current_user.full_name,
-        )
-        self._validate_import_draft_dates(draft)
-        self._set_import_draft_notice_deadline(draft)
-        self.db.add(draft)
-        self.db.flush()
-        return draft
-
-    def _create_engagement_from_import_draft(self, account: Account, draft: EngagementImportDraft, current_user: User) -> Engagement:
-        engagement = Engagement(
-            account_id=account.id,
-            name=draft.name,
-            description=draft.description,
-            status="active",
-            owner_id=draft.owner_id,
-            owner_name=draft.owner_name or current_user.full_name,
-            ops_lead_id=draft.ops_lead_id,
-            ops_lead_name=draft.ops_lead_name,
-            service_lines=list(draft.service_lines or []),
-            source_links=list(draft.source_links or []),
-            value=float(draft.value or 0),
-            currency=draft.currency or account.currency or "USD",
-            delivery_status=draft.delivery_status,
-            commercial_status=draft.commercial_status,
-            delivery_health=draft.delivery_health,
-            health_status=draft.health_status,
-            renewal_risk=draft.renewal_risk,
-            start_date=draft.start_date or datetime.now(timezone.utc),
-            end_date=draft.end_date,
-            renewal_date=draft.renewal_date,
-            notice_deadline=draft.notice_deadline,
-            notice_period_days=draft.notice_period_days,
-            auto_renewal=draft.auto_renewal,
-            commercial_context=draft.commercial_context,
-            resource_dependency=draft.resource_dependency,
-            risks=list(draft.risks or []),
-            source_citation=draft.source_citation,
             created_by_id=current_user.id,
             updated_by_id=current_user.id,
         )
@@ -658,14 +494,9 @@ class EngagementService:
         self.engagements.save(engagement)
         return engagement
 
-    def _create_stakeholders_from_import_draft(self, account: Account, engagement: Engagement, draft: EngagementImportDraft, current_user: User) -> None:
-        for item in list(draft.stakeholder_drafts or [])[:20]:
-            if isinstance(item, dict):
-                name = str(item.get("name") or "").strip()
-                title = str(item.get("title") or "").strip() or None
-                email = str(item.get("email") or "").strip() or None
-            else:
-                name, title, email = self._parse_stakeholder(str(item))
+    def _create_stakeholders_from_charter(self, account: Account, engagement: Engagement, fields: dict, current_user: User) -> None:
+        for raw in self._field_list(fields, "stakeholders")[:20]:
+            name, title, email = self._parse_stakeholder(raw)
             if not name:
                 continue
             duplicate = self.accounts.db.query(Stakeholder).filter(
@@ -809,48 +640,6 @@ class EngagementService:
         name = re.sub(r"^(Name|Stakeholder|Client has to|Customer shall identify)\s*[:\-]?\s*", "", name, flags=re.IGNORECASE).strip()
         return name[:180], title[:160] if title else None, email
 
-    def _stakeholder_drafts_from_fields(self, fields: dict) -> list[dict[str, str | None]]:
-        drafts: list[dict[str, str | None]] = []
-        seen: set[str] = set()
-        for raw in self._field_list(fields, "stakeholders")[:20]:
-            name, title, email = self._parse_stakeholder(raw)
-            if not name:
-                continue
-            key = (email or name).lower()
-            if key in seen:
-                continue
-            seen.add(key)
-            drafts.append({"name": name, "title": title, "email": email})
-        return drafts
-
-    @staticmethod
-    def _structured_confidence(fields: dict) -> int:
-        scores: list[int] = []
-        for item in fields.values():
-            if not isinstance(item, dict):
-                continue
-            try:
-                scores.append(max(0, min(100, int(item.get("confidence") or 0))))
-            except (TypeError, ValueError):
-                continue
-        non_zero = [score for score in scores if score > 0]
-        if not non_zero:
-            return 75
-        return round(sum(non_zero) / len(non_zero))
-
-    @staticmethod
-    def _engagement_import_missing_fields(fields: dict, name: str | None, service_lines: list[str], start_date: datetime | None, *, owner_id: str | None = None) -> list[str]:
-        missing = []
-        if not (name or "").strip():
-            missing.append("Engagement name is required.")
-        if not service_lines:
-            missing.append("At least one service line is required.")
-        if start_date is None:
-            missing.append("Engagement start date is required.")
-        if owner_id is None and not fields:
-            missing.append("Engagement owner is required.")
-        return missing
-
     def _apply_updates(self, engagement: Engagement, payload: EngagementUpdateRequest, current_user: User) -> None:
         updates = payload.model_dump(exclude_unset=True)
         updates.pop("notice_deadline", None)
@@ -865,36 +654,10 @@ class EngagementService:
             setattr(engagement, field, value)
         engagement.updated_by_id = current_user.id
 
-    def _apply_import_draft_updates(self, draft: EngagementImportDraft, payload: EngagementImportDraftUpdateRequest, current_user: User) -> None:
-        updates = payload.model_dump(exclude_unset=True)
-        updates.pop("notice_deadline", None)
-        if "owner_id" in updates:
-            if updates["owner_id"]:
-                owner = self._get_active_user(updates["owner_id"])
-                self.account_service._ensure_owner_is_eligible(owner, "primary_am")
-                updates["owner_name"] = owner.full_name
-            else:
-                updates["owner_name"] = None
-        if "ops_lead_id" in updates:
-            ops_lead = self._get_optional_ops_lead(updates["ops_lead_id"])
-            updates["ops_lead_name"] = ops_lead.full_name if ops_lead else None
-        for field, value in updates.items():
-            setattr(draft, field, value)
-        draft.updated_by_id = current_user.id
-        draft.updated_by_name = current_user.full_name
-        draft.missing_fields = self._engagement_import_missing_fields({}, draft.name, list(draft.service_lines or []), draft.start_date, owner_id=draft.owner_id)
-
     @staticmethod
     def _validate_engagement_dates(engagement: Engagement) -> None:
         start_date = EngagementService._calendar_date(engagement.start_date)
         end_date = EngagementService._calendar_date(engagement.end_date)
-        if start_date and end_date and end_date < start_date:
-            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Engagement end date must be after start date.")
-
-    @staticmethod
-    def _validate_import_draft_dates(draft: EngagementImportDraft) -> None:
-        start_date = EngagementService._calendar_date(draft.start_date)
-        end_date = EngagementService._calendar_date(draft.end_date)
         if start_date and end_date and end_date < start_date:
             raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Engagement end date must be after start date.")
 
@@ -905,39 +668,6 @@ class EngagementService:
             engagement.end_date,
             engagement.notice_period_days,
         )
-
-    @staticmethod
-    def _set_import_draft_notice_deadline(draft: EngagementImportDraft) -> None:
-        draft.notice_deadline = calculate_notice_deadline(
-            draft.renewal_date,
-            draft.end_date,
-            draft.notice_period_days,
-        )
-
-    @staticmethod
-    def _ensure_open_import_draft(draft: EngagementImportDraft) -> None:
-        if draft.status != "ready_for_review":
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Only engagement drafts ready for review can be changed")
-
-    def _apply_import_draft_approval_defaults(self, account: Account, draft: EngagementImportDraft, current_user: User) -> None:
-        if not draft.owner_id:
-            primary_owner = self.accounts.get_active_primary_owner(account.id)
-            draft.owner_id = primary_owner.user_id if primary_owner and primary_owner.user_id else current_user.id
-            draft.owner_name = primary_owner.user_name if primary_owner and primary_owner.user_name else current_user.full_name
-        if not draft.service_lines:
-            draft.service_lines = ["Account onboarding"]
-        if draft.start_date is None:
-            draft.start_date = datetime.now(timezone.utc)
-        draft.updated_by_id = current_user.id
-        draft.updated_by_name = current_user.full_name
-        self._set_import_draft_notice_deadline(draft)
-
-    def _validate_import_draft_for_approval(self, draft: EngagementImportDraft) -> None:
-        missing = self._engagement_import_missing_fields({}, draft.name, list(draft.service_lines or []), draft.start_date, owner_id=draft.owner_id)
-        if missing:
-            draft.missing_fields = missing
-            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail={"message": "Engagement draft is missing required fields.", "errors": [{"field": "engagement_draft", "message": "; ".join(missing)}]})
-        self._validate_import_draft_dates(draft)
 
     @staticmethod
     def _calendar_date(value: date | datetime | None) -> date | None:
@@ -1130,100 +860,6 @@ class EngagementService:
             exclude_user_ids={current_user.id},
         )
 
-    def _engagement_import_draft_recipients(self, draft: EngagementImportDraft, *, exclude_user_id: str | None = None) -> list[User]:
-        recipients = [
-            self.in_app_notifications.active_user(draft.owner_id),
-            *self.in_app_notifications.users_by_roles(["kam_head"]),
-        ]
-        seen: set[str] = set()
-        unique: list[User] = []
-        for recipient in recipients:
-            if recipient is None or recipient.id == exclude_user_id or recipient.id in seen:
-                continue
-            seen.add(recipient.id)
-            unique.append(recipient)
-        return unique
-
-    def _engagement_import_draft_owner_recipients(self, draft: EngagementImportDraft, *, exclude_user_id: str | None = None) -> list[User]:
-        recipients = [
-            self.in_app_notifications.active_user(draft.created_by_id),
-            self.in_app_notifications.active_user(draft.owner_id),
-        ]
-        seen: set[str] = set()
-        unique: list[User] = []
-        for recipient in recipients:
-            if recipient is None or recipient.id == exclude_user_id or recipient.id in seen:
-                continue
-            seen.add(recipient.id)
-            unique.append(recipient)
-        return unique
-
-    def _notify_engagement_import_draft_created(self, account: Account, draft: EngagementImportDraft, current_user: User) -> None:
-        self.in_app_notifications.queue_many(
-            self._engagement_import_draft_recipients(draft, exclude_user_id=current_user.id),
-            trigger="engagement_draft_created",
-            title=f"Engagement draft ready: {draft.name}",
-            body=f"{current_user.full_name} imported a charter draft for {account.name}.",
-            account=account,
-            source_record_type="engagement_import_draft",
-            source_record_id=draft.id,
-            source_record_route=f"/accounts/{account.id}?tab=engagements",
-            priority="high",
-            delivery_metadata={"draft_id": draft.id, "created_by_id": current_user.id},
-            dedupe_scope=f"created:{draft.id}",
-            exclude_user_ids={current_user.id},
-        )
-
-    def _notify_engagement_import_draft_updated(self, account: Account, draft: EngagementImportDraft, current_user: User, changed_fields: list[str]) -> None:
-        labels = ", ".join(changed_fields[:6])
-        suffix = " and more" if len(changed_fields) > 6 else ""
-        self.in_app_notifications.queue_many(
-            self._engagement_import_draft_recipients(draft, exclude_user_id=current_user.id),
-            trigger="engagement_draft_updated",
-            title=f"Engagement draft updated: {draft.name}",
-            body=f"{current_user.full_name} saved draft changes to {labels}{suffix}.",
-            account=account,
-            source_record_type="engagement_import_draft",
-            source_record_id=draft.id,
-            source_record_route=f"/accounts/{account.id}?tab=engagements",
-            priority="medium",
-            delivery_metadata={"draft_id": draft.id, "actor_id": current_user.id, "changed_fields": changed_fields},
-            dedupe_scope=f"updated:{datetime.now(timezone.utc).isoformat()}",
-            exclude_user_ids={current_user.id},
-        )
-
-    def _notify_engagement_import_draft_outcome(self, account: Account, draft: EngagementImportDraft, current_user: User, trigger: str, title: str, body: str) -> None:
-        self.in_app_notifications.queue_many(
-            self._engagement_import_draft_owner_recipients(draft, exclude_user_id=current_user.id),
-            trigger=trigger,
-            title=title,
-            body=body,
-            account=account,
-            source_record_type="engagement_import_draft",
-            source_record_id=draft.id,
-            source_record_route=f"/accounts/{account.id}?tab=engagements",
-            priority="high" if trigger == "engagement_draft_rejected" else "medium",
-            delivery_metadata={"draft_id": draft.id, "actor_id": current_user.id, "approved_engagement_id": draft.approved_engagement_id},
-            dedupe_scope=f"outcome:{draft.status}:{draft.decided_at.isoformat() if draft.decided_at else draft.id}",
-            exclude_user_ids={current_user.id},
-        )
-
-    def _notify_engagement_onboarded(self, account: Account, draft: EngagementImportDraft, engagement: Engagement, current_user: User) -> None:
-        self.in_app_notifications.queue_many(
-            self.in_app_notifications.users_by_roles(["kam_head"]),
-            trigger="engagement_draft_approved",
-            title=f"New engagement onboarded: {engagement.name}",
-            body=f"{current_user.full_name} approved {engagement.name}; the engagement is now active.",
-            account=account,
-            source_record_type="engagement",
-            source_record_id=engagement.id,
-            source_record_route=f"/accounts/{account.id}/engagements/{engagement.id}",
-            priority="medium",
-            delivery_metadata={"draft_id": draft.id, "actor_id": current_user.id, "approved_engagement_id": engagement.id},
-            dedupe_scope=f"onboarded:{draft.id}:{engagement.id}",
-            exclude_user_ids={current_user.id},
-        )
-
     def _notify_engagement_update(self, account: Account, engagement: Engagement, current_user: User, before: dict, after: dict, changed_fields: list[str]) -> None:
         if "owner_id" in changed_fields:
             self.in_app_notifications.queue_many(
@@ -1322,45 +958,6 @@ class EngagementService:
             "risks": list(engagement.risks or []),
             "source_citation": engagement.source_citation,
             "archived_at": datetime_value(engagement.archived_at),
-        }
-
-    @staticmethod
-    def _engagement_import_draft_audit_value(draft: EngagementImportDraft) -> dict:
-        return {
-            "id": draft.id,
-            "account_id": draft.account_id,
-            "source_document_id": draft.source_document_id,
-            "status": draft.status,
-            "name": draft.name,
-            "description": draft.description,
-            "owner_id": draft.owner_id,
-            "owner_name": draft.owner_name,
-            "ops_lead_id": draft.ops_lead_id,
-            "ops_lead_name": draft.ops_lead_name,
-            "service_lines": list(draft.service_lines or []),
-            "source_links": list(draft.source_links or []),
-            "delivery_status": draft.delivery_status,
-            "commercial_status": draft.commercial_status,
-            "delivery_health": draft.delivery_health,
-            "health_status": draft.health_status,
-            "renewal_risk": draft.renewal_risk,
-            "value": float(draft.value),
-            "currency": draft.currency,
-            "start_date": datetime_value(draft.start_date),
-            "end_date": datetime_value(draft.end_date),
-            "renewal_date": datetime_value(draft.renewal_date),
-            "notice_deadline": datetime_value(draft.notice_deadline),
-            "notice_period_days": draft.notice_period_days,
-            "auto_renewal": draft.auto_renewal,
-            "commercial_context": draft.commercial_context,
-            "resource_dependency": draft.resource_dependency,
-            "risks": list(draft.risks or []),
-            "stakeholder_drafts": list(draft.stakeholder_drafts or []),
-            "source_citation": draft.source_citation,
-            "confidence": draft.confidence,
-            "missing_fields": list(draft.missing_fields or []),
-            "approved_engagement_id": draft.approved_engagement_id,
-            "rejection_reason": draft.rejection_reason,
         }
 
     @classmethod

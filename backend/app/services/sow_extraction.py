@@ -580,77 +580,19 @@ class SowExtractionService:
     def _customer(text: str) -> str | None:
         for pattern in (
             r"(?is)by\s+and\s+between\s+(.+?)\s*\([\"“']?\s*Customer\s*[\"”']?",
-            r"(?im)^\s*(?:Account Name|Customer|Client)\s*(?:[:|]|\s+-\s+)\s*(.+?)\s*$",
+            r"(?im)^\s*(?:Account Name|Customer|Client)\s*[:\-]\s*(.+?)\s*$",
         ):
             match = re.search(pattern, text)
             if match:
-                candidate = SowExtractionService._clean_customer_candidate(match.group(1))
-                if candidate:
-                    return candidate
-        return SowExtractionService._customer_from_sow_title(text)
-
-    @staticmethod
-    def _customer_from_sow_title(text: str) -> str | None:
-        for line in SowExtractionService._content_lines(text)[:12]:
-            match = re.search(r"(?i)\bstatement\s+of\s+work\b|\bsow\b", line)
-            if not match:
-                continue
-            for candidate in (line[: match.start()], re.sub(r"(?i)^for\s+", "", line[match.end() :])):
-                cleaned = SowExtractionService._clean_customer_candidate(candidate)
-                if cleaned:
-                    return cleaned
+                return re.sub(r"\s+", " ", match.group(1)).strip(" ,.;")[:180]
         return None
-
-    @staticmethod
-    def _clean_customer_candidate(value: Any) -> str | None:
-        cleaned = re.sub(r"\s+", " ", str(value or "")).strip(" -|,.;:")
-        if not cleaned or len(cleaned) < 2 or len(cleaned) > 120:
-            return None
-        lower = cleaned.lower()
-        if lower == "this":
-            return None
-        if not re.search(r"[a-z]", lower):
-            return None
-        if any(
-            marker in lower
-            for marker in (
-                "statement of work",
-                "prepared",
-                "project",
-                "baseline",
-                "scope",
-                "contract",
-                "agreement",
-                "dedicated",
-                "team",
-            )
-        ):
-            return None
-        if SowExtractionService._is_vendor_name(cleaned):
-            return None
-        return cleaned[:180]
-
-    @staticmethod
-    def _content_lines(text: str) -> list[str]:
-        lines = []
-        for line in text.splitlines():
-            cleaned = re.sub(r"\s+", " ", line or "").strip()
-            if not cleaned or cleaned.lower().startswith("source:") or cleaned.startswith("["):
-                continue
-            lines.append(cleaned)
-        return lines
 
     @staticmethod
     def _date_from_timeframe(text: str, group: int) -> str | None:
         match = re.search(r"(?is)start\s+date\s+of\s+engagement\s+is\s+(\d{1,2}/\d{1,2}/\d{4})\s+(?:till|until|through|to)\s+(\d{1,2}/\d{1,2}/\d{4})", text)
-        if match:
-            return match.group(group)
-        label = "Start Date" if group == 1 else "End Date"
-        label_match = re.search(rf"(?im)^\s*{re.escape(label)}\s*(?:[:|]|\s+-\s+)\s*(.+?)\s*$", text)
-        if not label_match:
+        if not match:
             return None
-        date_match = re.search(r"\d{4}-\d{2}-\d{2}|\d{1,2}/\d{1,2}/\d{4}", label_match.group(1))
-        return date_match.group(0) if date_match else None
+        return match.group(group)
 
     @staticmethod
     def _renewal_terms(text: str) -> str | None:
@@ -670,7 +612,7 @@ class SowExtractionService:
 
     @staticmethod
     def _commercial_value(text: str) -> dict[str, Any]:
-        match = re.search(r"(?im)^\s*(?:Applicable monthly fee|Total monthly fee|Contract Value|SOW Value)\s*(?:[:|]|\s+-\s+)\s*(?:([A-Z]{3})\s*)?\$?\s*([\d,]+(?:\.\d+)?)", text)
+        match = re.search(r"(?im)^\s*(?:Applicable monthly fee|Total monthly fee|Contract Value|SOW Value)\s*[:\-]\s*(?:([A-Z]{3})\s*)?\$?\s*([\d,]+(?:\.\d+)?)", text)
         if not match:
             return {"value": None, "currency": None, "confidence": 0}
         return {"value": float(match.group(2).replace(",", "")), "currency": match.group(1) or "USD", "confidence": 82}

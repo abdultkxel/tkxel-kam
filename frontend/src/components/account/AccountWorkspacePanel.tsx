@@ -11,7 +11,9 @@ import { GovernanceEventActions } from '@/components/governance/GovernanceEventA
 import { RuntimeCustomFieldValues } from '@/components/custom-fields/RuntimeCustomFields'
 import { Account } from '@/types/account'
 import { useGovernanceStore } from '@/stores/governanceStore'
-import { SourceDocument } from '@/types/v3'
+import { useTimelineStore } from '@/stores/timelineStore'
+import { useV3Store } from '@/stores/v3Store'
+import { RetentionPlan, SourceDocument } from '@/types/v3'
 import { GovernanceEventRecord } from '@/types/governance'
 import { formatDate } from '@/utils/formatters'
 import { useAuth } from '@/contexts/AuthContext'
@@ -25,6 +27,8 @@ import { cn } from '@/utils/cn'
 import { apiFieldErrors, clearFieldError, FieldErrors, hasFieldErrors } from '@/utils/formErrors'
 
 export function AccountWorkspacePanel({ account, tab }: { account: Account; tab: string }) {
+  const documents = useV3Store(state => state.sourceDocuments).filter(document => document.accountId === account.id)
+  const plans = useV3Store(state => state.retentionPlans).filter(item => item.accountId === account.id)
   const governance = useGovernanceStore(state => state.events).filter(event => event.accountId === account.id)
 
   if (tab === 'Education') {
@@ -37,12 +41,12 @@ export function AccountWorkspacePanel({ account, tab }: { account: Account; tab:
     return <GovernanceAccountPanel account={account} governance={governance} />
   }
   if (tab === 'Notes') {
-    return <NotesPanel account={account} />
+    return <NotesPanel account={account} plans={plans} />
   }
-  return <DocumentsPanel account={account} />
+  return <DocumentsPanel account={account} fallbackDocuments={documents} />
 }
 
-function DocumentsPanel({ account }: { account: Account }) {
+function DocumentsPanel({ account, fallbackDocuments }: { account: Account; fallbackDocuments: SourceDocument[] }) {
   const { token } = useAuth()
   const [documents, setDocuments] = useState<SourceDocument[]>([])
   const [loading, setLoading] = useState(true)
@@ -55,7 +59,7 @@ function DocumentsPanel({ account }: { account: Account }) {
 
   useEffect(() => {
     if (!token) {
-      setDocuments([])
+      setDocuments(fallbackDocuments)
       setLoading(false)
       return
     }
@@ -69,7 +73,7 @@ function DocumentsPanel({ account }: { account: Account }) {
       })
       .catch(err => {
         if (!cancelled) {
-          setDocuments([])
+          setDocuments(fallbackDocuments)
           setError(err instanceof Error ? err.message : 'Source documents could not load')
         }
       })
@@ -79,7 +83,7 @@ function DocumentsPanel({ account }: { account: Account }) {
     return () => {
       cancelled = true
     }
-  }, [account.id, token])
+  }, [account.id, fallbackDocuments, token])
 
   async function refreshDocuments() {
     if (!token) return
@@ -696,11 +700,20 @@ type AccountNote = {
   createdAt: string
 }
 
-function NotesPanel({ account }: { account: Account }) {
+function NotesPanel({ account, plans }: { account: Account; plans: RetentionPlan[] }) {
   const [searchParams, setSearchParams] = useSearchParams()
   const { token } = useAuth()
   const user = useRole()
-  const [notes, setNotes] = useState<AccountNote[]>([])
+  const addTimelineEntry = useTimelineStore(state => state.addEntry)
+  const planNotes = useMemo<AccountNote[]>(() => [
+    ...plans.map(plan => ({
+      id: `plan-${plan.id}`,
+      title: plan.title,
+      body: plan.successCriteria.join(', '),
+      createdAt: new Date().toISOString(),
+    })),
+  ], [plans])
+  const [notes, setNotes] = useState<AccountNote[]>(planNotes)
   const [loading, setLoading] = useState(Boolean(token))
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
@@ -713,7 +726,7 @@ function NotesPanel({ account }: { account: Account }) {
 
   useEffect(() => {
     if (!token) {
-      setNotes([])
+      setNotes(planNotes)
       setLoading(false)
       return
     }
@@ -723,11 +736,11 @@ function NotesPanel({ account }: { account: Account }) {
     getAccountTimeline(token, account.id, { event_type: 'manual_note', direction: 'desc', page: 1, page_size: 50 })
       .then(result => {
         if (cancelled) return
-        setNotes(result.items.map(timelineEntryToNote))
+        setNotes([...result.items.map(timelineEntryToNote), ...planNotes])
       })
       .catch(err => {
         if (cancelled) return
-        setNotes([])
+        setNotes(planNotes)
         setError(err instanceof Error ? err.message : 'Notes could not be loaded')
       })
       .finally(() => {
@@ -736,7 +749,7 @@ function NotesPanel({ account }: { account: Account }) {
     return () => {
       cancelled = true
     }
-  }, [account.id, token])
+  }, [account.id, planNotes, token])
 
   useEffect(() => {
     if (searchParams.get('addNote') !== '1') return
@@ -757,7 +770,7 @@ function NotesPanel({ account }: { account: Account }) {
     setError('')
     try {
       const result = await getAccountTimeline(token, account.id, { event_type: 'manual_note', direction: 'desc', page: 1, page_size: 50 })
-      setNotes(result.items.map(timelineEntryToNote))
+      setNotes([...result.items.map(timelineEntryToNote), ...planNotes])
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Notes could not be refreshed')
     } finally {
@@ -805,6 +818,7 @@ function NotesPanel({ account }: { account: Account }) {
           is_sensitive: false,
           tags: ['manual', 'notes'],
         })
+        addTimelineEntry(entry)
         setNotes(current => [timelineEntryToNote(entry), ...current.filter(note => note.id !== entry.id)])
         toast.success('Note saved')
       }

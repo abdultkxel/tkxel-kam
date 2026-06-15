@@ -10,7 +10,6 @@ Growth and Retention remain available as two internal tabs inside Stage. The pre
 
 - In scope:
   - Account detail tab order: Overview, Engagement, Stakeholders, KYC, Health, Stage, Opportunities, Governance, Education, Timeline, Notes, Documents.
-  - Account overview command center without the Generate handover button.
   - Legacy deep links for `engagements`, `stakeholders`, `growth`, `retention`, `renewal`, and `planning`.
   - Stage tab renders existing Growth whitespace and Retention plan panels as two internal tabs.
 - Out of scope:

@@ -6,7 +6,6 @@ from sqlalchemy.orm import Session
 from app.models import User
 from app.repositories.accounts import AccountRepository
 from app.repositories.dashboards import DashboardRepository
-from app.repositories.onboarding import OnboardingRepository
 from app.repositories.rbac import RbacRepository
 from app.schemas import AiForecastResponse, DashboardRead, DashboardWidgetRead, TaskSummaryRefreshRead
 from app.services.account_access import AccountAccessService
@@ -26,7 +25,6 @@ class DashboardsService:
         self.db = db
         self.repository = DashboardRepository(db)
         self.accounts = AccountRepository(db)
-        self.onboarding = OnboardingRepository(db)
         self.rbac = RbacRepository(db)
         self.access = AccountAccessService(self.accounts, self.rbac)
         self.forecasting = ForecastingService(db)
@@ -165,40 +163,31 @@ class DashboardsService:
             tasks = [task for task in tasks if task.priority == priority]
         opportunities = self.repository.list_open_opportunities(account_ids=scoped_ids, owner_id=owner_id, limit=100)
         governance = self.repository.list_governance_events(account_ids=scoped_ids, limit=100)
-        engagement_health = self.repository.list_engagement_health_items(account_ids=scoped_ids, limit=100)
-        onboarding_drafts, onboarding_draft_total = self._onboarding_drafts_for_dashboard(
-            current_user,
-            search=search,
-            page=page,
-            page_size=page_size,
-            include_when_filtered=account_id is None,
-        )
         now = self.repository.now()
         mask_commercial = self._mask_commercial_values(current_user)
         at_risk = [item for item in accounts if item.risk_status in {"warning", "critical"}]
-        critical_action_items = self._critical_action_items(tasks, accounts, engagement_health, now)
-        todays_tasks = self._todays_tasks(tasks, now)
+        critical_tasks = self._critical_tasks(tasks)
+        critical_task_items = [self._critical_task_item(task, now) for task in critical_tasks]
         widgets = [
             self._widget(
                 "summary",
                 "Manager attention summary",
-                {"my_accounts": len(accounts), "at_risk": len(at_risk), "critical_actions": len(critical_action_items), "open_tasks": len(tasks)},
+                {"my_accounts": len(accounts), "at_risk": len(at_risk), "critical_tasks": len(critical_tasks), "open_tasks": len(tasks)},
                 [],
                 "assigned_accounts",
                 {
                     "tiles": [
                         {"key": "my_accounts", "label": "My Accounts", "value": len(accounts), "route": "/accounts", "detail": "Assigned account portfolio."},
                         {"key": "at_risk", "label": "At risk", "value": len(at_risk), "route": "/accounts?risk=at_risk", "detail": "Warning and critical accounts."},
-                        {"key": "critical_actions", "label": "Critical Actions", "value": len(critical_action_items), "route": "/dashboard#critical-actions", "detail": "Critical tasks and health drops."},
+                        {"key": "critical_tasks", "label": "Critical tasks", "value": len(critical_tasks), "route": "/tasks?priority=critical", "detail": "Critical and blocked tasks only."},
                         {"key": "open_tasks", "label": "Open tasks", "value": len(tasks), "route": "/tasks", "detail": "Open operational work in scope."},
                     ]
                 },
                 primary_route="/dashboard",
             ),
-            self._critical_actions_widget(critical_action_items, tasks, accounts, engagement_health, data_scope="assigned_accounts", page=page, page_size=page_size),
-            self._todays_tasks_widget(todays_tasks, data_scope="assigned_accounts", now=now, page=page, page_size=page_size),
+            self._widget("account_portfolio", "Account portfolio table", None, [self._account_item(account, include_commercial=not mask_commercial) for account in self._slice(accounts, page, page_size)], "assigned_accounts", {"page": page, "page_size": page_size, "total": len(accounts)}, primary_route="/accounts"),
+            self._widget("critical_tasks", "Critical tasks", None, self._slice(critical_task_items, page, page_size), "assigned_accounts", {"page": page, "page_size": page_size, "total": len(critical_task_items), "source_counts": {"critical_tasks": len(critical_tasks)}}, primary_route="/tasks?priority=critical"),
             self._widget("tasks", "Tasks summary", self._task_breakdown_value(tasks, accounts, current_user.id, now), [self._task_item(task, now) for task in self._slice(tasks, page, page_size)], "assigned_accounts", {"page": page, "page_size": page_size, "total": len(tasks), "data_source": "Task records filtered to: owner = AM or account in assigned list"}, primary_route="/tasks"),
-            self._widget("onboarding_drafts", "Onboarding drafts", {"ready_for_review": onboarding_draft_total}, [self._onboarding_draft_item(draft) for draft in onboarding_drafts], "assigned_accounts", {"page": page, "page_size": page_size, "total": onboarding_draft_total}, primary_route="/accounts/onboarding"),
             self._pipeline_widget(opportunities, data_scope="assigned_accounts", masked=mask_commercial, page=page, page_size=page_size),
             self._forecast_widget(opportunities, accounts, data_scope="assigned_accounts", masked=mask_commercial),
             self._governance_calendar_widget(governance, data_scope="assigned_accounts", read_only=False),
@@ -231,19 +220,18 @@ class DashboardsService:
         tasks = self.repository.list_open_tasks(account_ids=scoped_ids, limit=200)
         opportunities = self.repository.list_open_opportunities(account_ids=scoped_ids, limit=200)
         governance = self.repository.list_governance_events(account_ids=scoped_ids, limit=200)
-        engagement_health = self.repository.list_engagement_health_items(account_ids=scoped_ids, limit=100)
         now = self.repository.now()
-        critical_action_items = self._critical_action_items(tasks, accounts, engagement_health, now)
-        todays_tasks = self._todays_tasks(tasks, now)
+        critical_tasks = self._critical_tasks(tasks)
+        critical_task_items = [self._critical_task_item(task, now) for task in critical_tasks]
         workload = self._workload(scoped_ids)
         mask_commercial = self._mask_commercial_values(current_user)
         at_risk_accounts = [account for account in accounts if account.risk_status in {"warning", "critical"}]
         widgets = [
-            self._widget("summary", "Portfolio attention summary", {"accounts": len(accounts), "at_risk_accounts": len(at_risk_accounts), "critical_actions": len(critical_action_items), "open_tasks": len(tasks)}, [], "portfolio", primary_route="/dashboard"),
+            self._widget("summary", "Portfolio attention summary", {"accounts": len(accounts), "at_risk_accounts": len(at_risk_accounts), "critical_tasks": len(critical_tasks), "open_tasks": len(tasks)}, [], "portfolio", primary_route="/dashboard"),
             self._forecast_widget(opportunities, accounts, data_scope="portfolio", masked=mask_commercial),
+            self._widget("account_portfolio", "Account portfolio table", None, [self._account_item(account, include_commercial=not mask_commercial) for account in self._slice(accounts, page, page_size)], "portfolio", {"page": page, "page_size": page_size, "total": len(accounts), "masked": mask_commercial}, primary_route="/accounts"),
             self._widget("high_risk_accounts", "At-risk accounts", None, [self._risk_account_item(account, include_commercial=not mask_commercial) for account in self._slice(at_risk_accounts, page, page_size)], "portfolio", {"page": page, "page_size": page_size, "total": len(at_risk_accounts), "masked": mask_commercial}, primary_route="/accounts?risk=at_risk"),
-            self._critical_actions_widget(critical_action_items, tasks, accounts, engagement_health, data_scope="portfolio", page=page, page_size=page_size),
-            self._todays_tasks_widget(todays_tasks, data_scope="portfolio", now=now, page=page, page_size=page_size),
+            self._widget("critical_tasks", "Critical tasks", None, self._slice(critical_task_items, page, page_size), "portfolio", {"page": page, "page_size": page_size, "total": len(critical_task_items), "source_counts": {"critical_tasks": len(critical_tasks)}}, primary_route="/tasks?priority=critical"),
             self._governance_calendar_widget(governance, data_scope="portfolio", read_only=False),
             self._pipeline_widget(opportunities, data_scope="portfolio", masked=mask_commercial, page=page, page_size=page_size),
             self._widget("am_workload", "AM workload", None, workload, "portfolio", primary_route="/accounts"),
@@ -293,13 +281,9 @@ class DashboardsService:
         governance = self.repository.list_governance_events(account_ids=account_ids, limit=100)
         engagement_health = self.repository.list_engagement_health_items(account_ids=account_ids, limit=100)
         now = self.repository.now()
-        critical_action_items = self._critical_action_items(tasks, accounts, engagement_health, now)
-        todays_tasks = self._todays_tasks(tasks, now)
         widgets = [
-            self._widget("summary", f"{display_name} summary", {"authorized_accounts": len(accounts), "critical_actions": len(critical_action_items), "open_tasks": len(tasks), "critical_signals": len([item for item in signals if item.severity == "critical"]), "engagement_health_items": len(engagement_health)}, [], role_group, primary_route="/dashboard"),
+            self._widget("summary", f"{display_name} summary", {"authorized_accounts": len(accounts), "open_tasks": len(tasks), "critical_signals": len([item for item in signals if item.severity == "critical"]), "engagement_health_items": len(engagement_health)}, [], role_group, primary_route="/dashboard"),
             self._task_summary_widget(tasks, signals, data_scope=role_group),
-            self._critical_actions_widget(critical_action_items, tasks, accounts, engagement_health, data_scope=role_group, page=page, page_size=page_size),
-            self._todays_tasks_widget(todays_tasks, data_scope=role_group, now=now, page=page, page_size=page_size),
             self._widget("tasks", "Operational tasks", None, [self._task_item(task, now) for task in self._slice(tasks, page, page_size)], role_group, {"page": page, "page_size": page_size, "total": len(tasks)}, primary_route="/tasks"),
             self._widget("signals", "Delivery risk signals", None, [self._signal_item(signal) for signal in self._slice(signals, page, page_size)], role_group, {"page": page, "page_size": page_size, "total": len(signals)}, primary_route="/tasks"),
             self._widget("high_risk_accounts", "At-risk accounts", None, [self._risk_account_item(account) for account in accounts if account.risk_status in {"warning", "critical"}][:page_size], role_group, {"total": len(accounts)}, primary_route="/accounts?risk=at_risk"),
@@ -315,12 +299,11 @@ class DashboardsService:
         accounts = self.repository.list_accounts(account_ids=account_ids, search=search, risk=risk, limit=100) if self._can(current_user, "account_overview", "view") else []
         scoped_ids = [account.id for account in accounts]
         widgets: list[DashboardWidgetRead] = []
-        tasks: list = []
-        engagement_health: list = []
-        now = self.repository.now()
+        if accounts:
+            widgets.append(self._widget("accounts", "Authorized accounts", None, [self._account_item(account) for account in self._slice(accounts, page, page_size)], "rbac", {"page": page, "page_size": page_size, "total": len(accounts)}, primary_route="/accounts"))
         if self._can(current_user, "playbooks_tasks_calendar", "view"):
             tasks = self.repository.list_open_tasks(account_ids=scoped_ids, owner_id=None if self.access.can_view_portfolio(current_user) else current_user.id, limit=100)
-            widgets.append(self._widget("tasks", "Tasks summary", None, [self._task_item(task, now) for task in self._slice(tasks, page, page_size)], "rbac", {"total": len(tasks)}, primary_route="/tasks"))
+            widgets.append(self._widget("tasks", "Tasks summary", None, [self._task_item(task, self.repository.now()) for task in self._slice(tasks, page, page_size)], "rbac", {"total": len(tasks)}, primary_route="/tasks"))
         if self._can(current_user, "signals_attention", "view"):
             signals = self.repository.list_open_signals(account_ids=scoped_ids, owner_id=None if self.access.can_view_portfolio(current_user) else current_user.id, limit=100)
             widgets.append(self._widget("signals", "Signals", None, [self._signal_item(signal) for signal in self._slice(signals, page, page_size)], "rbac", {"total": len(signals)}, primary_route="/tasks"))
@@ -334,35 +317,7 @@ class DashboardsService:
         if accounts and self._can(current_user, "engagement_sow_management", "view"):
             engagement_health = self.repository.list_engagement_health_items(account_ids=scoped_ids, limit=100)
             widgets.append(self._engagement_health_widget(engagement_health, data_scope="rbac", page_size=page_size))
-        if accounts and self._can(current_user, "playbooks_tasks_calendar", "view"):
-            critical_action_items = self._critical_action_items(tasks, accounts, engagement_health, now)
-            widgets.append(self._critical_actions_widget(critical_action_items, tasks, accounts, engagement_health, data_scope="rbac", page=page, page_size=page_size))
-            widgets.append(self._todays_tasks_widget(self._todays_tasks(tasks, now), data_scope="rbac", now=now, page=page, page_size=page_size))
         return self._dashboard_read(current_user, "rbac_widgets", "My Dashboard", "rbac", "authorized_scope", widgets, read_only=not self._can(current_user, "dashboards_reporting", "update"), filters=["search", "risk", "account_id"])
-
-    def _onboarding_drafts_for_dashboard(
-        self,
-        current_user: User,
-        *,
-        search: str | None,
-        page: int,
-        page_size: int,
-        include_when_filtered: bool,
-    ) -> tuple[list, int]:
-        if not include_when_filtered:
-            return [], 0
-        if not self.access.has_any_permission(current_user, {"onboarding:view_all", "onboarding:view_assigned"}):
-            return [], 0
-        visible_to_user_id = None if self.access.has_any_permission(current_user, {"onboarding:view_all"}) else current_user.id
-        visible_to_user_email = None if visible_to_user_id is None else current_user.email
-        return self.onboarding.list_drafts(
-            search=search,
-            status_filter="ready_for_review",
-            visible_to_user_id=visible_to_user_id,
-            visible_to_user_email=visible_to_user_email,
-            page=page,
-            page_size=page_size,
-        )
 
     def _account_scope(self, user: User) -> list[str] | None:
         if self.access.can_view_portfolio(user):
@@ -411,8 +366,6 @@ class DashboardsService:
             "health_distribution": "account_overview",
             "tasks": "playbooks_tasks_calendar",
             "critical_tasks": "playbooks_tasks_calendar",
-            "critical_actions": "playbooks_tasks_calendar",
-            "todays_tasks": "playbooks_tasks_calendar",
             "ai_task_summary": "playbooks_tasks_calendar",
             "signals": "signals_attention",
             "decision_queue": "signals_attention",
@@ -498,102 +451,6 @@ class DashboardsService:
         item["kind"] = "Critical task"
         item["severity"] = item.get("priority")
         return item
-
-    def _critical_actions_widget(self, action_items: list[dict[str, Any]], tasks: list, accounts: list, engagements: list, *, data_scope: str, page: int, page_size: int) -> DashboardWidgetRead:
-        critical_tasks = self._critical_tasks(tasks)
-        critical_accounts = self._critical_accounts(accounts)
-        health_drops = self._critical_engagements(engagements)
-        return self._widget(
-            "critical_actions",
-            "Critical Actions",
-            {
-                "total": len(action_items),
-                "critical_tasks": len(critical_tasks),
-                "health_drops": len(health_drops),
-                "critical_accounts": len(critical_accounts),
-            },
-            self._slice(action_items, page, page_size),
-            data_scope,
-            {
-                "page": page,
-                "page_size": page_size,
-                "total": len(action_items),
-                "source_counts": {
-                    "critical_tasks": len(critical_tasks),
-                    "health_drops": len(health_drops),
-                    "critical_accounts": len(critical_accounts),
-                },
-            },
-            primary_route="/dashboard#critical-actions",
-        )
-
-    def _todays_tasks_widget(self, tasks: list, *, data_scope: str, now: datetime, page: int, page_size: int) -> DashboardWidgetRead:
-        blocked = [task for task in tasks if task.status == "blocked"]
-        overdue = [task for task in tasks if self._is_before(task.due_at, now)]
-        return self._widget(
-            "todays_tasks",
-            "Today's Tasks",
-            {"due_today": len(tasks), "blocked": len(blocked), "overdue": len(overdue)},
-            [self._task_item(task, now) for task in self._slice(tasks, page, page_size)],
-            data_scope,
-            {"page": page, "page_size": page_size, "total": len(tasks), "date": now.date().isoformat()},
-            primary_route="/tasks?due=today",
-        )
-
-    def _critical_action_items(self, tasks: list, accounts: list, engagements: list, now: datetime) -> list[dict[str, Any]]:
-        items = [
-            *[self._critical_task_item(task, now) for task in self._critical_tasks(tasks)],
-            *[self._critical_account_action_item(account) for account in self._critical_accounts(accounts)],
-            *[self._critical_engagement_action_item(engagement) for engagement in self._critical_engagements(engagements)],
-        ]
-        items.sort(key=self._critical_action_sort_key)
-        return items
-
-    @staticmethod
-    def _critical_accounts(accounts: list) -> list:
-        return [
-            account
-            for account in accounts
-            if account.risk_status == "critical" or (account.health_overall is not None and account.health_overall < 60)
-        ]
-
-    @staticmethod
-    def _critical_engagements(engagements: list) -> list:
-        return [
-            engagement
-            for engagement in engagements
-            if engagement.delivery_health < 60 or (engagement.health_status or "").lower() in {"critical", "red"}
-        ]
-
-    @staticmethod
-    def _critical_account_action_item(account) -> dict[str, Any]:
-        item = DashboardsService._risk_account_item(account)
-        item["title"] = f"{account.name} health is critical"
-        item["source_type"] = "account_health"
-        item["kind"] = "Critical account health"
-        item["severity"] = "critical"
-        return item
-
-    @staticmethod
-    def _critical_engagement_action_item(engagement) -> dict[str, Any]:
-        item = DashboardsService._engagement_health_item(engagement)
-        item["title"] = f"{engagement.name} health dropped to critical"
-        item["source_type"] = "engagement_health"
-        item["kind"] = "Critical engagement health"
-        item["severity"] = "critical"
-        item["risk_reason"] = f"Delivery health is {engagement.delivery_health}, below the critical threshold of 60"
-        return item
-
-    @staticmethod
-    def _critical_action_sort_key(item: dict[str, Any]) -> tuple[int, str, str]:
-        severity_rank = {"critical": 0, "urgent": 0, "blocked": 0, "high": 1, "warning": 2, "medium": 3, "low": 4}
-        severity = str(item.get("severity") or item.get("priority") or item.get("status") or "").lower()
-        date = str(item.get("due_at") or item.get("updated_at") or item.get("renewal_date") or item.get("created_at") or "")
-        title = str(item.get("title") or item.get("name") or "")
-        return (severity_rank.get(severity, 5), date, title)
-
-    def _todays_tasks(self, tasks: list, now: datetime) -> list:
-        return [task for task in tasks if self._same_calendar_day(task.due_at, now)]
 
     def _pipeline_widget(self, opportunities: list, *, data_scope: str, masked: bool, page: int, page_size: int) -> DashboardWidgetRead:
         stage_totals: dict[str, dict[str, Any]] = {}
@@ -813,20 +670,6 @@ class DashboardsService:
         return item
 
     @staticmethod
-    def _onboarding_draft_item(draft) -> dict[str, Any]:
-        return {
-            "id": draft.id,
-            "title": draft.account_name,
-            "account_name": draft.account_name,
-            "project_name": draft.project_name,
-            "status": draft.status,
-            "owner": draft.primary_owner_name,
-            "confidence": draft.confidence,
-            "created_at": draft.created_at.isoformat() if draft.created_at else None,
-            "route": f"/accounts/onboarding?draft={draft.id}",
-        }
-
-    @staticmethod
     def _risk_reason(account) -> str:
         reasons: list[str] = []
         status = (account.risk_status or "").lower()
@@ -876,16 +719,6 @@ class DashboardsService:
         elif value.tzinfo is not None and reference.tzinfo is None:
             value = value.replace(tzinfo=None)
         return value < reference
-
-    @staticmethod
-    def _same_calendar_day(value: datetime, reference: datetime) -> bool:
-        if value.tzinfo is not None and reference.tzinfo is not None:
-            value = value.astimezone(reference.tzinfo)
-        elif value.tzinfo is None and reference.tzinfo is not None:
-            reference = reference.replace(tzinfo=None)
-        elif value.tzinfo is not None and reference.tzinfo is None:
-            value = value.replace(tzinfo=None)
-        return value.date() == reference.date()
 
     @staticmethod
     def _signal_item(signal) -> dict[str, Any]:

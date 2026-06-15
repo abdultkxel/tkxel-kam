@@ -1,4 +1,5 @@
 import { render, screen, waitFor } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import { MemoryRouter } from 'react-router-dom'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { Dashboard } from '@/pages/Dashboard'
@@ -148,43 +149,28 @@ function accountManagerDashboard() {
         generated_at: '2026-06-03T10:00:00Z',
         data_scope: 'assigned_accounts',
         primary_route: '/dashboard',
-        value: { my_accounts: 5, at_risk: 2, critical_actions: 4, open_tasks: 14 },
+        value: { my_accounts: 5, at_risk: 2, critical_tasks: 4, open_tasks: 14 },
         items: [],
         metadata: {
           tiles: [
             { key: 'my_accounts', label: 'My Accounts', value: 5, route: '/accounts', detail: 'Assigned account portfolio.' },
             { key: 'at_risk', label: 'At risk', value: 2, route: '/accounts?risk=at_risk', detail: 'Warning and critical accounts.' },
-            { key: 'critical_actions', label: 'Critical Actions', value: 4, route: '/dashboard#critical-actions', detail: 'Critical tasks and health drops.' },
+            { key: 'critical_tasks', label: 'Critical tasks', value: 4, route: '/tasks?priority=critical', detail: 'Critical and blocked tasks only.' },
             { key: 'open_tasks', label: 'Open tasks', value: 14, route: '/tasks', detail: 'Open operational work in scope.' },
           ],
         },
         error: null,
       },
       {
-        key: 'critical_actions',
-        title: 'Critical Actions',
+        key: 'critical_tasks',
+        title: 'Critical tasks',
         status: 'complete',
         generated_at: '2026-06-03T10:00:00Z',
         data_scope: 'assigned_accounts',
-        primary_route: '/dashboard#critical-actions',
-        value: { total: 4, critical_tasks: 1, health_drops: 1, critical_accounts: 2 },
-        items: [
-          { id: 'task-critical-1', title: 'Resolve blocked renewal task', source_type: 'task', account_id: 'acc-1', account_name: 'Acme', priority: 'critical', status: 'blocked', due_at: '2026-06-05T10:00:00Z', route: '/tasks?account_id=acc-1' },
-          { id: 'eng-1', title: 'Delivery Recovery SOW health dropped to critical', source_type: 'engagement_health', account_id: 'acc-1', account_name: 'Acme', delivery_health: 48, severity: 'critical', risk_reason: 'Delivery health is 48, below the critical threshold of 60', route: '/accounts/acc-1/engagements/eng-1' },
-        ],
-        metadata: { source_counts: { critical_tasks: 1, health_drops: 1, critical_accounts: 2 } },
-        error: null,
-      },
-      {
-        key: 'todays_tasks',
-        title: "Today's Tasks",
-        status: 'complete',
-        generated_at: '2026-06-03T10:00:00Z',
-        data_scope: 'assigned_accounts',
-        primary_route: '/tasks?due=today',
-        value: { due_today: 1, blocked: 0, overdue: 0 },
-        items: [{ id: 'task-today-1', title: 'Today customer action', account_id: 'acc-1', account_name: 'Acme', priority: 'medium', status: 'open', due_at: '2026-06-03T12:00:00Z', route: '/tasks?account_id=acc-1' }],
-        metadata: { total: 1 },
+        primary_route: '/tasks?priority=critical',
+        value: null,
+        items: [{ id: 'task-critical-1', title: 'Resolve blocked renewal task', account_id: 'acc-1', account_name: 'Acme', priority: 'critical', status: 'blocked', due_at: '2026-06-05T10:00:00Z', route: '/tasks?account_id=acc-1' }],
+        metadata: { source_counts: { critical_tasks: 4 } },
         error: null,
       },
       {
@@ -236,30 +222,6 @@ function accountManagerDashboard() {
         error: null,
       },
       {
-        key: 'onboarding_drafts',
-        title: 'Onboarding drafts',
-        status: 'complete',
-        generated_at: '2026-06-03T10:00:00Z',
-        data_scope: 'assigned_accounts',
-        primary_route: '/accounts/onboarding',
-        value: { ready_for_review: 1 },
-        items: [
-          {
-            id: 'draft-1',
-            title: 'Draft Workspace',
-            account_name: 'Draft Workspace',
-            project_name: 'Draft customer launch',
-            status: 'ready_for_review',
-            owner: 'Account Manager',
-            confidence: 82,
-            created_at: '2026-06-03T10:00:00Z',
-            route: '/accounts/onboarding?draft=draft-1',
-          },
-        ],
-        metadata: { total: 1 },
-        error: null,
-      },
-      {
         key: 'governance_calendar',
         title: 'Global / Governance Calendar',
         status: 'complete',
@@ -291,7 +253,7 @@ function portfolioDashboard() {
         generated_at: '2026-06-03T10:00:00Z',
         data_scope: 'portfolio',
         primary_route: '/dashboard',
-        value: { accounts: 12, at_risk_accounts: 3, critical_actions: 4, open_tasks: 6 },
+        value: { accounts: 12, at_risk_accounts: 3, critical_tasks: 4, open_tasks: 6 },
         items: [],
         metadata: {},
         error: null,
@@ -343,7 +305,7 @@ function portfolioDashboard() {
   })
 }
 
-function dashboardWithAccountListingWidget() {
+function paginatedPortfolioDashboard(page: number) {
   return dashboard({
     display_name: 'KAM Head Portfolio',
     dashboard: 'kam_head_portfolio',
@@ -362,19 +324,19 @@ function dashboardWithAccountListingWidget() {
         value: null,
         items: [
           {
-            id: 'acc-hidden',
-            account_id: 'acc-hidden',
-            name: 'Hidden Account Listing Row',
-            account_name: 'Hidden Account Listing Row',
-            risk_status: 'warning',
-            health_score: 68,
+            id: `acc-${page}`,
+            account_id: `acc-${page}`,
+            name: `Account ${page}`,
+            account_name: `Account ${page}`,
+            risk_status: page === 1 ? 'warning' : 'healthy',
+            health_score: page === 1 ? 68 : 84,
             segment: 'Growth',
             owner: 'Account Manager',
             next_governance_at: '2026-06-15T10:00:00Z',
-            route: '/accounts/acc-hidden',
+            route: `/accounts/acc-${page}`,
           },
         ],
-        metadata: { page: 1, page_size: 1, total: 1 },
+        metadata: { page, page_size: 1, total: 2 },
         error: null,
       },
     ],
@@ -635,12 +597,7 @@ describe('Dashboard', () => {
     await screen.findByText('AM Home')
     expect(screen.getByRole('link', { name: /my accounts/i })).toHaveAttribute('href', '/accounts')
     expect(screen.getByRole('link', { name: /at risk/i })).toHaveAttribute('href', '/accounts?risk=at_risk')
-    expect(screen.getByRole('link', { name: /critical actions/i })).toHaveAttribute('href', '/dashboard#critical-actions')
-    expect(screen.getByRole('heading', { name: 'Critical Actions' })).toBeInTheDocument()
-    expect(screen.getByRole('heading', { name: "Today's Tasks" })).toBeInTheDocument()
-    expect(screen.getByText('Delivery Recovery SOW health dropped to critical')).toBeInTheDocument()
-    expect(screen.getByText('Today customer action')).toBeInTheDocument()
-    expect(screen.getAllByRole('link', { name: /^Open$/i }).map(link => link.getAttribute('href'))).toEqual(expect.arrayContaining(['/dashboard#critical-actions', '/tasks?due=today']))
+    expect(screen.getByRole('link', { name: /critical tasks/i })).toHaveAttribute('href', '/tasks?priority=critical')
     expect(screen.getByText('Full task status breakdown across assigned accounts')).toBeInTheDocument()
     expect(screen.getByText('Task records filtered to: owner = AM or account in assigned list')).toBeInTheDocument()
     expect(screen.getByText('Task completion does NOT improve health scores; only underlying account data changes do.')).toBeInTheDocument()
@@ -658,8 +615,6 @@ describe('Dashboard', () => {
     expect(screen.getByRole('link', { name: /open opps 9/i })).toHaveAttribute('href', '/opportunities?openOnly=true')
     expect(screen.getByRole('link', { name: /total value \$840/i })).toHaveAttribute('href', '/opportunities?openOnly=true')
     expect(screen.getByRole('link', { name: /stalled 2 >90 days no move/i })).toHaveAttribute('href', '/opportunities?stalled=true')
-    expect(screen.getByText('Onboarding drafts')).toBeInTheDocument()
-    expect(screen.getByRole('link', { name: /Draft Workspace/i })).toHaveAttribute('href', '/accounts/onboarding?draft=draft-1')
     expect(screen.queryByText('Pipeline by stage')).not.toBeInTheDocument()
     expect(screen.queryByText('Stale KYC')).not.toBeInTheDocument()
     expect(screen.queryByText('Renewal focus')).not.toBeInTheDocument()
@@ -690,7 +645,7 @@ describe('Dashboard', () => {
     await screen.findByText('KAM Head Portfolio')
     expect(screen.getByRole('link', { name: /accounts 12/i })).toHaveAttribute('href', '/accounts')
     expect(screen.getByRole('link', { name: /at risk accounts 3/i })).toHaveAttribute('href', '/accounts?risk=at_risk')
-    expect(screen.getByRole('link', { name: /critical actions 4/i })).toHaveAttribute('href', '/dashboard#critical-actions')
+    expect(screen.getByRole('link', { name: /critical tasks 4/i })).toHaveAttribute('href', '/tasks?priority=critical')
     expect(screen.getByRole('link', { name: /open tasks 6/i })).toHaveAttribute('href', '/tasks')
     expect(screen.getByRole('link', { name: /critical tasks 2/i })).toHaveAttribute('href', '/tasks?priority=critical')
     expect(screen.getByRole('link', { name: /open opps 8/i })).toHaveAttribute('href', '/opportunities?openOnly=true')
@@ -699,11 +654,12 @@ describe('Dashboard', () => {
     expect(screen.getByRole('link', { name: /account manager 2 accounts/i })).toHaveAttribute('href', '/accounts?am_id=usr-am')
   })
 
-  it('does not render dashboard account listing widgets', async () => {
+  it('requests the next dashboard page from the portfolio table pager', async () => {
+    const user = userEvent.setup()
     const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
       const url = new URL(String(input), 'http://localhost')
       if (url.pathname.endsWith('/api/dashboards/me')) {
-        return jsonResponse(dashboardWithAccountListingWidget())
+        return jsonResponse(paginatedPortfolioDashboard(Number(url.searchParams.get('page') ?? '1')))
       }
       return jsonResponse({})
     })
@@ -715,10 +671,13 @@ describe('Dashboard', () => {
       </MemoryRouter>,
     )
 
-    expect(await screen.findByText('KAM Head Portfolio')).toBeInTheDocument()
-    expect(screen.queryByText('Account portfolio table')).not.toBeInTheDocument()
-    expect(screen.queryByText('Hidden Account Listing Row')).not.toBeInTheDocument()
-    expect(screen.queryByRole('button', { name: /next portfolio page/i })).not.toBeInTheDocument()
+    expect(await screen.findByText('Account 1')).toBeInTheDocument()
+    expect(screen.getByText('Page 1 of 2')).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: /next portfolio page/i }))
+
+    expect(await screen.findByText('Account 2')).toBeInTheDocument()
+    expect(screen.getByText('Page 2 of 2')).toBeInTheDocument()
+    expect(fetchMock.mock.calls.some(call => String(call[0]).includes('page=2'))).toBe(true)
   })
 
   it('shows the no-widgets empty state without fetching calendar data', async () => {

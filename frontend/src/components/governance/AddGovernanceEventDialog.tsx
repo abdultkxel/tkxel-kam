@@ -6,11 +6,10 @@ import { RuntimeCustomFields, customValuesForSubmit, requiredCustomFieldErrors }
 import { ApiError, ApiFieldError } from '@/services/api'
 import { useRole } from '@/hooks/useRole'
 import { useAuth } from '@/contexts/AuthContext'
+import { useAccountStore } from '@/stores/accountStore'
 import { useGovernanceStore } from '@/stores/governanceStore'
 import { GovernanceEventRecord, GovernanceEventType } from '@/types/governance'
 import { RuntimeCustomField, listRuntimeCustomFields } from '@/services/contentGovernance'
-import { listAccounts } from '@/services/accountWorkspace'
-import type { Account } from '@/types/account'
 
 type FieldErrors = Record<string, string>
 
@@ -29,15 +28,15 @@ export function AddGovernanceEventDialog({
   lockAccount = false,
   onCreated,
 }: AddGovernanceEventDialogProps) {
+  const accounts = useAccountStore(state => state.accounts)
+  const accountsLoaded = useAccountStore(state => state.accountsLoaded)
+  const accountsLoading = useAccountStore(state => state.accountsLoading)
+  const accountsError = useAccountStore(state => state.accountsError)
   const createEvent = useGovernanceStore(state => state.createEvent)
   const { token } = useAuth()
   const user = useRole()
   const initialAccountId = defaultAccountId ?? ''
   const [open, setOpen] = useState(false)
-  const [accounts, setAccounts] = useState<Account[]>([])
-  const [accountsLoaded, setAccountsLoaded] = useState(false)
-  const [accountsLoading, setAccountsLoading] = useState(false)
-  const [accountsError, setAccountsError] = useState('')
   const [saving, setSaving] = useState(false)
   const [fieldErrors, setFieldErrors] = useState<FieldErrors>({})
   const [accountId, setAccountId] = useState(initialAccountId)
@@ -54,38 +53,6 @@ export function AddGovernanceEventDialog({
   useEffect(() => {
     if (open) setAccountId(defaultAccountId ?? '')
   }, [defaultAccountId, open])
-
-  useEffect(() => {
-    if (!open) return
-    if (!token) {
-      setAccounts([])
-      setAccountsLoaded(true)
-      setAccountsError('Sign in again before loading accounts.')
-      return
-    }
-    let cancelled = false
-    setAccountsLoading(true)
-    setAccountsLoaded(false)
-    setAccountsError('')
-    listAccounts(token, new URLSearchParams({ page: '1', page_size: '500' }))
-      .then(response => {
-        if (cancelled) return
-        setAccounts(response.items)
-        setAccountsLoaded(true)
-      })
-      .catch(err => {
-        if (cancelled) return
-        setAccounts([])
-        setAccountsLoaded(true)
-        setAccountsError(err instanceof Error ? err.message : 'Accounts could not load')
-      })
-      .finally(() => {
-        if (!cancelled) setAccountsLoading(false)
-      })
-    return () => {
-      cancelled = true
-    }
-  }, [open, token])
 
   useEffect(() => {
     if (!token || !open) return

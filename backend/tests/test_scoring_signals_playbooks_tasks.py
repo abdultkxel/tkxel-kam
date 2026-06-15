@@ -281,7 +281,7 @@ def test_account_scoring_signal_lifecycle_conversion_and_authorization(client: T
     assert list_signals.status_code == 200
     assert list_signals.json()["total"] >= 1
 
-    other_owner = seeded_user(client, admin_headers, "leadership_viewer")
+    other_owner = seeded_user(client, admin_headers, "delivery_lead")
     unowned_headers = auth_headers(client, other_owner["email"], "User@12345")
     denied = client.post(f"/api/accounts/{account_id}/scores/recalculate", headers=unowned_headers, json={"trigger_source": "forbidden"})
     assert denied.status_code == 403

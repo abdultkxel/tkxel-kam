@@ -10,15 +10,17 @@ import { EditGovernanceEventDialog } from '@/components/governance/EditGovernanc
 import { DeleteGovernanceEventDialog } from '@/components/governance/GovernanceEventActions'
 import { RuntimeCustomFieldValues } from '@/components/custom-fields/RuntimeCustomFields'
 import { useAuth } from '@/contexts/AuthContext'
-import { useAccountOptions } from '@/hooks/useAccountOptions'
 import { useRole } from '@/hooks/useRole'
 import { RuntimeCustomField, listRuntimeCustomFields } from '@/services/contentGovernance'
 import { CalendarItem, listCalendarItems } from '@/services/playbooksTasks'
+import { useAccountStore } from '@/stores/accountStore'
 import { useGovernanceStore } from '@/stores/governanceStore'
+import { useScoreActivityStore } from '@/stores/scoreActivityStore'
+import { useV3Store } from '@/stores/v3Store'
 import { GovernanceEventRecord, GovernanceEventStatus, GovernanceEventType, GovernanceGeneratedOutputCitationRecord, GovernanceGeneratedOutputRecord } from '@/types/governance'
 import { cn } from '@/utils/cn'
 import { filterAndSortGovernanceEvents, GovernanceSortDirection, GovernanceSortKey } from '@/utils/governanceFlow'
-import { UnifiedCalendarItem } from '@/utils/unifiedCalendar'
+import { buildUnifiedCalendarItems, UnifiedCalendarItem } from '@/utils/unifiedCalendar'
 
 const tone = {
   QBR: 'bg-brand-blue',
@@ -84,7 +86,7 @@ export function GovernancePanel() {
   const [customFields, setCustomFields] = useState<RuntimeCustomField[]>([])
   const { token } = useAuth()
   const user = useRole()
-  const { accounts } = useAccountOptions()
+  const accounts = useAccountStore(state => state.accounts)
   const events = useGovernanceStore(state => state.events)
   const governanceLoading = useGovernanceStore(state => state.loading)
   const governanceError = useGovernanceStore(state => state.error)
@@ -93,6 +95,8 @@ export function GovernancePanel() {
   const generateAgendaDraft = useGovernanceStore(state => state.generateAgendaDraft)
   const updateAgenda = useGovernanceStore(state => state.updateAgenda)
   const generateBrief = useGovernanceStore(state => state.generateBrief)
+  const scoreTasks = useScoreActivityStore(state => state.tasks)
+  const signals = useV3Store(state => state.signals)
 
   useEffect(() => {
     if (!token) return
@@ -142,13 +146,13 @@ export function GovernancePanel() {
   }, [token])
 
   const visibleItems = useMemo(() => {
-    const items = token ? apiCalendarItems.map(mapApiCalendarItem) : []
+    const items = token ? apiCalendarItems.map(mapApiCalendarItem) : buildUnifiedCalendarItems(events, scoreTasks, signals)
     return items
       .filter(item => item.kind === 'governance' ? showGovernance : item.kind === 'score_activity' ? showScoreActivities : showRenewalItems)
       .filter(item => !mineOnly || item.ownerId === user.id)
       .filter(item => !accountFilter || item.accountId === accountFilter)
       .filter(item => !search || [item.title, item.accountName, item.detail].join(' ').toLowerCase().includes(search.toLowerCase()))
-  }, [accountFilter, apiCalendarItems, mineOnly, search, showGovernance, showRenewalItems, showScoreActivities, token, user.id])
+  }, [accountFilter, apiCalendarItems, events, mineOnly, scoreTasks, search, showGovernance, showRenewalItems, showScoreActivities, signals, token, user.id])
   const monthItems = visibleItems.filter(item => new Date(item.date).getMonth() === month.getMonth() && new Date(item.date).getFullYear() === month.getFullYear())
   const days = eachDayOfInterval({ start: startOfMonth(month), end: endOfMonth(month) })
   const ownerOptions = useMemo(

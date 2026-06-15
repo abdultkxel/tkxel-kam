@@ -18,8 +18,8 @@ Implements role-resolved dashboard behavior so users no longer see AM Home, KAM 
 - Leadership dashboard is read-only and masks commercial pipeline, revenue-risk, and forecast values.
 - Forecast Chart is available where `analytics_portfolio:view` is allowed, and on the Account Manager dashboard from assigned-account opportunities with sensitive values masked before leaving the backend when required.
 - Dashboard widgets and items include route metadata for source navigation.
-- `delivery_lead` and `delivery_stakeholder` remain legacy dashboard constants for historical data, but neither is recreated by a fresh base seed or authorized without an explicit RBAC role.
-- Fresh resets seed `leadership_viewer` as the executive read-only role.
+- `delivery_lead` is added as the preferred system role while `delivery_stakeholder` remains a legacy-compatible delivery dashboard role.
+- Fresh resets seed `delivery_lead` and `leadership_viewer`; `delivery_stakeholder` is accepted only as a legacy user role alias and is no longer a visible seeded role.
 - Dashboard UI now uses the approved V4 dashboard visual language from `Feature/Playbooks-Activities` while omitting the previous Generative command center.
 - `governance_calendar` and `engagement_health` widgets are returned where role/RBAC permits.
 - The dashboard calendar is rendered from `GET /api/governance-events/calendar`; `governance_calendar` is the visibility/enabler widget.
@@ -28,7 +28,7 @@ Implements role-resolved dashboard behavior so users no longer see AM Home, KAM 
 - Admin/system alerts are sourced from failed worker runs, failed notification records, integration error connections, and persisted account-change alert counts.
 - Executive summaries are account fact rows from authorized account records, not generated placeholder prose.
 - Stale KYC, Renewal focus, Health distribution, SLA compliance, Account-change alerts, Decision queue, and escalation panels are omitted from all role dashboards.
-- Account Manager dashboard scope is intentionally focused on clickable attention tiles, Critical Actions, Today's Tasks, merged task breakdown/listing, opportunities/pipeline, assigned-account forecast, and the global governance calendar. The account listing table is omitted from dashboards; users open `/accounts` from summary tiles when they need the full account list.
+- Account Manager dashboard scope is intentionally focused on clickable attention tiles, paginated account portfolio table, critical tasks, merged task breakdown/listing, opportunities/pipeline, assigned-account forecast, and the global governance calendar. Duplicate AI task summary, escalation, upcoming-governance, and governance-cadence panels are omitted for this role.
 - All role dashboards now expose governance through `governance_calendar` only; standalone upcoming-governance and governance-cadence dashboard panels are omitted.
 - AM workload counts active AM ownership assignments, including supporting AM ownership records, deduped per owner/account.
 - AM workload rows link to `/accounts?am_id=<user_id>`, which filters by any active AM ownership assignment included in the workload count; KAM Head/Admin account lists still expose the exact Primary AM filter.
@@ -44,8 +44,6 @@ Implements role-resolved dashboard behavior so users no longer see AM Home, KAM 
 - Dashboard top metric tiles are clickable for all roles, using backend-provided routes when present and route fallbacks by metric key otherwise.
 - Task summary tiles deep-link to `/tasks` with real module filters (`status`, `due`, `my_items`, and account query aliases). AI task summary source-count tiles also link to their source module.
 - Opportunity Open opps/Total value/Stalled tiles deep-link to `/opportunities` with persisted API filters (`open_only` and `stalled`) rather than client-only or hardcoded filtering.
-- Critical Actions is a backend widget sourced from open critical/blocked tasks, critical account health, and critical engagement health drops. Engagements with delivery health below 60 or a critical/red health status appear there without a client-side rule.
-- Today's Tasks is a backend widget sourced from active tasks whose `due_at` falls on the dashboard service's current calendar day; its primary route uses the existing Tasks due-today filter.
 
 ## Backend
 
@@ -99,6 +97,6 @@ Latest verification:
 
 ## Known Follow-Ups
 
-- Decide whether delivery dashboard access should be reintroduced through a custom role policy or fully retired from runtime routing.
+- Optionally migrate existing `delivery_stakeholder` users to `delivery_lead`; until then, the backend alias preserves delivery dashboard and permission behavior without showing the old role as a seeded default.
 - Replace MVP forecast weights with finalized forecasting rules when available.
 - Introduce a centralized dashboard/report/export redaction service for sensitive fields beyond the current Leadership commercial masking.

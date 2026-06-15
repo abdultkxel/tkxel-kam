@@ -80,10 +80,11 @@ from app.services.users import initials_for_name, normalize_email
 
 DEFAULT_ROLE_USER_EMAIL_DOMAIN = "tkxel.com"
 DEFAULT_ROLE_USER_NAMES = {
-    "admin": "Admin",
-    "kam_head": "KAM Head",
-    "account_manager": "Account Manager",
-    "leadership_viewer": "Leadership Executive",
+    "admin": "Admin User",
+    "kam_head": "KAM Head User",
+    "account_manager": "Account Manager KAM",
+    "delivery_lead": "Delivery Lead User",
+    "leadership_viewer": "Leadership Viewer User",
 }
 FORECAST_DEMO_ACCOUNT_ID = "forecast-demo-account"
 FORECAST_DEMO_ACCOUNT_OWNER_ID = "forecast-demo-account-owner"
@@ -214,7 +215,7 @@ def seed_demo_project_data(db: Session, *, now: datetime | None = None) -> dict[
     current = _aware(now or utc_now())
     account_manager = _seed_user_by_role(db, "account_manager")
     kam_head = _seed_user_by_role(db, "kam_head")
-    delivery_lead = kam_head
+    delivery_lead = _seed_user_by_role(db, "delivery_lead")
     portfolio_reviewer = kam_head
     admin = _seed_user_by_role(db, "admin")
     account_repo = AccountRepository(db)
@@ -1444,19 +1445,14 @@ def seed_default_role_users(db: Session) -> list[User]:
         if role.slug == "super_admin":
             continue
         email = normalize_email(f"{role.slug.replace('_', '.')}.user@{DEFAULT_ROLE_USER_EMAIL_DOMAIN}")
-        full_name = DEFAULT_ROLE_USER_NAMES.get(role.slug, role.name.replace(" / ", " ").replace("/", " "))
         existing_user = db.scalar(select(User).where(User.email == email))
         if existing_user:
-            existing_user.full_name = full_name
-            existing_user.role = role.slug
-            existing_user.title = role.name
-            existing_user.avatar_initials = initials_for_name(full_name)
-            existing_user.is_active = True
             if not existing_user.primary_google_calendar_id:
                 existing_user.primary_google_calendar_id = existing_user.email
             seeded_users.append(existing_user)
             continue
 
+        full_name = DEFAULT_ROLE_USER_NAMES.get(role.slug, role.name.replace(" / ", " ").replace("/", " "))
         user = User(
             email=email,
             primary_google_calendar_id=email,

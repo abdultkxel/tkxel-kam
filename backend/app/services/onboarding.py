@@ -1,5 +1,5 @@
 import re
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from pathlib import Path
 
 from fastapi import HTTPException, UploadFile, status
@@ -191,7 +191,6 @@ class OnboardingService:
         manager_name: str | None = None,
         manager_email: str | None = None,
         linkedin_url: str | None = None,
-        use_ai: bool = True,
     ) -> OnboardingDraftRead:
         self.access.require_module_permission(current_user, "account_onboarding_workspace", "create")
         if not uploads:
@@ -242,7 +241,7 @@ class OnboardingService:
                 extraction = extraction_service.extract_document(document, force=True)
                 if extraction.status == "completed":
                     extraction_service.chunk_document(document, extraction=extraction, force=True)
-                    structured = SowExtractionService(self.onboarding.db).extract_structured_fields(document, extraction, allow_ai=use_ai)
+                    structured = SowExtractionService(self.onboarding.db).extract_structured_fields(document, extraction, allow_ai=True)
                     structured_extractions.append(structured.fields)
                     extracted_text = extraction.raw_text or extraction.normalized_text
                     if extracted_text:
@@ -349,7 +348,6 @@ class OnboardingService:
         manager_name: str | None = None,
         manager_email: str | None = None,
         linkedin_url: str | None = None,
-        use_ai: bool = True,
     ) -> OnboardingUploadExtractionRead:
         self.access.require_module_permission(current_user, "account_onboarding_workspace", "create")
         if not uploads:
@@ -413,7 +411,7 @@ class OnboardingService:
             structured = SowExtractionService(self.onboarding.db).extract_structured_fields_from_text(
                 combined_text,
                 source_name=documents[0].file_name if documents else "uploaded source document",
-                allow_ai=use_ai,
+                allow_ai=True,
             )
             structured_extractions.append(structured.fields)
         inferred = self._infer_uploaded_draft_fields(
@@ -443,7 +441,6 @@ class OnboardingService:
         self._ensure_draft_visible(draft, current_user)
         self._ensure_open_draft(draft)
         before = self._draft_audit_value(draft)
-        before_notification = self._draft_update_notification_value(draft)
         updates = payload.model_dump(exclude_unset=True)
         if "primary_owner_id" in updates or "primary_owner_email" in updates:
             owner = self._resolve_owner_from_values(
@@ -461,7 +458,6 @@ class OnboardingService:
                 updates["primary_owner_email"] = None
         for field, value in updates.items():
             setattr(draft, field, value)
-        changed_labels = self._draft_update_changed_labels(before_notification, self._draft_update_notification_value(draft))
         self.audit.log(
             module="account_onboarding_workspace",
             action="draft_update",
@@ -471,15 +467,12 @@ class OnboardingService:
             before_value=before,
             after_value=self._draft_audit_value(draft),
         )
-        if changed_labels:
-            self._notify_draft_updated(draft, current_user, changed_labels)
         self.onboarding.commit()
         return OnboardingDraftRead.model_validate(self._get_draft_or_404(draft.id))
 
     def approve_draft(self, draft_id: str, current_user: User) -> OnboardingDraftRead:
         draft = self._get_draft_or_404(draft_id)
         self.access.require_module_permission(current_user, "account_onboarding_workspace", "approve")
-        self._ensure_draft_visible(draft, current_user)
         self._ensure_open_draft(draft)
         self._ensure_not_duplicate(draft)
         primary_owner = self._resolve_primary_owner_for_approval(draft)
@@ -520,14 +513,12 @@ class OnboardingService:
         draft.decided_at = datetime.now(timezone.utc)
         self._log_approval(account, draft, current_user, created_engagements)
         self._notify_draft_outcome(draft, current_user, "account_draft_approved", f"Draft approved: {draft.account_name}", f"{current_user.full_name} approved the draft account.", account_id=account.id)
-        self._notify_account_onboarded(draft, account, current_user)
         self.onboarding.commit()
         return OnboardingDraftRead.model_validate(self._get_draft_or_404(draft.id))
 
     def reject_draft(self, draft_id: str, payload: OnboardingDraftRejectRequest, current_user: User) -> OnboardingDraftRead:
         draft = self._get_draft_or_404(draft_id)
         self.access.require_module_permission(current_user, "account_onboarding_workspace", "approve")
-        self._ensure_draft_visible(draft, current_user)
         self._ensure_open_draft(draft)
         draft.status = "rejected"
         draft.rejected_by_id = current_user.id
@@ -553,7 +544,6 @@ class OnboardingService:
         if account is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Account was not found")
         self.access.require_module_permission(current_user, "account_onboarding_workspace", "approve")
-        self._ensure_draft_visible(draft, current_user)
         self.access.require_account_update(current_user, account)
         self._ensure_open_draft(draft)
         for document in draft.source_documents:
@@ -850,7 +840,6 @@ class OnboardingService:
     def draft_document_download_path(self, draft_id: str, document_id: str, current_user: User) -> tuple[SourceDocument, Path]:
         draft = self._get_draft_or_404(draft_id)
         self.access.require_module_permission(current_user, "account_onboarding_workspace", "view")
-        self._ensure_draft_visible(draft, current_user)
         document = next((item for item in draft.source_documents if item.id == document_id), None)
         if document is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Onboarding source document was not found")
@@ -871,7 +860,6 @@ class OnboardingService:
     ) -> SourceDocumentExtractionRead:
         draft = self._get_draft_or_404(draft_id)
         self.access.require_module_permission(current_user, "account_onboarding_workspace", "update")
-        self._ensure_draft_visible(draft, current_user)
         if draft.status not in {"ready_for_review"}:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Only source documents on drafts ready for review can be re-extracted")
         document = next((item for item in draft.source_documents if item.id == document_id), None)
@@ -920,29 +908,24 @@ class OnboardingService:
         account_name = (
             self._structured_value(structured, "client_name", min_confidence=30)
             or
-            self._extract_label(text, ["Account Name", "Name of Account", "Customer", "Client", "Client Name", "Company Name", "Legal Entity", "Client Legal Name"])
+            self._extract_label(text, ["Account Name", "Customer", "Client", "Company Name", "Legal Entity", "Client Legal Name"])
             or self._extract_customer_from_legal_intro(text)
             or ""
         )
-        project_name = (
-            self._extract_label(text, ["Project Name", "Name of Project", "SOW Title", "Statement of Work Title", "Engagement Name", "Program Name"])
-            or self._extract_project_from_sow_heading(text, account_name)
-            or self._extract_sow_heading(text)
-        )
-        company_url = self._extract_label(text, ["Company URL", "Website", "Website URL", "Company Website", "Client Website"])
+        project_name = self._extract_label(text, ["Project Name", "SOW Title", "Statement of Work Title", "Engagement Name", "Program Name"]) or self._extract_sow_heading(text)
+        company_url = self._extract_label(text, ["Company URL", "Website", "Client Website"])
         linkedin_url = self._extract_label(text, ["LinkedIn URL", "LinkedIn", "Company LinkedIn", "Client LinkedIn"]) or self._extract_linkedin_url(text)
         region = self._extract_label(text, ["Region", "Primary Region", "Geography"]) or self._extract_region_from_legal_intro(text) or "Global"
-        segment = self._extract_label(text, ["Segment", "Account Segment", "Client Segment", "Industry Vertical"]) or "Enterprise"
+        segment = self._extract_label(text, ["Segment", "Account Segment", "Client Segment"]) or "Enterprise"
         structured_service_lines = self._structured_list(structured, "service_lines")
-        explicit_service_lines = self._split_list(self._extract_label(text, ["Service Lines", "Services", "Tkxel Service Lines", "Service Stream Name", "Service Stream", "Project Role/Skillsets"]))
-        service_lines = explicit_service_lines or structured_service_lines or self._infer_service_lines(text)
+        service_lines = structured_service_lines or self._split_list(self._extract_label(text, ["Service Lines", "Services", "Tkxel Service Lines"])) or self._infer_service_lines(text)
         commercial_value, currency = self._extract_money(text)
         structured_commercial_value, structured_currency = self._structured_money(structured)
         if structured_commercial_value is not None:
             commercial_value = structured_commercial_value
             currency = structured_currency or currency
-        start_date = self._extract_date(text, ["Start Date", "Effective Date", "SOW Start Date", "Project Kickoff Date", "Kickoff Date", "Project Start Date"])
-        end_date = self._extract_date(text, ["End Date", "Expiration Date", "SOW End Date", "Project Signoff Date", "Signoff Date", "Project End Date"])
+        start_date = self._extract_date(text, ["Start Date", "Effective Date", "SOW Start Date"])
+        end_date = self._extract_date(text, ["End Date", "Expiration Date", "SOW End Date"])
         narrative_start, narrative_end = self._extract_timeframe_sentence_dates(text)
         start_date = self._parse_structured_date(self._structured_value(structured, "start_date", min_confidence=30)) or start_date or narrative_start
         end_date = self._parse_structured_date(self._structured_value(structured, "end_date", min_confidence=30)) or end_date or narrative_end
@@ -951,7 +934,7 @@ class OnboardingService:
         structured_renewal_terms = self._structured_value(structured, "renewal_terms", min_confidence=30)
         notice_period_days = self._structured_notice_days(structured_notice) or self._extract_notice_period(text) or self._extract_renewal_notice_days(text)
         auto_renewal = self._structured_auto_renewal(structured_renewal_terms) or self._extract_bool(text, ["Auto Renewal", "Auto-Renewal", "Automatic Renewal"])
-        owner_name = manager_name or self._extract_label(text, ["Primary Owner Name", "Account Manager", "Tkxel Account Manager", "Account Executive"]) or current_user.full_name
+        owner_name = manager_name or self._extract_label(text, ["Primary Owner Name", "Account Manager", "Tkxel Account Manager"]) or current_user.full_name
         owner_email = manager_email or self._extract_label(text, ["Primary Owner Email", "Account Manager Email", "Tkxel Account Manager Email"]) or current_user.email
 
         structured_deliverables = self._structured_list(structured, "deliverables")
@@ -960,13 +943,6 @@ class OnboardingService:
             ["Scope of Work", "Service Context", "Engagement Scope", "Project Scope", "Business Context", "Objectives"],
             max_chars=1600,
         )
-        charter_context = self._extract_labeled_summary(
-            text,
-            ["Business Domain", "Project Domain", "Project Objectives", "Special Requirements / Remarks", "Special Requirements", "Success Metrics"],
-            max_chars=1600,
-        )
-        if charter_context:
-            service_context = "\n\n".join(part for part in (service_context, charter_context) if part)
         commercial_summary = self._extract_section(
             text,
             ["Commercial Summary", "Commercial Terms", "Pricing", "Fees", "Billing Terms", "Payment Terms"],
@@ -979,21 +955,11 @@ class OnboardingService:
             renewal_terms=structured_renewal_terms,
             notice_period=structured_notice,
         )
-        charter_commercial_summary = self._extract_labeled_summary(
-            text,
-            ["Contract Type", "Resource Agreement Type", "Project Size (man hours)", "Project Size", "Invoicing Methodology", "Invoicing Schedule"],
-            max_chars=1400,
-        )
-        if charter_commercial_summary:
-            commercial_summary = "\n\n".join(part for part in (commercial_summary, charter_commercial_summary) if part)
         initial_notes = self._extract_section(
             text,
             ["Risks", "Assumptions", "Success Metrics", "Governance", "Out of Scope"],
             max_chars=1400,
         )
-        charter_risks = self._extract_charter_risks(text)
-        if charter_risks:
-            initial_notes = charter_risks
         structured_risks = self._structured_list(structured, "risks")
         if structured_risks:
             initial_notes = "Risks:\n" + "\n".join(f"- {item}" for item in structured_risks)
@@ -1490,7 +1456,7 @@ class OnboardingService:
 
     @staticmethod
     def _extract_sow_heading(text: str) -> str | None:
-        lines = OnboardingService._content_lines(text)
+        lines = [line.strip() for line in text.splitlines() if line.strip()]
         if not lines:
             return None
         for index, line in enumerate(lines[:8]):
@@ -1503,89 +1469,6 @@ class OnboardingService:
         return None
 
     @staticmethod
-    def _extract_project_from_sow_heading(text: str, account_name: str | None) -> str | None:
-        lines = OnboardingService._content_lines(text)
-        normalized_account = re.sub(r"\s+", " ", account_name or "").strip().lower()
-        for index, line in enumerate(lines[:12]):
-            if line.lower().startswith("this statement"):
-                continue
-            match = re.search(r"(?i)\bstatement\s+of\s+work\b|\bsow\b", line)
-            if not match:
-                continue
-            before_title = re.sub(r"\s+", " ", line[: match.start()]).strip(" -|:")
-            title_mentions_account = bool(normalized_account and normalized_account in line.lower())
-            if not title_mentions_account and not OnboardingService._looks_like_customer_name(before_title):
-                continue
-            trailing_title = line[match.end() :].strip(" -|:")
-            candidate = OnboardingService._clean_project_title(trailing_title, account_name)
-            if candidate:
-                return candidate
-            next_line = lines[index + 1] if index + 1 < len(lines) else ""
-            candidate = OnboardingService._clean_project_title(next_line, account_name)
-            if candidate:
-                return candidate
-        return None
-
-    @staticmethod
-    def _clean_project_title(value: str | None, account_name: str | None) -> str | None:
-        cleaned = re.sub(r"\s+", " ", value or "").strip(" -|,.;:")
-        if not cleaned:
-            return None
-        if account_name:
-            cleaned = re.sub(rf"(?i)^{re.escape(account_name.strip())}\s*(?:[-|:]|\s+-\s+)\s*", "", cleaned).strip(" -|,.;:")
-        cleaned = re.sub(r"(?i)\bstatement\s+of\s+work\b|\bsow\b", "", cleaned).strip(" -|,.;:")
-        cleaned = re.sub(r"(?i)\s+\bprepared\s+(?:by|from)\s+tkxel\b.*$", "", cleaned).strip(" -|,.;:")
-        if not OnboardingService._meaningful_project_title(cleaned):
-            return None
-        return cleaned[:180]
-
-    @staticmethod
-    def _meaningful_project_title(value: str) -> bool:
-        cleaned = re.sub(r"\s+", " ", value or "").strip()
-        if len(cleaned) < 3 or not re.search(r"[A-Za-z]", cleaned):
-            return False
-        lower = cleaned.lower()
-        if lower in {"statement of work", "sow", "project", "source document"}:
-            return False
-        return not re.match(
-            r"(?i)^(source|\[sheet|this statement|company url|website|linkedin|client|customer|account name|start date|end date|service lines|contract value|sow value)\b",
-            cleaned,
-        )
-
-    @staticmethod
-    def _looks_like_customer_name(value: str | None) -> bool:
-        cleaned = re.sub(r"\s+", " ", value or "").strip(" -|,.;:")
-        if len(cleaned) < 2 or not re.search(r"[A-Za-z]", cleaned):
-            return False
-        lower = cleaned.lower()
-        if lower == "this":
-            return False
-        return not any(
-            marker in lower
-            for marker in (
-                "statement of work",
-                "prepared",
-                "project",
-                "baseline",
-                "scope",
-                "contract",
-                "agreement",
-                "dedicated",
-                "team",
-            )
-        )
-
-    @staticmethod
-    def _content_lines(text: str) -> list[str]:
-        lines: list[str] = []
-        for line in text.splitlines():
-            cleaned = re.sub(r"\s+", " ", line or "").strip()
-            if not cleaned or cleaned.lower().startswith("source:") or cleaned.startswith("["):
-                continue
-            lines.append(cleaned)
-        return lines
-
-    @staticmethod
     def _extract_region_from_legal_intro(text: str) -> str | None:
         match = re.search(r"(?is)principal place of business at .{0,220}?(United States|USA|Canada|United Kingdom|Europe|North America)", text)
         return match.group(1) if match else None
@@ -1593,56 +1476,13 @@ class OnboardingService:
     @staticmethod
     def _extract_label(text: str, labels: list[str]) -> str | None:
         for label in labels:
-            for line in text.splitlines():
-                value = OnboardingService._extract_label_from_pipe_cells(line, label)
-                if value:
-                    return value[:1000]
-            pattern = rf"(?im)^\s*{re.escape(label)}\s*(?:[:]|(?:\s+-\s+))\s*(.+?)\s*$"
+            pattern = rf"(?im)^\s*{re.escape(label)}\s*[:\-]\s*(.+?)\s*$"
             match = re.search(pattern, text)
             if match:
-                value = OnboardingService._clean_label_value(match.group(1))
+                value = re.sub(r"\s+", " ", match.group(1)).strip(" |")
                 if value:
                     return value[:1000]
         return None
-
-    @staticmethod
-    def _extract_labeled_summary(text: str, labels: list[str], *, max_chars: int) -> str | None:
-        parts: list[str] = []
-        seen: set[str] = set()
-        for label in labels:
-            value = OnboardingService._extract_label(text, [label])
-            if not value:
-                continue
-            normalized = f"{label.lower()}:{value.lower()}"
-            if normalized in seen:
-                continue
-            seen.add(normalized)
-            parts.append(f"{label}: {value}")
-        summary = "\n".join(parts).strip()
-        return summary[:max_chars] if summary else None
-
-    @staticmethod
-    def _extract_label_from_pipe_cells(line: str, label: str) -> str | None:
-        cells = [cell.strip() for cell in line.split("|")]
-        if len(cells) <= 1:
-            return None
-        normalized_label = re.sub(r"\s+", " ", label).strip().lower()
-        for index, cell in enumerate(cells):
-            inline = re.match(rf"(?i)^\s*{re.escape(label)}\s*:\s*(.+?)\s*$", cell)
-            if inline:
-                return OnboardingService._clean_label_value(inline.group(1))
-            normalized_cell = re.sub(r"\s+", " ", cell).strip().rstrip(":").lower()
-            if normalized_cell == normalized_label:
-                for value_cell in cells[index + 1 :]:
-                    value = OnboardingService._clean_label_value(value_cell)
-                    if value:
-                        return value
-        return None
-
-    @staticmethod
-    def _clean_label_value(value: str | None) -> str | None:
-        cleaned = re.sub(r"\s+", " ", value or "").strip(" |")
-        return cleaned or None
 
     @staticmethod
     def _extract_section(text: str, headings: list[str], *, max_chars: int) -> str | None:
@@ -1668,46 +1508,10 @@ class OnboardingService:
         return infer_service_lines_from_text(text)
 
     @staticmethod
-    def _extract_charter_risks(text: str) -> str | None:
-        risk_lines: list[str] = []
-        in_risk_sheet = False
-        header_cells = {"risk", "risk statement", "risks", "mitigation", "mitigation plan", "owner", "impact"}
-        for raw_line in text.splitlines():
-            line = raw_line.strip()
-            if not line:
-                continue
-            if line.lower().startswith("[sheet:"):
-                in_risk_sheet = "risk" in line.lower()
-                continue
-            if not in_risk_sheet:
-                continue
-            cells = [cell.strip() for cell in line.split("|") if cell.strip()]
-            if not cells:
-                continue
-            first_cell = cells[0].strip().lower()
-            if first_cell in header_cells:
-                continue
-            meaningful_cells = [cell for cell in cells if cell.strip().lower() not in header_cells]
-            if not meaningful_cells:
-                continue
-            risk = meaningful_cells[0]
-            mitigation = meaningful_cells[1] if len(meaningful_cells) > 1 else ""
-            risk_lines.append(f"- {risk}{f' - Mitigation: {mitigation}' if mitigation else ''}")
-        if not risk_lines:
-            return None
-        return "Risks:\n" + "\n".join(risk_lines[:12])
-
-    @staticmethod
     def _extract_money(text: str) -> tuple[float, str]:
-        raw = OnboardingService._extract_label(text, ["Contract Value", "SOW Value", "Commercial Value", "Estimated Budget", "Budget", "Fees", "Total monthly fee", "Applicable monthly fee", "Monthly fee"])
-        if raw:
-            money_match = re.search(r"(?i)\b([A-Z]{3})?\s*\$?\s*([\d,]+(?:\.\d+)?)\s*([A-Z]{3})?\b", raw)
-            if money_match:
-                currency = (money_match.group(1) or money_match.group(3) or "USD").upper()
-                return float(money_match.group(2).replace(",", "")), currency[:3]
         patterns = [
-            r"(?im)^\s*(?:Contract Value|SOW Value|Commercial Value|Estimated Budget|Budget|Fees|Total monthly fee|Applicable monthly fee|Monthly fee)\s*(?:[:|]|\s+-\s+)\s*(?:([A-Z]{3})\s*)?\$?\s*([\d,]+(?:\.\d+)?)",
-            r"(?im)^\s*(?:Contract Value|SOW Value|Commercial Value|Estimated Budget|Budget|Fees|Total monthly fee|Applicable monthly fee|Monthly fee)\s*(?:[:|]|\s+-\s+)\s*\$?\s*([\d,]+(?:\.\d+)?)\s*([A-Z]{3})?",
+            r"(?im)^\s*(?:Contract Value|SOW Value|Commercial Value|Estimated Budget|Budget|Fees|Total monthly fee|Applicable monthly fee|Monthly fee)\s*[:\-]\s*(?:([A-Z]{3})\s*)?\$?\s*([\d,]+(?:\.\d+)?)",
+            r"(?im)^\s*(?:Contract Value|SOW Value|Commercial Value|Estimated Budget|Budget|Fees|Total monthly fee|Applicable monthly fee|Monthly fee)\s*[:\-]\s*\$?\s*([\d,]+(?:\.\d+)?)\s*([A-Z]{3})?",
         ]
         for pattern in patterns:
             match = re.search(pattern, text)
@@ -1726,12 +1530,9 @@ class OnboardingService:
         if not raw:
             return None
         match = re.search(r"\d{4}-\d{2}-\d{2}", raw)
-        if match:
-            return datetime.fromisoformat(match.group(0)).replace(tzinfo=timezone.utc)
-        us_match = re.search(r"\d{1,2}/\d{1,2}/\d{4}", raw)
-        if us_match:
-            return OnboardingService._parse_us_date(us_match.group(0))
-        return OnboardingService._parse_excel_serial_date(raw)
+        if not match:
+            return None
+        return datetime.fromisoformat(match.group(0)).replace(tzinfo=timezone.utc)
 
     @staticmethod
     def _extract_timeframe_sentence_dates(text: str) -> tuple[datetime | None, datetime | None]:
@@ -1747,19 +1548,6 @@ class OnboardingService:
             return datetime(year, month, day, tzinfo=timezone.utc)
         except (ValueError, TypeError):
             return None
-
-    @staticmethod
-    def _parse_excel_serial_date(value: str) -> datetime | None:
-        match = re.search(r"\b(\d{4,6})(?:\.0+)?\b", value)
-        if not match:
-            return None
-        try:
-            serial = int(match.group(1))
-        except (TypeError, ValueError):
-            return None
-        if serial < 20000 or serial > 80000:
-            return None
-        return datetime(1899, 12, 30, tzinfo=timezone.utc) + timedelta(days=serial)
 
     @staticmethod
     def _extract_notice_period(text: str) -> int | None:
@@ -1896,7 +1684,7 @@ class OnboardingService:
         return text or None
 
     def _notify_draft_created(self, draft: OnboardingDraft, current_user: User) -> None:
-        recipients = self._draft_creation_recipients(draft, exclude_user_id=current_user.id)
+        recipients = self._draft_approvers(exclude_user_id=current_user.id)
         trigger = "account_duplicate_detected" if draft.duplicate_account_id else "account_draft_created"
         title = f"Draft account ready: {draft.account_name}"
         body = f"{current_user.full_name} created a draft account that needs approval."
@@ -1914,46 +1702,6 @@ class OnboardingService:
                 priority="high",
                 delivery_metadata={"draft_id": draft.id, "created_by_id": current_user.id},
                 deduplication_key=f"{trigger}:{draft.id}:{recipient.id}",
-                in_app_only=True,
-            )
-
-    def _notify_draft_updated(self, draft: OnboardingDraft, actor: User, changed_labels: list[str]) -> None:
-        recipients = self._draft_update_recipients(draft, exclude_user_id=actor.id)
-        fields = ", ".join(changed_labels[:6])
-        suffix = " and more" if len(changed_labels) > 6 else ""
-        body = f"{actor.full_name} saved changes to {fields}{suffix}."
-        notification_run = datetime.now(timezone.utc).isoformat()
-        for recipient in recipients:
-            self.notifications.queue_notification(
-                recipient=recipient,
-                trigger="account_draft_updated",
-                title=f"Draft updated: {draft.account_name}",
-                body=body,
-                source_record_type="onboarding_draft",
-                source_record_id=draft.id,
-                source_record_route=f"/accounts/onboarding?draft={draft.id}",
-                priority="medium",
-                delivery_metadata={"draft_id": draft.id, "actor_id": actor.id, "changed_fields": changed_labels},
-                deduplication_key=f"account_draft_updated:{draft.id}:{recipient.id}:{notification_run}",
-                in_app_only=True,
-            )
-
-    def _notify_account_onboarded(self, draft: OnboardingDraft, account: Account, actor: User) -> None:
-        owner_recipient_ids = {recipient.id for recipient in self._draft_owner_recipients(draft, exclude_user_id=actor.id)}
-        recipients = [recipient for recipient in self._kam_head_recipients(exclude_user_id=actor.id) if recipient.id not in owner_recipient_ids]
-        for recipient in recipients:
-            self.notifications.queue_notification(
-                recipient=recipient,
-                trigger="account_draft_approved",
-                title=f"New account onboarded: {account.name}",
-                body=f"{actor.full_name} approved {account.name}; the account is now onboarded.",
-                account=account,
-                source_record_type="account",
-                source_record_id=account.id,
-                source_record_route=f"/accounts/{account.id}",
-                priority="medium",
-                delivery_metadata={"draft_id": draft.id, "actor_id": actor.id, "approved_account_id": account.id},
-                deduplication_key=f"account_onboarded:{draft.id}:{account.id}:{recipient.id}",
                 in_app_only=True,
             )
 
@@ -2004,46 +1752,13 @@ class OnboardingService:
                 dedupe_scope=f"review:{document.updated_at.isoformat() if document.updated_at else document.id}",
             )
 
-    def _draft_creation_recipients(self, draft: OnboardingDraft, *, exclude_user_id: str | None = None) -> list[User]:
-        return self._unique_users(
-            [
-                *self._draft_owner_recipients(draft, exclude_user_id=exclude_user_id),
-                *self._kam_head_recipients(exclude_user_id=exclude_user_id),
-            ],
-            exclude_user_id=exclude_user_id,
-        )
-
-    def _draft_update_recipients(self, draft: OnboardingDraft, *, exclude_user_id: str | None = None) -> list[User]:
-        return self._unique_users(
-            [
-                *self._draft_assigned_owner_recipients(draft, exclude_user_id=exclude_user_id),
-                *self._kam_head_recipients(exclude_user_id=exclude_user_id),
-            ],
-            exclude_user_id=exclude_user_id,
-        )
-
-    def _kam_head_recipients(self, *, exclude_user_id: str | None = None) -> list[User]:
-        users = [user for user in self.accounts.list_active_users() if user.role == "kam_head"]
-        return self._unique_users(users, exclude_user_id=exclude_user_id)
-
     def _draft_approvers(self, *, exclude_user_id: str | None = None) -> list[User]:
-        users = [
-            user
-            for user in self.notifications.active_users_with_any_permission({"onboarding:approve_draft"})
-            if self.access.has_any_permission(user, {"onboarding:view_all"})
-        ]
+        users = self.notifications.active_users_with_any_permission({"onboarding:approve_draft"})
         return self._unique_users(users, exclude_user_id=exclude_user_id)
 
     def _draft_owner_recipients(self, draft: OnboardingDraft, *, exclude_user_id: str | None = None) -> list[User]:
         candidates = [
             self._get_user_if_active(draft.created_by_id),
-            self._get_user_if_active(draft.primary_owner_id),
-            self.accounts.get_user_by_email(draft.primary_owner_email) if draft.primary_owner_email else None,
-        ]
-        return self._unique_users([user for user in candidates if user is not None], exclude_user_id=exclude_user_id)
-
-    def _draft_assigned_owner_recipients(self, draft: OnboardingDraft, *, exclude_user_id: str | None = None) -> list[User]:
-        candidates = [
             self._get_user_if_active(draft.primary_owner_id),
             self.accounts.get_user_by_email(draft.primary_owner_email) if draft.primary_owner_email else None,
         ]
@@ -2191,17 +1906,9 @@ class OnboardingService:
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="You do not have permission to clear account manager assignment")
         if self.access.can_assign_account_owners(current_user):
             return
-        if self._is_primary_am_eligible(current_user) and owner.id == current_user.id and (
-            draft is None or draft.created_by_id == current_user.id or self._draft_assigned_to_user(draft, current_user)
-        ):
+        if self._is_primary_am_eligible(current_user) and owner.id == current_user.id and (draft is None or draft.created_by_id == current_user.id):
             return
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="You do not have permission to assign onboarding drafts to other account managers")
-
-    @staticmethod
-    def _draft_assigned_to_user(draft: OnboardingDraft, user: User) -> bool:
-        if draft.primary_owner_id == user.id:
-            return True
-        return bool(draft.primary_owner_email and draft.primary_owner_email.strip().lower() == user.email.strip().lower())
 
     def _add_source_documents(self, draft: OnboardingDraft, source_documents, current_user: User) -> None:
         for document_payload in source_documents:
@@ -2559,48 +2266,6 @@ class OnboardingService:
             "region": draft.region,
             "status": draft.status,
         }
-
-    @staticmethod
-    def _draft_update_notification_value(draft: OnboardingDraft) -> dict:
-        return {
-            "account_name": draft.account_name,
-            "project_name": draft.project_name,
-            "company_url": draft.company_url,
-            "linkedin_url": draft.linkedin_url,
-            "lifecycle_status": draft.lifecycle_status,
-            "segment": draft.segment,
-            "region": draft.region,
-            "service_context": draft.service_context,
-            "commercial_summary": draft.commercial_summary,
-            "initial_notes": draft.initial_notes,
-            "commercial_value": float(draft.commercial_value or 0),
-            "currency": draft.currency,
-            "primary_owner_id": draft.primary_owner_id,
-            "primary_owner_name": draft.primary_owner_name,
-            "primary_owner_email": draft.primary_owner_email,
-        }
-
-    @staticmethod
-    def _draft_update_changed_labels(before: dict, after: dict) -> list[str]:
-        labels_by_key = {
-            "account_name": "account name",
-            "project_name": "project name",
-            "company_url": "company URL",
-            "linkedin_url": "LinkedIn URL",
-            "lifecycle_status": "lifecycle status",
-            "segment": "segment",
-            "region": "region",
-            "service_context": "service context",
-            "commercial_summary": "commercial summary",
-            "initial_notes": "initial notes",
-            "commercial_value": "commercial value",
-            "currency": "currency",
-        }
-        changed = [label for key, label in labels_by_key.items() if before.get(key) != after.get(key)]
-        owner_keys = ("primary_owner_id", "primary_owner_name", "primary_owner_email")
-        if any(before.get(key) != after.get(key) for key in owner_keys):
-            changed.append("assigned Account Manager")
-        return changed
 
     @staticmethod
     def _health_drivers(engagement: Engagement) -> list[str]:

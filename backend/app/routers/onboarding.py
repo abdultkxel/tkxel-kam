@@ -138,7 +138,6 @@ async def extract_upload_fields(
     manager_name: Annotated[str | None, Form(description="Optional primary account manager display name for owner context.")] = None,
     manager_email: Annotated[str | None, Form(description="Optional primary account manager email for owner context.")] = None,
     linkedin_url: Annotated[str | None, Form(description="Optional company LinkedIn profile URL.")] = None,
-    use_ai: Annotated[bool, Form(description="Whether SOW AI enrichment may run after deterministic document parsing.")] = True,
 ) -> OnboardingUploadExtractionRead:
     return await service.extract_fields_from_uploads(
         files,
@@ -146,7 +145,6 @@ async def extract_upload_fields(
         manager_name=manager_name,
         manager_email=manager_email,
         linkedin_url=linkedin_url,
-        use_ai=use_ai,
     )
 
 
@@ -177,7 +175,6 @@ async def create_draft_from_upload(
     manager_name: Annotated[str | None, Form(description="Optional primary account manager display name.")] = None,
     manager_email: Annotated[str | None, Form(description="Optional primary account manager email.")] = None,
     linkedin_url: Annotated[str | None, Form(description="Optional company LinkedIn profile URL.")] = None,
-    use_ai: Annotated[bool, Form(description="Whether SOW AI enrichment may run after deterministic document parsing.")] = True,
 ) -> OnboardingDraftRead:
     return await service.create_draft_from_uploads(
         files,
@@ -189,7 +186,6 @@ async def create_draft_from_upload(
         manager_name=manager_name,
         manager_email=manager_email,
         linkedin_url=linkedin_url,
-        use_ai=use_ai,
     )
 
 

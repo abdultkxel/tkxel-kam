@@ -1,5 +1,6 @@
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
+import { accounts } from '@/data/mock'
 import { Account, AccountStage, HealthScore } from '@/types/account'
 
 interface AccountStore {
@@ -22,7 +23,7 @@ interface AccountStore {
 export const useAccountStore = create<AccountStore>()(
   persist(
     set => ({
-      accounts: [],
+      accounts,
       accountsLoaded: false,
       accountsLoading: false,
       accountsError: '',

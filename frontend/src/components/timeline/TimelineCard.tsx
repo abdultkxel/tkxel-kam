@@ -8,6 +8,8 @@ import { MentionTextarea } from '@/components/collaboration/MentionTextarea'
 import { useAuth } from '@/contexts/AuthContext'
 import { useCapabilities } from '@/hooks/useCapabilities'
 import { useRole } from '@/hooks/useRole'
+import { useAccountStore } from '@/stores/accountStore'
+import { useNotificationStore } from '@/stores/notificationStore'
 import { createTimelineComment, deleteTimelineComment, getTimelineComments, updateTimelineComment } from '@/services/timeline'
 import { TimelineComment, TimelineEntry, MODULE_COLOURS } from '@/types/timeline'
 import { cn } from '@/utils/cn'
@@ -51,6 +53,8 @@ export function TimelineCard({ entry, searchQuery, flash = false }: { entry: Tim
   const user = useRole()
   const { token } = useAuth()
   const { capabilities } = useCapabilities()
+  const accountName = useAccountStore(state => state.accounts.find(account => account.id === entry.accountId)?.name ?? 'Account')
+  const addNotification = useNotificationStore(state => state.addNotification)
   const rows = diffRows(entry)
   const canAnnotate = capabilities.can_moderate_timeline && entry.isImmutable
   const canModerate = capabilities.can_moderate_timeline
@@ -92,6 +96,28 @@ export function TimelineCard({ entry, searchQuery, flash = false }: { entry: Tim
     try {
       const comment = await createTimelineComment(token, entry.id, content, mentions)
       setComments(items => [...items, comment])
+      if (entry.performedBy !== user.id) {
+        addNotification({
+          userId: entry.performedBy,
+          trigger: 'timeline_comment',
+          sentence: `${user.name} commented on your timeline note`,
+          accountId: entry.accountId,
+          accountName,
+          contentPreview: 'A timeline comment was added. Open the account to view authorized details.',
+          route: `/accounts/${entry.accountId}`,
+        })
+      }
+      mentions.forEach(mentionedUserId => {
+        addNotification({
+          userId: mentionedUserId,
+          trigger: 'timeline_mention',
+          sentence: `${user.name} mentioned you in a timeline comment`,
+          accountId: entry.accountId,
+          accountName,
+          contentPreview: 'You were mentioned in a timeline comment. Open the account to view authorized details.',
+          route: `/accounts/${entry.accountId}`,
+        })
+      })
       setCommentText('')
       setCommentsOpen(true)
       toast.success('Comment added')

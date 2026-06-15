@@ -1,3 +1,5 @@
+import { users } from '@/data/mock'
+
 const mentionPattern = /@\{([^}]+)\}/g
 
 export function extractMentionIds(text: string) {
@@ -5,11 +7,11 @@ export function extractMentionIds(text: string) {
 }
 
 export function displayMention(token: string) {
-  return token
+  return users.find(user => user.id === token)?.name ?? token
 }
 
 export function initialsForUser(userId: string) {
-  return userId ? userId.slice(0, 2).toUpperCase() : '@'
+  return users.find(user => user.id === userId)?.avatarInitials ?? '@'
 }
 
 export function insertMentionToken(value: string, cursor: number, query: string, userId: string) {

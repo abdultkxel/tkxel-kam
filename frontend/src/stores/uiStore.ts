@@ -26,7 +26,7 @@ export const useUIStore = create<UIStore>(set => ({
   aiOpen: false,
   aiPrefill: '',
   aiAutoSubmitRequest: null,
-  activeAccountId: '',
+  activeAccountId: 'amd-001',
   shortcutModalOpen: false,
   globalNoteOpen: false,
   toggleSidebar: () => set(state => ({ sidebarCollapsed: !state.sidebarCollapsed })),
