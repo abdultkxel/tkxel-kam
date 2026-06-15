@@ -5,6 +5,8 @@ from app.models import PasswordResetToken, User
 from app.security import hash_reset_token
 from app.services.users import normalize_email
 
+HIDDEN_MANAGEABLE_ROLE_SLUGS = {"super_admin"}
+
 
 class UserRepository:
     def __init__(self, db: Session) -> None:
@@ -73,7 +75,7 @@ class UserRepository:
 
     @staticmethod
     def _manageable_user_conditions(search: str | None, status_filter: str, role: str | None) -> list:
-        conditions = []
+        conditions = [~User.role.in_(HIDDEN_MANAGEABLE_ROLE_SLUGS)]
         if search and search.strip():
             term = f"%{search.strip()}%"
             conditions.append(or_(User.email.ilike(term), User.full_name.ilike(term)))

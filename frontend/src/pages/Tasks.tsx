@@ -9,9 +9,10 @@ import { PageHeader } from '@/components/ui/PageHeader'
 import { useAuth } from '@/contexts/AuthContext'
 import { useCapabilities } from '@/hooks/useCapabilities'
 import { useRole } from '@/hooks/useRole'
+import { listAccounts } from '@/services/accountWorkspace'
 import { listRuntimeCustomFields, RuntimeCustomField } from '@/services/contentGovernance'
 import { addTaskEvidence, createTask, listTasks, PlaybookTask, TaskPriority, TaskStatus, updateTask } from '@/services/playbooksTasks'
-import { useAccountStore } from '@/stores/accountStore'
+import type { Account } from '@/types/account'
 import { cn } from '@/utils/cn'
 import { formatDate, formatRelative } from '@/utils/formatters'
 
@@ -31,7 +32,8 @@ export function Tasks() {
   const { token } = useAuth()
   const user = useRole()
   const { capabilities } = useCapabilities()
-  const accounts = useAccountStore(state => state.accounts)
+  const [accounts, setAccounts] = useState<Account[]>([])
+  const [accountsError, setAccountsError] = useState('')
   const [tasks, setTasks] = useState<PlaybookTask[]>([])
   const [customFields, setCustomFields] = useState<RuntimeCustomField[]>([])
   const [loading, setLoading] = useState(false)
@@ -62,6 +64,22 @@ export function Tasks() {
     setViewMode(viewModeParam(searchParams.get('view')))
     setPage(positivePage(searchParams.get('page')))
   }, [searchParams])
+
+  useEffect(() => {
+    if (!token) return
+    let cancelled = false
+    setAccountsError('')
+    listAccounts(token, new URLSearchParams({ page: '1', page_size: '500' }))
+      .then(response => {
+        if (!cancelled) setAccounts(response.items)
+      })
+      .catch(err => {
+        if (!cancelled) setAccountsError(err instanceof Error ? err.message : 'Accounts could not load')
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [token])
 
   useEffect(() => {
     if (!token) return
@@ -175,6 +193,7 @@ export function Tasks() {
               <option value="">All accounts</option>
               {accounts.map(account => <option key={account.id} value={account.id}>{account.name}</option>)}
             </select>
+            {accountsError ? <p className="text-xs font-semibold text-rag-red">{accountsError}</p> : null}
           </label>
           <label className="space-y-1">
             <span className="tk-label text-xs">Status</span>
@@ -522,7 +541,7 @@ function EvidenceList({ task, token, readOnly }: { task: PlaybookTask; token: st
   )
 }
 
-function CreateTaskDialog({ token, accounts, currentUserId, readOnly, customFields, onCreated }: { token: string | null; accounts: ReturnType<typeof useAccountStore.getState>['accounts']; currentUserId: string; readOnly: boolean; customFields: RuntimeCustomField[]; onCreated: (task: PlaybookTask) => void }) {
+function CreateTaskDialog({ token, accounts, currentUserId, readOnly, customFields, onCreated }: { token: string | null; accounts: Account[]; currentUserId: string; readOnly: boolean; customFields: RuntimeCustomField[]; onCreated: (task: PlaybookTask) => void }) {
   const [open, setOpen] = useState(false)
   const [customValues, setCustomValues] = useState<Record<string, unknown>>({})
   const [customErrors, setCustomErrors] = useState<Record<string, string>>({})

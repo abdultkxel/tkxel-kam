@@ -1,5 +1,5 @@
 import * as Dialog from '@radix-ui/react-dialog'
-import { AlertTriangle, Building2, ChevronLeft, ChevronRight, Download, FileText, LayoutGrid, Loader2, Search, Table2, Tags, Upload, UserRound, X } from 'lucide-react'
+import { AlertTriangle, Building2, ChevronLeft, ChevronRight, Download, FileText, LayoutGrid, Loader2, Search, Table2, Upload, X } from 'lucide-react'
 import { ReactNode, useEffect, useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { AccountCard } from '@/components/account/AccountCard'
@@ -10,15 +10,10 @@ import { PageHeader } from '@/components/ui/PageHeader'
 import { Skeleton } from '@/components/ui/Skeleton'
 import { Column, SortableTable } from '@/components/ui/SortableTable'
 import { useAuth } from '@/contexts/AuthContext'
-import { users } from '@/data/mock'
 import { useCapabilities } from '@/hooks/useCapabilities'
-import { useRole } from '@/hooks/useRole'
 import { listAccounts, listOnboardingAccountManagers, listOnboardingDrafts, type OnboardingAccountManager } from '@/services/accountWorkspace'
-import { useAccountStore } from '@/stores/accountStore'
-import { useTimelineStore } from '@/stores/timelineStore'
 import { Account } from '@/types/account'
 import { cn } from '@/utils/cn'
-import { emitTimelineEvent } from '@/utils/emitTimelineEvent'
 import { formatCompactCurrency } from '@/utils/formatters'
 
 type AccountLayout = 'cards' | 'table'
@@ -52,18 +47,12 @@ export function Accounts() {
   const [view, setView] = useState<AccountLayout>('cards')
   const [selectedIds, setSelectedIds] = useState<string[]>([])
   const [accountManagers, setAccountManagers] = useState<OnboardingAccountManager[]>([])
+  const [accounts, setAccounts] = useState<Account[]>([])
   const [pagination, setPagination] = useState({ total: 0, page: 1, pageSize: 12, pages: 1 })
   const [params, setParams] = useSearchParams()
   const navigate = useNavigate()
-  const user = useRole()
   const { capabilities } = useCapabilities()
   const { token } = useAuth()
-  const accounts = useAccountStore(state => state.accounts)
-  const setAccounts = useAccountStore(state => state.setAccounts)
-  const segmentTags = useAccountStore(state => state.segmentTags)
-  const assignOwner = useAccountStore(state => state.assignOwner)
-  const addTagToAccounts = useAccountStore(state => state.addTagToAccounts)
-  const timelineEntries = useTimelineStore(state => state.entries)
   const search = params.get('q') ?? ''
   const stage = params.get('stage') ?? ''
   const risk = params.get('risk') ?? ''
@@ -75,7 +64,9 @@ export function Accounts() {
   const direction: SortDirection = params.get('direction') === 'desc' ? 'desc' : 'asc'
   const page = Number(params.get('page') ?? '1')
   const privileged = capabilities.can_view_portfolio || capabilities.can_update_portfolio_accounts || capabilities.can_assign_account_owners
-  const canSeeDraftAccounts = capabilities.can_approve_onboarding || capabilities.permission_keys.includes('onboarding:view_all')
+  const canSeeDraftAccounts =
+    capabilities.can_approve_onboarding ||
+    capabilities.permission_keys.some(permission => ['onboarding:view_all', 'onboarding:view_assigned', 'onboarding:create_draft'].includes(permission))
   const tableSort = { column: apiSortToTableColumn[sort] ?? 'name', direction }
   const activeManagerName = accountManagers.find(manager => manager.id === activeAm)?.name ?? accounts.find(account => account.ownerId === activeAm)?.ownerName ?? activeAm
   const accountManagerOptions = activeAm && !accountManagers.some(manager => manager.id === activeAm)
@@ -142,38 +133,10 @@ export function Accounts() {
     setSelectedIds(current => (ids.every(id => current.includes(id)) ? current.filter(id => !ids.includes(id)) : Array.from(new Set([...current, ...ids]))))
   }
 
-  function changeOwner(ownerId: string) {
-    const owner = accountManagers.find(item => item.id === ownerId) ?? users.find(item => item.id === ownerId)
-    if (!owner) return
-    assignOwner(selectedIds, owner.id, owner.name)
-    selectedIds.forEach(accountId => {
-      emitTimelineEvent({
-        accountId,
-        eventType: 'account_setup',
-        module: 'manual',
-        title: 'Owner changed',
-        description: `Account owner changed to ${owner.name}.`,
-        performedBy: user.id,
-        performedByName: user.name,
-        metadata: { action: 'owner_changed', ownerId },
-        isSensitive: false,
-        isSystemGenerated: true,
-        isImmutable: false,
-      })
-    })
-    setSelectedIds([])
-  }
-
-  function addTag(tag: string) {
-    addTagToAccounts(selectedIds, tag)
-    setSelectedIds([])
-  }
-
   function exportCsv() {
     const rows = selectedIds.map(id => accounts.find(account => account.id === id)).filter(Boolean) as Account[]
     const csvRows = rows.map(account => {
-      const lastActivity = timelineEntries.filter(entry => entry.accountId === account.id).sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())[0]?.timestamp ?? ''
-      return [account.name, account.stage, account.health.overall, account.arr, account.ownerName, lastActivity].join(',')
+      return [account.name, account.stage, account.health.overall, account.arr, account.ownerName, ''].join(',')
     })
     const blob = new Blob([['name,stage,health_score,arr,am,last_activity', ...csvRows].join('\n')], { type: 'text/csv' })
     const link = document.createElement('a')
@@ -416,20 +379,6 @@ export function Accounts() {
         <div className="fixed bottom-4 left-1/2 z-40 flex w-[min(960px,calc(100vw-2rem))] -translate-x-1/2 flex-wrap items-center justify-between gap-3 rounded-xl border border-surface-border bg-white p-3 shadow-panel">
           <span className="text-sm font-semibold text-ink">{selectedIds.length} selected</span>
           <div className="flex flex-wrap gap-2">
-            <label className="inline-flex items-center gap-2">
-              <UserRound className="h-4 w-4 text-brand-blue" />
-              <select className="tk-input min-w-[180px]" defaultValue="" onChange={event => event.target.value && changeOwner(event.target.value)}>
-                <option value="">Change AM</option>
-                {accountManagers.map(owner => <option key={owner.id} value={owner.id}>{owner.name}</option>)}
-              </select>
-            </label>
-            <label className="inline-flex items-center gap-2">
-              <Tags className="h-4 w-4 text-brand-blue" />
-              <select className="tk-input min-w-[160px]" defaultValue="" onChange={event => event.target.value && addTag(event.target.value)}>
-                <option value="">Add tag</option>
-                {segmentTags.map(tag => <option key={tag}>{tag}</option>)}
-              </select>
-            </label>
             <button className="tk-button-secondary" onClick={exportCsv}>
               <Download className="h-4 w-4" />
               Export CSV

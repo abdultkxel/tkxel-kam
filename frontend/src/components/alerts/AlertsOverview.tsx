@@ -3,8 +3,8 @@ import { useEffect, useState } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
 import { EmptyState } from '@/components/ui/EmptyState'
 import { useAuth } from '@/contexts/AuthContext'
+import { useAccountOptions } from '@/hooks/useAccountOptions'
 import { AlertRecord, getAlerts } from '@/services/alerts'
-import { useAccountStore } from '@/stores/accountStore'
 import { cn } from '@/utils/cn'
 import { formatDate, formatRelative } from '@/utils/formatters'
 
@@ -17,7 +17,7 @@ function severityStyle(severity: AlertRecord['severity']) {
 export function AlertsOverview() {
   const { token } = useAuth()
   const [params, setParams] = useSearchParams()
-  const accounts = useAccountStore(state => state.accounts)
+  const { accounts } = useAccountOptions()
   const [alerts, setAlerts] = useState<AlertRecord[]>([])
   const [total, setTotal] = useState(0)
   const [loading, setLoading] = useState(false)

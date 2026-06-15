@@ -1,5 +1,5 @@
-import { AlertTriangle, Archive, ArrowRight, BriefcaseBusiness, CalendarClock, FileText, Loader2, Pencil, Plus, Search, ShieldCheck, Upload, UserRound } from 'lucide-react'
-import { useCallback, useMemo, useRef, useState } from 'react'
+import { AlertTriangle, Archive, ArrowRight, BriefcaseBusiness, CalendarClock, CheckCircle2, FileText, Loader2, Pencil, Plus, Save, Search, ShieldCheck, Upload, UserRound, XCircle } from 'lucide-react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { toast } from 'sonner'
 import { EngagementFormDialog } from '@/components/account/EngagementFormDialog'
@@ -9,7 +9,8 @@ import { FilterBar } from '@/components/ui/FilterBar'
 import { Skeleton } from '@/components/ui/Skeleton'
 import { SortableTable } from '@/components/ui/SortableTable'
 import type { Column } from '@/components/ui/SortableTable'
-import { useArchiveEngagement, useCreateEngagementFromCharter, useEngagements } from '@/hooks/useEngagements'
+import { useApproveEngagementImportDraft, useArchiveEngagement, useCreateEngagementFromCharter, useEngagementImportDrafts, useEngagements, useRejectEngagementImportDraft, useUpdateEngagementImportDraft } from '@/hooks/useEngagements'
+import type { EngagementImportDraftRecord, EngagementUpdatePayload } from '@/services/accountWorkspace'
 import type { Account } from '@/types/account'
 import type { EngagementHealthStatus, EngagementRecord, EngagementRenewalRisk, EngagementRenewalStatus, EngagementStatus } from '@/types/v3'
 import { cn } from '@/utils/cn'
@@ -33,8 +34,12 @@ export function EngagementsPanel({ account }: { account: Account }) {
   const [archiveTarget, setArchiveTarget] = useState<EngagementRecord | null>(null)
   const charterInputRef = useRef<HTMLInputElement | null>(null)
   const { engagements, isLoading, error, refetch } = useEngagements(account.id, { page: 1, page_size: 100 })
+  const { drafts, isLoading: draftsLoading, refetch: refetchDrafts } = useEngagementImportDrafts(account.id)
   const { archiveEngagement, isLoading: archiving } = useArchiveEngagement()
   const { createEngagementFromCharter, isLoading: importingCharter } = useCreateEngagementFromCharter()
+  const { updateEngagementImportDraft, isLoading: savingDraft } = useUpdateEngagementImportDraft()
+  const { approveEngagementImportDraft, isLoading: approvingDraft } = useApproveEngagementImportDraft()
+  const { rejectEngagementImportDraft, isLoading: rejectingDraft } = useRejectEngagementImportDraft()
 
   const ownerOptions = useMemo(() => {
     const owners = new Map<string, string>()
@@ -215,15 +220,50 @@ export function EngagementsPanel({ account }: { account: Account }) {
   async function importCharter(file?: File | null) {
     if (!file) return
     try {
-      const engagement = await createEngagementFromCharter(account.id, file)
-      toast.success(`Engagement created from charter: ${engagement.name}`)
-      await refetch().catch(() => undefined)
+      const draft = await createEngagementFromCharter(account.id, file)
+      toast.success(`Engagement draft ready: ${draft.name}`)
+      await refetchDrafts().catch(() => undefined)
     } catch (error) {
       toast.error(error instanceof Error ? error.message : 'Project charter could not be imported')
     } finally {
       if (charterInputRef.current) charterInputRef.current.value = ''
     }
   }
+
+  async function saveDraft(draft: EngagementImportDraftRecord, payload: EngagementUpdatePayload) {
+    try {
+      await updateEngagementImportDraft(draft.id, payload, account.id)
+      toast.success('Engagement draft changes saved')
+      await refetchDrafts().catch(() => undefined)
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Engagement draft could not be saved')
+      throw error
+    }
+  }
+
+  async function approveDraft(draft: EngagementImportDraftRecord) {
+    try {
+      await approveEngagementImportDraft(draft.id, account.id)
+      toast.success('Engagement draft approved')
+      await Promise.all([refetchDrafts().catch(() => undefined), refetch().catch(() => undefined)])
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Engagement draft could not be approved')
+      throw error
+    }
+  }
+
+  async function rejectDraft(draft: EngagementImportDraftRecord, reason: string) {
+    try {
+      await rejectEngagementImportDraft(draft.id, reason, account.id)
+      toast.success('Engagement draft rejected')
+      await refetchDrafts().catch(() => undefined)
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Engagement draft could not be rejected')
+      throw error
+    }
+  }
+
+  const draftBusy = savingDraft || approvingDraft || rejectingDraft
 
   return (
     <div className="space-y-5">
@@ -261,6 +301,36 @@ export function EngagementsPanel({ account }: { account: Account }) {
           <SummaryMetric icon={AlertTriangle} label="Open Risks" value={engagements.reduce((sum, item) => sum + item.risks.length, 0)} tone="orange" />
         </div>
       </section>
+
+      {draftsLoading ? (
+        <div className="space-y-3">
+          <Skeleton className="h-32 w-full" />
+        </div>
+      ) : drafts.length > 0 ? (
+        <section className="tk-card overflow-hidden">
+          <div className="border-b border-surface-border bg-blue-tint-20 p-5">
+            <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+              <div>
+                <p className="text-[10px] font-extrabold uppercase tracking-widest text-brand-blue">Imported charter drafts</p>
+                <h3 className="mt-1 text-lg font-semibold text-ink">{drafts.length} ready for review</h3>
+              </div>
+              <Badge tone="blue">Draft</Badge>
+            </div>
+          </div>
+          <div className="divide-y divide-surface-border">
+            {drafts.map(draft => (
+              <EngagementDraftReviewCard
+                key={draft.id}
+                draft={draft}
+                busy={draftBusy}
+                onSave={saveDraft}
+                onApprove={approveDraft}
+                onReject={rejectDraft}
+              />
+            ))}
+          </div>
+        </section>
+      ) : null}
 
       <FilterBar onClear={clearFilters} contentClassName="md:grid-cols-[minmax(180px,1.4fr)_repeat(4,minmax(150px,1fr))_auto]">
         <label className="space-y-1">
@@ -316,6 +386,179 @@ export function EngagementsPanel({ account }: { account: Account }) {
         onConfirm={() => void confirmArchive()}
       />
     </div>
+  )
+}
+
+interface EngagementDraftFormState {
+  name: string
+  serviceLines: string
+  value: string
+  startDate: string
+  endDate: string
+  renewalDate: string
+  noticePeriodDays: string
+  commercialContext: string
+  resourceDependency: string
+  risks: string
+  rejectReason: string
+}
+
+function EngagementDraftReviewCard({
+  draft,
+  busy,
+  onSave,
+  onApprove,
+  onReject,
+}: {
+  draft: EngagementImportDraftRecord
+  busy: boolean
+  onSave: (draft: EngagementImportDraftRecord, payload: EngagementUpdatePayload) => Promise<void>
+  onApprove: (draft: EngagementImportDraftRecord) => Promise<void>
+  onReject: (draft: EngagementImportDraftRecord, reason: string) => Promise<void>
+}) {
+  const [form, setForm] = useState<EngagementDraftFormState>(() => draftToForm(draft))
+  const [formError, setFormError] = useState('')
+
+  useEffect(() => {
+    setForm(draftToForm(draft))
+    setFormError('')
+  }, [draft])
+
+  function updateField(field: keyof EngagementDraftFormState, value: string) {
+    setForm(current => ({ ...current, [field]: value }))
+    if (formError) setFormError('')
+  }
+
+  function payloadFromForm(): EngagementUpdatePayload {
+    const value = Number(form.value || 0)
+    return {
+      name: form.name.trim(),
+      serviceLines: splitList(form.serviceLines),
+      contractValue: Number.isFinite(value) ? value : 0,
+      startDate: dateInputToIso(form.startDate) ?? undefined,
+      endDate: dateInputToIso(form.endDate),
+      renewalDate: dateInputToIso(form.renewalDate),
+      noticePeriodDays: form.noticePeriodDays.trim() ? Number(form.noticePeriodDays) : null,
+      commercialContext: form.commercialContext.trim() || null,
+      resourceDependency: form.resourceDependency.trim() || null,
+      risks: splitList(form.risks),
+    }
+  }
+
+  async function handleSave() {
+    if (!form.name.trim()) {
+      setFormError('Engagement name is required.')
+      return false
+    }
+    if (splitList(form.serviceLines).length === 0) {
+      setFormError('Add at least one service line.')
+      return false
+    }
+    await onSave(draft, payloadFromForm())
+    return true
+  }
+
+  async function handleApprove() {
+    const saved = await handleSave()
+    if (!saved) return
+    await onApprove(draft)
+  }
+
+  async function handleReject() {
+    const reason = form.rejectReason.trim()
+    if (reason.length < 3) {
+      setFormError('Add a rejection reason.')
+      return
+    }
+    await onReject(draft, reason)
+  }
+
+  return (
+    <article className="bg-white p-5">
+      <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+        <div className="min-w-0">
+          <div className="flex flex-wrap items-center gap-2">
+            <h4 className="text-base font-semibold text-ink">{draft.name}</h4>
+            <Badge tone="amber">{`${draft.confidence}% confidence`}</Badge>
+          </div>
+          <p className="mt-1 text-sm text-ink-secondary">{draft.sourceDocuments[0]?.fileName ?? draft.sourceDocuments[0]?.name ?? 'Imported source document'}</p>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          <button type="button" className="tk-button-secondary bg-white" disabled={busy} onClick={() => void handleSave()}>
+            {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
+            Save draft changes
+          </button>
+          <button type="button" className="tk-button-primary" disabled={busy} onClick={() => void handleApprove()}>
+            {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4" />}
+            Approve draft
+          </button>
+        </div>
+      </div>
+
+      {draft.missingFields.length > 0 ? (
+        <div className="mt-4 rounded-md border border-brand-orange/20 bg-brand-orange/10 p-3 text-sm text-brand-orange">
+          {draft.missingFields.join(' ')}
+        </div>
+      ) : null}
+      {formError ? <p className="mt-3 text-sm font-semibold text-rag-red">{formError}</p> : null}
+
+      <div className="mt-5 grid gap-3 lg:grid-cols-2">
+        <DraftField label="Engagement name" value={form.name} onChange={value => updateField('name', value)} />
+        <DraftField label="Service lines" value={form.serviceLines} onChange={value => updateField('serviceLines', value)} />
+        <DraftField label="Contract value" value={form.value} type="number" onChange={value => updateField('value', value)} />
+        <DraftField label="Notice period days" value={form.noticePeriodDays} type="number" onChange={value => updateField('noticePeriodDays', value)} />
+        <DraftField label="Start date" value={form.startDate} type="date" onChange={value => updateField('startDate', value)} />
+        <DraftField label="End date" value={form.endDate} type="date" onChange={value => updateField('endDate', value)} />
+        <DraftField label="Renewal date" value={form.renewalDate} type="date" onChange={value => updateField('renewalDate', value)} />
+        <div className="rounded-md border border-surface-border bg-surface-secondary p-3">
+          <p className="text-[10px] font-semibold uppercase tracking-wider text-ink-secondary">Assigned owner</p>
+          <p className="mt-1 text-sm font-semibold text-ink">{draft.ownerName}</p>
+        </div>
+        <DraftTextarea label="Commercial context" value={form.commercialContext} onChange={value => updateField('commercialContext', value)} />
+        <DraftTextarea label="Risks" value={form.risks} onChange={value => updateField('risks', value)} />
+        <DraftTextarea label="Resource dependency" value={form.resourceDependency} onChange={value => updateField('resourceDependency', value)} />
+        <DraftTextarea label="Reject reason" value={form.rejectReason} onChange={value => updateField('rejectReason', value)} />
+      </div>
+
+      {draft.stakeholderDrafts.length > 0 ? (
+        <div className="mt-5 rounded-md border border-surface-border bg-surface-secondary p-3">
+          <p className="text-[10px] font-semibold uppercase tracking-wider text-ink-secondary">Stakeholders drafted</p>
+          <div className="mt-2 flex flex-wrap gap-2">
+            {draft.stakeholderDrafts.map((stakeholder, index) => (
+              <span key={`${stakeholder.email ?? stakeholder.name ?? index}`} className="rounded-full border border-surface-border bg-white px-2.5 py-1 text-xs font-semibold text-ink-secondary">
+                {stakeholder.name}
+                {stakeholder.title ? `, ${stakeholder.title}` : ''}
+              </span>
+            ))}
+          </div>
+        </div>
+      ) : null}
+
+      <div className="mt-4 flex justify-end">
+        <button type="button" className="tk-button-secondary bg-white text-rag-red hover:bg-rag-red/10" disabled={busy} onClick={() => void handleReject()}>
+          {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <XCircle className="h-4 w-4" />}
+          Reject draft
+        </button>
+      </div>
+    </article>
+  )
+}
+
+function DraftField({ label, value, onChange, type = 'text' }: { label: string; value: string; onChange: (value: string) => void; type?: 'text' | 'number' | 'date' }) {
+  return (
+    <label className="space-y-1">
+      <span className="tk-label">{label}</span>
+      <input className="tk-input" type={type} value={value} onChange={event => onChange(event.target.value)} />
+    </label>
+  )
+}
+
+function DraftTextarea({ label, value, onChange }: { label: string; value: string; onChange: (value: string) => void }) {
+  return (
+    <label className="space-y-1">
+      <span className="tk-label">{label}</span>
+      <textarea className="tk-input min-h-24 resize-y" value={value} onChange={event => onChange(event.target.value)} />
+    </label>
   )
 }
 
@@ -434,6 +677,39 @@ function renewalStatusTone(status: EngagementRenewalStatus): BadgeTone {
 
 function isUrgentRenewalStatus(status: EngagementRenewalStatus) {
   return status === 'notice_due' || status === 'renewal_due' || status === 'expired'
+}
+
+function draftToForm(draft: EngagementImportDraftRecord): EngagementDraftFormState {
+  return {
+    name: draft.name,
+    serviceLines: draft.serviceLines.join(', '),
+    value: String(draft.contractValue ?? draft.value ?? 0),
+    startDate: isoToDateInput(draft.renewalTerms.startDate),
+    endDate: isoToDateInput(draft.renewalTerms.endDate),
+    renewalDate: isoToDateInput(draft.renewalTerms.renewalDate),
+    noticePeriodDays: draft.renewalTerms.noticePeriodDays ? String(draft.renewalTerms.noticePeriodDays) : '',
+    commercialContext: draft.commercialContext === 'No commercial context recorded yet.' ? '' : draft.commercialContext,
+    resourceDependency: draft.resourceDependency === 'No resource dependency recorded.' ? '' : draft.resourceDependency,
+    risks: draft.risks.join('\n'),
+    rejectReason: draft.rejectionReason ?? '',
+  }
+}
+
+function splitList(value: string) {
+  return value
+    .split(/[\n,;]+/)
+    .map(item => item.trim())
+    .filter(Boolean)
+}
+
+function isoToDateInput(value?: string | null) {
+  if (!value) return ''
+  return value.slice(0, 10)
+}
+
+function dateInputToIso(value: string) {
+  if (!value.trim()) return null
+  return new Date(`${value}T00:00:00.000Z`).toISOString()
 }
 
 function formatOptionalDate(value: string) {

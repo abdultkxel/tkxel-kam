@@ -153,6 +153,7 @@ describe('Account360 account detail tabs', () => {
     expect(within(commandCenter as HTMLElement).getByText('Open opportunities')).toBeInTheDocument()
     expect(within(commandCenter as HTMLElement).getByText('Next governance')).toBeInTheDocument()
     expect(within(commandCenter as HTMLElement).queryByText('Timeline')).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /generate handover/i })).not.toBeInTheDocument()
   })
 
   it('shows account Field Builder values on the overview', async () => {

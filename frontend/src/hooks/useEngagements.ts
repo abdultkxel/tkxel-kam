@@ -1,15 +1,19 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useAuth } from '@/contexts/AuthContext'
 import {
+  approveEngagementImportDraft as approveEngagementImportDraftRequest,
   archiveEngagement as archiveEngagementRequest,
   createEngagement as createEngagementRequest,
   createEngagementFromCharter as createEngagementFromCharterRequest,
   getEngagement as getEngagementRequest,
   getEngagementTimeline as getEngagementTimelineRequest,
+  listEngagementImportDrafts as listEngagementImportDraftsRequest,
   listEngagements as listEngagementsRequest,
+  rejectEngagementImportDraft as rejectEngagementImportDraftRequest,
+  updateEngagementImportDraft as updateEngagementImportDraftRequest,
   updateEngagement as updateEngagementRequest,
 } from '@/services/accountWorkspace'
-import type { EngagementCreatePayload, EngagementListParams, EngagementTimelineParams, EngagementUpdatePayload, Page } from '@/services/accountWorkspace'
+import type { EngagementCreatePayload, EngagementImportDraftRecord, EngagementListParams, EngagementTimelineParams, EngagementUpdatePayload, Page } from '@/services/accountWorkspace'
 import type { EngagementRecord } from '@/types/v3'
 import type { TimelineEntry } from '@/types/timeline'
 
@@ -48,6 +52,17 @@ export function useEngagements(accountId?: string, params?: URLSearchParams | En
   }, [accountId, paramsKey, token])
   const query = useEngagementQuery(Boolean(token && accountId), { accountId }, load)
   return { ...query, engagements: query.data?.items ?? [] }
+}
+
+export function useEngagementImportDrafts(accountId?: string, params?: URLSearchParams): QueryState<Page<EngagementImportDraftRecord>> & { drafts: EngagementImportDraftRecord[] } {
+  const { token } = useAuth()
+  const paramsKey = useMemo(() => paramsToKey(params ?? new URLSearchParams({ status: 'ready_for_review', page: '1', page_size: '20' })), [params])
+  const load = useCallback(() => {
+    if (!token || !accountId) return Promise.resolve(null)
+    return listEngagementImportDraftsRequest(token, accountId, keyToSearchParams(paramsKey))
+  }, [accountId, paramsKey, token])
+  const query = useEngagementQuery(Boolean(token && accountId), { accountId }, load)
+  return { ...query, drafts: query.data?.items ?? [] }
 }
 
 export function useEngagement(engagementId?: string): QueryState<EngagementRecord> {
@@ -98,7 +113,7 @@ export function useCreateEngagement(): MutationState & { createEngagement: (acco
   return { createEngagement, isLoading, error }
 }
 
-export function useCreateEngagementFromCharter(): MutationState & { createEngagementFromCharter: (accountId: string, file: File) => Promise<EngagementRecord> } {
+export function useCreateEngagementFromCharter(): MutationState & { createEngagementFromCharter: (accountId: string, file: File) => Promise<EngagementImportDraftRecord> } {
   const { token } = useAuth()
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState<Error | null>(null)
@@ -109,9 +124,9 @@ export function useCreateEngagementFromCharter(): MutationState & { createEngage
       setIsLoading(true)
       setError(null)
       try {
-        const engagement = await createEngagementFromCharterRequest(token, accountId, file)
-        invalidateEngagementCache({ accountId, engagementId: engagement.id })
-        return engagement
+        const draft = await createEngagementFromCharterRequest(token, accountId, file)
+        invalidateEngagementCache({ accountId })
+        return draft
       } catch (err) {
         const nextError = toError(err)
         setError(nextError)
@@ -124,6 +139,90 @@ export function useCreateEngagementFromCharter(): MutationState & { createEngage
   )
 
   return { createEngagementFromCharter, isLoading, error }
+}
+
+export function useUpdateEngagementImportDraft(): MutationState & { updateEngagementImportDraft: (draftId: string, payload: EngagementUpdatePayload, accountId?: string) => Promise<EngagementImportDraftRecord> } {
+  const { token } = useAuth()
+  const [isLoading, setIsLoading] = useState(false)
+  const [error, setError] = useState<Error | null>(null)
+
+  const updateEngagementImportDraft = useCallback(
+    async (draftId: string, payload: EngagementUpdatePayload, accountId?: string) => {
+      if (!token) throw new Error('You must be logged in to update an engagement draft')
+      setIsLoading(true)
+      setError(null)
+      try {
+        const draft = await updateEngagementImportDraftRequest(token, draftId, payload)
+        invalidateEngagementCache({ accountId: accountId ?? draft.accountId })
+        return draft
+      } catch (err) {
+        const nextError = toError(err)
+        setError(nextError)
+        throw nextError
+      } finally {
+        setIsLoading(false)
+      }
+    },
+    [token],
+  )
+
+  return { updateEngagementImportDraft, isLoading, error }
+}
+
+export function useApproveEngagementImportDraft(): MutationState & { approveEngagementImportDraft: (draftId: string, accountId?: string) => Promise<EngagementImportDraftRecord> } {
+  const { token } = useAuth()
+  const [isLoading, setIsLoading] = useState(false)
+  const [error, setError] = useState<Error | null>(null)
+
+  const approveEngagementImportDraft = useCallback(
+    async (draftId: string, accountId?: string) => {
+      if (!token) throw new Error('You must be logged in to approve an engagement draft')
+      setIsLoading(true)
+      setError(null)
+      try {
+        const draft = await approveEngagementImportDraftRequest(token, draftId)
+        invalidateEngagementCache({ accountId: accountId ?? draft.accountId, engagementId: draft.approvedEngagementId ?? undefined })
+        return draft
+      } catch (err) {
+        const nextError = toError(err)
+        setError(nextError)
+        throw nextError
+      } finally {
+        setIsLoading(false)
+      }
+    },
+    [token],
+  )
+
+  return { approveEngagementImportDraft, isLoading, error }
+}
+
+export function useRejectEngagementImportDraft(): MutationState & { rejectEngagementImportDraft: (draftId: string, reason: string, accountId?: string) => Promise<EngagementImportDraftRecord> } {
+  const { token } = useAuth()
+  const [isLoading, setIsLoading] = useState(false)
+  const [error, setError] = useState<Error | null>(null)
+
+  const rejectEngagementImportDraft = useCallback(
+    async (draftId: string, reason: string, accountId?: string) => {
+      if (!token) throw new Error('You must be logged in to reject an engagement draft')
+      setIsLoading(true)
+      setError(null)
+      try {
+        const draft = await rejectEngagementImportDraftRequest(token, draftId, reason)
+        invalidateEngagementCache({ accountId: accountId ?? draft.accountId })
+        return draft
+      } catch (err) {
+        const nextError = toError(err)
+        setError(nextError)
+        throw nextError
+      } finally {
+        setIsLoading(false)
+      }
+    },
+    [token],
+  )
+
+  return { rejectEngagementImportDraft, isLoading, error }
 }
 
 export function useUpdateEngagement(): MutationState & { updateEngagement: (engagementId: string, payload: EngagementUpdatePayload) => Promise<EngagementRecord> } {

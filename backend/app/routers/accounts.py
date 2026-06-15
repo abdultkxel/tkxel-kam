@@ -23,6 +23,8 @@ from app.schemas import (
     AccountSummaryCardsRead,
     CustomFieldDefinitionRead,
     EngagementCreateRequest,
+    EngagementImportDraftPageRead,
+    EngagementImportDraftRead,
     EngagementPageRead,
     EngagementRead,
     MessageResponse,
@@ -568,12 +570,12 @@ def list_engagements(
 
 @router.post(
     "/{account_id}/engagements/from-charter",
-    response_model=EngagementRead,
+    response_model=EngagementImportDraftRead,
     status_code=status.HTTP_201_CREATED,
-    summary="Create account engagement from project charter",
+    summary="Create editable engagement draft from project charter",
     description=(
-        "Uploads a project charter file, extracts structured SOW/charter fields, creates an engagement record, "
-        "stores the source document for KYC/RAG reuse, and creates stakeholder records from charter content."
+        "Uploads a project charter file, reads it with deterministic document parsers, stores the source document for KYC/RAG reuse, "
+        "and creates an editable engagement draft that must be approved before an engagement record is created."
     ),
     responses={
         400: {"description": "File is missing, unsupported, or cannot be extracted."},
@@ -587,8 +589,30 @@ async def create_engagement_from_charter(
     file: Annotated[UploadFile, File(description="Project charter, SOW, PDF, DOCX, XLSX, or text file.")],
     current_user: Annotated[User, Depends(get_current_user)],
     service: Annotated[EngagementService, Depends(get_engagement_service)],
-) -> EngagementRead:
+) -> EngagementImportDraftRead:
     return await service.create_engagement_from_charter(account_id, file, current_user)
+
+
+@router.get(
+    "/{account_id}/engagement-drafts",
+    response_model=EngagementImportDraftPageRead,
+    summary="List account engagement import drafts",
+    description="Lists editable engagement drafts created by Import Charter before approval converts them into official Engagement/SOW records.",
+    responses={
+        401: {"description": "Missing, invalid, or expired bearer token."},
+        403: {"description": "Authenticated user cannot view this account's engagement drafts."},
+        404: {"description": "Account was not found."},
+    },
+)
+def list_engagement_import_drafts(
+    account_id: str,
+    current_user: Annotated[User, Depends(get_current_user)],
+    service: Annotated[EngagementService, Depends(get_engagement_service)],
+    status_filter: Annotated[str | None, Query(alias="status", description="Draft status filter; defaults to ready_for_review.")] = "ready_for_review",
+    page: Annotated[int, Query(ge=1, description="One-based page number.")] = 1,
+    page_size: Annotated[int, Query(ge=1, le=100, description="Number of engagement drafts per page.")] = 20,
+) -> EngagementImportDraftPageRead:
+    return service.list_import_drafts_for_account(account_id, current_user, status_filter=status_filter, page=page, page_size=page_size)
 
 
 @router.post(
