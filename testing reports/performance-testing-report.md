@@ -1,8 +1,19 @@
 # Performance Testing Report
 
 Generated: 2026-06-12
+Updated: 2026-06-15
 
 Project: KAM Intelligence Platform
+
+## 2026-06-15 UAT-Account Update
+
+| Check | Result | Notes |
+| --- | --- | --- |
+| Frontend typecheck | Pass | `npm run typecheck` completed successfully after Tasks page simplification. |
+| Backend compile check | Pass | Task/account backend modules compiled successfully with `python -m py_compile`. |
+| Task board data volume | Updated | Board request now uses first page with `page_size=100`, due-date ascending sort, and no visible pagination controls. |
+| Task detail modal size | Updated | Detail modal max width reduced to `810px` and max height to `75vh`, reducing screen coverage versus the prior full-width modal. |
+| Performance benchmark | Not rerun | No k6/Locust/Lighthouse benchmark was run in this update. Existing performance follow-ups remain open. |
 
 ## Validation Summary
 

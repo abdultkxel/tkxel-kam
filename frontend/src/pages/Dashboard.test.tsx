@@ -196,7 +196,7 @@ function accountManagerDashboard() {
         primary_route: '/tasks',
         value: { open: 14, accounts_with_open_tasks: 5, in_progress: 6, assigned_to_me: 6, overdue: 3, due_this_week: 7 },
         items: [{ id: 'task-1', title: 'Follow up on blocker', account_id: 'acc-1', account_name: 'Acme', priority: 'critical', status: 'open', due_at: '2026-06-05T10:00:00Z', route: '/tasks?account_id=acc-1' }],
-        metadata: { data_source: 'Task records filtered to: owner = AM or account in assigned list' },
+        metadata: { data_source: 'Showing tasks assigned to you across your assigned accounts.' },
         error: null,
       },
       {
@@ -642,7 +642,7 @@ describe('Dashboard', () => {
     expect(screen.getByText('Today customer action')).toBeInTheDocument()
     expect(screen.getAllByRole('link', { name: /^Open$/i }).map(link => link.getAttribute('href'))).toEqual(expect.arrayContaining(['/dashboard#critical-actions', '/tasks?due=today']))
     expect(screen.getByText('Full task status breakdown across assigned accounts')).toBeInTheDocument()
-    expect(screen.getByText('Task records filtered to: owner = AM or account in assigned list')).toBeInTheDocument()
+    expect(screen.getByText('Showing tasks assigned to you across your assigned accounts.')).toBeInTheDocument()
     expect(screen.getByText('Task completion does NOT improve health scores; only underlying account data changes do.')).toBeInTheDocument()
     expect(screen.getByRole('link', { name: /open 14 across 5 accounts/i })).toHaveAttribute('href', '/tasks?status=open')
     expect(screen.getByRole('link', { name: /in progress 6 assigned to me/i })).toHaveAttribute('href', '/tasks?status=in_progress&my_items=true')
