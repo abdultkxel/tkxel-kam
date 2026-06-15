@@ -239,27 +239,26 @@ make reset-db
 ```
 
 `make migrate` creates/updates tables from SQLAlchemy metadata.
-`make seed` creates required default data, including the hidden super admin user, PRD roles, one visible user for every non-super-admin seeded role, and the module/action permission catalog.
+`make seed` creates required default data, including the hidden super admin user, visible operating users, PRD roles, and the module/action permission catalog.
 `make reset-db` drops and recreates the local database schema, then seeds basic roles, permissions, allowed domains, and users. Use it only for local/demo refreshes.
 
-Default seeded roles from `requirements/KAM PRD.pdf`:
+Default seeded roles:
 
 ```text
 super_admin
 admin
 account_manager
 kam_head
-delivery_lead
 leadership_viewer
 ```
 
-`super_admin` is kept out of Admin user/role listings and assignment dropdowns. Seeded visible role users use this pattern:
+`super_admin` is kept out of Admin user/role listings and assignment dropdowns. Seeded visible role users:
 
 ```text
 admin.user@tkxel.com
 account.manager.user@tkxel.com
-kam.head.user@tkxel.com
-delivery.lead.user@tkxel.com
+account.manager.two@tkxel.com
+abdul.rehman@tkxel.io
 leadership.viewer.user@tkxel.com
 Password: User@12345
 ```

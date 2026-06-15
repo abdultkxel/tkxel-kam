@@ -638,6 +638,19 @@ export async function createOnboardingDraftFromUpload(token: string, payload: Cr
   )
 }
 
+export async function replaceOnboardingDraftSourceDocuments(token: string, draftId: string, payload: Pick<CreateDraftFromUploadPayload, 'files' | 'useAi'>) {
+  const body = new FormData()
+  payload.files.forEach(file => body.append('files', file))
+  if (payload.useAi !== undefined) body.append('use_ai', String(payload.useAi))
+  return mapDraft(
+    await apiRequest<ApiOnboardingDraft>(`/api/onboarding/drafts/${draftId}/documents/upload`, {
+      method: 'POST',
+      token,
+      body,
+    }),
+  )
+}
+
 export async function extractOnboardingUploadFields(token: string, payload: CreateDraftFromUploadPayload) {
   const body = new FormData()
   payload.files.forEach(file => body.append('files', file))

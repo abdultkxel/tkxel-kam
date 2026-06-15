@@ -808,6 +808,9 @@ def test_onboarding_draft_flags_duplicate_company_url_before_approval(client: Te
 
 
 def test_onboarding_upload_allows_reusing_same_source_file(client: TestClient, db_session: Session) -> None:
+    settings = get_settings()
+    previous_ai_setting = settings.sow_ai_extraction_enabled
+    settings.sow_ai_extraction_enabled = False
     headers = auth_headers(client)
     existing_drafts = db_session.query(OnboardingDraft).count()
     existing_documents = db_session.query(SourceDocument).count()
@@ -820,18 +823,21 @@ Start Date: 2026-07-01
 End Date: 2026-12-31
 """
 
-    first = client.post(
-        "/api/onboarding/drafts/upload",
-        headers=headers,
-        files=[("files", ("duplicate-sow.txt", content, "text/plain"))],
-    )
-    assert first.status_code == 201
+    try:
+        first = client.post(
+            "/api/onboarding/drafts/upload",
+            headers=headers,
+            files=[("files", ("duplicate-sow.txt", content, "text/plain"))],
+        )
+        assert first.status_code == 201
 
-    second = client.post(
-        "/api/onboarding/drafts/upload",
-        headers=headers,
-        files=[("files", ("duplicate-sow-copy.txt", content, "text/plain"))],
-    )
+        second = client.post(
+            "/api/onboarding/drafts/upload",
+            headers=headers,
+            files=[("files", ("duplicate-sow-copy.txt", content, "text/plain"))],
+        )
+    finally:
+        settings.sow_ai_extraction_enabled = previous_ai_setting
 
     assert second.status_code == 201
     assert first.json()["source_documents"][0]["checksum_sha256"] == second.json()["source_documents"][0]["checksum_sha256"]
@@ -840,6 +846,9 @@ End Date: 2026-12-31
 
 
 def test_onboarding_source_extraction_retry_endpoint_reextracts_document(client: TestClient) -> None:
+    settings = get_settings()
+    previous_ai_setting = settings.sow_ai_extraction_enabled
+    settings.sow_ai_extraction_enabled = False
     headers = auth_headers(client)
     content = b"""
 Account Name: Retry Source Customer
@@ -850,26 +859,82 @@ Start Date: 2026-07-01
 End Date: 2026-12-31
 """
 
-    draft_response = client.post(
-        "/api/onboarding/drafts/upload",
-        headers=headers,
-        files=[("files", ("retry-sow.txt", content, "text/plain"))],
-    )
-    assert draft_response.status_code == 201
-    draft = draft_response.json()
-    document_id = draft["source_documents"][0]["id"]
+    try:
+        draft_response = client.post(
+            "/api/onboarding/drafts/upload",
+            headers=headers,
+            files=[("files", ("retry-sow.txt", content, "text/plain"))],
+        )
+        assert draft_response.status_code == 201
+        draft = draft_response.json()
+        document_id = draft["source_documents"][0]["id"]
 
-    retry_response = client.post(
-        f"/api/onboarding/drafts/{draft['id']}/documents/{document_id}/extract",
-        headers=headers,
-        params={"force": "true"},
-    )
+        retry_response = client.post(
+            f"/api/onboarding/drafts/{draft['id']}/documents/{document_id}/extract",
+            headers=headers,
+            params={"force": "true"},
+        )
+    finally:
+        settings.sow_ai_extraction_enabled = previous_ai_setting
 
     assert retry_response.status_code == 200
     extraction = retry_response.json()
     assert extraction["source_document_id"] == document_id
     assert extraction["status"] == "completed"
     assert extraction["page_count"] == 1
+
+
+def test_onboarding_draft_source_reupload_replaces_document_and_refreshes_fields(client: TestClient, db_session: Session) -> None:
+    settings = get_settings()
+    previous_ai_setting = settings.sow_ai_extraction_enabled
+    settings.sow_ai_extraction_enabled = False
+    headers = auth_headers(client)
+    wrong_content = b"""
+Account Name: Wrong Source Customer
+Project Name: Wrong SOW Test
+Service Lines: Product Engineering
+Contract Value: USD 12000
+Start Date: 2026-07-01
+End Date: 2026-12-31
+"""
+    correct_content = b"""
+Account Name: Correct Source Customer
+Project Name: Correct Charter Replacement
+Service Lines: Cloud Migration
+Contract Value: USD 45000
+Start Date: 2026-08-01
+End Date: 2027-02-28
+"""
+
+    try:
+        draft_response = client.post(
+            "/api/onboarding/drafts/upload",
+            headers=headers,
+            files=[("files", ("wrong-sow.txt", wrong_content, "text/plain"))],
+        )
+        assert draft_response.status_code == 201
+        draft = draft_response.json()
+        old_document_id = draft["source_documents"][0]["id"]
+
+        replace_response = client.post(
+            f"/api/onboarding/drafts/{draft['id']}/documents/upload",
+            headers=headers,
+            files=[("files", ("correct-charter.txt", correct_content, "text/plain"))],
+        )
+    finally:
+        settings.sow_ai_extraction_enabled = previous_ai_setting
+
+    assert replace_response.status_code == 200
+    refreshed = replace_response.json()
+    assert refreshed["account_name"] == "Correct Source Customer"
+    assert refreshed["project_name"] == "Correct Charter Replacement"
+    assert len(refreshed["source_documents"]) == 1
+    assert refreshed["source_documents"][0]["file_name"] == "correct-charter.txt"
+    assert refreshed["source_documents"][0]["id"] != old_document_id
+    assert "Correct Source Customer" in refreshed["source_documents"][0]["extracted_text"]
+    assert refreshed["engagement_drafts"][0]["name"] == "Correct Charter Replacement"
+    assert db_session.get(SourceDocument, old_document_id) is None
+    assert db_session.query(SourceDocument).filter(SourceDocument.draft_id == draft["id"]).count() == 1
 
 
 def test_pdf_without_readable_text_is_marked_ocr_required(
@@ -1301,7 +1366,7 @@ def test_sow_structured_qwen_result_is_cited_and_vendor_name_guarded(db_session:
     assert fields["stakeholders"]["missing_evidence"] == "Stakeholders were not supported by extracted SOW text."
 def test_onboarding_account_manager_candidates_are_active_account_managers(client: TestClient) -> None:
     admin_headers = auth_headers(client)
-    kam_headers = auth_headers(client, "kam.head.user@tkxel.com", "User@12345")
+    kam_headers = auth_headers(client, "abdul.rehman@tkxel.io", "User@12345")
     create_account_manager_user(client, admin_headers, "second.account.manager@tkxel.com", "Second Account Manager")
 
     response = client.get("/api/onboarding/account-managers", headers=kam_headers)

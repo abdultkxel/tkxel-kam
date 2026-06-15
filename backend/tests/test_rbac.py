@@ -18,8 +18,9 @@ SEEDED_ROLE_SLUGS = {role.slug for role in DEFAULT_ROLES}
 VISIBLE_BASE_ROLE_SLUGS = {"account_manager", "admin", "kam_head", "leadership_viewer"}
 VISIBLE_BASE_USERS = {
     "account.manager.user@tkxel.com": ("Account Manager", "account_manager", "Account Manager"),
+    "account.manager.two@tkxel.com": ("Account Manager Two", "account_manager", "Account Manager"),
     "admin.user@tkxel.com": ("Admin", "admin", "Admin"),
-    "kam.head.user@tkxel.com": ("KAM Head", "kam_head", "KAM Head"),
+    "abdul.rehman@tkxel.io": ("KAM Head", "kam_head", "KAM Head"),
     "leadership.viewer.user@tkxel.com": ("Leadership Executive", "leadership_viewer", "Leadership / Executive"),
 }
 
@@ -123,6 +124,7 @@ def test_seed_creates_visible_users_for_required_roles_and_break_glass_admin(cli
         assert user["full_name"] == expected_name
         assert user["role"] == expected_role
         assert user["title"] == expected_title
+    assert sum(1 for user in users if user["role"] == "account_manager") == 2
     assert not any(user["email"] == "admin@tkxel.com" or user["role"] == "super_admin" for user in users)
     assert db_session.scalar(select(User).where(User.email == "admin@tkxel.com", User.role == "super_admin")) is not None
 

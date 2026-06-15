@@ -16,7 +16,7 @@ Workflow-first notification delivery replaces the old small trigger list as the 
 
 ## User Flow
 
-An AM creates an account draft. KAM Head/Admin users receive a persisted bell notification to review it. When the draft is approved, rejected, or linked, the draft creator and assigned owner receive outcome notifications. Account ownership, attachments, source extraction, KYC review/approval/rejection, engagement health, opportunities, governance events/actions/decisions, escalations, CSAT, RBAC, and Admin security changes now create in-app notifications for the affected users. When a task is created or reassigned, the assignee receives a persisted notification.
+An AM creates an account draft. KAM Head users receive a persisted bell notification to review it. If KAM Head creates a draft for an AM, the KAM Head still receives the draft-ready notification and the assigned AM receives their notification. When the draft is approved, rejected, or linked, the draft creator and assigned owner receive outcome notifications. Account ownership, attachments, source extraction, KYC review/approval/rejection, engagement health, opportunities, governance events/actions/decisions, escalations, CSAT, RBAC, and Admin security changes now create in-app notifications for the affected users. When a task is created or reassigned, the assignee receives a persisted notification.
 
 ## Backend Plan
 
@@ -47,6 +47,7 @@ An AM creates an account draft. KAM Head/Admin users receive a persisted bell no
 - Admin Settings, Profile notification preferences, and Notification Center trigger filters now surface only configurable triggers. Runtime-only escalation/SLA configs remain available for existing backend emitters but are hidden from Admin Settings defaults.
 - Admin trigger defaults are paginated in the Settings panel so large trigger catalogs remain scannable.
 - Notification scheduler dry-run controls and scheduler run history are no longer shown in Admin Settings.
+- The topbar bell shows the current unread notification count beside the profile control, capped visually at `99+`.
 - Backend error display: existing toast/error-state behavior is reused.
 
 ## Validation And Errors

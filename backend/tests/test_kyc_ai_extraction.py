@@ -131,7 +131,7 @@ def create_account(client: TestClient, headers: dict[str, str], account_name: st
 def test_onboarding_approval_seeds_stakeholder_default_kyc_and_prompt(client: TestClient, db_session: Session) -> None:
     admin_headers = auth_headers(client)
     account_id, _ = create_account(client, admin_headers, "KYC Prompt Seed Account")
-    kam_headers = auth_headers(client, "kam.head.user@tkxel.com", "User@12345")
+    kam_headers = auth_headers(client, "abdul.rehman@tkxel.io", "User@12345")
 
     stakeholder = db_session.scalar(select(Stakeholder).where(Stakeholder.account_id == account_id))
     assert stakeholder is not None
@@ -155,7 +155,7 @@ def test_onboarding_approval_seeds_stakeholder_default_kyc_and_prompt(client: Te
 def test_kyc_draft_approval_creates_snapshot_freshness_logs_and_search(client: TestClient, db_session: Session) -> None:
     admin_headers = auth_headers(client)
     account_id, _ = create_account(client, admin_headers, "KYC Northwind")
-    kam_headers = auth_headers(client, "kam.head.user@tkxel.com", "User@12345")
+    kam_headers = auth_headers(client, "abdul.rehman@tkxel.io", "User@12345")
 
     missing_freshness = client.get(f"/api/accounts/{account_id}/kyc/freshness", headers=kam_headers)
     assert missing_freshness.status_code == 200
@@ -223,7 +223,7 @@ def test_kyc_draft_approval_creates_snapshot_freshness_logs_and_search(client: T
 def test_kyc_approval_validation_and_authorization_are_enforced(client: TestClient) -> None:
     admin_headers = auth_headers(client)
     account_id, _ = create_account(client, admin_headers, "KYC Validation")
-    kam_headers = auth_headers(client, "kam.head.user@tkxel.com", "User@12345")
+    kam_headers = auth_headers(client, "abdul.rehman@tkxel.io", "User@12345")
     am_headers = auth_headers(client, "account.manager.user@tkxel.com", "User@12345")
 
     draft_response = client.post(f"/api/accounts/{account_id}/kyc/drafts", headers=kam_headers, json={"trigger_source": "manual"})
@@ -269,7 +269,7 @@ def test_kyc_agent_runs_support_partial_failure_refresh_filters_and_sensitive_ma
 
     admin_headers = auth_headers(client)
     account_id, _ = create_account(client, admin_headers, "KYC Agent Runs")
-    kam_headers = auth_headers(client, "kam.head.user@tkxel.com", "User@12345")
+    kam_headers = auth_headers(client, "abdul.rehman@tkxel.io", "User@12345")
     am_headers = auth_headers(client, "account.manager.user@tkxel.com", "User@12345")
 
     def override_kyc_service() -> KycService:
@@ -377,7 +377,7 @@ def test_kyc_gateway_exception_creates_reviewable_failed_draft(client: TestClien
 
     admin_headers = auth_headers(client)
     account_id, _ = create_account(client, admin_headers, "KYC Gateway Failure")
-    kam_headers = auth_headers(client, "kam.head.user@tkxel.com", "User@12345")
+    kam_headers = auth_headers(client, "abdul.rehman@tkxel.io", "User@12345")
 
     def override_kyc_service() -> KycService:
         return KycService(db_session, gateway=FailingGateway())
@@ -408,7 +408,7 @@ def test_kyc_gateway_exception_creates_reviewable_failed_draft(client: TestClien
 def test_kyc_reject_preserves_draft_and_requires_reason(client: TestClient) -> None:
     admin_headers = auth_headers(client)
     account_id, _ = create_account(client, admin_headers, "KYC Rejection")
-    kam_headers = auth_headers(client, "kam.head.user@tkxel.com", "User@12345")
+    kam_headers = auth_headers(client, "abdul.rehman@tkxel.io", "User@12345")
 
     draft_response = client.post(f"/api/accounts/{account_id}/kyc/drafts", headers=kam_headers, json={"trigger_source": "account_overview"})
     assert draft_response.status_code == 201
@@ -430,7 +430,7 @@ def test_kyc_reject_preserves_draft_and_requires_reason(client: TestClient) -> N
 def test_kyc_snapshot_restore_creates_new_active_version_and_requires_kam_head(client: TestClient, db_session: Session) -> None:
     admin_headers = auth_headers(client)
     account_id, _ = create_account(client, admin_headers, "KYC Restore Versioning")
-    kam_headers = auth_headers(client, "kam.head.user@tkxel.com", "User@12345")
+    kam_headers = auth_headers(client, "abdul.rehman@tkxel.io", "User@12345")
     am_headers = auth_headers(client, "account.manager.user@tkxel.com", "User@12345")
 
     first_draft = client.post(f"/api/accounts/{account_id}/kyc/drafts", headers=kam_headers, json={"trigger_source": "account_overview"})
@@ -492,7 +492,7 @@ def test_kyc_snapshot_restore_creates_new_active_version_and_requires_kam_head(c
 
 def test_kyc_configuration_requires_configure_permission_and_normalizes_sources(client: TestClient) -> None:
     admin_headers = auth_headers(client)
-    kam_headers = auth_headers(client, "kam.head.user@tkxel.com", "User@12345")
+    kam_headers = auth_headers(client, "abdul.rehman@tkxel.io", "User@12345")
     am_headers = auth_headers(client, "account.manager.user@tkxel.com", "User@12345")
 
     denied = client.get("/api/kyc/configuration", headers=am_headers)
@@ -545,7 +545,7 @@ def test_local_ai_kyc_queue_manual_worker_retry_cancel_and_draft_population(clie
 
     admin_headers = auth_headers(client)
     account_id, _ = create_account(client, admin_headers, "KYC Local Qwen Queue")
-    kam_headers = auth_headers(client, "kam.head.user@tkxel.com", "User@12345")
+    kam_headers = auth_headers(client, "abdul.rehman@tkxel.io", "User@12345")
 
     def override_kyc_service() -> KycService:
         return KycService(db_session, gateway=AsyncDeterministicGateway())
@@ -613,7 +613,7 @@ def test_local_ai_kyc_queue_manual_worker_retry_cancel_and_draft_population(clie
 def test_stale_running_kyc_run_is_released_before_web_research_queue(client: TestClient, db_session: Session) -> None:
     admin_headers = auth_headers(client)
     account_id, _ = create_account(client, admin_headers, "KYC Stale Run Release")
-    kam_headers = auth_headers(client, "kam.head.user@tkxel.com", "User@12345")
+    kam_headers = auth_headers(client, "abdul.rehman@tkxel.io", "User@12345")
 
     draft_response = client.post(f"/api/accounts/{account_id}/kyc/drafts", headers=kam_headers, json={"trigger_source": "kyc_page"})
     assert draft_response.status_code == 201
@@ -665,7 +665,7 @@ def test_stale_running_kyc_run_is_released_before_web_research_queue(client: Tes
 def test_running_kyc_run_can_be_cancelled(client: TestClient, db_session: Session) -> None:
     admin_headers = auth_headers(client)
     account_id, _ = create_account(client, admin_headers, "KYC Running Cancel")
-    kam_headers = auth_headers(client, "kam.head.user@tkxel.com", "User@12345")
+    kam_headers = auth_headers(client, "abdul.rehman@tkxel.io", "User@12345")
 
     started_at = datetime.now(timezone.utc)
     run = KycAgentRun(

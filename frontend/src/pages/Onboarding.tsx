@@ -20,13 +20,14 @@ import {
   OnboardingAccountManager,
   OnboardingDraftView,
   rejectOnboardingDraft,
+  replaceOnboardingDraftSourceDocuments,
   retryOnboardingDraftDocumentExtraction,
   updateOnboardingDraft,
 } from '@/services/accountWorkspace'
 import type { EngagementRecord, SourceDocument } from '@/types/v3'
 import { cn } from '@/utils/cn'
 import { formatCompactCurrency, formatDate, formatRelative } from '@/utils/formatters'
-import { allProjectCharterFiles, PROJECT_CHARTER_ACCEPT } from '@/utils/projectCharterFiles'
+import { allProjectCharterFiles, allSupportedSourceDocuments, PROJECT_CHARTER_ACCEPT, SOURCE_DOCUMENT_ACCEPT } from '@/utils/projectCharterFiles'
 
 type DraftEditState = {
   accountName: string
@@ -64,6 +65,7 @@ export function Onboarding() {
   const [drafts, setDrafts] = useState<OnboardingDraftView[]>([])
   const [selectedId, setSelectedId] = useState('')
   const [files, setFiles] = useState<File[]>([])
+  const [replacementFiles, setReplacementFiles] = useState<File[]>([])
   const [accountManagers, setAccountManagers] = useState<OnboardingAccountManager[]>([])
   const [selectedManagerId, setSelectedManagerId] = useState('')
   const [loadingManagers, setLoadingManagers] = useState(false)
@@ -73,6 +75,7 @@ export function Onboarding() {
   const [engagementDraftEditErrors, setEngagementDraftEditErrors] = useState<Record<string, Partial<Record<keyof EngagementDraftEditState, string>>>>({})
   const [savingDraft, setSavingDraft] = useState(false)
   const [extracting, setExtracting] = useState(false)
+  const [replacingSource, setReplacingSource] = useState(false)
   const [retryingDocumentId, setRetryingDocumentId] = useState('')
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
@@ -97,6 +100,7 @@ export function Onboarding() {
     setEngagementDraftEdits(Object.fromEntries(selected.engagementDrafts.map(engagement => [engagement.id, engagementDraftToEditState(engagement)])))
     setDraftEditErrors({})
     setEngagementDraftEditErrors({})
+    setReplacementFiles([])
   }, [selected?.id, selectedOwnerId])
 
   useEffect(() => {
@@ -313,6 +317,29 @@ export function Onboarding() {
     }
   }
 
+  async function replaceSourceDocuments(selectedDraft: OnboardingDraftView) {
+    if (!token) return
+    if (!replacementFiles.length) {
+      toast.error('Select a replacement SOW or charter file')
+      return
+    }
+    if (!allSupportedSourceDocuments(replacementFiles)) {
+      toast.error('Only PDF, DOCX, TXT, CSV, or Excel source files are allowed')
+      return
+    }
+    setReplacingSource(true)
+    try {
+      const updated = await replaceOnboardingDraftSourceDocuments(token, selectedDraft.id, { files: replacementFiles })
+      setDrafts(current => current.map(item => (item.id === updated.id ? updated : item)))
+      setReplacementFiles([])
+      toast.success('Source document replaced and draft fields refreshed')
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Source document could not be replaced')
+    } finally {
+      setReplacingSource(false)
+    }
+  }
+
   return (
     <div>
       <PageHeader
@@ -385,33 +412,33 @@ export function Onboarding() {
               </button>
             </section>
 
-          <section className="tk-card p-4">
-            <h2 className="text-sm font-semibold text-ink">Draft queue</h2>
-            <div className="mt-3 space-y-2">
-              {loading ? (
-                <>
-                  <Skeleton className="h-20 w-full" />
-                  <Skeleton className="h-20 w-full" />
-                </>
-              ) : error ? (
-                <div className="rounded-lg border border-rag-red/20 bg-rag-red/10 p-3 text-sm text-rag-red">{error}</div>
-              ) : drafts.length === 0 ? (
-                <div className="rounded-lg border border-surface-border bg-surface-secondary p-3 text-sm text-ink-secondary">No onboarding drafts yet.</div>
-              ) : drafts.map(draft => (
-                <button
-                  key={draft.id}
-                  className="w-full rounded-lg border border-surface-border bg-white p-3 text-left transition-colors hover:bg-surface-tertiary"
-                  onClick={() => setSelectedId(draft.id)}
-                >
-                  <div className="flex items-center justify-between gap-3">
-                    <span className="text-sm font-semibold text-ink">{draft.accountDraft.name}</span>
-                    <DraftBadge status={draft.status} />
-                  </div>
-                  <p className="mt-1 text-xs text-ink-secondary">{draft.engagementDrafts.length} engagement draft | {draft.confidence}% confidence</p>
-                </button>
-              ))}
-            </div>
-          </section>
+            <section className="tk-card p-4">
+              <h2 className="text-sm font-semibold text-ink">Draft queue</h2>
+              <div className="mt-3 space-y-2">
+                {loading ? (
+                  <>
+                    <Skeleton className="h-20 w-full" />
+                    <Skeleton className="h-20 w-full" />
+                  </>
+                ) : error ? (
+                  <div className="rounded-lg border border-rag-red/20 bg-rag-red/10 p-3 text-sm text-rag-red">{error}</div>
+                ) : drafts.length === 0 ? (
+                  <div className="rounded-lg border border-surface-border bg-surface-secondary p-3 text-sm text-ink-secondary">No onboarding drafts yet.</div>
+                ) : drafts.map(draft => (
+                  <button
+                    key={draft.id}
+                    className="w-full rounded-lg border border-surface-border bg-white p-3 text-left transition-colors hover:bg-surface-tertiary"
+                    onClick={() => setSelectedId(draft.id)}
+                  >
+                    <div className="flex items-center justify-between gap-3">
+                      <span className="text-sm font-semibold text-ink">{draft.accountDraft.name}</span>
+                      <DraftBadge status={draft.status} />
+                    </div>
+                    <p className="mt-1 text-xs text-ink-secondary">{draft.engagementDrafts.length} engagement draft | {draft.confidence}% confidence</p>
+                  </button>
+                ))}
+              </div>
+            </section>
           </aside>
         ) : null}
 
@@ -508,6 +535,66 @@ export function Onboarding() {
                   )}
                 </ReviewCard>
 
+                <ReviewCard title="SOW / charter source">
+                  <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(260px,340px)]">
+                    <div className="space-y-2">
+                      {selectedDocs.length ? (
+                        selectedDocs.map(document => (
+                          <DocumentRow
+                            key={document.id}
+                            document={document}
+                            onDownload={token ? () => downloadOnboardingDraftDocument(token, selected.id, document).catch(err => toast.error(err instanceof Error ? err.message : 'Document could not be downloaded')) : undefined}
+                            onRetry={token && selected.status === 'ready_for_review' ? () => retryDocumentExtraction(selected, document) : undefined}
+                            retrying={retryingDocumentId === document.id}
+                          />
+                        ))
+                      ) : (
+                        <div className="rounded-lg border border-surface-border bg-surface-secondary p-3 text-sm text-ink-secondary">No source document is attached to this draft.</div>
+                      )}
+                    </div>
+                    {selected.status === 'ready_for_review' ? (
+                      <div className="rounded-lg border border-dashed border-brand-blue/30 bg-blue-tint-20 p-4">
+                        <label className="flex min-h-[112px] cursor-pointer flex-col items-center justify-center rounded-md border border-dashed border-brand-blue/40 bg-white p-4 text-center">
+                          <UploadCloud className="h-6 w-6 text-brand-blue" />
+                          <span className="mt-2 text-sm font-semibold text-ink">Replace SOW / charter</span>
+                          <span className="mt-1 text-xs text-ink-secondary">PDF, DOCX, TXT, CSV, XLSX, XLSM, or XLS.</span>
+                          <input
+                            type="file"
+                            multiple
+                            accept={SOURCE_DOCUMENT_ACCEPT}
+                            className="sr-only"
+                            aria-label="Upload replacement SOW or charter"
+                            onChange={event => {
+                              const selectedFiles = Array.from(event.target.files ?? [])
+                              if (!allSupportedSourceDocuments(selectedFiles)) {
+                                setReplacementFiles([])
+                                toast.error('Only PDF, DOCX, TXT, CSV, or Excel source files are allowed')
+                                event.currentTarget.value = ''
+                                return
+                              }
+                              setReplacementFiles(selectedFiles)
+                            }}
+                          />
+                        </label>
+                        {replacementFiles.length ? (
+                          <div className="mt-3 space-y-2">
+                            {replacementFiles.map(file => (
+                              <div key={`${file.name}-${file.size}`} className="flex items-center gap-2 rounded-md bg-white p-2 text-xs font-medium text-ink-secondary">
+                                <FileText className="h-4 w-4 text-brand-blue" />
+                                <span className="min-w-0 flex-1 truncate">{file.name}</span>
+                              </div>
+                            ))}
+                          </div>
+                        ) : null}
+                        <button className="tk-button-primary mt-3 w-full" type="button" onClick={() => void replaceSourceDocuments(selected)} disabled={replacingSource || !replacementFiles.length}>
+                          {replacingSource ? <Loader2 className="h-4 w-4 animate-spin" /> : <UploadCloud className="h-4 w-4" />}
+                          Re-upload source
+                        </button>
+                      </div>
+                    ) : null}
+                  </div>
+                </ReviewCard>
+
                 {selected.engagementDrafts.map(engagement => {
                   const edit = engagementDraftEdits[engagement.id] ?? engagementDraftToEditState(engagement)
                   const errors = engagementDraftEditErrors[engagement.id] ?? {}
@@ -577,19 +664,6 @@ export function Onboarding() {
               </section>
 
               <aside className="space-y-4">
-                <ReviewCard title="Source documents">
-                  <div className="space-y-2">
-                    {selectedDocs.map(document => (
-                      <DocumentRow
-                        key={document.id}
-                        document={document}
-                        onDownload={token ? () => downloadOnboardingDraftDocument(token, selected.id, document).catch(err => toast.error(err instanceof Error ? err.message : 'Document could not be downloaded')) : undefined}
-                        onRetry={token && selected.status === 'ready_for_review' ? () => retryDocumentExtraction(selected, document) : undefined}
-                        retrying={retryingDocumentId === document.id}
-                      />
-                    ))}
-                  </div>
-                </ReviewCard>
                 <ReviewCard title="Source citations">
                   {selected.sourceDocuments.some(document => document.citations.length) ? (
                     <div className="grid gap-2">
