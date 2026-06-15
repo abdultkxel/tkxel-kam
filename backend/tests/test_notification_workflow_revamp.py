@@ -207,7 +207,6 @@ def test_admin_defaults_only_show_configurable_notification_triggers() -> None:
         assert metadata.status_code == 200
         metadata_triggers = {item["trigger"] for item in metadata.json()["items"]}
         assert "account_draft_created" in metadata_triggers
-        assert "account_draft_updated" in metadata_triggers
         assert "renewal_due" not in metadata_triggers
         assert "signal_unreviewed" not in metadata_triggers
 
@@ -215,7 +214,6 @@ def test_admin_defaults_only_show_configurable_notification_triggers() -> None:
         assert preferences.status_code == 200
         preference_triggers = {item["trigger"] for item in preferences.json()}
         assert "account_draft_created" in preference_triggers
-        assert "account_draft_updated" in preference_triggers
         assert "renewal_due" not in preference_triggers
         assert "sla_escalation" not in preference_triggers
 

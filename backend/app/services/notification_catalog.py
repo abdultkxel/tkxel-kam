@@ -7,7 +7,6 @@ OPTIONAL_TRIGGERS = {"alert_created", "csat_received", "admin_configuration_publ
 
 MANDATORY_TRIGGERS = {
     "account_draft_created",
-    "account_draft_updated",
     "account_draft_rejected",
     "account_draft_approved",
     "account_draft_linked_existing",
@@ -19,10 +18,6 @@ MANDATORY_TRIGGERS = {
     "kyc_rejected",
     "kyc_workstream_failed",
     "source_document_failed",
-    "engagement_draft_created",
-    "engagement_draft_updated",
-    "engagement_draft_rejected",
-    "engagement_draft_approved",
     "engagement_health_drop",
     "opportunity_decision_required",
     "governance_reminder",
@@ -69,7 +64,6 @@ def _definition(trigger: str, workflow: str, recipients: str, priority: str, act
 
 NOTIFICATION_TRIGGER_DEFINITIONS = [
     _definition("account_draft_created", "account_onboarding", "account_approvers", "high", "Review draft", "A new account draft is ready for approval."),
-    _definition("account_draft_updated", "account_onboarding", "draft_owner_approvers", "medium", "Review draft", "An account onboarding draft was updated."),
     _definition("account_draft_rejected", "account_onboarding", "draft_creator_owner", "high", "Fix draft"),
     _definition("account_draft_approved", "account_onboarding", "draft_creator_owner", "medium", "Open account"),
     _definition("account_draft_linked_existing", "account_onboarding", "draft_creator_owner", "medium", "Open linked account"),
@@ -88,10 +82,6 @@ NOTIFICATION_TRIGGER_DEFINITIONS = [
     _definition("kyc_workstream_failed", "kyc", "requester_owner", "medium", "Review run"),
     _definition("source_document_failed", "source_documents", "uploader_owner", "high", "Review document"),
     _definition("source_document_low_confidence", "source_documents", "uploader_owner", "medium", "Verify document"),
-    _definition("engagement_draft_created", "engagements", "assigned_am_kam_head", "high", "Review draft", "An imported engagement draft is ready for review."),
-    _definition("engagement_draft_updated", "engagements", "assigned_am_kam_head", "medium", "Review draft", "An imported engagement draft was updated."),
-    _definition("engagement_draft_rejected", "engagements", "draft_creator_owner", "high", "Fix draft", "An imported engagement draft was rejected."),
-    _definition("engagement_draft_approved", "engagements", "draft_creator_owner_kam_head", "medium", "Open engagement", "An imported engagement draft was approved and onboarded."),
     _definition("engagement_created", "engagements", "account_owner", "medium", "Open engagement"),
     _definition("engagement_owner_assigned", "engagements", "new_previous_owner", "medium", "Open engagement"),
     _definition("engagement_status_changed", "engagements", "account_engagement_owner", "medium", "Review engagement"),

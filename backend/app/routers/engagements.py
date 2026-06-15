@@ -7,9 +7,6 @@ from app.models import User
 from app.schemas import (
     EngagementHealthPageRead,
     EngagementHealthRead,
-    EngagementImportDraftRead,
-    EngagementImportDraftRejectRequest,
-    EngagementImportDraftUpdateRequest,
     EngagementRead,
     EngagementUpdateRequest,
     MessageResponse,
@@ -18,72 +15,6 @@ from app.schemas import (
 from app.services.engagements import EngagementService
 
 router = APIRouter(prefix="/api/engagements", tags=["Engagement 360"])
-draft_router = APIRouter(prefix="/api/engagement-drafts", tags=["Engagement 360"])
-
-
-@draft_router.patch(
-    "/{draft_id}",
-    response_model=EngagementImportDraftRead,
-    summary="Update engagement import draft",
-    description="Saves edits to an engagement draft created from Import Charter before approval creates the official Engagement/SOW record.",
-    responses={
-        400: {"description": "Draft is already approved or rejected, or selected owner is inactive."},
-        401: {"description": "Missing, invalid, or expired bearer token."},
-        403: {"description": "Authenticated user cannot update this draft's account."},
-        404: {"description": "Engagement import draft was not found."},
-        422: {"description": "Field-level validation errors or invalid SOW date sequence."},
-    },
-)
-def update_engagement_import_draft(
-    draft_id: str,
-    payload: EngagementImportDraftUpdateRequest,
-    current_user: Annotated[User, Depends(get_current_user)],
-    service: Annotated[EngagementService, Depends(get_engagement_service)],
-) -> EngagementImportDraftRead:
-    return service.update_import_draft(draft_id, payload, current_user)
-
-
-@draft_router.post(
-    "/{draft_id}/approve",
-    response_model=EngagementImportDraftRead,
-    summary="Approve engagement import draft",
-    description="Approves an imported engagement draft, creates the official Engagement/SOW record, links the source document, creates drafted stakeholders, and sends workflow notifications.",
-    responses={
-        400: {"description": "Draft is already approved or rejected."},
-        401: {"description": "Missing, invalid, or expired bearer token."},
-        403: {"description": "Authenticated user cannot approve this draft's account."},
-        404: {"description": "Engagement import draft was not found."},
-        422: {"description": "Draft is missing required engagement fields."},
-    },
-)
-def approve_engagement_import_draft(
-    draft_id: str,
-    current_user: Annotated[User, Depends(get_current_user)],
-    service: Annotated[EngagementService, Depends(get_engagement_service)],
-) -> EngagementImportDraftRead:
-    return service.approve_import_draft(draft_id, current_user)
-
-
-@draft_router.post(
-    "/{draft_id}/reject",
-    response_model=EngagementImportDraftRead,
-    summary="Reject engagement import draft",
-    description="Rejects an imported engagement draft and notifies the creator/assigned owner without creating an Engagement/SOW record.",
-    responses={
-        400: {"description": "Draft is already approved or rejected."},
-        401: {"description": "Missing, invalid, or expired bearer token."},
-        403: {"description": "Authenticated user cannot reject this draft's account."},
-        404: {"description": "Engagement import draft was not found."},
-        422: {"description": "Rejection reason is missing or invalid."},
-    },
-)
-def reject_engagement_import_draft(
-    draft_id: str,
-    payload: EngagementImportDraftRejectRequest,
-    current_user: Annotated[User, Depends(get_current_user)],
-    service: Annotated[EngagementService, Depends(get_engagement_service)],
-) -> EngagementImportDraftRead:
-    return service.reject_import_draft(draft_id, payload, current_user)
 
 
 @router.get(

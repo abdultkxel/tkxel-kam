@@ -17,9 +17,8 @@ import {
   RecommendedPlaybook,
   updatePlaybookTemplate,
 } from '@/services/playbooksTasks'
-import { listAccounts } from '@/services/accountWorkspace'
-import { listSignals, type SignalRead } from '@/services/scoringSignalsTasks'
-import type { Account } from '@/types/account'
+import { useAccountStore } from '@/stores/accountStore'
+import { useV3Store } from '@/stores/v3Store'
 import { cn } from '@/utils/cn'
 import { formatDate } from '@/utils/formatters'
 
@@ -133,8 +132,8 @@ const blankTemplate: PlaybookTemplatePayload = {
 export function Playbook() {
   const { token } = useAuth()
   const { capabilities } = useCapabilities()
-  const [accounts, setAccounts] = useState<Account[]>([])
-  const [signals, setSignals] = useState<SignalRead[]>([])
+  const accounts = useAccountStore(state => state.accounts)
+  const signals = useV3Store(state => state.signals)
   const [mode, setMode] = useState<'operations' | 'manual'>('operations')
   const [templates, setTemplates] = useState<PlaybookTemplate[]>([])
   const [recommendations, setRecommendations] = useState<RecommendedPlaybook[]>([])
@@ -154,8 +153,8 @@ export function Playbook() {
   const [total, setTotal] = useState(0)
   const [selectedTemplateId, setSelectedTemplateId] = useState('')
   const [selectedAccountId, setSelectedAccountId] = useState(accounts[0]?.id ?? '')
-  const [signalType, setSignalType] = useState('')
-  const [weakMetric, setWeakMetric] = useState('')
+  const [signalType, setSignalType] = useState<string>(signals[0]?.type ?? '')
+  const [weakMetric, setWeakMetric] = useState<string>(signals[0]?.reasonCodes?.[0] ?? '')
   const [form, setForm] = useState<PlaybookTemplatePayload>(blankTemplate)
   const [editingId, setEditingId] = useState('')
   const canConfigure = capabilities.can_configure_playbooks
@@ -163,42 +162,10 @@ export function Playbook() {
   const selectedTemplate = useMemo(() => templates.find(template => template.id === selectedTemplateId) ?? templates[0], [selectedTemplateId, templates])
   const activeTemplates = templates.filter(template => template.is_active)
   const selectedAccount = accounts.find(account => account.id === selectedAccountId)
-  const selectedSignal = signals[0]
 
   useEffect(() => {
     if (!selectedAccountId && accounts[0]) setSelectedAccountId(accounts[0].id)
   }, [accounts, selectedAccountId])
-
-  useEffect(() => {
-    if (!token || !canConfigure) return
-    let cancelled = false
-    const params = new URLSearchParams({ page: '1', page_size: '100', sort: 'name', direction: 'asc' })
-    listAccounts(token, params)
-      .then(response => {
-        if (!cancelled) setAccounts(response.items)
-      })
-      .catch(() => {
-        if (!cancelled) setAccounts([])
-      })
-    return () => {
-      cancelled = true
-    }
-  }, [canConfigure, token])
-
-  useEffect(() => {
-    if (!token || !canConfigure) return
-    let cancelled = false
-    listSignals(token, { account_id: selectedAccountId || undefined, page_size: 25, sort: 'created_at', direction: 'desc' })
-      .then(response => {
-        if (!cancelled) setSignals(response.items)
-      })
-      .catch(() => {
-        if (!cancelled) setSignals([])
-      })
-    return () => {
-      cancelled = true
-    }
-  }, [canConfigure, selectedAccountId, token])
 
   useEffect(() => {
     if (!token || !canConfigure) return
@@ -235,18 +202,13 @@ export function Playbook() {
 
   useEffect(() => {
     if (!token || !canConfigure) return
-    if (!selectedSignal?.id) {
-      setRecommendations([])
-      setRecommendationLoading(false)
-      return
-    }
     let cancelled = false
     setRecommendationLoading(true)
     const params = new URLSearchParams()
     if (selectedAccountId) params.set('account_id', selectedAccountId)
     if (signalType) params.set('signal_type', signalType)
     if (weakMetric) params.set('weak_metric', weakMetric)
-    listRecommendedPlaybooks(token, selectedSignal.id, params)
+    listRecommendedPlaybooks(token, signals[0]?.id ?? 'manual-signal', params)
       .then(items => {
         if (!cancelled) setRecommendations(items)
       })
@@ -259,7 +221,7 @@ export function Playbook() {
     return () => {
       cancelled = true
     }
-  }, [canConfigure, selectedAccountId, selectedSignal?.id, signalType, token, weakMetric])
+  }, [canConfigure, selectedAccountId, signalType, signals, token, weakMetric])
 
   async function refreshTemplates() {
     setPage(1)
@@ -335,8 +297,8 @@ export function Playbook() {
     try {
       const execution = await executePlaybook(token, template.id, {
         account_id: selectedAccountId,
-        source_signal_id: selectedSignal?.id,
-        source_signal_type: signalType || selectedSignal?.signal_type || undefined,
+        source_signal_id: signals[0]?.id,
+        source_signal_type: signalType || undefined,
         source_metric: weakMetric || undefined,
         confirmed: true,
       })

@@ -4,20 +4,19 @@ import { describe, expect, it, vi } from 'vitest'
 import { ScoreCalculators } from '@/components/account/ScoreCalculators'
 import type { Account } from '@/types/account'
 
-vi.mock('@/contexts/AuthContext', () => ({
-  useAuth: () => ({ token: 'test-token' }),
-}))
-
-vi.mock('@/services/playbooksTasks', () => ({
-  listTasks: vi.fn().mockResolvedValue({ items: [], total: 0, page: 1, page_size: 100, pages: 0 }),
-  updateTask: vi.fn(),
-  addTaskEvidence: vi.fn(),
+vi.mock('@/hooks/useRole', () => ({
+  useRole: () => ({
+    id: 'usr-am',
+    name: 'Account Manager',
+    email: 'am@tkxel.com',
+    role: 'account_manager',
+    avatarInitials: 'AM',
+  }),
 }))
 
 vi.mock('sonner', () => ({
   toast: {
     success: vi.fn(),
-    error: vi.fn(),
   },
 }))
 

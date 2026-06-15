@@ -81,12 +81,18 @@ DEFAULT_ROLES: tuple[DefaultRole, ...] = (
     DefaultRole(
         slug="account_manager",
         name="Account Manager",
-        description="Primary operational owner for assigned accounts with assigned-draft approval rights; portfolio and sensitive administration actions require explicit grants.",
+        description="Primary operational owner for assigned accounts. Portfolio, approval, and sensitive administration actions require explicit grants.",
         permission_rules=_permission_rules_for(DEFAULT_ROLE_GRANTS["account_manager"]),
     ),
     DefaultRole(
+        slug="delivery_lead",
+        name="Delivery Lead",
+        description="Delivery owner for engagement health, governance, escalations, and delivery task operations.",
+        permission_rules=_permission_rules_for(DEFAULT_ROLE_GRANTS["delivery_lead"]),
+    ),
+    DefaultRole(
         slug="leadership_viewer",
-        name="Leadership / Executive",
+        name="Leadership Viewer",
         description="Read-only strategic viewer for portfolio, risk, retention, growth, and executive decisions.",
         permission_rules=_permission_rules_for(DEFAULT_ROLE_GRANTS["leadership_viewer"]),
     ),

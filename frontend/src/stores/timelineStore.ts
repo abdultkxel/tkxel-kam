@@ -1,4 +1,5 @@
 import { create } from 'zustand'
+import { timelineEntries, timelineEventTypes } from '@/data/mock'
 import { TimelineComment, TimelineEntry, TimelineEventTypeConfig } from '@/types/timeline'
 
 interface TimelineStore {
@@ -17,9 +18,9 @@ interface TimelineStore {
 }
 
 export const useTimelineStore = create<TimelineStore>((set, get) => ({
-  entries: [],
+  entries: timelineEntries,
   comments: [],
-  eventTypes: [],
+  eventTypes: timelineEventTypes,
   addEntry: entry => set(state => ({ entries: [entry, ...state.entries] })),
   addComment: comment => set(state => ({ comments: [...state.comments, comment] })),
   addAnnotation: entry => set(state => ({ entries: [entry, ...state.entries] })),

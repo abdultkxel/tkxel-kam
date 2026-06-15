@@ -61,6 +61,7 @@ type DashboardProps = {
   onAccountChange: (value: string) => void
   onAmChange: (value: string) => void
   onSearchSubmit: (event: FormEvent) => void
+  onPageChange: (page: number) => void
   onRefreshSummary: () => void
 }
 
@@ -85,8 +86,6 @@ const knownWidgetKeys = new Set([
   'high_risk_accounts',
   'signals',
   'critical_tasks',
-  'critical_actions',
-  'todays_tasks',
   'tasks',
   'stale_kyc',
   'renewal_focus',
@@ -120,6 +119,7 @@ export function RoleDashboard({
   onAccountChange,
   onAmChange,
   onSearchSubmit,
+  onPageChange,
   onRefreshSummary,
 }: DashboardProps) {
   const widgets = dashboard?.widgets ?? []
@@ -128,9 +128,8 @@ export function RoleDashboard({
   const summary = widgetByKey.get('summary')
   const taskSummary = widgetByKey.get('ai_task_summary')
   const taskPanel = taskSummary ?? (isAccountManagerDashboard ? widgetByKey.get('tasks') : undefined)
-  const criticalActions = widgetByKey.get('critical_actions')
-  const todaysTasks = widgetByKey.get('todays_tasks')
   const opportunities = widgetByKey.get('opportunities') ?? widgetByKey.get('growth')
+  const portfolio = widgetByKey.get('account_portfolio') ?? widgetByKey.get('accounts')
   const forecast = widgetByKey.get('forecast_chart')
   const calendar = widgetByKey.get('governance_calendar')
   const accountOptions = useMemo(() => collectAccountOptions(widgets), [widgets])
@@ -174,13 +173,6 @@ export function RoleDashboard({
         <>
           <MetricGrid summary={summary} />
 
-          {(criticalActions || todaysTasks) ? (
-            <section className="grid gap-4 xl:grid-cols-2">
-              {criticalActions ? <WidgetListPanel widget={criticalActions} /> : null}
-              {todaysTasks ? <WidgetListPanel widget={todaysTasks} /> : null}
-            </section>
-          ) : null}
-
           {taskPanel ? (
             <TaskSummaryPanel
               widget={taskPanel}
@@ -196,6 +188,8 @@ export function RoleDashboard({
             {forecast ? <ForecastPanel widget={forecast} accountOptions={accountOptions} accountId={accountId} onAccountChange={onAccountChange} /> : null}
           </section>
           ) : null}
+
+          {portfolio ? <PortfolioTable widget={portfolio} onPageChange={onPageChange} /> : null}
 
           <section className="grid gap-4 xl:grid-cols-2">
             {[
@@ -775,11 +769,76 @@ function ForecastMetric({ label, value }: { label: string; value: string }) {
   )
 }
 
+function PortfolioTable({ widget, onPageChange }: { widget: DashboardWidget; onPageChange: (page: number) => void }) {
+  const page = Math.max(1, Number(widget.metadata.page) || 1)
+  const pageSize = Math.max(1, Number(widget.metadata.page_size) || widget.items.length || 1)
+  const total = Math.max(widget.items.length, Number(widget.metadata.total) || widget.items.length)
+  const pages = Math.max(1, Math.ceil(total / pageSize))
+  const firstItem = total ? (page - 1) * pageSize + 1 : 0
+  const lastItem = Math.min(total, firstItem + widget.items.length - 1)
+
+  return (
+    <section className="tk-card overflow-hidden">
+      <div className="flex flex-col gap-3 border-b border-surface-border p-5 md:flex-row md:items-center md:justify-between">
+        <div>
+          <h2 className="text-lg font-semibold text-ink">{widget.title}</h2>
+          <p className="mt-1 text-xs font-medium text-ink-secondary">
+            {total ? `Showing ${firstItem}-${lastItem} of ${total}` : 'No accounts in this view'}
+          </p>
+        </div>
+        {pages > 1 ? (
+          <div className="flex items-center gap-2">
+            <button className="tk-icon-button" type="button" onClick={() => onPageChange(page - 1)} disabled={page <= 1} aria-label="Previous portfolio page">
+              <ArrowLeft className="h-4 w-4" />
+            </button>
+            <span className="min-w-[96px] text-center text-sm font-semibold text-ink-secondary">Page {page} of {pages}</span>
+            <button className="tk-icon-button" type="button" onClick={() => onPageChange(page + 1)} disabled={page >= pages} aria-label="Next portfolio page">
+              <ArrowRight className="h-4 w-4" />
+            </button>
+          </div>
+        ) : null}
+      </div>
+      <div className="overflow-x-auto">
+        <table className="w-full min-w-[860px] text-left text-sm">
+          <thead className="border-b border-surface-border text-xs font-semibold uppercase tracking-wider text-ink-secondary">
+            <tr>
+              <th className="px-5 py-4">Account</th>
+              <th className="px-5 py-4">Status</th>
+              <th className="px-5 py-4">Health</th>
+              <th className="px-5 py-4">Segment</th>
+              <th className="px-5 py-4">Owner</th>
+              <th className="px-5 py-4">Next Gov.</th>
+              {widget.items.some(item => 'commercial_value' in item) ? <th className="px-5 py-4">Value</th> : null}
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-surface-border">
+            {widget.items.map(item => {
+              const route = getString(item.route)
+              return (
+                <tr key={String(item.id ?? item.account_id)}>
+                  <td className="px-5 py-4">
+                    {route ? <Link to={route} className="inline-flex min-h-[44px] min-w-[44px] items-center font-semibold text-ink hover:text-brand-blue">{itemName(item)}</Link> : <span className="font-semibold text-ink">{itemName(item)}</span>}
+                  </td>
+                  <td className="px-5 py-4"><StatusPill status={getString(item.risk_status)} /></td>
+                  <td className="px-5 py-4 font-semibold text-ink">{formatValue(item.health_score ?? item.health)}</td>
+                  <td className="px-5 py-4 text-ink-secondary">{formatValue(item.segment)}</td>
+                  <td className="px-5 py-4 text-ink-secondary">{formatValue(item.owner)}</td>
+                  <td className="px-5 py-4 text-ink-secondary">{formatDateTime(getString(item.next_governance_at))}</td>
+                  {'commercial_value' in item ? <td className="px-5 py-4 font-semibold text-ink">{formatValue(item.commercial_value, 'commercial_value')}</td> : null}
+                </tr>
+              )
+            })}
+          </tbody>
+        </table>
+      </div>
+    </section>
+  )
+}
+
 function WidgetListPanel({ widget }: { widget: DashboardWidget }) {
   const value = isRecord(widget.value) ? widget.value : {}
-  const sectionId = widget.key === 'critical_actions' ? 'critical-actions' : widget.key === 'todays_tasks' ? 'todays-tasks' : undefined
   return (
-    <section id={sectionId} className="tk-card scroll-mt-24 overflow-hidden">
+    <section className="tk-card overflow-hidden">
       <div className="flex flex-col gap-3 border-b border-surface-border p-5 sm:flex-row sm:items-start sm:justify-between">
         <div className="min-w-0">
           <h2 className="text-lg font-semibold text-ink">{widget.title}</h2>
@@ -1063,6 +1122,18 @@ function EmptyDashboard() {
   )
 }
 
+function StatusPill({ status }: { status: string }) {
+  const normalized = status.toLowerCase()
+  const tone = normalized === 'healthy' || normalized === 'green' ? 'green' : normalized === 'critical' || normalized === 'red' ? 'red' : 'amber'
+  const className = tone === 'green' ? 'bg-rag-green/10 text-rag-green' : tone === 'red' ? 'bg-rag-red/10 text-rag-red' : 'bg-brand-orange/10 text-brand-orange'
+  return (
+    <span className={cn('inline-flex items-center gap-2 rounded-full px-3 py-1 text-sm font-semibold capitalize', className)}>
+      <span className={cn('h-2.5 w-2.5 rounded-full', tone === 'green' ? 'bg-rag-green' : tone === 'red' ? 'bg-rag-red' : 'bg-brand-orange')} />
+      {status || '-'}
+    </span>
+  )
+}
+
 function metricIcon(key: string): LucideIcon {
   if (key.includes('account')) return Building2
   if (key.includes('risk') || key.includes('critical')) return AlertCircle
@@ -1095,8 +1166,6 @@ function dashboardMetricRoute(key: string) {
   if (['my_accounts', 'accounts', 'authorized_accounts', 'account_portfolio'].includes(normalized)) return '/accounts'
   if (normalized === 'at_risk' || normalized.includes('at_risk') || normalized.includes('critical_accounts')) return '/accounts?risk=at_risk'
   if (normalized.includes('governance')) return '/governance'
-  if (normalized.includes('critical_action') || normalized.includes('health_drop')) return '/dashboard#critical-actions'
-  if (normalized.includes('today') && normalized.includes('task')) return '/tasks?due=today'
   if (normalized.includes('critical_task')) return '/tasks?priority=critical'
   if (normalized.includes('task')) return '/tasks'
   if (normalized.includes('signal')) return '/tasks'
@@ -1107,8 +1176,6 @@ function dashboardMetricRoute(key: string) {
 
 function metricDetail(key: string, value: unknown) {
   if (key.includes('risk')) return 'Accounts that need active attention.'
-  if (key.includes('critical_actions')) return 'Critical tasks and health drops.'
-  if (key.includes('todays_tasks')) return 'Tasks due today.'
   if (key.includes('critical_tasks')) return 'Critical and blocked tasks only.'
   if (key.includes('signal')) return 'Source-backed attention items.'
   if (key.includes('governance')) return 'Scheduled governance coverage.'

@@ -1,12 +1,13 @@
 import { CalendarClock, Check, CheckCircle2, ChevronDown, ClipboardCheck, Info, Loader2, Play, Save, XCircle } from 'lucide-react'
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { toast } from 'sonner'
-import { useAuth } from '@/contexts/AuthContext'
-import { addTaskEvidence, listTasks, PlaybookTask, TaskPriority, TaskStatus, updateTask } from '@/services/playbooksTasks'
+import { useRole } from '@/hooks/useRole'
+import { useScoreActivityStore } from '@/stores/scoreActivityStore'
 import { Account } from '@/types/account'
 import { ScoreActivityEvidence, ScoreActivityTask, ScoreCalculatorId } from '@/types/scoreActivity'
 import { cn } from '@/utils/cn'
 import { formatDate } from '@/utils/formatters'
+import { emitScoreActivityCompletion } from '@/utils/scoreActivityActions'
 
 type ScoreScale = 3 | 5
 
@@ -31,7 +32,6 @@ type CalculatorDefinition = {
 }
 
 type CalculatorSelections = Record<ScoreCalculatorId, Record<string, number | undefined>>
-type ScoreActivityApiTask = ScoreActivityTask & { apiTask: PlaybookTask }
 
 export type ScoreCalculatorSummary = {
   relationship: number
@@ -456,11 +456,9 @@ export function ScoreCalculators({
   saving: boolean
   onApply: (summary: ScoreCalculatorSummary) => void
 }) {
-  const { token } = useAuth()
-  const [taskRecords, setTaskRecords] = useState<PlaybookTask[]>([])
-  const [tasksLoading, setTasksLoading] = useState(false)
-  const [tasksError, setTasksError] = useState('')
-  const [evidenceDrafts, setEvidenceDrafts] = useState<Record<string, string>>({})
+  const user = useRole()
+  const tasks = useScoreActivityStore(state => state.tasks)
+  const updateTask = useScoreActivityStore(state => state.updateTask)
   const [selections, setSelections] = useState<CalculatorSelections>(() => seedSelections(account))
   const [selectedServiceLines, setSelectedServiceLines] = useState<string[]>(() => serviceLines.slice(0, account.tags.length + 4))
   const [expandedCalculators, setExpandedCalculators] = useState<Record<ScoreCalculatorId, boolean>>({
@@ -472,38 +470,7 @@ export function ScoreCalculators({
   })
   const [serviceLinesExpanded, setServiceLinesExpanded] = useState(false)
   const [expandedActivityKeys, setExpandedActivityKeys] = useState<Record<string, boolean>>({})
-  const loadTasks = useCallback(async () => {
-    if (!token) {
-      setTaskRecords([])
-      setTasksLoading(false)
-      return
-    }
-    setTasksLoading(true)
-    setTasksError('')
-    try {
-      const params = new URLSearchParams({
-        account_id: account.id,
-        page: '1',
-        page_size: '100',
-        sort: 'due_at',
-        direction: 'asc',
-      })
-      const result = await listTasks(token, params)
-      setTaskRecords(result.items)
-    } catch (err) {
-      setTaskRecords([])
-      setTasksError(err instanceof Error ? err.message : 'Score activity tasks could not load')
-    } finally {
-      setTasksLoading(false)
-    }
-  }, [account.id, token])
-  const accountTasks = useMemo(
-    () =>
-      taskRecords
-        .map(task => mapApiTaskToScoreActivity(task, account, evidenceDrafts[task.id]))
-        .filter((task): task is ScoreActivityApiTask => Boolean(task)),
-    [account, evidenceDrafts, taskRecords],
-  )
+  const accountTasks = useMemo(() => tasks.filter(task => task.accountId === account.id), [account.id, tasks])
   const activityEvidence = useMemo<ScoreActivityEvidence[]>(
     () =>
       accountTasks
@@ -525,11 +492,6 @@ export function ScoreCalculators({
   useEffect(() => {
     setSelections(seedSelections(account))
   }, [account.id, account.health.commercial, account.health.delivery, account.health.relationship, account.health.usage, account.riskStatus])
-
-  useEffect(() => {
-    setEvidenceDrafts({})
-    void loadTasks()
-  }, [loadTasks])
 
   function setScore(calculatorId: ScoreCalculatorId, criterionId: string, value: string) {
     setSelections(current => ({
@@ -562,53 +524,34 @@ export function ScoreCalculators({
   }
 
   function updateEvidence(taskId: string, evidenceNote: string) {
-    setEvidenceDrafts(current => ({ ...current, [taskId]: evidenceNote }))
+    updateTask(taskId, { evidenceNote })
   }
 
-  async function persistTask(taskId: string, payload: Partial<Pick<PlaybookTask, 'status' | 'notes' | 'outcome' | 'skipped_reason'>>) {
-    if (!token) throw new Error('You must be logged in to update score activity tasks')
-    const updated = await updateTask(token, taskId, payload)
-    setTaskRecords(current => current.map(item => (item.id === updated.id ? updated : item)))
-    return updated
+  function startTask(task: ScoreActivityTask) {
+    updateTask(task.id, { status: 'in_progress' })
+    toast.success('Score activity moved to in progress')
   }
 
-  async function startTask(task: ScoreActivityApiTask) {
-    try {
-      await persistTask(task.id, { status: 'in_progress' })
-      toast.success('Score activity moved to in progress')
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : 'Score activity could not be started')
-    }
-  }
-
-  async function completeTask(task: ScoreActivityApiTask) {
+  function completeTask(task: ScoreActivityTask) {
     const evidenceNote = task.evidenceNote?.trim() || `Evidence captured for ${task.title}.`
-    try {
-      if (!token) throw new Error('You must be logged in to complete score activity tasks')
-      await addTaskEvidence(token, task.id, { evidence_type: 'note', title: 'Score activity evidence', body: evidenceNote })
-      const updated = await updateTask(token, task.id, { status: 'done', notes: evidenceNote, outcome: evidenceNote })
-      setTaskRecords(current => current.map(item => (item.id === updated.id ? updated : item)))
-      setEvidenceDrafts(current => {
-        const next = { ...current }
-        delete next[task.id]
-        return next
-      })
-      toast.success('Score activity completed and saved')
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : 'Score activity could not be completed')
-    }
+    const completedAt = new Date().toISOString()
+    const entry = emitScoreActivityCompletion(task, user, evidenceNote)
+    updateTask(task.id, {
+      status: 'done',
+      evidenceNote,
+      completedAt,
+      skippedReason: undefined,
+      sourceTimelineEntryId: entry.id,
+    })
+    toast.success('Score activity completed and added to timeline')
   }
 
-  async function skipTask(task: ScoreActivityApiTask) {
-    try {
-      await persistTask(task.id, {
-        status: 'cancelled',
-        skipped_reason: task.evidenceNote?.trim() || task.skippedReason || 'Cancelled during score review.',
-      })
-      toast.success('Score activity cancelled')
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : 'Score activity could not be cancelled')
-    }
+  function skipTask(task: ScoreActivityTask) {
+    updateTask(task.id, {
+      status: 'cancelled',
+      skippedReason: task.evidenceNote?.trim() || task.skippedReason || 'Cancelled during score review.',
+    })
+    toast.success('Score activity cancelled')
   }
 
   return (
@@ -628,19 +571,6 @@ export function ScoreCalculators({
           <ScoreSummary label="Service coverage" value={`${summary.serviceCoverage}%`} />
         </div>
       </div>
-
-      {tasksLoading ? (
-        <div className="inline-flex items-center gap-2 rounded-md border border-surface-border bg-surface-secondary px-3 py-2 text-xs font-semibold text-ink-secondary">
-          <Loader2 className="h-3.5 w-3.5 animate-spin" />
-          Loading score activity tasks
-        </div>
-      ) : null}
-
-      {tasksError ? (
-        <div className="rounded-md border border-rag-red/20 bg-rag-red/10 px-3 py-2 text-xs font-semibold text-rag-red">
-          {tasksError}
-        </div>
-      ) : null}
 
       <div className="space-y-4">
         {calculators.map(calculator => {
@@ -829,13 +759,13 @@ function CriterionActivities({
   onComplete,
   onSkip,
 }: {
-  tasks: ScoreActivityApiTask[]
+  tasks: ScoreActivityTask[]
   expanded: boolean
   onToggle: () => void
   onEvidenceChange: (taskId: string, evidenceNote: string) => void
-  onStart: (task: ScoreActivityApiTask) => void
-  onComplete: (task: ScoreActivityApiTask) => void
-  onSkip: (task: ScoreActivityApiTask) => void
+  onStart: (task: ScoreActivityTask) => void
+  onComplete: (task: ScoreActivityTask) => void
+  onSkip: (task: ScoreActivityTask) => void
 }) {
   if (!tasks.length) {
     return (
@@ -947,60 +877,4 @@ function priorityClass(priority: ScoreActivityTask['priority']) {
   if (priority === 'high') return 'border-brand-orange/20 bg-brand-orange/10 text-brand-orange'
   if (priority === 'medium') return 'border-blue-tint-20 bg-blue-tint-20 text-brand-blue'
   return 'border-surface-border bg-surface-tertiary text-ink-secondary'
-}
-
-function mapApiTaskToScoreActivity(task: PlaybookTask, account: Account, draftEvidence?: string): ScoreActivityApiTask | null {
-  const custom = task.custom_field_values ?? {}
-  const calculatorId = toScoreCalculatorId(custom.calculator_id ?? custom.calculatorId ?? task.source_metric)
-  const criterionId = toStringValue(custom.criterion_id ?? custom.criterionId ?? (task.source_type === 'score_activity' ? task.source_record_id : undefined))
-  if (!calculatorId || !criterionId) return null
-
-  const latestEvidence = task.evidence[0]
-  const evidenceNote = draftEvidence ?? latestEvidence?.body ?? task.outcome ?? task.notes ?? undefined
-
-  return {
-    id: task.id,
-    templateId: task.template_activity_id ?? task.source_record_id ?? task.id,
-    accountId: task.account_id,
-    accountName: account.name,
-    ownerId: task.owner_id ?? '',
-    ownerName: task.owner_name,
-    calculatorId,
-    criterionId,
-    title: task.title,
-    description: task.description ?? '',
-    dueDate: task.due_at,
-    status: mapTaskStatus(task.status),
-    priority: mapTaskPriority(task.priority),
-    evidenceNote,
-    completedAt: task.completed_at ?? undefined,
-    skippedReason: task.skipped_reason ?? undefined,
-    sourceTimelineEntryId: latestEvidence?.id,
-    createdAt: task.created_at,
-    apiTask: task,
-  }
-}
-
-function toScoreCalculatorId(value: unknown): ScoreCalculatorId | undefined {
-  if (value === 'relationship' || value === 'contract' || value === 'resource' || value === 'csat' || value === 'risk') return value
-  return undefined
-}
-
-function toStringValue(value: unknown): string | undefined {
-  return typeof value === 'string' && value.trim() ? value.trim() : undefined
-}
-
-function mapTaskStatus(status: TaskStatus): ScoreActivityTask['status'] {
-  if (status === 'done') return 'done'
-  if (status === 'in_progress') return 'in_progress'
-  if (status === 'blocked') return 'blocked'
-  if (status === 'cancelled' || status === 'skipped') return 'cancelled'
-  return 'open'
-}
-
-function mapTaskPriority(priority: TaskPriority): ScoreActivityTask['priority'] {
-  if (priority === 'critical' || priority === 'urgent') return 'critical'
-  if (priority === 'high') return 'high'
-  if (priority === 'medium') return 'medium'
-  return 'low'
 }

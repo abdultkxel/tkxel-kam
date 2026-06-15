@@ -10,11 +10,11 @@ import { AnimatedNumber } from '@/components/ui/AnimatedNumber'
 import { EmptyState } from '@/components/ui/EmptyState'
 import { PageHeader } from '@/components/ui/PageHeader'
 import { useAuth } from '@/contexts/AuthContext'
-import { useAccountOptions } from '@/hooks/useAccountOptions'
 import { Account } from '@/types/account'
 import { listEngagements } from '@/services/accountWorkspace'
 import { ApiError } from '@/services/api'
 import { RuntimeCustomField, listRuntimeCustomFields } from '@/services/contentGovernance'
+import { useAccountStore } from '@/stores/accountStore'
 import { useOpportunityStore } from '@/stores/opportunityStore'
 import { Opportunity, OpportunityActionItem, OpportunityCreateInput, OpportunityTypeRecord, Stage } from '@/types/opportunity'
 import { EngagementRecord } from '@/types/v3'
@@ -62,7 +62,7 @@ function PipelineStat({ label, value, tone = 'default', format }: { label: strin
 export function Opportunities() {
   const [params, setParams] = useSearchParams()
   const { token, user } = useAuth()
-  const { accounts } = useAccountOptions()
+  const accounts = useAccountStore(state => state.accounts)
   const opportunities = useOpportunityStore(state => state.opportunities)
   const types = useOpportunityStore(state => state.types)
   const stages = useOpportunityStore(state => state.stages)
