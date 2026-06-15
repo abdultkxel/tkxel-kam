@@ -3,6 +3,7 @@ import { AlertTriangle, Building2, ChevronLeft, ChevronRight, Download, FileText
 import { ReactNode, useEffect, useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { AccountCard } from '@/components/account/AccountCard'
+import { AccountStageBadge } from '@/components/account/AccountStageBadge'
 import { CreateAccountDialog } from '@/components/account/CreateAccountDialog'
 import { AccountCsvImport } from '@/components/admin/AccountCsvImport'
 import { EmptyState } from '@/components/ui/EmptyState'
@@ -118,7 +119,7 @@ export function Accounts() {
 
   const columns: Column<Account>[] = [
     { key: 'name', header: 'Account', sortable: true, render: account => <span className="font-semibold text-ink">{account.name}</span> },
-    { key: 'stage', header: 'Stage', sortable: true },
+    { key: 'stage', header: 'Stage', sortable: true, render: account => <AccountStageBadge stage={account.stage} /> },
     { key: 'riskStatus', header: 'Risk', sortable: true },
     { key: 'ownerName', header: 'AM', sortable: true },
     { key: 'segment', header: 'Segment', sortable: true },

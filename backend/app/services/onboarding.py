@@ -2494,15 +2494,14 @@ class OnboardingService:
         return owner
 
     def _create_engagement(self, account: Account, draft: OnboardingDraftEngagement, primary_owner: User, current_user: User) -> Engagement:
-        owner = self._get_user_if_active(draft.owner_id) or primary_owner
         ops_lead = self._get_user_if_active(draft.ops_lead_id)
-        self.account_service._ensure_owner_is_eligible(owner, "primary_am")
+        self.account_service._ensure_owner_is_eligible(primary_owner, "primary_am")
         engagement = Engagement(
             account_id=account.id,
             name=draft.name,
-            status="draft",
-            owner_id=owner.id,
-            owner_name=owner.full_name,
+            status="active" if account.lifecycle_status == "Active" else "draft",
+            owner_id=primary_owner.id,
+            owner_name=primary_owner.full_name,
             ops_lead_id=ops_lead.id if ops_lead else draft.ops_lead_id,
             ops_lead_name=ops_lead.full_name if ops_lead else draft.ops_lead_name,
             service_lines=list(draft.service_lines),

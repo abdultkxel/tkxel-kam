@@ -391,10 +391,15 @@ function Badge({ tone, children }: { tone: BadgeTone; children: string }) {
 }
 
 function roleTone(role: string): BadgeTone {
-  if (role === 'executive_sponsor') return 'purple'
-  if (role === 'economic_buyer' || role === 'commercial_owner') return 'blue'
-  if (role === 'technical_decision_maker') return 'green'
+  const key = roleKey(role)
+  if (key === 'executive_sponsor') return 'purple'
+  if (key === 'economic_buyer' || key === 'commercial_owner') return 'blue'
+  if (key === 'technical_decision_maker') return 'green'
   return 'gray'
+}
+
+function roleKey(value: string) {
+  return value.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '')
 }
 
 function statusTone(status: string): BadgeTone {

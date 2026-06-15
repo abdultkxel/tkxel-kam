@@ -95,6 +95,57 @@ FORECAST_DEMO_OPPORTUNITY_IDS = (
     "forecast-demo-automation-expansion",
     "forecast-demo-platform-expansion",
 )
+DEFAULT_SERVICE_CATALOG_ITEMS = (
+    ("assessment_strategy", "Assessment & Strategy", "Strategy", ["assessment", "strategy"], "Strategic assessment, account discovery, roadmap framing, and delivery advisory."),
+    ("business_analysis", "Business Analysis", "Strategy", ["analysis", "requirements"], "Business process analysis, requirements discovery, and stakeholder alignment."),
+    ("ux_design", "UX Design", "Design", ["ux", "research", "design"], "User research, experience design, prototyping, usability review, and interface design."),
+    ("solution_architecture_design", "Solution Architecture & Design", "Architecture", ["architecture", "design"], "Solution architecture, technical design, integration planning, and platform blueprinting."),
+    ("development", "Development", "Engineering", ["web", "mobile", "platform"], "Custom software development, feature delivery, product engineering, and application build-out."),
+    ("devops_service", "DevOps Service", "Cloud & DevOps", ["devops", "ci-cd", "cloud"], "Release automation, CI/CD, infrastructure enablement, and delivery operations."),
+    ("functional_testing_service", "Functional Testing Service", "Quality", ["qa", "functional-testing"], "Functional test planning, manual validation, regression coverage, and acceptance testing."),
+    ("performance_testing_service", "Performance Testing Service", "Quality", ["qa", "performance"], "Load, stress, scalability, and performance validation for applications and platforms."),
+    ("security_testing_service", "Security Testing Service", "Security", ["security", "testing"], "Application security testing, vulnerability validation, and security test reporting."),
+    ("test_automation", "Test Automation", "Quality", ["qa", "automation", "testing"], "Automated regression coverage, test framework implementation, and CI-integrated quality gates."),
+    ("sre_services", "SRE Services", "Cloud & DevOps", ["sre", "reliability", "observability"], "Reliability engineering, observability, incident readiness, and production operations maturity."),
+    ("l1_support", "L1 Support", "Managed Support", ["support", "l1"], "First-line support, triage, ticket handling, and basic operational issue resolution."),
+    ("l2_support", "L2 Support", "Managed Support", ["support", "l2"], "Second-line support, technical investigation, defect coordination, and service continuity assistance."),
+    ("l3_support", "L3 Support", "Managed Support", ["support", "l3"], "Advanced technical support, engineering-level troubleshooting, and complex production issue resolution."),
+    ("salesforce_tech_support", "Salesforce Tech Support", "Platforms", ["salesforce", "support"], "Salesforce administration, troubleshooting, enhancements, and platform support."),
+    ("ms_dynamics_tech_support", "MS Dynamics Tech Support", "Platforms", ["dynamics", "support"], "Microsoft Dynamics administration, troubleshooting, enhancements, and platform support."),
+    ("peoplesoft_tech_support", "PeopleSoft Tech Support", "Platforms", ["peoplesoft", "support"], "PeopleSoft administration, troubleshooting, enhancements, and platform support."),
+    ("hubspot_tech_support", "Hubspot Tech Support", "Platforms", ["hubspot", "support"], "HubSpot administration, troubleshooting, enhancements, and platform support."),
+    ("monday_tech_support", "Monday.com Tech Support", "Platforms", ["monday", "support"], "Monday.com workspace configuration, automation support, and operational administration."),
+    ("jira_tech_support", "Jira Tech Support", "Platforms", ["jira", "support"], "Jira configuration, workflow support, project administration, and operational troubleshooting."),
+    ("data_engineering_services", "Data Engineering Services", "Data & AI", ["data", "engineering", "pipelines"], "Data pipelines, warehouse foundations, integrations, modeling, and data platform engineering."),
+    ("data_analysis_services", "Data Analysis Services", "Data & AI", ["data", "analytics"], "Analysis, reporting, metric exploration, dashboard inputs, and business insight support."),
+    ("data_science_services", "Data Science Services", "Data & AI", ["data", "ml", "science"], "Predictive modeling, experimentation, machine learning workflows, and applied data science."),
+    ("genai_services", "GenAI Services", "Data & AI", ["genai", "ai", "automation"], "Generative AI use cases, assistants, copilots, retrieval workflows, and AI-enabled automation."),
+    ("architecture_design_audit", "Architecture & Design Audit", "Architecture", ["audit", "architecture"], "Architecture review, design assessment, scalability checks, and technical recommendation reporting."),
+    ("security_audit", "Security Audit", "Security", ["audit", "security"], "Security posture review, controls assessment, vulnerability context, and remediation planning."),
+    ("infrastructure_audit", "Infrastructure Audit", "Cloud & DevOps", ["audit", "infra", "cloud"], "Infrastructure review, cloud readiness assessment, reliability checks, and operational gap analysis."),
+    ("code_audit", "Code Audit", "Engineering", ["audit", "code"], "Codebase review, maintainability assessment, quality findings, and remediation recommendations."),
+    ("wordpress_tech_support", "Wordpress Tech Support", "Platforms", ["wordpress", "support"], "WordPress administration, troubleshooting, plugin support, and site maintenance."),
+    ("moodle_tech_support", "Moodle Tech Support", "Platforms", ["moodle", "support"], "Moodle administration, troubleshooting, learning platform support, and enhancements."),
+    ("discovery_workshop_service", "Discovery Workshop Service", "Strategy", ["discovery", "workshop"], "Facilitated discovery workshops, scope clarification, opportunity framing, and implementation planning."),
+    ("mobile_development", "Mobile Development", "Engineering", ["mobile", "ios", "android"], "Native and cross-platform mobile application development and mobile product delivery."),
+    ("web_development", "Web Development", "Engineering", ["web", "frontend", "backend"], "Web application development, frontend/backend delivery, and web platform enhancements."),
+    ("digital_transformation", "Digital Transformation", "Strategy", ["transformation", "digital"], "Digital operating model improvements, process modernization, and technology-enabled business change."),
+    ("ai_transformation", "AI Transformation", "Data & AI", ["ai", "transformation"], "AI strategy, adoption roadmap, enablement, workflow redesign, and AI operating model support."),
+    ("application_modernization", "Application Modernization", "Engineering", ["modernization", "legacy"], "Legacy modernization, refactoring, re-platforming, and application architecture renewal."),
+    ("call_center_service", "Call Center Service", "Managed Support", ["support", "call-center"], "Customer support operations, call center enablement, and managed service execution."),
+    ("noc", "NOC", "Managed Support", ["noc", "operations"], "Network operations center monitoring, incident triage, escalation, and uptime support."),
+    ("soc", "SOC", "Security", ["soc", "security"], "Security operations monitoring, alert triage, escalation, and threat response support."),
+    ("cyber_security_services", "Cyber Security Services", "Security", ["cybersecurity", "security"], "Cybersecurity advisory, implementation support, monitoring, hardening, and risk reduction."),
+    ("grc_services", "GRC Services", "Security", ["grc", "compliance"], "Governance, risk, compliance, control mapping, and audit readiness support."),
+    ("cloud_optimization", "Cloud Optimization", "Cloud & DevOps", ["cloud", "finops", "optimization"], "Cloud cost, performance, reliability, and usage optimization across deployed workloads."),
+    ("cloud_migration_service", "Cloud Migration Service", "Cloud & DevOps", ["cloud", "migration"], "Cloud migration planning, workload movement, landing zone setup, and modernization support."),
+    ("technology_upgradation", "Technology Upgradation", "Engineering", ["upgrade", "technology"], "Framework, platform, dependency, and technology stack upgrade services."),
+    ("business_intelligence_service", "Business Intelligence Service", "Data & AI", ["bi", "analytics", "reporting"], "BI dashboards, reporting layers, metric models, and executive insight enablement."),
+    ("staff_augmentation", "Staff Augmentation", "Talent", ["staffing", "augmentation"], "Dedicated talent, capacity augmentation, skill-based staffing, and delivery team extension."),
+    ("handover_process_hop", "Handover Process (HOP)", "Managed Support", ["handover", "transition"], "Structured handover, transition planning, documentation, and operational readiness support."),
+    ("automation_testing", "Automation Testing", "Quality", ["qa", "automation"], "Automated testing execution, regression suites, and quality automation support."),
+    ("mulesoft", "Mulesoft", "Platforms", ["mulesoft", "integration"], "MuleSoft integration, API-led connectivity, implementation support, and platform operations."),
+)
 DEMO_PROJECT_SLUGS = ("cafe-zupas", "fintua", "canvs", "signals")
 FIXED_TIMELINE_EVENT_TYPES: tuple[dict[str, Any], ...] = (
     {"slug": "manual_note", "name": "Manual note", "category": "manual", "module": "manual", "color_token": "surface-border", "display_order": 10},
@@ -1629,15 +1680,8 @@ def seed_relationship_planning_reference_data(db: Session) -> None:
 
 
 def _seed_service_growth_reference_data(db: Session) -> None:
-    service_specs = (
-        ("product_engineering", "Product Engineering", "Engineering", ["web", "mobile", "platform"], "Custom software, product squads, and platform feature delivery."),
-        ("cloud_devops", "Cloud & DevOps", "Engineering", ["cloud", "sre", "infra"], "Cloud infrastructure, release automation, reliability, and operational maturity."),
-        ("data_analytics", "Data Analytics", "Data", ["bi", "warehouse", "analytics"], "Data warehouse, dashboarding, analytics enablement, and reporting foundations."),
-        ("automation_qa", "Automation & QA", "Quality", ["qa", "automation", "testing"], "Quality engineering, automated regression coverage, and testing acceleration."),
-        ("customer_success_ops", "Customer Success Ops", "Customer", ["retention", "ops", "enablement"], "Retention operations, success workflows, enablement, and customer health execution."),
-    )
     services_by_slug: dict[str, ServiceCatalogItem] = {}
-    for display_order, (slug, name, category, tags, description) in enumerate(service_specs, start=1):
+    for display_order, (slug, name, category, tags, description) in enumerate(DEFAULT_SERVICE_CATALOG_ITEMS, start=1):
         service = db.scalar(select(ServiceCatalogItem).where(ServiceCatalogItem.slug == slug))
         if service is None:
             service = ServiceCatalogItem(slug=slug)
@@ -1653,11 +1697,11 @@ def _seed_service_growth_reference_data(db: Session) -> None:
     db.flush()
 
     adjacency_specs = (
-        ("product_engineering", "automation_qa", 82, "{source_service} accounts often benefit from test automation and quality enablement."),
-        ("product_engineering", "cloud_devops", 78, "Product delivery maturity usually exposes cloud, release, and reliability opportunities."),
-        ("cloud_devops", "data_analytics", 72, "Cloud modernization creates the foundation for stronger data pipelines and analytics."),
-        ("data_analytics", "automation_qa", 68, "Analytics-heavy accounts often need automated validation for data quality and reporting."),
-        ("customer_success_ops", "data_analytics", 70, "Customer success operations benefit from dashboards, health metrics, and retention analytics."),
+        ("development", "test_automation", 82, "{source_service} accounts often benefit from test automation and quality enablement."),
+        ("development", "devops_service", 78, "Product delivery maturity usually exposes DevOps, release, and reliability opportunities."),
+        ("cloud_migration_service", "data_engineering_services", 72, "Cloud modernization creates the foundation for stronger data pipelines and analytics."),
+        ("data_analysis_services", "test_automation", 68, "Analytics-heavy accounts often need automated validation for data quality and reporting."),
+        ("l2_support", "business_intelligence_service", 70, "Support-heavy accounts benefit from dashboards, health metrics, and retention analytics."),
     )
     for source_slug, target_slug, score, rationale in adjacency_specs:
         source = services_by_slug[source_slug]
@@ -1680,13 +1724,13 @@ def _seed_service_growth_reference_data(db: Session) -> None:
             "engineering_growth",
             "Engineering Growth",
             "Product delivery expansion package covering engineering, quality, and cloud maturity.",
-            ("product_engineering", "automation_qa", "cloud_devops"),
+            ("development", "test_automation", "devops_service"),
         ),
         (
             "data_growth",
             "Data Growth",
             "Data and customer operations package for account intelligence and retention insight.",
-            ("data_analytics", "customer_success_ops"),
+            ("data_engineering_services", "data_analysis_services", "business_intelligence_service"),
         ),
     )
     bundles_by_slug: dict[str, ServiceGrowthBundle] = {}
@@ -1722,7 +1766,7 @@ def _seed_service_growth_reference_data(db: Session) -> None:
             "tag",
             "cloud",
             "category",
-            "Data",
+            "Data & AI",
             72,
             15,
             "{account_name} has cloud maturity signals from {source_service}; {target_service} can convert platform work into reporting insight.",
@@ -1731,7 +1775,7 @@ def _seed_service_growth_reference_data(db: Session) -> None:
             "bundle",
             "engineering_growth",
             "service",
-            "data_analytics",
+            "data_analysis_services",
             70,
             10,
             "{account_name} has engineering-growth coverage through {source_service}; {target_service} can expose account and product insights.",

@@ -48,6 +48,7 @@ An AM creates an account draft. KAM Head users receive a persisted bell notifica
 - Admin trigger defaults are paginated in the Settings panel so large trigger catalogs remain scannable.
 - Notification scheduler dry-run controls and scheduler run history are no longer shown in Admin Settings.
 - The topbar bell shows the current unread notification count beside the profile control, capped visually at `99+`.
+- The topbar bell dropdown includes an `All Notifications` footer link to `/notifications` after the latest notification preview list.
 - Backend error display: existing toast/error-state behavior is reused.
 
 ## Validation And Errors
@@ -58,7 +59,7 @@ An AM creates an account draft. KAM Head users receive a persisted bell notifica
 ## Tests
 
 - Backend unit/API tests cover base/catalog seeding, mandatory email enforcement for explicit admin test paths, bell summary, admin timing update/test/dry-run, draft workflow notifications, task creation notifications, account-owner notifications, and escalation notifications.
-- Frontend tests cover tray summary loading and Admin trigger settings visibility/pagination.
+- Frontend tests cover tray summary loading, the bell dropdown `All Notifications` link, and Admin trigger settings visibility/pagination.
 
 ## Linting And Quality
 

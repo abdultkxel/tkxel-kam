@@ -13,6 +13,8 @@ Account onboarding drafts now require a real Account Manager assignment before a
 - Account Managers may self-assign their own drafts but cannot assign or reassign drafts to other AMs.
 - Draft approval validates the persisted assignment. Missing, inactive, or non-AM owners return field-level validation errors on `primary_owner_id`.
 - Draft approval also requires at least one engagement draft, guaranteeing every newly onboarded account creates an initial engagement record.
+- Newly approved accounts start with account-level health values of `0` and `has_health_score=false` until a score snapshot is calculated or saved.
+- When draft approval promotes the account to `Active`, the default engagement created from the draft is also marked `active`.
 - Reviewers can update the assigned Account Manager on ready-for-review drafts before approving.
 - Admin and KAM Head reviewers can approve or reject visible drafts. Approved drafts create official account, owner, engagement, source-document links, default stakeholder, default KYC draft, audit, timeline, and outcome notification records. Rejected drafts remain stored with rationale and outcome notification records.
 - Admin, KAM Head, Super Admin, and draft-capable Account Manager users see ready-for-review draft accounts in the Accounts listing. Draft rows link to onboarding review, not Account 360, until approval creates the official account.
@@ -27,6 +29,8 @@ Account onboarding drafts now require a real Account Manager assignment before a
 - `POST /api/onboarding/drafts` persists `primary_owner_id`, `primary_owner_name`, and `primary_owner_email` when supplied.
 - `PATCH /api/onboarding/drafts/{draft_id}` can update `primary_owner_id` on open drafts.
 - `POST /api/onboarding/drafts/{draft_id}/approve` rejects unassigned or invalid owners before creating the official account.
+- Approved account responses expose zeroed account health with `has_health_score=false` until scoring runs.
+- Approved active accounts return their draft-created default engagement with `status=active`.
 - `POST /api/onboarding/drafts/{draft_id}/reject` stores a required rejection reason and notifies the draft uploader/owner.
 - `GET /api/onboarding/drafts/{draft_id}/documents/{document_id}/download` returns only stored source documents visible to the requesting user.
 

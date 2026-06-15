@@ -4,12 +4,14 @@ import { useEffect, useMemo, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { toast } from 'sonner'
 import { ConfirmDialog } from '@/components/admin/ConfirmDialog'
+import { ServiceLineMultiSelect } from '@/components/account/ServiceLineMultiSelect'
 import { EmptyState } from '@/components/ui/EmptyState'
 import { PageHeader } from '@/components/ui/PageHeader'
 import { Skeleton } from '@/components/ui/Skeleton'
 import { useAuth } from '@/contexts/AuthContext'
 import { useCapabilities } from '@/hooks/useCapabilities'
 import { useRole } from '@/hooks/useRole'
+import { useServiceCatalogOptions } from '@/hooks/useServiceCatalogOptions'
 import { ApiError } from '@/services/api'
 import {
   approveOnboardingDraft,
@@ -38,7 +40,7 @@ type DraftEditState = {
 type EngagementDraftEditState = {
   id: string
   name: string
-  serviceLines: string
+  serviceLines: string[]
   value: string
   startDate: string
   sowEndDate: string
@@ -65,6 +67,7 @@ export function Onboarding() {
   const navigate = useNavigate()
   const { capabilities } = useCapabilities()
   const { token } = useAuth()
+  const { serviceLineOptions, isLoading: loadingServiceLines, error: serviceLineCatalogError } = useServiceCatalogOptions()
   const [drafts, setDrafts] = useState<OnboardingDraftView[]>([])
   const [selectedId, setSelectedId] = useState('')
   const [files, setFiles] = useState<File[]>([])
@@ -204,7 +207,7 @@ export function Onboarding() {
     setDraftEditErrors(current => ({ ...current, [field]: undefined }))
   }
 
-  function updateEngagementDraftEdit(engagementId: string, field: keyof EngagementDraftEditState, value: string) {
+  function updateEngagementDraftEdit<K extends keyof EngagementDraftEditState>(engagementId: string, field: K, value: EngagementDraftEditState[K]) {
     setEngagementDraftEdits(current => ({
       ...current,
       [engagementId]: {
@@ -235,7 +238,7 @@ export function Onboarding() {
       const value = Number(edit.value)
       const confidence = Number(edit.confidence)
       if (!edit.name.trim()) errors.name = 'Engagement name is required'
-      if (!parseServiceLines(edit.serviceLines).length) errors.serviceLines = 'Add at least one service line'
+      if (!edit.serviceLines.length) errors.serviceLines = 'Add at least one service line'
       if (!edit.value.trim() || !Number.isFinite(value) || value < 0) errors.value = 'Value must be zero or greater'
       if (!edit.startDate) errors.startDate = 'Start date is required'
       if (!deliveryStatusOptions.includes(edit.deliveryStatus as EngagementDeliveryStatus)) errors.deliveryStatus = 'Select a delivery status'
@@ -520,7 +523,16 @@ export function Onboarding() {
                         <div className="space-y-4">
                           <div className="grid gap-3 md:grid-cols-3">
                             <DraftTextInput label="Engagement name" value={edit.name} error={errors.name} onChange={value => updateEngagementDraftEdit(engagement.id, 'name', value)} />
-                            <DraftTextInput label="Service lines" value={edit.serviceLines} error={errors.serviceLines} onChange={value => updateEngagementDraftEdit(engagement.id, 'serviceLines', value)} placeholder="Development, UX Design" />
+                            <ServiceLineMultiSelect
+                              label="Service lines"
+                              selected={edit.serviceLines}
+                              options={serviceLineOptions}
+                              onChange={value => updateEngagementDraftEdit(engagement.id, 'serviceLines', value)}
+                              error={errors.serviceLines}
+                              required
+                              isLoading={loadingServiceLines}
+                              catalogError={serviceLineCatalogError}
+                            />
                             <DraftTextInput label="Value" type="number" min="0" value={edit.value} error={errors.value} onChange={value => updateEngagementDraftEdit(engagement.id, 'value', value)} />
                             <DraftTextInput label="Start date" type="date" value={edit.startDate} error={errors.startDate} onChange={value => updateEngagementDraftEdit(engagement.id, 'startDate', value)} />
                             <DraftTextInput label="SOW end" type="date" value={edit.sowEndDate} error={errors.sowEndDate} onChange={value => updateEngagementDraftEdit(engagement.id, 'sowEndDate', value)} />
@@ -741,10 +753,6 @@ function accountManagerOptionLabel(manager: OnboardingAccountManager) {
   return manager.email ? `${manager.name} - ${manager.email}` : manager.name
 }
 
-function parseServiceLines(value: string) {
-  return value.split(',').map(item => item.trim()).filter(Boolean)
-}
-
 function formatDeliveryStatus(value: string) {
   return value.replace(/_/g, ' ').replace(/\b\w/g, letter => letter.toUpperCase())
 }
@@ -768,7 +776,7 @@ function engagementDraftToEditState(engagement: EngagementRecord): EngagementDra
   return {
     id: engagement.id,
     name: engagement.name,
-    serviceLines: engagement.serviceLines.join(', '),
+    serviceLines: engagement.serviceLines,
     value: String(engagement.value ?? 0),
     startDate: toDateInputValue(engagement.renewalTerms.startDate),
     sowEndDate: toDateInputValue(engagement.renewalTerms.endDate),
@@ -785,7 +793,7 @@ function buildEngagementDraftUpdatePayload(edit: EngagementDraftEditState) {
   return {
     id: edit.id,
     name: edit.name.trim(),
-    serviceLines: parseServiceLines(edit.serviceLines),
+    serviceLines: edit.serviceLines,
     value: Number(edit.value),
     startDate: fromDateInputValue(edit.startDate),
     deliveryStatus: edit.deliveryStatus as EngagementDeliveryStatus,

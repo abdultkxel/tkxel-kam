@@ -25,7 +25,6 @@ from app.schemas import (
 from app.services.account_access import AccountAccessService
 from app.services.audit import AuditService
 from app.services.stakeholder_gap_service import StakeholderGapService
-from app.services.stakeholder_config import StakeholderConfigService
 from app.services.timeline import TimelineService
 from app.services.user_management import page_count
 
@@ -51,7 +50,6 @@ class StakeholderService:
         self.audit = AuditService(AuditRepository(db))
         self.timeline = TimelineService(TimelineRepository(db))
         self.gaps = StakeholderGapService(db)
-        self.config = StakeholderConfigService(db)
 
     def list_for_account(
         self,
@@ -97,8 +95,6 @@ class StakeholderService:
             self._ensure_engagement_belongs_to_account(payload.engagement_id, account_id)
         if payload.reports_to_stakeholder_id:
             self._get_report_target_or_404(payload.reports_to_stakeholder_id, account_id)
-        self.config.require_active_role(payload.role)
-
         stakeholder = Stakeholder(
             account_id=account_id,
             engagement_id=payload.engagement_id,
@@ -298,8 +294,6 @@ class StakeholderService:
             self._ensure_engagement_belongs_to_account(updates["engagement_id"], stakeholder.account_id)
         if "reports_to_stakeholder_id" in updates and updates["reports_to_stakeholder_id"]:
             self._ensure_valid_reports_to(stakeholder, updates["reports_to_stakeholder_id"])
-        if "role" in updates and updates["role"]:
-            self.config.require_active_role(updates["role"])
         for field, value in updates.items():
             if field == "email" and value is not None:
                 value = str(value)
