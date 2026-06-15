@@ -501,9 +501,16 @@ function TaskBreakdownPanel({ widget }: { widget: DashboardWidget }) {
       </div>
 
       <div className="mt-5 divide-y divide-surface-border border-y border-surface-border">
-        <div className="grid gap-3 py-4 md:grid-cols-[220px_minmax(0,1fr)] md:items-center">
-          <p className="flex items-center gap-3 text-sm font-semibold text-ink-secondary"><span className="h-2.5 w-2.5 rounded-full bg-brand-blue" />Data source</p>
-          <p className="text-sm font-semibold text-ink">{getString(widget.metadata.data_source) || 'Task records filtered to assigned account scope'}</p>
+        <div className="py-4">
+          <div className="flex items-start gap-3 rounded-lg border border-brand-blue/20 bg-blue-tint-20/60 px-4 py-3">
+            <span className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-white text-brand-blue shadow-sm">
+              <Info className="h-4 w-4" />
+            </span>
+            <div className="min-w-0">
+              <p className="text-sm font-semibold text-ink">Task scope</p>
+              <p className="mt-1 text-sm leading-6 text-ink-secondary">{taskDataSourceCopy(widget)}</p>
+            </div>
+          </div>
         </div>
         {widget.items.length ? (
           <div className="py-2">
@@ -1191,6 +1198,14 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function getString(value: unknown): string {
   return typeof value === 'string' ? value : ''
+}
+
+function taskDataSourceCopy(widget: DashboardWidget) {
+  const value = getString(widget.metadata.data_source)
+  if (!value || value.includes('owner = AM') || value.includes('assigned list')) {
+    return 'Showing tasks assigned to you across your assigned accounts.'
+  }
+  return value
 }
 
 function labelize(value: string) {
