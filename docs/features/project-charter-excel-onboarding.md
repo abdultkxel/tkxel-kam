@@ -17,8 +17,10 @@ The Create Account upload flow reads Excel project charters with deterministic s
 - Rejecting a draft requires confirmation. The warning explains that the draft will leave active review, will not become a visible account, and onboarding the same customer later requires creating a new draft.
 - The side `Upload new charter` rail stays visible while a draft is selected, including after refresh. It shows the current attached charter/SOW with a download link and keeps account manager assignment in the draft review form.
 - The selected draft header shows only operational review counts for engagements and missing fields; Confidence and ARR Draft summary cards are not shown there.
-- The selected draft review screen shows the attached source file with a visible download-for-verification action. Its Account Manager dropdown includes the draft's assigned manager as the selected option, even when the general intake assignment list is filtered.
-- The `Upload new charter / SOW` area accepts a replacement source file and refreshes extracted account fields, citations, and the engagement draft so reviewers can re-check the draft details before approval.
+- The selected draft review screen does not show a separate `SOW / charter source` card below `Draft account`; reviewers use the side rail to download the existing charter.
+- The selected draft Account Manager dropdown includes the draft's assigned manager as the selected option, even when the general intake assignment list is filtered.
+- Editable missing-field blockers are represented in the draft forms, including company URL plus engagement service lines, value, start date, SOW end, notice deadline, and delivery status. Saving those fields refreshes the `Review blockers` list from the API response, including matching "not supported by extracted SOW text" notes.
+- The `Source-backed account context` card only shows Created By, Created At, and Last Updated At.
 
 ## API
 

@@ -1414,6 +1414,62 @@ def test_onboarding_approval_requires_at_least_one_engagement_draft(client: Test
     assert error["message"] == "At least one engagement is required before approval."
 
 
+def test_onboarding_update_clears_editable_missing_field_blockers(client: TestClient) -> None:
+    headers = auth_headers(client)
+    owner = seeded_user(client, headers, "account_manager")
+    payload = draft_payload("Editable Missing Fields Workspace", owner["id"])
+    payload["company_url"] = None
+    payload["missing_fields"] = [
+        "Company website was not found in the uploaded source text.",
+        "Service lines were not found in the uploaded source text.",
+        "Service lines were not supported by extracted SOW text.",
+        "Commercial value was not found in the uploaded source text.",
+        "Commercial value was not supported by extracted SOW text.",
+        "Engagement start date was not found in the uploaded source text.",
+        "Start date was not supported by extracted SOW text.",
+        "Engagement end date was not found in the uploaded source text.",
+        "End date was not supported by extracted SOW text.",
+        "Renewal notice period was not found in the uploaded source text.",
+        "Notice period was not supported by extracted SOW text.",
+    ]
+    payload["engagement_drafts"][0]["service_lines"] = []
+    payload["engagement_drafts"][0]["value"] = 0
+    payload["engagement_drafts"][0]["start_date"] = None
+    payload["engagement_drafts"][0]["end_date"] = None
+    payload["engagement_drafts"][0]["notice_deadline"] = None
+    payload["engagement_drafts"][0]["notice_period_days"] = None
+
+    create_response = client.post("/api/onboarding/drafts", headers=headers, json=payload)
+    assert create_response.status_code == 201
+    draft = create_response.json()
+    assert len(draft["missing_fields"]) == 11
+
+    update_response = client.patch(
+        f"/api/onboarding/drafts/{draft['id']}",
+        headers=headers,
+        json={
+            "company_url": "https://editable-missing-fields.example.com",
+            "engagement_drafts": [
+                {
+                    "id": draft["engagement_drafts"][0]["id"],
+                    "service_lines": ["Development"],
+                    "value": 50000,
+                    "start_date": iso_days_from_now(0),
+                    "end_date": iso_days_from_now(120),
+                    "notice_deadline": iso_days_from_now(90),
+                }
+            ],
+        },
+    )
+
+    assert update_response.status_code == 200
+    updated = update_response.json()
+    assert updated["company_url"] == "https://editable-missing-fields.example.com"
+    assert updated["engagement_drafts"][0]["service_lines"] == ["Development"]
+    assert updated["engagement_drafts"][0]["value"] == 50000
+    assert updated["missing_fields"] == []
+
+
 def test_onboarding_drafts_are_visible_to_assigned_manager_not_unrelated_managers(client: TestClient) -> None:
     admin_headers = auth_headers(client)
     owner = seeded_user(client, admin_headers, "account_manager")
