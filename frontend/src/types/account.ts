@@ -53,6 +53,7 @@ export interface Account {
   arr: number
   nextQbr: string
   health: HealthScore
+  hasHealthScore?: boolean
   stakeholders: string[]
   risks: string[]
   customFieldValues?: Record<string, unknown>

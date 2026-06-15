@@ -52,6 +52,7 @@ interface ApiAccount {
     delivery: number
     commercial: number
   }
+  has_health_score?: boolean
   next_governance_at?: string | null
   updated_at: string
   primary_owner?: ApiAccountOwner | null
@@ -358,7 +359,21 @@ export interface UpdateOnboardingDraftPayload {
   managerId?: string
   managerEmail?: string
   managerName?: string
+  engagementDrafts?: OnboardingEngagementDraftUpdatePayload[]
   customFieldValues?: Record<string, unknown>
+}
+
+export interface OnboardingEngagementDraftUpdatePayload {
+  id: string
+  name?: string
+  value?: number
+  endDate?: string | null
+  renewalDate?: string | null
+  noticeDeadline?: string | null
+  autoRenewal?: boolean
+  confidence?: number
+  opsLeadName?: string | null
+  sourceCitation?: string | null
 }
 
 export interface AccountCsvImportRow {
@@ -930,6 +945,21 @@ function buildDraftUpdatePayload(payload: UpdateOnboardingDraftPayload) {
   setIfDefined(body, 'primary_owner_id', payload.managerId)
   setIfDefined(body, 'primary_owner_name', payload.managerName)
   setIfDefined(body, 'primary_owner_email', payload.managerEmail)
+  setIfDefined(body, 'engagement_drafts', payload.engagementDrafts?.map(buildOnboardingEngagementDraftUpdatePayload))
+  return body
+}
+
+function buildOnboardingEngagementDraftUpdatePayload(payload: OnboardingEngagementDraftUpdatePayload) {
+  const body: Record<string, unknown> = { id: payload.id }
+  setIfDefined(body, 'name', payload.name)
+  setIfDefined(body, 'value', payload.value)
+  setIfDefined(body, 'end_date', payload.endDate)
+  setIfDefined(body, 'renewal_date', payload.renewalDate)
+  setIfDefined(body, 'notice_deadline', payload.noticeDeadline)
+  setIfDefined(body, 'auto_renewal', payload.autoRenewal)
+  setIfDefined(body, 'confidence', payload.confidence)
+  setIfDefined(body, 'ops_lead_name', payload.opsLeadName)
+  setIfDefined(body, 'source_citation', payload.sourceCitation)
   return body
 }
 
@@ -990,6 +1020,7 @@ function mapDraft(draft: ApiOnboardingDraft): OnboardingDraftView {
     commercial_value: draft.commercial_value,
     currency: draft.currency,
     health: { overall: 45, relationship: 45, usage: 45, delivery: 45, commercial: 45 },
+    has_health_score: false,
     next_governance_at: null,
     updated_at: draft.created_at,
     primary_owner: draft.primary_owner_name
@@ -1061,6 +1092,7 @@ function mapApiAccount(account: ApiAccount): Account {
     arr: Number(account.commercial_value ?? 0),
     nextQbr: account.next_governance_at ?? account.updated_at,
     health: account.health,
+    hasHealthScore: Boolean(account.has_health_score),
     stakeholders: account.owners.map(item => `${ownerLabel(item.ownership_role)}: ${item.user_name}`),
     risks: Object.entries(account.governance_completeness)
       .filter(([, complete]) => !complete)

@@ -22,7 +22,7 @@ import { useAuth } from '@/contexts/AuthContext'
 import { useRole } from '@/hooks/useRole'
 import { RuntimeCustomField, listRuntimeCustomFields } from '@/services/contentGovernance'
 import { AlertRecord, evaluateAlerts, getAlerts, updateAlertStatus } from '@/services/alerts'
-import { recalculateAccountScore } from '@/services/scoringSignalsTasks'
+import { getAccountScore, recalculateAccountScore } from '@/services/scoringSignalsTasks'
 import type { ScoreRead } from '@/services/scoringSignalsTasks'
 import { getAccountTimeline } from '@/services/timeline'
 import { useGovernanceStore } from '@/stores/governanceStore'
@@ -93,6 +93,7 @@ export function Account360({ account }: { account: Account }) {
   const [accountAlerts, setAccountAlerts] = useState<AlertRecord[]>([])
   const [timelineEntries, setTimelineEntries] = useState<TimelineEntry[]>([])
   const [currentHealth, setCurrentHealth] = useState(account.health)
+  const [hasHealthScore, setHasHealthScore] = useState(Boolean(account.hasHealthScore))
   const [alertsLoading, setAlertsLoading] = useState(false)
   const [alertActionId, setAlertActionId] = useState('')
   const requestedTab = searchParams.get('tab')
@@ -138,7 +139,7 @@ export function Account360({ account }: { account: Account }) {
     if (account.ownerId) options.set(account.ownerId, { id: account.ownerId, name: account.ownerName, email: account.ownerEmail })
     return Array.from(options.values()).sort((a, b) => a.name.localeCompare(b.name))
   }, [account.ownerEmail, account.ownerId, account.ownerName, user.email, user.id, user.name])
-  const displayAccount = useMemo(() => ({ ...account, health: currentHealth }), [account, currentHealth])
+  const displayAccount = useMemo(() => ({ ...account, hasHealthScore, health: currentHealth }), [account, currentHealth, hasHealthScore])
 
   const refreshAccountAlerts = useCallback(async () => {
     if (!token) {
@@ -162,7 +163,29 @@ export function Account360({ account }: { account: Account }) {
 
   useEffect(() => {
     setCurrentHealth(account.health)
-  }, [account.health, account.id])
+    setHasHealthScore(Boolean(account.hasHealthScore))
+  }, [account.hasHealthScore, account.health, account.id])
+
+  useEffect(() => {
+    if (!token) return
+    let cancelled = false
+    getAccountScore(token, account.id)
+      .then(score => {
+        if (cancelled) return
+        if (score.latest_snapshot) {
+          setCurrentHealth(scoreReadToAccountHealth(score, account.health))
+          setHasHealthScore(true)
+        } else {
+          setHasHealthScore(false)
+        }
+      })
+      .catch(() => {
+        if (!cancelled) setHasHealthScore(Boolean(account.hasHealthScore))
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [account.hasHealthScore, account.health, account.id, token])
 
   useEffect(() => {
     if (!token) {
@@ -263,6 +286,7 @@ export function Account360({ account }: { account: Account }) {
       if (!token) throw new Error('You must be logged in to recalculate health')
       const score = await recalculateAccountScore(token, account.id, { trigger_source: 'account_health_tab', include_signal_evaluation: true })
       setCurrentHealth(scoreReadToAccountHealth(score, currentHealth))
+      setHasHealthScore(true)
       await evaluateAlerts(token, { scope: 'account', account_id: account.id })
       await refreshAccountAlerts()
       toast.success('Health score recalculated')
@@ -287,6 +311,7 @@ export function Account360({ account }: { account: Account }) {
         },
       })
       setCurrentHealth(scoreReadToAccountHealth(score, currentHealth))
+      setHasHealthScore(true)
       await evaluateAlerts(token, { scope: 'account', account_id: account.id })
       await refreshAccountAlerts()
       toast.success('Calculator scores saved')
@@ -383,9 +408,15 @@ export function Account360({ account }: { account: Account }) {
             </section>
             <section className="tk-card flex flex-col items-center justify-center p-5 text-center">
               <p className="mb-3 text-[10px] font-extrabold uppercase tracking-widest text-brand-blue">Health posture</p>
-              <HealthScoreRing value={currentHealth.overall} />
-              <p className="mt-4 text-sm font-semibold text-ink">Current score: {currentHealth.overall}/100</p>
-              <p className="mt-1 text-xs text-ink-secondary">{recentDecisions} decision events visible in this account</p>
+              {hasHealthScore ? (
+                <>
+                  <HealthScoreRing value={currentHealth.overall} />
+                  <p className="mt-4 text-sm font-semibold text-ink">Current score: {currentHealth.overall}/100</p>
+                  <p className="mt-1 text-xs text-ink-secondary">{recentDecisions} decision events visible in this account</p>
+                </>
+              ) : (
+                <EmptyState icon={AlertTriangle} heading="No health score recorded" body="This account does not have an account-level score snapshot yet." className="px-2 py-8" />
+              )}
             </section>
           </div>
           <AIBriefCard
@@ -413,39 +444,45 @@ export function Account360({ account }: { account: Account }) {
         </Tabs.Content>
         <Tabs.Content value="Health">
           <div className="space-y-4">
-            <section className="tk-card p-5">
-              <div className="grid gap-6 xl:grid-cols-[260px_1fr]">
-                <div className="flex flex-col items-center justify-center rounded-lg bg-surface-secondary p-5 text-center">
-                  <HealthScoreRing value={currentHealth.overall} size={176} />
-                  <span className={`mt-4 rounded-full border px-3 py-1 text-[11px] font-semibold uppercase tracking-wider ${riskTone}`}>
-                    {account.riskStatus}
-                  </span>
-                </div>
+            {hasHealthScore ? (
+              <section className="tk-card p-5">
+                <div className="grid gap-6 xl:grid-cols-[260px_1fr]">
+                  <div className="flex flex-col items-center justify-center rounded-lg bg-surface-secondary p-5 text-center">
+                    <HealthScoreRing value={currentHealth.overall} size={176} />
+                    <span className={`mt-4 rounded-full border px-3 py-1 text-[11px] font-semibold uppercase tracking-wider ${riskTone}`}>
+                      {account.riskStatus}
+                    </span>
+                  </div>
 
-                <div className="min-w-0">
-                  <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
-                    <div>
-                      <p className="text-[10px] font-extrabold uppercase tracking-widest text-brand-blue">Health scoring</p>
-                      <h3 className="mt-1 text-base font-semibold text-ink">Current score breakdown</h3>
-                      <p className="mt-1 max-w-2xl text-sm text-ink-secondary">
-                        Review the live score, complete evidence-linked activities, then save calculator changes with timeline audit.
-                      </p>
+                  <div className="min-w-0">
+                    <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+                      <div>
+                        <p className="text-[10px] font-extrabold uppercase tracking-widest text-brand-blue">Health scoring</p>
+                        <h3 className="mt-1 text-base font-semibold text-ink">Current score breakdown</h3>
+                        <p className="mt-1 max-w-2xl text-sm text-ink-secondary">
+                          Review the live score, complete evidence-linked activities, then save calculator changes with timeline audit.
+                        </p>
+                      </div>
+                      <button className="tk-button-primary shrink-0" disabled={savingHealth} onClick={recalcHealth}>
+                        {savingHealth ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCcw className="h-4 w-4" />}
+                        Recalculate
+                      </button>
                     </div>
-                    <button className="tk-button-primary shrink-0" disabled={savingHealth} onClick={recalcHealth}>
-                      {savingHealth ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCcw className="h-4 w-4" />}
-                      Recalculate
-                    </button>
-                  </div>
 
-                  <div className="mt-5 grid gap-3 sm:grid-cols-2">
-                    <HealthDimensionMeter label="Overall" value={currentHealth.overall} prominent />
-                    {healthDimensions.map(dimension => (
-                      <HealthDimensionMeter key={dimension.key} label={dimension.label} value={dimension.value} />
-                    ))}
+                    <div className="mt-5 grid gap-3 sm:grid-cols-2">
+                      <HealthDimensionMeter label="Overall" value={currentHealth.overall} prominent />
+                      {healthDimensions.map(dimension => (
+                        <HealthDimensionMeter key={dimension.key} label={dimension.label} value={dimension.value} />
+                      ))}
+                    </div>
                   </div>
                 </div>
-              </div>
-            </section>
+              </section>
+            ) : (
+              <section className="tk-card">
+                <EmptyState icon={AlertTriangle} heading="No health score recorded" body="This account does not have an account-level score snapshot yet." />
+              </section>
+            )}
             <ScoreCalculators account={displayAccount} saving={savingHealth} onApply={applyCalculatorScores} />
             <ScoreHistoryPanel accountId={account.id} />
           </div>

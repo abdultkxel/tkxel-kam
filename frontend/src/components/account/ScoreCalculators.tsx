@@ -353,6 +353,16 @@ function nearestOption(value: number, options: ScoreOption[]) {
 }
 
 function seedSelections(account: Account): CalculatorSelections {
+  if (!account.hasHealthScore) {
+    return calculators.reduce((state, calculator) => {
+      state[calculator.id] = calculator.criteria.reduce<Record<string, number | undefined>>((criteriaState, criterion) => {
+        criteriaState[criterion.id] = undefined
+        return criteriaState
+      }, {})
+      return state
+    }, {} as CalculatorSelections)
+  }
+
   const seedByCalculator: Record<ScoreCalculatorId, number> = {
     relationship: account.health.relationship / 100 * 3,
     contract: account.health.commercial / 100 * 3,
@@ -362,7 +372,7 @@ function seedSelections(account: Account): CalculatorSelections {
   }
 
   return calculators.reduce((state, calculator) => {
-    state[calculator.id] = calculator.criteria.reduce<Record<string, number>>((criteriaState, criterion) => {
+    state[calculator.id] = calculator.criteria.reduce<Record<string, number | undefined>>((criteriaState, criterion) => {
       const options = criterion.options ?? (calculator.scale === 5 ? scaleFiveOptions : scaleThreeOptions)
       criteriaState[criterion.id] = nearestOption(seedByCalculator[calculator.id], options)
       return criteriaState
@@ -524,7 +534,7 @@ export function ScoreCalculators({
 
   useEffect(() => {
     setSelections(seedSelections(account))
-  }, [account.id, account.health.commercial, account.health.delivery, account.health.relationship, account.health.usage, account.riskStatus])
+  }, [account.hasHealthScore, account.health.commercial, account.health.delivery, account.health.relationship, account.health.usage, account.id, account.riskStatus])
 
   useEffect(() => {
     setEvidenceDrafts({})
