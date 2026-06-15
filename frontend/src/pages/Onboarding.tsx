@@ -524,6 +524,7 @@ export function Onboarding() {
                           <div className="grid gap-3 md:grid-cols-3">
                             <DraftTextInput label="Engagement name" value={edit.name} error={errors.name} onChange={value => updateEngagementDraftEdit(engagement.id, 'name', value)} />
                             <ServiceLineMultiSelect
+                              className="md:col-span-3"
                               label="Service lines"
                               selected={edit.serviceLines}
                               options={serviceLineOptions}

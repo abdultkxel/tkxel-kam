@@ -46,26 +46,30 @@ export function ServiceLineMultiSelect({
   }
 
   return (
-    <div className={cn('space-y-2', className)}>
-      <div className="flex items-center justify-between gap-3">
+    <div className={cn('w-full min-w-0 space-y-2', className)}>
+      <div className="flex flex-wrap items-center justify-between gap-2">
         <span className={cn('tk-label', error && 'text-rag-red')}>
           {label} {required ? <span className="text-rag-red">*</span> : null}
         </span>
         <span className="text-[11px] font-semibold text-ink-secondary">{normalizedSelected.length} selected</span>
       </div>
 
-      {normalizedSelected.length ? (
-        <div className="flex flex-wrap gap-1.5">
-          {normalizedSelected.map(option => (
-            <span key={option} className="inline-flex max-w-full items-center gap-1 rounded-full border border-surface-border bg-surface-secondary px-2 py-1 text-xs font-semibold text-ink">
-              <span className="truncate">{option}</span>
-              <button type="button" className="text-ink-secondary hover:text-rag-red" title={`Remove ${option}`} aria-label={`Remove ${option}`} onClick={() => remove(option)}>
-                <X className="h-3.5 w-3.5" />
-              </button>
-            </span>
-          ))}
-        </div>
-      ) : null}
+      <div className="min-h-11 rounded-md border border-surface-border bg-surface-secondary p-2">
+        {normalizedSelected.length ? (
+          <div className="flex flex-wrap gap-1.5">
+            {normalizedSelected.map(option => (
+              <span key={option} className="inline-flex max-w-full items-center gap-1 rounded-full border border-surface-border bg-white px-2 py-1 text-xs font-semibold text-ink">
+                <span className="truncate">{option}</span>
+                <button type="button" className="text-ink-secondary hover:text-rag-red" title={`Remove ${option}`} aria-label={`Remove ${option}`} onClick={() => remove(option)}>
+                  <X className="h-3.5 w-3.5" />
+                </button>
+              </span>
+            ))}
+          </div>
+        ) : (
+          <p className="px-1 py-1.5 text-xs font-medium text-ink-secondary">No service lines selected.</p>
+        )}
+      </div>
 
       <div className={cn('rounded-lg border bg-white p-3', error ? 'border-rag-red' : 'border-surface-border')}>
         <label className="relative block">
@@ -75,7 +79,7 @@ export function ServiceLineMultiSelect({
             className="tk-input h-10 pl-9"
             value={query}
             onChange={event => setQuery(event.target.value)}
-            placeholder="Search services"
+            placeholder="Search service catalog"
             aria-label="Search service lines"
           />
         </label>
@@ -84,13 +88,13 @@ export function ServiceLineMultiSelect({
           {!isLoading && catalogError ? <p className="px-2 py-3 text-sm text-rag-red">{catalogError}</p> : null}
           {!isLoading && !catalogError && !filteredOptions.length ? <p className="px-2 py-3 text-sm text-ink-secondary">No matching services.</p> : null}
           {!isLoading && !catalogError ? (
-            <div className="grid gap-1 sm:grid-cols-2">
+            <div className="grid gap-1 md:grid-cols-2 xl:grid-cols-3">
               {filteredOptions.map(option => {
                 const checked = normalizedSelected.some(item => item.toLowerCase() === option.toLowerCase())
                 return (
-                  <label key={option} className={cn('flex min-h-10 items-center gap-2 rounded-md px-2 py-1.5 text-sm font-medium', checked ? 'bg-blue-tint-20 text-brand-blue' : 'bg-white text-ink hover:bg-surface-tertiary')}>
-                    <input type="checkbox" className="h-4 w-4 rounded border-surface-border text-brand-blue focus:ring-brand-blue/20" checked={checked} onChange={() => toggle(option)} />
-                    <span className="min-w-0 flex-1">{option}</span>
+                  <label key={option} className={cn('flex min-h-10 min-w-0 items-center gap-2 rounded-md px-2 py-1.5 text-sm font-medium', checked ? 'bg-blue-tint-20 text-brand-blue' : 'bg-white text-ink hover:bg-surface-tertiary')}>
+                    <input type="checkbox" className="h-4 w-4 shrink-0 rounded border-surface-border text-brand-blue focus:ring-brand-blue/20" checked={checked} onChange={() => toggle(option)} />
+                    <span className="min-w-0 flex-1 break-words">{option}</span>
                   </label>
                 )
               })}

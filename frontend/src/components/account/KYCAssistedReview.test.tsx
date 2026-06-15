@@ -117,33 +117,6 @@ vi.mock('@/services/accountWorkspace', () => ({
   listAccountAttachments: vi.fn(),
 }))
 
-vi.mock('@/components/ui/RichTextEditor', () => ({
-  RichTextEditor: ({
-    value,
-    onChange,
-    disabled,
-    ariaLabel,
-    placeholder,
-    editorHeight,
-  }: {
-    value: string
-    onChange: (value: string) => void
-    disabled?: boolean
-    ariaLabel?: string
-    placeholder?: string
-    editorHeight?: string
-  }) => (
-    <textarea
-      aria-label={ariaLabel}
-      value={value}
-      disabled={disabled}
-      placeholder={placeholder}
-      style={editorHeight ? { height: editorHeight } : undefined}
-      onChange={event => onChange(event.target.value)}
-    />
-  ),
-}))
-
 const account: Account = {
   id: 'acct-1',
   name: 'Acme Corp',
@@ -331,6 +304,7 @@ const freshness: KycFreshness = {
 
 describe('KYCAssistedReview', () => {
   beforeEach(() => {
+    vi.clearAllMocks()
     authMock.user = {
       id: 'usr-super-admin',
       name: 'Super Admin',
@@ -401,8 +375,10 @@ describe('KYCAssistedReview', () => {
     await user.type(screen.getByPlaceholderText(/search drafts/i), 'renewal')
     await waitFor(() => expect(listKycDrafts).toHaveBeenCalledWith('test-token', account.id, expect.objectContaining({ search: 'renewal' })))
 
-    await user.clear(screen.getByDisplayValue('Acme is a strategic enterprise account.'))
-    await user.type(screen.getByLabelText(/Company snapshot/i), 'Acme has expanded into the strategic book.')
+    const companySnapshot = screen.getByLabelText(/Company snapshot/i)
+    await user.click(companySnapshot)
+    await user.clear(companySnapshot)
+    await user.type(companySnapshot, 'Acme has expanded into the strategic book.')
     await user.click(screen.getByRole('button', { name: /Save edits/i }))
 
     await waitFor(() => expect(updateKycDraft).toHaveBeenCalledWith(
@@ -503,17 +479,54 @@ describe('KYCAssistedReview', () => {
     expect(screen.queryByText('Detailed AI description')).not.toBeInTheDocument()
     expect(screen.queryByText('Research question')).not.toBeInTheDocument()
     expect(screen.queryByText('Review gates')).not.toBeInTheDocument()
+    expect((screen.getByLabelText(/OpenAI KYC response/i) as HTMLTextAreaElement).value).not.toMatch(/\d+%/)
+    expect(screen.queryByText('86%')).not.toBeInTheDocument()
   })
 
-  it('hides prompt, runtime review, and provider debug panels from non-super-admin users', async () => {
+  it('shows the prompt and runtime source review for admin users', async () => {
     authMock.user = {
-      id: 'usr-am',
-      name: 'Account Manager',
-      email: 'am@tkxel.com',
-      role: 'account_manager',
-      avatarInitials: 'AM',
+      id: 'usr-admin',
+      name: 'Admin User',
+      email: 'admin.user@tkxel.com',
+      role: 'admin',
+      avatarInitials: 'AU',
     }
     authMock.capabilities = emptyTestCapabilities
+
+    render(<KYCAssistedReview account={account} />)
+
+    expect(await screen.findByText('Run KYC for this account')).toBeInTheDocument()
+    expect(screen.getByText('Runtime source and KYC extraction review')).toBeInTheDocument()
+    expect(screen.queryByText('Advanced run status, generated body, and logs')).not.toBeInTheDocument()
+  })
+
+  it('keeps the KYC prompt readonly until an admin clicks it', async () => {
+    const user = userEvent.setup()
+
+    render(<KYCAssistedReview account={account} />)
+
+    const prompt = await screen.findByLabelText(/Editable KYC prompt/i) as HTMLTextAreaElement
+    await waitFor(() => expect(prompt).toHaveValue('Create a source-backed KYC for Acme Corp using uploaded SOW evidence.'))
+    expect(prompt).toHaveAttribute('readonly')
+
+    await user.click(prompt)
+
+    await waitFor(() => expect(prompt).not.toHaveAttribute('readonly'))
+  })
+
+  it.each([
+    ['account_manager', 'Account Manager'],
+    ['kam_head', 'KAM Head'],
+  ])('hides prompt, runtime review, and provider debug panels from %s users', async (role, name) => {
+    const user = userEvent.setup()
+    authMock.user = {
+      id: `usr-${role}`,
+      name,
+      email: `${role}@tkxel.com`,
+      role,
+      avatarInitials: name.split(' ').map(part => part[0]).join(''),
+    }
+    authMock.capabilities = privilegedKycCapabilities
     vi.mocked(listKycAgentRuns).mockResolvedValue({ items: [agentRun()], total: 1, page: 1, page_size: 1, pages: 1 })
 
     render(<KYCAssistedReview account={account} />)
@@ -522,6 +535,11 @@ describe('KYCAssistedReview', () => {
     expect(screen.queryByText('Run KYC for this account')).not.toBeInTheDocument()
     expect(screen.queryByText('Runtime source and KYC extraction review')).not.toBeInTheDocument()
     expect(screen.queryByText('Advanced run status, generated body, and logs')).not.toBeInTheDocument()
+    expect(getKycDefaultPrompt).not.toHaveBeenCalled()
+
+    await user.click(screen.getByRole('button', { name: /^Run KYC$/i }))
+
+    await waitFor(() => expect(createKycDraft).toHaveBeenCalledWith('test-token', account.id, { trigger_source: 'kyc_page' }))
   })
 
   it('restores an older snapshot as the active KYC version', async () => {

@@ -1,6 +1,7 @@
 import { FileText } from 'lucide-react'
-import { RichTextEditor } from '@/components/ui/RichTextEditor'
+import { useState } from 'react'
 import { cn } from '@/utils/cn'
+import { htmlToTextareaText } from '@/utils/htmlText'
 
 export interface DocumentReviewSource {
   id?: string
@@ -41,8 +42,10 @@ export function DocumentExtractionReviewPanel({
   previewError,
   className,
 }: DocumentExtractionReviewPanelProps) {
+  const [editingExtractedData, setEditingExtractedData] = useState(false)
   const isPdf = Boolean(previewUrl && (mimeType?.includes('pdf') || documentName?.toLowerCase().endsWith('.pdf')))
   const isImage = Boolean(previewUrl && mimeType?.startsWith('image/'))
+  const extractedDataReadOnly = disabled || !editingExtractedData
 
   return (
     <section className={cn('tk-card overflow-hidden', className)}>
@@ -82,7 +85,6 @@ export function DocumentExtractionReviewPanel({
               {sources.slice(0, 4).map(source => (
                 <span key={source.id ?? source.name} className="rounded-md bg-white px-2 py-1 text-xs font-medium text-ink-secondary ring-1 ring-surface-border">
                   {source.status ? source.status.replace(/_/g, ' ') : 'source'}
-                  {typeof source.confidence === 'number' ? ` · ${source.confidence}%` : ''}
                   {typeof source.pages === 'number' ? ` · ${source.pages}p` : ''}
                 </span>
               ))}
@@ -94,13 +96,25 @@ export function DocumentExtractionReviewPanel({
             <p className="text-xs font-semibold uppercase tracking-wider text-ink-secondary">Extracted data review</p>
             <p className="mt-1 text-sm font-semibold text-ink">Reviewer notes and extracted fields</p>
           </div>
-          <RichTextEditor
-            value={extractedHtml}
-            onChange={onExtractedHtmlChange}
-            disabled={disabled}
-            ariaLabel="Extracted document data"
+          <textarea
+            className={cn(
+              'tk-input h-[520px] resize-none text-sm leading-6',
+              extractedDataReadOnly ? 'bg-surface-secondary' : 'bg-white',
+            )}
+            value={htmlToTextareaText(extractedHtml)}
+            onChange={event => {
+              if (!extractedDataReadOnly) onExtractedHtmlChange(event.target.value)
+            }}
+            onClick={() => {
+              if (!disabled) setEditingExtractedData(true)
+            }}
+            onFocus={() => {
+              if (!disabled) setEditingExtractedData(true)
+            }}
+            readOnly={extractedDataReadOnly}
+            aria-label="Extracted document data"
+            aria-readonly={extractedDataReadOnly}
             placeholder="Extracted account, engagement, renewal, citation, and KYC details will appear here."
-            editorHeight="520px"
           />
         </div>
       </div>
